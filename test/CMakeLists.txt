@@ -1,4 +1,3 @@
-
 set(TEST_SOURCES lexer_test.c parser_test.c)
 
 function(add_rule_test TEST_NAME TEST_SOURCE)

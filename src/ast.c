@@ -20,6 +20,7 @@ ASTNode *new_ast_bin_op_node(ASTNode *left, TokenType op, ASTNode *right) {
 
 ASTNode *new_ast_variable_node(char *name) {
     ASTNode *node = new_ast_node();
+    node->type = NODE_VARIABLE;
     node->name = name;
     return node;
 }

@@ -28,6 +28,8 @@ static ASTNode *parse_expression(Lexer *lexer) {
         ASTNode *rhs = parse_term(lexer);
 
         if (rhs == NULL) {
+            ast_free(node);
+            token_free(&token);
             return NULL;
         }
 
@@ -55,6 +57,8 @@ static ASTNode *parse_term(Lexer *lexer) {
         ASTNode *rhs = parse_factor(lexer);
 
         if (rhs == NULL) {
+            ast_free(node);
+            token_free(&token);
             return NULL;
         }
 
@@ -78,15 +82,19 @@ static ASTNode *parse_factor(Lexer *lexer) {
         ASTNode *node = parse_expression(lexer);
 
         if (node == NULL) {
+            token_free(&token);
             return NULL;
         }
 
         if (lexer_next(lexer).type != TOKEN_RPAREN) {
+            ast_free(node);
+            token_free(&token);
             return NULL;
         }
 
         return node;
     }
 
+    token_free(&token);
     return NULL;
 }

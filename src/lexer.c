@@ -1,6 +1,7 @@
 #include "lexer.h"
 
 #include <ctype.h>
+#include <stdlib.h>
 #include <string.h>
 
 static Token lexer_number(Lexer *lexer) {
@@ -73,5 +74,23 @@ Token lexer_next(Lexer *lexer) {
     default:
         lexer_eat(lexer);
         return (Token){.type = TOKEN_ERROR};
+    }
+}
+
+void token_free(Token *token) {
+    switch (token->type) {
+    case TOKEN_NUMBER:
+    case TOKEN_PLUS:
+    case TOKEN_MINUS:
+    case TOKEN_MUL:
+    case TOKEN_DIV:
+    case TOKEN_LPAREN:
+    case TOKEN_RPAREN:
+    case TOKEN_EOF:
+    case TOKEN_ERROR:
+        break;
+    case TOKEN_IDENT:
+        free(token->value.identifier);
+        break;
     }
 }

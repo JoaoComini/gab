@@ -1,13 +1,17 @@
+#include "ast.h"
+#include "lexer.h"
 #include <assert.h>
 #include <parser.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 
 // --- Test Cases ---
 static void test_single_number() {
     Lexer lexer = lexer_new("42");
     ASTNode *ast = parse(&lexer);
     assert(ast != NULL);
+
     assert(ast->type == NODE_NUMBER);
     assert(ast->number == 42.0);
     ast_free(ast);
@@ -17,6 +21,7 @@ static void test_simple_addition() {
     Lexer lexer = lexer_new("3 + 4");
     ASTNode *ast = parse(&lexer);
     assert(ast != NULL);
+
     assert(ast->type == NODE_BIN_OP);
     assert(ast->op == TOKEN_PLUS);
     assert(ast->left->type == NODE_NUMBER);
@@ -53,7 +58,6 @@ static void test_parentheses() {
     ASTNode *ast = parse(&lexer);
     assert(ast != NULL);
 
-    printf("%d\n", ast->type);
     // Expect: (3 + 4) * 2
     assert(ast->type == NODE_BIN_OP);
     assert(ast->op == TOKEN_MUL);
@@ -68,6 +72,31 @@ static void test_parentheses() {
 
     assert(ast->right->type == NODE_NUMBER);
     assert(ast->right->number == 2.0);
+
+    ast_free(ast);
+}
+
+static void test_variables() {
+    Lexer lexer = lexer_new("2 + (x * y)");
+    ASTNode *ast = parse(&lexer);
+    assert(ast != NULL);
+
+    assert(ast->type == NODE_BIN_OP);
+    assert(ast->op == TOKEN_PLUS);
+
+    ASTNode *lhs = ast->left;
+    assert(lhs->type == NODE_NUMBER);
+    assert(lhs->number == 2);
+
+    ASTNode *rhs = ast->right;
+    assert(rhs->type == NODE_BIN_OP);
+    assert(rhs->op == TOKEN_MUL);
+
+    assert(rhs->left->type == NODE_VARIABLE);
+    assert(strcmp(rhs->left->name, "x") == 0);
+
+    assert(rhs->right->type == NODE_VARIABLE);
+    assert(strcmp(rhs->right->name, "y") == 0);
 
     ast_free(ast);
 }
@@ -92,6 +121,7 @@ int main() {
     test_parentheses();
     test_invalid_token();
     test_missing_paren();
+    test_variables();
 
     return 0;
 }

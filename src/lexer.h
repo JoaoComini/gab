@@ -34,4 +34,6 @@ char lexer_peek(Lexer *lexer);
 void lexer_eat(Lexer *lexer);
 Token lexer_next(Lexer *lexer);
 
+void token_free(Token *token);
+
 #endif
