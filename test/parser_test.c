@@ -23,7 +23,7 @@ static void test_simple_addition() {
     assert(ast != NULL);
 
     assert(ast->type == NODE_BIN_OP);
-    assert(ast->op == TOKEN_PLUS);
+    assert(ast->op == BIN_OP_ADD);
     assert(ast->left->type == NODE_NUMBER);
     assert(ast->left->number == 3.0);
     assert(ast->right->type == NODE_NUMBER);
@@ -38,13 +38,13 @@ static void test_operator_precedence() {
 
     // Expect: 3 + (4 * 2)
     assert(ast->type == NODE_BIN_OP);
-    assert(ast->op == TOKEN_PLUS);
+    assert(ast->op == BIN_OP_ADD);
     assert(ast->left->type == NODE_NUMBER);
     assert(ast->left->number == 3.0);
 
     ASTNode *rhs = ast->right;
     assert(rhs->type == NODE_BIN_OP);
-    assert(rhs->op == TOKEN_MUL);
+    assert(rhs->op == BIN_OP_MUL);
     assert(rhs->left->type == NODE_NUMBER);
     assert(rhs->left->number == 4.0);
     assert(rhs->right->type == NODE_NUMBER);
@@ -60,11 +60,11 @@ static void test_parentheses() {
 
     // Expect: (3 + 4) * 2
     assert(ast->type == NODE_BIN_OP);
-    assert(ast->op == TOKEN_MUL);
+    assert(ast->op == BIN_OP_MUL);
 
     ASTNode *lhs = ast->left;
     assert(lhs->type == NODE_BIN_OP);
-    assert(lhs->op == TOKEN_PLUS);
+    assert(lhs->op == BIN_OP_ADD);
     assert(lhs->left->type == NODE_NUMBER);
     assert(lhs->left->number == 3.0);
     assert(lhs->right->type == NODE_NUMBER);
@@ -82,7 +82,7 @@ static void test_variables() {
     assert(ast != NULL);
 
     assert(ast->type == NODE_BIN_OP);
-    assert(ast->op == TOKEN_PLUS);
+    assert(ast->op == BIN_OP_ADD);
 
     ASTNode *lhs = ast->left;
     assert(lhs->type == NODE_NUMBER);
@@ -90,7 +90,7 @@ static void test_variables() {
 
     ASTNode *rhs = ast->right;
     assert(rhs->type == NODE_BIN_OP);
-    assert(rhs->op == TOKEN_MUL);
+    assert(rhs->op == BIN_OP_MUL);
 
     assert(rhs->left->type == NODE_VARIABLE);
     assert(strcmp(rhs->left->name, "x") == 0);

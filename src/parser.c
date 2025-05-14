@@ -2,11 +2,14 @@
 #include "ast.h"
 #include "lexer.h"
 
+#include <assert.h>
 #include <stdlib.h>
 
 static ASTNode *parse_expression(Lexer *lexer);
 static ASTNode *parse_term(Lexer *lexer);
 static ASTNode *parse_factor(Lexer *lexer);
+
+static ASTBinOp parse_bin_op(TokenType type);
 
 ASTNode *parse(Lexer *lexer) { return parse_expression(lexer); }
 
@@ -33,7 +36,7 @@ static ASTNode *parse_expression(Lexer *lexer) {
             return NULL;
         }
 
-        node = new_ast_bin_op_node(node, token.type, rhs);
+        node = new_ast_bin_op_node(node, parse_bin_op(token.type), rhs);
     }
     return node;
 }
@@ -62,7 +65,7 @@ static ASTNode *parse_term(Lexer *lexer) {
             return NULL;
         }
 
-        node = new_ast_bin_op_node(node, token.type, rhs);
+        node = new_ast_bin_op_node(node, parse_bin_op(token.type), rhs);
     }
     return node;
 }
@@ -97,4 +100,26 @@ static ASTNode *parse_factor(Lexer *lexer) {
 
     token_free(&token);
     return NULL;
+}
+
+static ASTBinOp parse_bin_op(TokenType type) {
+    switch (type) {
+    case TOKEN_PLUS:
+        return BIN_OP_ADD;
+    case TOKEN_MINUS:
+        return BIN_OP_SUB;
+    case TOKEN_MUL:
+        return BIN_OP_MUL;
+    case TOKEN_DIV:
+        return BIN_OP_DIV;
+    case TOKEN_NUMBER:
+    case TOKEN_LPAREN:
+    case TOKEN_RPAREN:
+    case TOKEN_IDENT:
+    case TOKEN_EOF:
+    case TOKEN_ERROR:
+        break;
+    }
+
+    assert(0 && "Invalid token type");
 }

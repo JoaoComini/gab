@@ -1,4 +1,5 @@
 #include "ast.h"
+#include <stdlib.h>
 
 ASTNode *new_ast_node() { return malloc(sizeof(ASTNode)); }
 
@@ -9,7 +10,7 @@ ASTNode *new_ast_number_node(double value) {
     return node;
 }
 
-ASTNode *new_ast_bin_op_node(ASTNode *left, TokenType op, ASTNode *right) {
+ASTNode *new_ast_bin_op_node(ASTNode *left, ASTBinOp op, ASTNode *right) {
     ASTNode *node = new_ast_node();
     node->type = NODE_BIN_OP;
     node->left = left;
