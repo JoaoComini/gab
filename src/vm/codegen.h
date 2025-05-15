@@ -4,6 +4,6 @@
 #include "ast.h"
 #include "vm/vm.h"
 
-Chunk *codegen_generate(ASTNode *ast);
+Chunk *codegen_generate(ASTScript *ast);
 
 #endif

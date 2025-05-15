@@ -4,6 +4,22 @@
 #include "ast.h"
 #include "lexer.h"
 
-ASTNode *parse(Lexer *lexer);
+#include <stdbool.h>
+
+typedef struct {
+    const char *message;
+    size_t line;
+    size_t column;
+} ParseError;
+
+typedef struct {
+    Lexer *lexer;
+    ParseError error;
+    bool ok;
+} Parser;
+
+Parser parser_create(Lexer *lexer);
+
+ASTScript *parser_parse(Parser *parser);
 
 #endif

@@ -1,45 +1,56 @@
 #include "ast.h"
+#include "variant.h"
 #include "vm/codegen.h"
 #include "vm/opcode.h"
 #include <assert.h>
 
 // Test number literal compilation
 static void test_number() {
-    ASTNode *num = new_ast_number_node(42);
-    Chunk *chunk = codegen_generate(num);
+    Variant variant = {.type = VARIANT_NUMBER, .number = 42};
+    ASTExpr *num = ast_literal_expr_create(variant);
+    ASTStmt *stmt = ast_expr_stmt_create(num);
+
+    ASTScript *script = ast_script_create();
+    ast_script_add_statement(script, stmt);
+
+    Chunk *chunk = codegen_generate(script);
 
     // Verify chunk contains:
     // 1. LOAD_CONST R0, [const_index]
-    // 2. RETURN R0
-    assert(chunk->instructions_size == 2);
+    assert(chunk->instructions_size == 1);
 
     // Check LOAD_CONST instruction
     Instruction inst = chunk->instructions[0];
     assert((inst >> 26) == OP_LOAD_CONST); // Opcode
-    assert(((inst >> 19) & 0x7F) == 0);    // Register R0
 
     // Check constant pool
     assert(chunk->const_pool->count == 1);
     assert(chunk->const_pool->constants[0].number == 42.0);
 
     chunk_free(chunk);
-    ast_free(num);
+    ast_script_free(script);
 }
 
 // Test binary addition
 static void test_bin_op_add() {
-    ASTNode *left = new_ast_number_node(3.0);
-    ASTNode *right = new_ast_number_node(4.0);
-    ASTNode *add = new_ast_bin_op_node(left, BIN_OP_ADD, right);
+    Variant var_left = {.type = VARIANT_NUMBER, .number = 3};
+    Variant var_right = {.type = VARIANT_NUMBER, .number = 4};
 
-    Chunk *chunk = codegen_generate(add);
+    ASTExpr *left = ast_literal_expr_create(var_left);
+    ASTExpr *right = ast_literal_expr_create(var_right);
+    ASTExpr *add = ast_bin_op_expr_create(left, BIN_OP_ADD, right);
+    ASTStmt *stmt = ast_expr_stmt_create(add);
+
+    ASTScript *script = ast_script_create();
+    ast_script_add_statement(script, stmt);
+
+    Chunk *chunk = codegen_generate(script);
 
     // Expected instructions:
     // 1. LOAD_CONST R0, [3.0]
     // 2. LOAD_CONST R1, [4.0]
     // 3. ADD R0, R0, R1
-    // 4. RETURN R0
-    assert(chunk->instructions_size == 4);
+    assert(chunk->instructions_size == 3);
 
     // Verify ADD instruction
     Instruction inst = chunk->instructions[2];
@@ -49,7 +60,7 @@ static void test_bin_op_add() {
     assert(((inst >> 5) & 0x7F) == 1);  // Src2 R1
 
     chunk_free(chunk);
-    ast_free(add);
+    ast_script_free(script);
 }
 
 int main(void) {

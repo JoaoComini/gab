@@ -43,5 +43,6 @@ size_t constpool_add(ConstantPool *pool, Variant value) {
 
 Variant constpool_get(const ConstantPool *pool, size_t index) {
     assert(index < pool->count);
+
     return pool->constants[index];
 }

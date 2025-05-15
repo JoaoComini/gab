@@ -2,7 +2,6 @@
 #include "ast.h"
 #include "vm/constant_pool.h"
 #include "vm/opcode.h"
-#include "vm/variant.h"
 #include "vm/vm.h"
 #include <assert.h>
 
@@ -11,45 +10,50 @@ typedef struct {
     size_t next_register;
 } CodegenState;
 
-static size_t codegen_expression(CodegenState *state, ASTNode *ast);
-static size_t codegen_number(CodegenState *state, ASTNode *node);
-static size_t codegen_bin_op(CodegenState *state, ASTNode *node);
-static size_t codegen_variable(CodegenState *state, ASTNode *node);
+static void codegen_statement(CodegenState *state, ASTStmt *ast);
+static size_t codegen_expression(CodegenState *state, ASTExpr *ast);
+static size_t codegen_literal(CodegenState *state, ASTExpr *node);
+static size_t codegen_bin_op(CodegenState *state, ASTExpr *node);
 
 static size_t codegen_alloc_register(CodegenState *state);
 static void codegen_free_register(CodegenState *state);
 
-Chunk *codegen_generate(ASTNode *node) {
+Chunk *codegen_generate(ASTScript *script) {
     CodegenState state = {
         .chunk = chunk_create(),
         .next_register = 0,
     };
 
-    size_t result_register = codegen_expression(&state, node);
-
-    chunk_add_instruction(state.chunk, VM_ENCODE_R(OP_RETURN, 0, result_register, 0));
+    for (size_t i = 0; i < script->count; i++) {
+        codegen_statement(&state, script->statements[i]);
+    }
 
     return state.chunk;
 }
 
-static size_t codegen_expression(CodegenState *state, ASTNode *ast) {
+static void codegen_statement(CodegenState *state, ASTStmt *ast) {
     switch (ast->type) {
-    case NODE_NUMBER:
-        return codegen_number(state, ast);
-    case NODE_BIN_OP:
-        return codegen_bin_op(state, ast);
-    case NODE_VARIABLE:
-        return codegen_variable(state, ast);
+    case STMT_EXPR:
+        codegen_expression(state, ast->expr.value);
+    case STMT_VAR_DECL:
+    case STMT_ASSIGN:
+        break;
     }
 }
 
-static size_t codegen_number(CodegenState *state, ASTNode *node) {
-    Variant variant = {
-        .type = VARIANT_NUMBER,
-        .number = node->number,
-    };
+static size_t codegen_expression(CodegenState *state, ASTExpr *ast) {
+    switch (ast->type) {
+    case EXPR_LITERAL:
+        return codegen_literal(state, ast);
+    case EXPR_BIN_OP:
+        return codegen_bin_op(state, ast);
+    default:
+        return 0;
+    }
+}
 
-    size_t const_index = constpool_add(state->chunk->const_pool, variant);
+static size_t codegen_literal(CodegenState *state, ASTExpr *node) {
+    size_t const_index = constpool_add(state->chunk->const_pool, node->literal.value);
     size_t reg = codegen_alloc_register(state);
     Instruction load_const = VM_ENCODE_I(OP_LOAD_CONST, reg, const_index);
 
@@ -58,12 +62,12 @@ static size_t codegen_number(CodegenState *state, ASTNode *node) {
     return reg;
 }
 
-static size_t codegen_bin_op(CodegenState *state, ASTNode *node) {
-    size_t lhs_reg = codegen_expression(state, node->left);
-    size_t rhs_reg = codegen_expression(state, node->right);
+static size_t codegen_bin_op(CodegenState *state, ASTExpr *node) {
+    size_t lhs_reg = codegen_expression(state, node->bin_op.left);
+    size_t rhs_reg = codegen_expression(state, node->bin_op.right);
 
     Instruction instruction;
-    switch (node->op) {
+    switch (node->bin_op.op) {
     case BIN_OP_ADD:
         instruction = VM_ENCODE_R(OP_ADD, lhs_reg, lhs_reg, rhs_reg);
         break;
@@ -82,10 +86,6 @@ static size_t codegen_bin_op(CodegenState *state, ASTNode *node) {
     codegen_free_register(state);
 
     return lhs_reg;
-}
-
-static size_t codegen_variable(CodegenState *state, ASTNode *node) {
-    assert(0 && "Not implemented yet!");
 }
 
 static size_t codegen_alloc_register(CodegenState *state) {

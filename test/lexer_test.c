@@ -17,10 +17,12 @@ static void assert_identifier(Lexer *lexer, char *expected_name) {
     Token token = lexer_next(lexer);
     assert(token.type == TOKEN_IDENT);
     assert(strcmp(token.value.identifier, expected_name) == 0);
+
+    token_free(&token);
 }
 
 static void test_numbers() {
-    Lexer lexer = lexer_new("42 3.14 .5 1e3");
+    Lexer lexer = lexer_create("42 3.14 .5 1e3");
     assert_number(&lexer, 42);
     assert_number(&lexer, 3.14);
     assert_number(&lexer, 0.5);  // .5 → 0.5
@@ -29,38 +31,41 @@ static void test_numbers() {
 }
 
 static void test_operators() {
-    Lexer lexer = lexer_new("+-*/");
+    Lexer lexer = lexer_create("+-*/=");
     assert_token(&lexer, TOKEN_PLUS);
     assert_token(&lexer, TOKEN_MINUS);
     assert_token(&lexer, TOKEN_MUL);
     assert_token(&lexer, TOKEN_DIV);
+    assert_token(&lexer, TOKEN_EQUAL);
     assert_token(&lexer, TOKEN_EOF);
 }
 
 static void test_parentheses() {
-    Lexer lexer = lexer_new("( )");
+    Lexer lexer = lexer_create("( )");
     assert_token(&lexer, TOKEN_LPAREN);
     assert_token(&lexer, TOKEN_RPAREN);
     assert_token(&lexer, TOKEN_EOF);
 }
 
 static void test_whitespace() {
-    Lexer lexer = lexer_new("  \t\n42 \n + ");
+    Lexer lexer = lexer_create("  \t\n42 \n + ");
     assert_number(&lexer, 42);
     assert_token(&lexer, TOKEN_PLUS);
     assert_token(&lexer, TOKEN_EOF);
 }
 
 static void test_identifiers() {
-    Lexer lexer = lexer_new("variable1 variable2");
+    Lexer lexer = lexer_create("let variable1 variable2");
+    assert_token(&lexer, TOKEN_LET);
     assert_identifier(&lexer, "variable1");
     assert_identifier(&lexer, "variable2");
+    assert_token(&lexer, TOKEN_EOF);
 }
 
 static void test_errors() {
-    Lexer lexer = lexer_new("42 $ +");
+    Lexer lexer = lexer_create("42 $ +");
     assert_number(&lexer, 42);
-    assert_token(&lexer, TOKEN_ERROR); // '$' is invalid
+    assert_token(&lexer, TOKEN_INVALID); // '$' is invalid
 }
 
 int main(void) {

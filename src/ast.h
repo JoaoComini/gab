@@ -1,36 +1,85 @@
 #ifndef RULE_AST_H
 #define RULE_AST_H
 
+#include "variant.h"
+#include <stddef.h>
+
 typedef enum {
-    NODE_NUMBER,
-    NODE_BIN_OP,
-    NODE_VARIABLE,
-} ASTNodeType;
+    EXPR_LITERAL,
+    EXPR_BIN_OP,
+    EXPR_VARIABLE,
+} ExprType;
 
 typedef enum {
     BIN_OP_ADD,
     BIN_OP_SUB,
     BIN_OP_MUL,
     BIN_OP_DIV,
-} ASTBinOp;
+} BinOp;
 
-typedef struct ASTNode {
-    ASTNodeType type;
+typedef struct ASTExpr {
+    ExprType type;
     union {
-        double number; // Numeric nodes
-        char *name;    // Variable nodes
-        struct {       // Binary operator nodes
-            struct ASTNode *left;
-            struct ASTNode *right;
-            ASTBinOp op;
-        };
+        struct {
+            Variant value;
+        } literal;
+
+        struct {
+            struct ASTExpr *left;
+            struct ASTExpr *right;
+            BinOp op;
+        } bin_op;
+
+        struct {
+            char *name;
+        } variable;
     };
-} ASTNode;
+} ASTExpr;
 
-ASTNode *new_ast_number_node(double value);
-ASTNode *new_ast_bin_op_node(ASTNode *left, ASTBinOp op, ASTNode *right);
-ASTNode *new_ast_variable_node(char *name);
+ASTExpr *ast_literal_expr_create(Variant value);
+ASTExpr *ast_bin_op_expr_create(ASTExpr *left, BinOp op, ASTExpr *right);
+ASTExpr *ast_variable_expr_create(char *name);
+void ast_expr_free(ASTExpr *node);
 
-void ast_free(ASTNode *node);
+typedef enum {
+    STMT_EXPR,
+    STMT_VAR_DECL,
+    STMT_ASSIGN,
+} StmtType;
+
+typedef struct {
+    StmtType type;
+
+    union {
+        struct {
+            ASTExpr *value;
+        } expr;
+
+        struct {
+            char *name;
+            ASTExpr *initializer;
+        } var_decl;
+
+        struct {
+            ASTExpr *target;
+            ASTExpr *value;
+        } assign;
+    };
+
+} ASTStmt;
+
+ASTStmt *ast_expr_stmt_create(ASTExpr *value);
+ASTStmt *ast_var_decl_stmt_create(char *name, ASTExpr *initializer);
+ASTStmt *ast_assign_stmt_create(ASTExpr *target, ASTExpr *value);
+void ast_stmt_free(ASTStmt *stmt);
+
+typedef struct ASTScript {
+    ASTStmt **statements;
+    size_t count;
+} ASTScript;
+
+ASTScript *ast_script_create();
+void ast_script_add_statement(ASTScript *script, ASTStmt *stmt);
+void ast_script_free(ASTScript *script);
 
 #endif

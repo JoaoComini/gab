@@ -1,15 +1,18 @@
 #include "lexer.h"
 
+#include <assert.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
 static Token lexer_number(Lexer *lexer) {
-    char *endptr;
     const char *start = lexer->source + lexer->pos;
-    double value = strtod(start, &endptr); // Parse as double
-    lexer->pos += (endptr - start);
-    return (Token){.type = TOKEN_NUMBER, .value.number = value};
+    char *end;
+    double value = strtod(start, &end); // Parse as double
+
+    size_t length = end - start;
+    lexer->pos += length;
+    return (Token){.type = TOKEN_NUMBER, .value.number = value, .length = length};
 }
 
 static Token lexer_identifier(Lexer *lexer) {
@@ -24,12 +27,14 @@ static Token lexer_identifier(Lexer *lexer) {
 
     buffer[i] = '\0';
 
-    return (Token){.type = TOKEN_IDENT, .value.identifier = strdup(buffer)};
+    if (strcmp(buffer, "let") == 0) {
+        return (Token){.type = TOKEN_LET, .length = i};
+    }
+
+    return (Token){.type = TOKEN_IDENT, .value.identifier = strdup(buffer), .length = i};
 }
 
-Lexer lexer_new(const char *source) {
-    return (Lexer){.source = source, .pos = 0};
-}
+Lexer lexer_create(const char *source) { return (Lexer){.source = source, .pos = 0}; }
 
 char lexer_peek(Lexer *lexer) { return lexer->source[lexer->pos]; }
 
@@ -38,10 +43,6 @@ void lexer_eat(Lexer *lexer) { lexer->pos++; }
 Token lexer_next(Lexer *lexer) {
     while (isspace(lexer_peek(lexer))) {
         lexer_eat(lexer);
-    }
-
-    if (lexer_peek(lexer) == '\0') {
-        return (Token){.type = TOKEN_EOF};
     }
 
     if (isdigit(lexer_peek(lexer)) || lexer_peek(lexer) == '.') {
@@ -53,44 +54,50 @@ Token lexer_next(Lexer *lexer) {
     }
 
     switch (lexer_peek(lexer)) {
+    case '\0':
+        lexer_eat(lexer);
+        return (Token){.type = TOKEN_EOF, .length = 1};
     case '+':
         lexer_eat(lexer);
-        return (Token){.type = TOKEN_PLUS};
+        return (Token){.type = TOKEN_PLUS, .length = 1};
     case '-':
         lexer_eat(lexer);
-        return (Token){.type = TOKEN_MINUS};
+        return (Token){.type = TOKEN_MINUS, .length = 1};
     case '*':
         lexer_eat(lexer);
-        return (Token){.type = TOKEN_MUL};
+        return (Token){.type = TOKEN_MUL, .length = 1};
     case '/':
         lexer_eat(lexer);
-        return (Token){.type = TOKEN_DIV};
+        return (Token){.type = TOKEN_DIV, .length = 1};
     case '(':
         lexer_eat(lexer);
-        return (Token){.type = TOKEN_LPAREN};
+        return (Token){.type = TOKEN_LPAREN, .length = 1};
     case ')':
         lexer_eat(lexer);
-        return (Token){.type = TOKEN_RPAREN};
+        return (Token){.type = TOKEN_RPAREN, .length = 1};
+    case '=':
+        lexer_eat(lexer);
+        return (Token){.type = TOKEN_EQUAL, .length = 1};
+    case ';':
+        lexer_eat(lexer);
+        return (Token){.type = TOKEN_SEMICOLON, .length = 1};
     default:
         lexer_eat(lexer);
-        return (Token){.type = TOKEN_ERROR};
+        return (Token){.type = TOKEN_INVALID, .length = 1};
     }
+}
+
+void lexer_unget(Lexer *lexer, Token token) {
+    assert(lexer->pos >= token.length);
+    lexer->pos -= token.length;
 }
 
 void token_free(Token *token) {
     switch (token->type) {
-    case TOKEN_NUMBER:
-    case TOKEN_PLUS:
-    case TOKEN_MINUS:
-    case TOKEN_MUL:
-    case TOKEN_DIV:
-    case TOKEN_LPAREN:
-    case TOKEN_RPAREN:
-    case TOKEN_EOF:
-    case TOKEN_ERROR:
-        break;
     case TOKEN_IDENT:
         free(token->value.identifier);
+        break;
+    default:
         break;
     }
 }
