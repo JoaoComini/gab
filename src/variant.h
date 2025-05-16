@@ -1,5 +1,5 @@
-#ifndef RULE_VARIANT_H
-#define RULE_VARIANT_H
+#ifndef GAB_VARIANT_H
+#define GAB_VARIANT_H
 
 typedef enum {
     VARIANT_NUMBER,

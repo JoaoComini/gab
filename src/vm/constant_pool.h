@@ -1,5 +1,5 @@
-#ifndef RULE_CONSTPOOL_H
-#define RULE_CONSTPOOL_H
+#ifndef GAB_CONSTPOOL_H
+#define GAB_CONSTPOOL_H
 
 #include "variant.h"
 #include <stddef.h>

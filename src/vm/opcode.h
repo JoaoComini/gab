@@ -1,5 +1,5 @@
-#ifndef RULE_OPCODE_H
-#define RULE_OPCODE_H
+#ifndef GAB_OPCODE_H
+#define GAB_OPCODE_H
 
 typedef enum {
     OP_LOAD_CONST, // Rdest ← Constant (I-type)

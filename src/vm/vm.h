@@ -1,5 +1,5 @@
-#ifndef RULE_VM_H
-#define RULE_VM_H
+#ifndef GAB_VM_H
+#define GAB_VM_H
 
 #include "variant.h"
 #include "vm/constant_pool.h"

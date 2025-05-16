@@ -1,5 +1,5 @@
-#ifndef RULE_AST_H
-#define RULE_AST_H
+#ifndef GAB_AST_H
+#define GAB_AST_H
 
 #include "variant.h"
 #include <stddef.h>
