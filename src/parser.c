@@ -111,6 +111,13 @@ static ASTStmt *parse_statement(Parser *parser) {
 
         return ast_expr_stmt_create(expr);
     }
+    case TOKEN_RETURN: {
+        ASTExpr *result = parse_expression(parser);
+        if (!result) {
+            return NULL;
+        }
+        return ast_return_stmt_create(result);
+    }
     default: {
         lexer_unget(parser->lexer, token);
         ASTExpr *expr = parse_expression(parser);

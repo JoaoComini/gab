@@ -45,6 +45,7 @@ typedef enum {
     STMT_EXPR,
     STMT_VAR_DECL,
     STMT_ASSIGN,
+    STMT_RETURN,
 } StmtType;
 
 typedef struct {
@@ -64,6 +65,10 @@ typedef struct {
             ASTExpr *target;
             ASTExpr *value;
         } assign;
+
+        struct {
+            ASTExpr *result;
+        } ret;
     };
 
 } ASTStmt;
@@ -71,6 +76,7 @@ typedef struct {
 ASTStmt *ast_expr_stmt_create(ASTExpr *value);
 ASTStmt *ast_var_decl_stmt_create(char *name, ASTExpr *initializer);
 ASTStmt *ast_assign_stmt_create(ASTExpr *target, ASTExpr *value);
+ASTStmt *ast_return_stmt_create(ASTExpr *result);
 void ast_stmt_free(ASTStmt *stmt);
 
 typedef struct ASTScript {

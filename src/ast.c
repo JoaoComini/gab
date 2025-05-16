@@ -51,6 +51,13 @@ ASTStmt *ast_assign_stmt_create(ASTExpr *target, ASTExpr *value) {
     return stmt;
 }
 
+ASTStmt *ast_return_stmt_create(ASTExpr *result) {
+    ASTStmt *stmt = ast_stmt_create();
+    stmt->type = STMT_RETURN;
+    stmt->ret.result = result;
+    return stmt;
+}
+
 void ast_expr_free(ASTExpr *expr) {
     if (!expr)
         return;
@@ -86,6 +93,9 @@ void ast_stmt_free(ASTStmt *stmt) {
     case STMT_ASSIGN:
         ast_expr_free(stmt->assign.target);
         ast_expr_free(stmt->assign.value);
+        break;
+    case STMT_RETURN:
+        ast_expr_free(stmt->ret.result);
         break;
     }
 

@@ -218,6 +218,23 @@ static void test_assignment() {
     ast_script_free(script);
 }
 
+static void test_return() {
+    Lexer lexer = lexer_create("return 2;");
+    Parser parser = parser_create(&lexer);
+    ASTScript *script = parser_parse(&parser);
+    assert(script != NULL);
+
+    assert(script->count == 1);
+
+    ASTStmt *stmt = script->statements[0];
+    assert(stmt->type == STMT_RETURN);
+
+    ASTExpr *result = stmt->ret.result;
+    assert(result->type == EXPR_LITERAL);
+    assert(result->literal.value.number == 2.0);
+
+    ast_script_free(script);
+}
 static void test_invalid_token() {
     Lexer lexer = lexer_create("3 + $");
     Parser parser = parser_create(&lexer);
@@ -282,6 +299,7 @@ int main() {
     test_variables();
     test_declaration();
     test_unintialized_declaration();
+    test_assignment();
     test_assignment();
 
     return 0;

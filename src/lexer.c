@@ -31,6 +31,10 @@ static Token lexer_identifier(Lexer *lexer) {
         return (Token){.type = TOKEN_LET, .length = i};
     }
 
+    if (strcmp(buffer, "return") == 0) {
+        return (Token){.type = TOKEN_RETURN, .length = i};
+    }
+
     return (Token){.type = TOKEN_IDENT, .value.identifier = strdup(buffer), .length = i};
 }
 

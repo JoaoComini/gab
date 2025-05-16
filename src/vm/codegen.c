@@ -35,8 +35,14 @@ static void codegen_statement(CodegenState *state, ASTStmt *ast) {
     switch (ast->type) {
     case STMT_EXPR:
         codegen_expression(state, ast->expr.value);
-    case STMT_VAR_DECL:
+        break;
+    case STMT_RETURN: {
+        size_t reg = codegen_expression(state, ast->ret.result);
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RETURN, 0, reg, 0));
+        break;
+    }
     case STMT_ASSIGN:
+    case STMT_VAR_DECL:
         break;
     }
 }

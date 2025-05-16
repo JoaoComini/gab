@@ -14,6 +14,7 @@ typedef enum {
     TOKEN_EQUAL,     // '='
     TOKEN_SEMICOLON, // ';'
     TOKEN_LET,       // 'let'
+    TOKEN_RETURN,    // 'return'
     TOKEN_IDENT,     // Variable and function names
 } TokenType;
 

@@ -55,11 +55,16 @@ static void test_whitespace() {
 }
 
 static void test_identifiers() {
-    Lexer lexer = lexer_create("let variable1 variable2");
-    assert_token(&lexer, TOKEN_LET);
+    Lexer lexer = lexer_create("variable1 variable2");
     assert_identifier(&lexer, "variable1");
     assert_identifier(&lexer, "variable2");
     assert_token(&lexer, TOKEN_EOF);
+}
+
+static void test_keywords() {
+    Lexer lexer = lexer_create("let return");
+    assert_token(&lexer, TOKEN_LET);
+    assert_token(&lexer, TOKEN_RETURN);
 }
 
 static void test_errors() {
@@ -74,6 +79,7 @@ int main(void) {
     test_parentheses();
     test_whitespace();
     test_identifiers();
+    test_keywords();
     test_errors();
     return 0;
 }

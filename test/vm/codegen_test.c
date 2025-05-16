@@ -63,9 +63,34 @@ static void test_bin_op_add() {
     ast_script_free(script);
 }
 
+static void test_return() {
+    Variant var = {.type = VARIANT_NUMBER, .number = 3};
+    ASTExpr *result = ast_literal_expr_create(var);
+    ASTStmt *stmt = ast_return_stmt_create(result);
+
+    ASTScript *script = ast_script_create();
+    ast_script_add_statement(script, stmt);
+
+    Chunk *chunk = codegen_generate(script);
+
+    // Expected instructions:
+    // 1. LOAD_CONST R0, [3.0]
+    // 1, RETURN R0
+    assert(chunk->instructions_size == 2);
+
+    Instruction load = chunk->instructions[0];
+    assert((load >> 26) == OP_LOAD_CONST);
+
+    Instruction ret = chunk->instructions[1];
+    assert((ret >> 26) == OP_RETURN);
+
+    chunk_free(chunk);
+    ast_script_free(script);
+}
 int main(void) {
     test_number();
     test_bin_op_add();
+    test_return();
 
     return 0;
 }
