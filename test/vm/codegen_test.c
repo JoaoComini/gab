@@ -2,7 +2,10 @@
 #include "variant.h"
 #include "vm/codegen.h"
 #include "vm/opcode.h"
+#include "vm/vm.h"
 #include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 // Test number literal compilation
 static void test_number() {
@@ -87,10 +90,46 @@ static void test_return() {
     chunk_free(chunk);
     ast_script_free(script);
 }
+
+static void test_var_decl() {
+    char *name = malloc(sizeof(char) * 2);
+
+    name[0] = 'x';
+    name[1] = '\0';
+
+    Variant var = {.type = VARIANT_NUMBER, .number = 3};
+    ASTExpr *inititalizer = ast_literal_expr_create(var);
+    ASTStmt *stmt = ast_var_decl_stmt_create(name, inititalizer);
+
+    ASTScript *script = ast_script_create();
+    ast_script_add_statement(script, stmt);
+
+    Chunk *chunk = codegen_generate(script);
+
+    assert(chunk->instructions_size == 2);
+
+    // Expected instructions:
+    // 1. LOAD_CONST R1, [3.0]
+    // 1. MOVE R0, R1
+
+    Instruction load = chunk->instructions[0];
+    assert((load >> 26) == OP_LOAD_CONST);
+    assert((load >> 19) == 1);
+
+    Instruction move = chunk->instructions[1];
+
+    assert((move >> 26) == OP_MOVE);
+    assert(VM_DECODE_R_RD(move) == 0);
+    assert(VM_DECODE_R_R1(move) == 1);
+
+    chunk_free(chunk);
+    ast_script_free(script);
+}
+
 int main(void) {
     test_number();
     test_bin_op_add();
     test_return();
-
+    test_var_decl();
     return 0;
 }

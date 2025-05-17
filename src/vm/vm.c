@@ -66,6 +66,13 @@ void vm_execute(VM *vm, const char *source) {
             vm->registers[reg] = constpool_get(chunk->const_pool, const_index);
             break;
         }
+        case OP_MOVE: {
+            int rd = VM_DECODE_R_RD(instruction);
+            int r1 = VM_DECODE_R_R1(instruction);
+
+            vm->registers[rd] = vm->registers[r1];
+            break;
+        }
         case OP_ADD: {
             size_t rd = VM_DECODE_R_RD(instruction);
             size_t r1 = VM_DECODE_R_R1(instruction);

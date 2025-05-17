@@ -3,6 +3,7 @@
 
 typedef enum {
     OP_LOAD_CONST, // Rdest ← Constant (I-type)
+    OP_MOVE,       // Rdest ← Rsrc1 (R-type)
     OP_ADD,        // Rdest ← Rsrc1 + Rsrc2 (R-type)
     OP_SUB,        // Rdest ← Rsrc1 - Rsrc2 (R-type)
     OP_MUL,        // Rdest ← Rsrc1 * Rsrc2 (R-type)

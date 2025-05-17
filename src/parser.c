@@ -1,6 +1,7 @@
 #include "parser.h"
 #include "ast.h"
 #include "lexer.h"
+#include "symbol_table.h"
 #include "variant.h"
 
 #include <assert.h>

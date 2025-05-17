@@ -1,12 +1,17 @@
 #include "codegen.h"
+
 #include "ast.h"
+#include "symbol_table.h"
 #include "vm/constant_pool.h"
 #include "vm/opcode.h"
+#include "vm/scope.h"
 #include "vm/vm.h"
+
 #include <assert.h>
 
 typedef struct {
     Chunk *chunk;
+    Scope *scope;
     size_t next_register;
 } CodegenState;
 
@@ -15,12 +20,10 @@ static size_t codegen_expression(CodegenState *state, ASTExpr *ast);
 static size_t codegen_literal(CodegenState *state, ASTExpr *node);
 static size_t codegen_bin_op(CodegenState *state, ASTExpr *node);
 
-static size_t codegen_alloc_register(CodegenState *state);
-static void codegen_free_register(CodegenState *state);
-
 Chunk *codegen_generate(ASTScript *script) {
     CodegenState state = {
         .chunk = chunk_create(),
+        .scope = scope_create(NULL),
         .next_register = 0,
     };
 
@@ -41,8 +44,17 @@ static void codegen_statement(CodegenState *state, ASTStmt *ast) {
         chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RETURN, 0, reg, 0));
         break;
     }
+    case STMT_VAR_DECL: {
+        int rd = scope_alloc_register(state->scope);
+        symbol_table_insert(state->scope->symbol_table, ast->var_decl.name, rd);
+
+        if (ast->var_decl.initializer) {
+            int r1 = codegen_expression(state, ast->var_decl.initializer);
+            chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_MOVE, rd, r1, 0));
+        }
+        break;
+    }
     case STMT_ASSIGN:
-    case STMT_VAR_DECL:
         break;
     }
 }
@@ -60,7 +72,7 @@ static size_t codegen_expression(CodegenState *state, ASTExpr *ast) {
 
 static size_t codegen_literal(CodegenState *state, ASTExpr *node) {
     size_t const_index = constpool_add(state->chunk->const_pool, node->literal.value);
-    size_t reg = codegen_alloc_register(state);
+    size_t reg = scope_alloc_register(state->scope);
     Instruction load_const = VM_ENCODE_I(OP_LOAD_CONST, reg, const_index);
 
     chunk_add_instruction(state->chunk, load_const);
@@ -89,22 +101,7 @@ static size_t codegen_bin_op(CodegenState *state, ASTExpr *node) {
     }
 
     chunk_add_instruction(state->chunk, instruction);
-    codegen_free_register(state);
+    scope_free_register(state->scope);
 
     return lhs_reg;
-}
-
-static size_t codegen_alloc_register(CodegenState *state) {
-    assert(state->next_register < VM_MAX_REGISTERS);
-
-    size_t current_register = state->next_register;
-    state->next_register += 1;
-
-    return current_register;
-}
-
-static void codegen_free_register(CodegenState *state) {
-    assert(state->next_register > 0);
-
-    state->next_register -= 1;
 }
