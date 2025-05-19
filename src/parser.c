@@ -24,20 +24,35 @@ Parser parser_create(Lexer *lexer) {
     };
 }
 
+Token parser_peek_token(Parser *parser) {
+    if (parser->has_lookahead) {
+        return parser->lookahead;
+    }
+
+    parser->lookahead = lexer_next(parser->lexer);
+    parser->has_lookahead = true;
+    return parser->lookahead;
+}
+
+Token parser_next_token(Parser *parser) {
+    if (!parser->has_lookahead) {
+        return lexer_next(parser->lexer);
+    }
+
+    parser->has_lookahead = false;
+    return parser->lookahead;
+}
+
 ASTScript *parser_parse(Parser *parser) {
     ASTScript *script = ast_script_create();
 
-    while (1) {
-        Token token = lexer_next(parser->lexer);
-        if (token.type == TOKEN_EOF) {
-            break;
-        }
+    while (parser_peek_token(parser).type != TOKEN_EOF) {
+        Token token = parser_peek_token(parser);
 
         if (token.type == TOKEN_SEMICOLON) {
+            parser_next_token(parser);
             continue;
         }
-
-        lexer_unget(parser->lexer, token);
 
         ASTStmt *stmt = parse_statement(parser);
         if (!stmt) {
@@ -45,7 +60,7 @@ ASTScript *parser_parse(Parser *parser) {
             return NULL;
         }
 
-        Token terminator = lexer_next(parser->lexer);
+        Token terminator = parser_next_token(parser);
         if (terminator.type != TOKEN_SEMICOLON) {
             parser_error(parser, "expected ';' after statement", terminator);
             ast_stmt_free(stmt);
@@ -61,19 +76,20 @@ ASTScript *parser_parse(Parser *parser) {
 }
 
 static ASTStmt *parse_statement(Parser *parser) {
-    Token token = lexer_next(parser->lexer);
+    Token token = parser_peek_token(parser);
 
     switch (token.type) {
     case TOKEN_LET: {
-        Token name = lexer_next(parser->lexer);
+        parser_next_token(parser); // eat "let"
+
+        Token name = parser_next_token(parser);
         if (name.type != TOKEN_IDENT) {
             parser_error(parser, "expected identifier after 'let'", name);
             return NULL;
         }
 
-        Token next = lexer_next(parser->lexer);
+        Token next = parser_peek_token(parser);
         if (next.type == TOKEN_SEMICOLON) {
-            lexer_unget(parser->lexer, next);
             return ast_var_decl_stmt_create(name.lexeme, NULL);
         }
 
@@ -81,6 +97,8 @@ static ASTStmt *parse_statement(Parser *parser) {
             parser_error(parser, "expected ';' or '='", next);
             return NULL;
         }
+
+        parser_next_token(parser); // eat '='
 
         ASTExpr *initializer = parse_expression(parser);
         if (!initializer) {
@@ -90,26 +108,34 @@ static ASTStmt *parse_statement(Parser *parser) {
         return ast_var_decl_stmt_create(name.lexeme, initializer);
     }
     case TOKEN_IDENT: {
-        Token next = lexer_next(parser->lexer);
-        if (next.type == TOKEN_EQUAL) {
-            ASTExpr *value = parse_expression(parser);
-            if (!value) {
-                return NULL;
-            }
-            ASTExpr *target = ast_variable_expr_create(token.lexeme);
-            return ast_assign_stmt_create(target, value);
-        }
-        lexer_unget(parser->lexer, next);
-        lexer_unget(parser->lexer, token);
-
         ASTExpr *expr = parse_expression(parser);
         if (expr == NULL) {
             return NULL;
         }
 
-        return ast_expr_stmt_create(expr);
+        Token next = parser_peek_token(parser);
+        if (next.type != TOKEN_EQUAL) {
+            return ast_expr_stmt_create(expr);
+        }
+
+        if (expr->type != EXPR_VARIABLE) {
+            parser_error(parser, "expression is not assignable", next);
+            ast_expr_free(expr);
+            return NULL;
+        }
+
+        parser_next_token(parser);
+
+        ASTExpr *value = parse_expression(parser);
+        if (!value) {
+            return NULL;
+        }
+
+        return ast_assign_stmt_create(expr, value);
     }
     case TOKEN_RETURN: {
+        parser_next_token(parser); // eat "return"
+
         ASTExpr *result = parse_expression(parser);
         if (!result) {
             return NULL;
@@ -117,8 +143,6 @@ static ASTStmt *parse_statement(Parser *parser) {
         return ast_return_stmt_create(result);
     }
     default: {
-        lexer_unget(parser->lexer, token);
-
         ASTExpr *expr = parse_expression(parser);
         if (expr == NULL) {
             return NULL;
@@ -131,20 +155,20 @@ static ASTStmt *parse_statement(Parser *parser) {
 
 static ASTExpr *parse_expression(Parser *parser) { return parse_precedence(parser, 0); }
 
-// Precedence climbing for binary operations
 static ASTExpr *parse_precedence(Parser *parser, int min_precedence) {
     ASTExpr *lhs = parse_primary(parser);
     if (!lhs)
         return NULL;
 
     while (1) {
-        Token token = lexer_next(parser->lexer);
+        Token token = parser_peek_token(parser);
         int precedence = get_precedence(token.type);
 
         if (precedence == 0 || precedence < min_precedence) {
-            lexer_unget(parser->lexer, token);
             break;
         }
+
+        parser_next_token(parser); // eat op
 
         BinOp op = parse_bin_op(token.type);
         ASTExpr *rhs = parse_precedence(parser, precedence + 1);
@@ -161,11 +185,10 @@ static ASTExpr *parse_precedence(Parser *parser, int min_precedence) {
 }
 
 static ASTExpr *parse_primary(Parser *parser) {
-    Token token = lexer_next(parser->lexer);
+    Token token = parser_next_token(parser);
 
     switch (token.type) {
     case TOKEN_NUMBER: {
-
         char *temp = string_ref_to_cstr(token.lexeme);
         double value = strtod(temp, NULL);
         free(temp);
@@ -183,7 +206,7 @@ static ASTExpr *parse_primary(Parser *parser) {
             return NULL;
         }
 
-        Token next = lexer_next(parser->lexer);
+        Token next = parser_next_token(parser);
         if (next.type != TOKEN_RPAREN) {
             parser_error(parser, "expected ')'", next);
             ast_expr_free(node);

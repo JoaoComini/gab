@@ -33,9 +33,6 @@ typedef struct {
 } Lexer;
 
 Lexer lexer_create(const char *source);
-char lexer_peek(Lexer *lexer);
-void lexer_eat(Lexer *lexer);
-void lexer_unget(Lexer *lexer, Token token);
 Token lexer_next(Lexer *lexer);
 
 #endif

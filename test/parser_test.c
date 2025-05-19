@@ -287,6 +287,16 @@ static void test_missing_semicolon() {
     assert(ast == NULL); // Should fail
 }
 
+static void test_expression_not_assignable() {
+    Lexer lexer = lexer_create("2 = 1");
+    Parser parser = parser_create(&lexer);
+    ASTScript *ast = parser_parse(&parser);
+
+    assert(!parser.ok);
+    assert(strcmp(parser.error.message, "expression is not assignable") == 0);
+    assert(ast == NULL);
+}
+
 int main() {
     test_single_number();
     test_multiple_statements();

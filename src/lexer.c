@@ -6,6 +6,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+char lexer_peek(Lexer *lexer) { return lexer->source[lexer->pos]; }
+
+void lexer_eat(Lexer *lexer) { lexer->pos++; }
+
 static Token lexer_number(Lexer *lexer) {
     const char *begin = lexer->source + lexer->pos;
 
@@ -54,10 +58,6 @@ static Token lexer_identifier(Lexer *lexer) {
 
 Lexer lexer_create(const char *source) { return (Lexer){.source = source, .pos = 0}; }
 
-char lexer_peek(Lexer *lexer) { return lexer->source[lexer->pos]; }
-
-void lexer_eat(Lexer *lexer) { lexer->pos++; }
-
 Token lexer_next(Lexer *lexer) {
     while (isspace(lexer_peek(lexer))) {
         lexer_eat(lexer);
@@ -97,9 +97,4 @@ Token lexer_next(Lexer *lexer) {
     default:
         return (Token){.type = TOKEN_INVALID, .lexeme = ref};
     }
-}
-
-void lexer_unget(Lexer *lexer, Token token) {
-    assert(lexer->pos >= token.lexeme.length);
-    lexer->pos -= token.lexeme.length;
 }
