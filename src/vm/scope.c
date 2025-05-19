@@ -26,3 +26,16 @@ void scope_free_register(Scope *scope) {
     assert(scope->next_reg > 0);
     scope->next_reg--;
 }
+
+SymbolEntry *scope_symbol_lookup(Scope *scope, const char *name) {
+    while (scope) {
+        SymbolEntry *entry = symbol_table_lookup(scope->symbol_table, name);
+        if (entry) {
+            return entry;
+        }
+
+        scope = scope->parent;
+    }
+
+    return NULL;
+}

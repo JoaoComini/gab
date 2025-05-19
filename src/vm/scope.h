@@ -20,4 +20,6 @@ void scope_free(Scope *scope);
 int scope_alloc_register(Scope *scope);
 void scope_free_register(Scope *scope);
 
+SymbolEntry *scope_symbol_lookup(Scope *scope, const char *name);
+
 #endif

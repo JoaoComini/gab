@@ -1,4 +1,5 @@
 #include "symbol_table.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -56,7 +57,7 @@ void symbol_table_free(SymbolTable *table) {
     free(table);
 }
 
-bool symbol_table_insert(SymbolTable *table, const char *key, int reg) {
+bool symbol_table_insert(SymbolTable *table, const char *key, size_t reg) {
     if (table->size >= table->capacity * SYMBOL_TABLE_RESIZE_THRESHOLD) {
         symbol_table_resize(table);
     }
@@ -73,7 +74,7 @@ bool symbol_table_insert(SymbolTable *table, const char *key, int reg) {
 
     SymbolEntry *new_entry = malloc(sizeof(SymbolEntry));
     new_entry->key = strdup(key);
-    new_entry->reg = reg;
+    new_entry->symbol.reg = reg;
     new_entry->next = table->buckets[idx];
     table->buckets[idx] = new_entry;
     table->size++;
@@ -83,6 +84,7 @@ bool symbol_table_insert(SymbolTable *table, const char *key, int reg) {
 
 SymbolEntry *symbol_table_lookup(SymbolTable *table, const char *key) {
     size_t idx = djb2_hash(key) % table->capacity;
+
     SymbolEntry *entry = table->buckets[idx];
     while (entry) {
         if (strcmp(entry->key, key) == 0) {

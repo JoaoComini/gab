@@ -14,20 +14,20 @@ static void test_create_and_free() {
 static void test_basic_insert_and_lookup() {
     SymbolTable *table = symbol_table_create(8);
 
-    assert(symbol_table_insert(table, "x", 1) == true);
+    assert(symbol_table_insert(table, "x", 0) == true);
     assert(table->size == 1);
-    assert(symbol_table_insert(table, "y", 2) == true);
+    assert(symbol_table_insert(table, "y", 1) == true);
     assert(table->size == 2);
 
     SymbolEntry *x = symbol_table_lookup(table, "x");
     assert(x != NULL);
     assert(strcmp(x->key, "x") == 0);
-    assert(x->reg == 1);
+    assert(x->symbol.reg == 0);
 
     SymbolEntry *y = symbol_table_lookup(table, "y");
     assert(y != NULL);
     assert(strcmp(y->key, "y") == 0);
-    assert(y->reg == 2);
+    assert(y->symbol.reg == 1);
 
     assert(symbol_table_lookup(table, "z") == NULL);
 
@@ -37,14 +37,14 @@ static void test_basic_insert_and_lookup() {
 static void test_duplicate_insert() {
     SymbolTable *table = symbol_table_create(8);
 
-    assert(symbol_table_insert(table, "x", 1) == true);
+    assert(symbol_table_insert(table, "x", 0) == true);
     assert(table->size == 1);
 
-    assert(symbol_table_insert(table, "x", 2) == false);
+    assert(symbol_table_insert(table, "x", 0) == false);
     assert(table->size == 1); // Size shouldn't change
 
     SymbolEntry *x = symbol_table_lookup(table, "x");
-    assert(x->reg == 1);
+    assert(x->symbol.reg == 0);
 
     symbol_table_free(table);
 }
@@ -52,8 +52,8 @@ static void test_duplicate_insert() {
 static void test_delete() {
     SymbolTable *table = symbol_table_create(8);
 
-    assert(symbol_table_insert(table, "x", 1) == true);
-    assert(symbol_table_insert(table, "y", 2) == true);
+    assert(symbol_table_insert(table, "x", 0) == true);
+    assert(symbol_table_insert(table, "y", 1) == true);
     assert(table->size == 2);
 
     symbol_table_delete(table, "x");
@@ -70,9 +70,9 @@ static void test_delete() {
 static void test_collision_handling() {
     SymbolTable *table = symbol_table_create(2);
 
-    assert(symbol_table_insert(table, "a", 1) == true);
-    assert(symbol_table_insert(table, "b", 2) == true);
-    assert(symbol_table_insert(table, "c", 3) == true);
+    assert(symbol_table_insert(table, "a", 0) == true);
+    assert(symbol_table_insert(table, "b", 1) == true);
+    assert(symbol_table_insert(table, "c", 2) == true);
     assert(table->size == 3);
 
     assert(symbol_table_lookup(table, "a") != NULL);
@@ -86,9 +86,9 @@ static void test_resize() {
     SymbolTable *table = symbol_table_create(4);
 
     assert(table->capacity == 4);
-    assert(symbol_table_insert(table, "a", 1) == true);
-    assert(symbol_table_insert(table, "b", 2) == true);
-    assert(symbol_table_insert(table, "c", 3) == true);
+    assert(symbol_table_insert(table, "a", 0) == true);
+    assert(symbol_table_insert(table, "b", 1) == true);
+    assert(symbol_table_insert(table, "c", 2) == true);
 
     assert(table->capacity == 8);
     assert(table->size == 3);
@@ -148,7 +148,7 @@ static void test_stress() {
         snprintf(key, sizeof(key), "var%d", i);
         SymbolEntry *entry = symbol_table_lookup(table, key);
         assert(entry != NULL);
-        assert(entry->reg == i);
+        assert(entry->symbol.reg == i);
     }
 
     for (int i = 0; i < NUM_ENTRIES; i += 2) {

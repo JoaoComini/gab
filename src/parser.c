@@ -1,10 +1,10 @@
 #include "parser.h"
 #include "ast.h"
 #include "lexer.h"
-#include "symbol_table.h"
 #include "variant.h"
 
 #include <assert.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 static ASTStmt *parse_statement(Parser *parser);
@@ -121,6 +121,7 @@ static ASTStmt *parse_statement(Parser *parser) {
     }
     default: {
         lexer_unget(parser->lexer, token);
+
         ASTExpr *expr = parse_expression(parser);
         if (expr == NULL) {
             return NULL;

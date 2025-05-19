@@ -1,6 +1,7 @@
 #ifndef GAB_AST_H
 #define GAB_AST_H
 
+#include "symbol_table.h"
 #include "variant.h"
 #include <stddef.h>
 
@@ -34,6 +35,8 @@ typedef struct ASTExpr {
             char *name;
         } variable;
     };
+
+    Symbol symbol; // Filled during symbol resolution
 } ASTExpr;
 
 ASTExpr *ast_literal_expr_create(Variant value);
@@ -59,6 +62,8 @@ typedef struct {
         struct {
             char *name;
             ASTExpr *initializer;
+
+            int reg; // Filled during symbol resolution
         } var_decl;
 
         struct {
@@ -80,12 +85,17 @@ ASTStmt *ast_return_stmt_create(ASTExpr *result);
 void ast_stmt_free(ASTStmt *stmt);
 
 typedef struct ASTScript {
+    SymbolTable *symbol_table;
+
     ASTStmt **statements;
-    size_t count;
+    size_t statements_size;
+
+    int vars_count;
 } ASTScript;
 
 ASTScript *ast_script_create();
 void ast_script_add_statement(ASTScript *script, ASTStmt *stmt);
+void ast_script_resolve_symbols(ASTScript *script);
 void ast_script_free(ASTScript *script);
 
 #endif

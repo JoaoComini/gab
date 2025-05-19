@@ -50,7 +50,7 @@ static void test_chunk_resize() {
 static void test_vm_execute() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "let x = 2; return (2 + 3) * ((15 / 5) - 1);");
+    vm_execute(vm, "let x = 2; return (x + 3) * ((15 / 5) - 1);");
 
     vm_free(vm);
 }
