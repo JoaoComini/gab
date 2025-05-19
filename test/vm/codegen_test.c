@@ -1,4 +1,5 @@
 #include "ast.h"
+#include "string_ref.h"
 #include "variant.h"
 #include "vm/codegen.h"
 #include "vm/opcode.h"
@@ -95,7 +96,10 @@ static void test_return() {
 static void test_var_decl() {
     Variant var = {.type = VARIANT_NUMBER, .number = 3};
     ASTExpr *inititalizer = ast_literal_expr_create(var);
-    ASTStmt *stmt = ast_var_decl_stmt_create("x", inititalizer);
+
+    char var_name[] = {"x"};
+    StringRef ref = {.data = var_name, .length = 1};
+    ASTStmt *stmt = ast_var_decl_stmt_create(ref, inititalizer);
 
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, stmt);
@@ -123,11 +127,14 @@ static void test_var_decl() {
 }
 
 static void test_variable_access() {
+    char var_name[] = {"x"};
+    StringRef ref = {.data = var_name, .length = 1};
+
     Variant three = {.type = VARIANT_NUMBER, .number = 3};
     ASTExpr *inititalizer = ast_literal_expr_create(three);
-    ASTStmt *var_decl = ast_var_decl_stmt_create("x", inititalizer); // let x = 3;
+    ASTStmt *var_decl = ast_var_decl_stmt_create(ref, inititalizer); // let x = 3;
 
-    ASTExpr *target_expr = ast_variable_expr_create("x");
+    ASTExpr *target_expr = ast_variable_expr_create(ref);
     Variant two = {.type = VARIANT_NUMBER, .number = 2};
     ASTExpr *value_expr = ast_literal_expr_create(two);
     ASTStmt *assign_stmt = ast_assign_stmt_create(target_expr, value_expr); // x = 2;

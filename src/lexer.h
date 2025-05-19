@@ -1,6 +1,8 @@
 #ifndef LEXER_H
 #define LEXER_H
 
+#include "string_ref.h"
+
 typedef enum {
     TOKEN_INVALID,   // Invalid token
     TOKEN_EOF,       // End of input
@@ -20,13 +22,9 @@ typedef enum {
 
 typedef struct {
     TokenType type;
-    int length;
+    StringRef lexeme;
     int line;
     int column;
-    union {
-        double number;
-        char *identifier;
-    } value;
 } Token;
 
 typedef struct {
@@ -39,7 +37,5 @@ char lexer_peek(Lexer *lexer);
 void lexer_eat(Lexer *lexer);
 void lexer_unget(Lexer *lexer, Token token);
 Token lexer_next(Lexer *lexer);
-
-void token_free(Token *token);
 
 #endif

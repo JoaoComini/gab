@@ -1,5 +1,6 @@
 #include "ast.h"
 #include "lexer.h"
+#include "string_ref.h"
 #include <assert.h>
 #include <parser.h>
 #include <stdbool.h>
@@ -86,7 +87,7 @@ static void test_operator_precedence() {
     assert(rhs->bin_op.right->type == EXPR_LITERAL);
     assert(rhs->bin_op.right->literal.value.number == 2.0);
 
-    ast_expr_free(expr);
+    ast_script_free(script);
 }
 
 static void test_parentheses() {
@@ -141,9 +142,9 @@ static void test_variables() {
     assert(rhs->type == EXPR_BIN_OP);
     assert(rhs->bin_op.op == BIN_OP_MUL);
     assert(rhs->bin_op.left->type == EXPR_VARIABLE);
-    assert(strcmp(rhs->bin_op.left->variable.name, "x") == 0);
+    assert(string_ref_equals_cstr(rhs->bin_op.left->variable.name, "x"));
     assert(rhs->bin_op.right->type == EXPR_VARIABLE);
-    assert(strcmp(rhs->bin_op.right->variable.name, "y") == 0);
+    assert(string_ref_equals_cstr(rhs->bin_op.right->variable.name, "y"));
 
     assert(expr->bin_op.left->type == EXPR_LITERAL);
     assert(expr->bin_op.left->literal.value.number == 2.0);
@@ -162,7 +163,7 @@ static void test_declaration() {
     ASTStmt *stmt = script->statements[0];
     assert(stmt->type == STMT_VAR_DECL);
 
-    assert(strcmp(stmt->var_decl.name, "x") == 0);
+    assert(string_ref_equals_cstr(stmt->var_decl.name, "x"));
 
     ASTExpr *initializer = stmt->var_decl.initializer;
 
@@ -191,7 +192,7 @@ static void test_unintialized_declaration() {
     ASTStmt *stmt = script->statements[0];
     assert(stmt->type == STMT_VAR_DECL);
 
-    assert(strcmp(stmt->var_decl.name, "x") == 0);
+    assert(string_ref_equals_cstr(stmt->var_decl.name, "x"));
     assert(stmt->var_decl.initializer == NULL);
 
     ast_script_free(script);
@@ -210,7 +211,7 @@ static void test_assignment() {
 
     ASTExpr *target = stmt->assign.target;
     assert(target->type == EXPR_VARIABLE);
-    assert(strcmp(target->variable.name, "x") == 0);
+    assert(string_ref_equals_cstr(target->variable.name, "x"));
 
     ASTExpr *value = stmt->assign.value;
     assert(value->type == EXPR_LITERAL);

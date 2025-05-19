@@ -87,9 +87,11 @@ SymbolEntry *symbol_table_lookup(SymbolTable *table, const char *key) {
 
     SymbolEntry *entry = table->buckets[idx];
     while (entry) {
+
         if (strcmp(entry->key, key) == 0) {
             return entry;
         }
+
         entry = entry->next;
     }
     return NULL;
@@ -101,17 +103,22 @@ void symbol_table_delete(SymbolTable *table, const char *key) {
     SymbolEntry *prev = NULL;
 
     while (entry) {
-        if (strcmp(entry->key, key) == 0) {
-            if (prev) {
-                prev->next = entry->next;
-            } else {
-                table->buckets[idx] = entry->next;
-            }
-            free(entry->key);
-            free(entry);
-            table->size--;
+        if (strcmp(entry->key, key) != 0) {
+            prev = entry;
+            entry = entry->next;
+            continue;
         }
-        prev = entry;
-        entry = entry->next;
+
+        if (prev) {
+            prev->next = entry->next;
+        } else {
+            table->buckets[idx] = entry->next;
+        }
+
+        free(entry->key);
+        free(entry);
+
+        table->size--;
+        return;
     }
 }

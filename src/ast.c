@@ -1,4 +1,5 @@
 #include "ast.h"
+#include "string_ref.h"
 #include "symbol_table.h"
 #include <assert.h>
 #include <stdio.h>
@@ -23,10 +24,10 @@ ASTExpr *ast_bin_op_expr_create(ASTExpr *left, BinOp op, ASTExpr *right) {
     return node;
 }
 
-ASTExpr *ast_variable_expr_create(char *name) {
+ASTExpr *ast_variable_expr_create(StringRef name) {
     ASTExpr *node = ast_expr_create();
     node->type = EXPR_VARIABLE;
-    node->variable.name = strdup(name);
+    node->variable.name = name;
     return node;
 }
 
@@ -39,10 +40,10 @@ ASTStmt *ast_expr_stmt_create(ASTExpr *value) {
     return stmt;
 }
 
-ASTStmt *ast_var_decl_stmt_create(char *name, ASTExpr *initializer) {
+ASTStmt *ast_var_decl_stmt_create(StringRef name, ASTExpr *initializer) {
     ASTStmt *stmt = ast_stmt_create();
     stmt->type = STMT_VAR_DECL;
-    stmt->var_decl.name = strdup(name);
+    stmt->var_decl.name = name;
     stmt->var_decl.initializer = initializer;
     return stmt;
 }
@@ -71,10 +72,7 @@ void ast_expr_free(ASTExpr *expr) {
         ast_expr_free(expr->bin_op.left);
         ast_expr_free(expr->bin_op.right);
         break;
-    case EXPR_VARIABLE:
-        free(expr->variable.name);
-        break;
-    case EXPR_LITERAL:
+    default:
         break;
     }
 
@@ -91,7 +89,6 @@ void ast_stmt_free(ASTStmt *stmt) {
         break;
     case STMT_VAR_DECL:
         ast_expr_free(stmt->var_decl.initializer);
-        free(stmt->var_decl.name);
         break;
     case STMT_ASSIGN:
         ast_expr_free(stmt->assign.target);
@@ -128,7 +125,10 @@ void ast_script_expr_visit(ASTScript *script, ASTExpr *expr) {
         break;
     }
     case EXPR_VARIABLE: {
-        SymbolEntry *entry = symbol_table_lookup(script->symbol_table, expr->variable.name);
+        char *key = string_ref_to_cstr(expr->variable.name);
+        SymbolEntry *entry = symbol_table_lookup(script->symbol_table, key);
+        free(key);
+
         assert(entry && "undeclared variable");
 
         expr->symbol = entry->symbol;
@@ -145,8 +145,10 @@ void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt) {
         break;
     }
     case STMT_VAR_DECL: {
-        bool ok =
-            symbol_table_insert(script->symbol_table, stmt->var_decl.name, script->vars_count);
+        char *key = string_ref_to_cstr(stmt->var_decl.name);
+        bool ok = symbol_table_insert(script->symbol_table, key, script->vars_count);
+        free(key);
+
         assert(ok && "variable already declared");
 
         if (stmt->var_decl.initializer) {

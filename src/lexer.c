@@ -1,4 +1,5 @@
 #include "lexer.h"
+#include "string_ref.h"
 
 #include <assert.h>
 #include <ctype.h>
@@ -6,36 +7,49 @@
 #include <string.h>
 
 static Token lexer_number(Lexer *lexer) {
-    const char *start = lexer->source + lexer->pos;
-    char *end;
-    double value = strtod(start, &end); // Parse as double
+    const char *begin = lexer->source + lexer->pos;
 
-    size_t length = end - start;
-    lexer->pos += length;
-    return (Token){.type = TOKEN_NUMBER, .value.number = value, .length = length};
+    while (isdigit(lexer_peek(lexer))) {
+        lexer_eat(lexer);
+    }
+
+    if (lexer_peek(lexer) == '.') {
+        lexer_eat(lexer);
+
+        while (isdigit(lexer_peek(lexer))) {
+            lexer_eat(lexer);
+        }
+    }
+
+    const char *end = lexer->source + lexer->pos;
+    size_t length = end - begin;
+
+    StringRef ref = {.data = begin, .length = length};
+
+    return (Token){.type = TOKEN_NUMBER, .lexeme = ref};
 }
 
 static Token lexer_identifier(Lexer *lexer) {
-    char buffer[256];
+    const char *begin = lexer->source + lexer->pos;
 
-    int i = 0;
     while (isalnum(lexer_peek(lexer))) {
-        buffer[i] = lexer_peek(lexer);
         lexer_eat(lexer);
-        i += 1;
     }
 
-    buffer[i] = '\0';
+    const char *end = lexer->source + lexer->pos;
+    size_t length = end - begin;
 
-    if (strcmp(buffer, "let") == 0) {
-        return (Token){.type = TOKEN_LET, .length = i};
+    StringRef ref = {.data = begin, .length = length};
+
+    if (strncmp(ref.data, "let", ref.length) == 0) {
+        return (Token){.type = TOKEN_LET, .lexeme = ref};
     }
 
-    if (strcmp(buffer, "return") == 0) {
-        return (Token){.type = TOKEN_RETURN, .length = i};
+    if (strncmp(ref.data, "return", ref.length) == 0) {
+        return (Token){.type = TOKEN_RETURN, .lexeme = ref};
     }
 
-    return (Token){.type = TOKEN_IDENT, .value.identifier = strdup(buffer), .length = i};
+    return (Token){.type = TOKEN_IDENT, .lexeme = ref};
 }
 
 Lexer lexer_create(const char *source) { return (Lexer){.source = source, .pos = 0}; }
@@ -57,51 +71,35 @@ Token lexer_next(Lexer *lexer) {
         return lexer_identifier(lexer);
     }
 
-    switch (lexer_peek(lexer)) {
+    char ch = lexer_peek(lexer);
+    StringRef ref = {.data = lexer->source + lexer->pos, .length = 1};
+    lexer_eat(lexer);
+
+    switch (ch) {
     case '\0':
-        lexer_eat(lexer);
-        return (Token){.type = TOKEN_EOF, .length = 1};
+        return (Token){.type = TOKEN_EOF, .lexeme = ref};
     case '+':
-        lexer_eat(lexer);
-        return (Token){.type = TOKEN_PLUS, .length = 1};
+        return (Token){.type = TOKEN_PLUS, .lexeme = ref};
     case '-':
-        lexer_eat(lexer);
-        return (Token){.type = TOKEN_MINUS, .length = 1};
+        return (Token){.type = TOKEN_MINUS, .lexeme = ref};
     case '*':
-        lexer_eat(lexer);
-        return (Token){.type = TOKEN_MUL, .length = 1};
+        return (Token){.type = TOKEN_MUL, .lexeme = ref};
     case '/':
-        lexer_eat(lexer);
-        return (Token){.type = TOKEN_DIV, .length = 1};
+        return (Token){.type = TOKEN_DIV, .lexeme = ref};
     case '(':
-        lexer_eat(lexer);
-        return (Token){.type = TOKEN_LPAREN, .length = 1};
+        return (Token){.type = TOKEN_LPAREN, .lexeme = ref};
     case ')':
-        lexer_eat(lexer);
-        return (Token){.type = TOKEN_RPAREN, .length = 1};
+        return (Token){.type = TOKEN_RPAREN, .lexeme = ref};
     case '=':
-        lexer_eat(lexer);
-        return (Token){.type = TOKEN_EQUAL, .length = 1};
+        return (Token){.type = TOKEN_EQUAL, .lexeme = ref};
     case ';':
-        lexer_eat(lexer);
-        return (Token){.type = TOKEN_SEMICOLON, .length = 1};
+        return (Token){.type = TOKEN_SEMICOLON, .lexeme = ref};
     default:
-        lexer_eat(lexer);
-        return (Token){.type = TOKEN_INVALID, .length = 1};
+        return (Token){.type = TOKEN_INVALID, .lexeme = ref};
     }
 }
 
 void lexer_unget(Lexer *lexer, Token token) {
-    assert(lexer->pos >= token.length);
-    lexer->pos -= token.length;
-}
-
-void token_free(Token *token) {
-    switch (token->type) {
-    case TOKEN_IDENT:
-        free(token->value.identifier);
-        break;
-    default:
-        break;
-    }
+    assert(lexer->pos >= token.lexeme.length);
+    lexer->pos -= token.lexeme.length;
 }

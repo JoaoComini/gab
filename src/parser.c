@@ -1,11 +1,12 @@
 #include "parser.h"
 #include "ast.h"
 #include "lexer.h"
+#include "string_ref.h"
 #include "variant.h"
 
 #include <assert.h>
-#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static ASTStmt *parse_statement(Parser *parser);
 static ASTExpr *parse_expression(Parser *parser);
@@ -47,8 +48,8 @@ ASTScript *parser_parse(Parser *parser) {
         Token terminator = lexer_next(parser->lexer);
         if (terminator.type != TOKEN_SEMICOLON) {
             parser_error(parser, "expected ';' after statement", terminator);
+            ast_stmt_free(stmt);
             ast_script_free(script);
-            token_free(&terminator);
 
             return NULL;
         }
@@ -73,33 +74,29 @@ static ASTStmt *parse_statement(Parser *parser) {
         Token next = lexer_next(parser->lexer);
         if (next.type == TOKEN_SEMICOLON) {
             lexer_unget(parser->lexer, next);
-            return ast_var_decl_stmt_create(name.value.identifier, NULL);
+            return ast_var_decl_stmt_create(name.lexeme, NULL);
         }
 
         if (next.type != TOKEN_EQUAL) {
             parser_error(parser, "expected ';' or '='", next);
-            token_free(&name);
-            token_free(&next);
             return NULL;
         }
 
         ASTExpr *initializer = parse_expression(parser);
         if (!initializer) {
-            token_free(&name);
             return NULL;
         }
 
-        return ast_var_decl_stmt_create(name.value.identifier, initializer);
+        return ast_var_decl_stmt_create(name.lexeme, initializer);
     }
     case TOKEN_IDENT: {
         Token next = lexer_next(parser->lexer);
         if (next.type == TOKEN_EQUAL) {
             ASTExpr *value = parse_expression(parser);
             if (!value) {
-                token_free(&token);
                 return NULL;
             }
-            ASTExpr *target = ast_variable_expr_create(token.value.identifier);
+            ASTExpr *target = ast_variable_expr_create(token.lexeme);
             return ast_assign_stmt_create(target, value);
         }
         lexer_unget(parser->lexer, next);
@@ -168,11 +165,16 @@ static ASTExpr *parse_primary(Parser *parser) {
 
     switch (token.type) {
     case TOKEN_NUMBER: {
-        Variant variant = {.type = VARIANT_NUMBER, .number = token.value.number};
+
+        char *temp = string_ref_to_cstr(token.lexeme);
+        double value = strtod(temp, NULL);
+        free(temp);
+
+        Variant variant = {.type = VARIANT_NUMBER, .number = value};
         return ast_literal_expr_create(variant);
     }
     case TOKEN_IDENT: {
-        return ast_variable_expr_create(token.value.identifier);
+        return ast_variable_expr_create(token.lexeme);
     }
     case TOKEN_LPAREN: {
         ASTExpr *node = parse_expression(parser);
@@ -185,7 +187,6 @@ static ASTExpr *parse_primary(Parser *parser) {
         if (next.type != TOKEN_RPAREN) {
             parser_error(parser, "expected ')'", next);
             ast_expr_free(node);
-            token_free(&next);
             return NULL;
         }
 
@@ -193,7 +194,6 @@ static ASTExpr *parse_primary(Parser *parser) {
     }
     default:
         parser_error(parser, "expected expression", token);
-        token_free(&token);
         return NULL;
     }
 }

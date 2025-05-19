@@ -1,6 +1,7 @@
 #ifndef GAB_AST_H
 #define GAB_AST_H
 
+#include "string_ref.h"
 #include "symbol_table.h"
 #include "variant.h"
 #include <stddef.h>
@@ -32,7 +33,7 @@ typedef struct ASTExpr {
         } bin_op;
 
         struct {
-            char *name;
+            StringRef name;
         } variable;
     };
 
@@ -41,7 +42,7 @@ typedef struct ASTExpr {
 
 ASTExpr *ast_literal_expr_create(Variant value);
 ASTExpr *ast_bin_op_expr_create(ASTExpr *left, BinOp op, ASTExpr *right);
-ASTExpr *ast_variable_expr_create(char *name);
+ASTExpr *ast_variable_expr_create(StringRef name);
 void ast_expr_free(ASTExpr *node);
 
 typedef enum {
@@ -60,7 +61,7 @@ typedef struct {
         } expr;
 
         struct {
-            char *name;
+            StringRef name;
             ASTExpr *initializer;
 
             int reg; // Filled during symbol resolution
@@ -79,7 +80,7 @@ typedef struct {
 } ASTStmt;
 
 ASTStmt *ast_expr_stmt_create(ASTExpr *value);
-ASTStmt *ast_var_decl_stmt_create(char *name, ASTExpr *initializer);
+ASTStmt *ast_var_decl_stmt_create(StringRef name, ASTExpr *initializer);
 ASTStmt *ast_assign_stmt_create(ASTExpr *target, ASTExpr *value);
 ASTStmt *ast_return_stmt_create(ASTExpr *result);
 void ast_stmt_free(ASTStmt *stmt);
