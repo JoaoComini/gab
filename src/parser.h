@@ -16,8 +16,6 @@ typedef struct {
     Lexer *lexer;
 
     Token current;
-    Token lookahead;
-    bool has_lookahead;
 
     ParseError error;
     bool ok;
