@@ -20,6 +20,11 @@ add_library(gab
     src/vm/scope.c
 )
 
+find_library(MATH_LIBRARY m)
+if(MATH_LIBRARY)
+    target_link_libraries(gab PRIVATE ${MATH_LIBRARY})
+endif()
+
 target_include_directories(gab PUBLIC src/)
 
 enable_testing()

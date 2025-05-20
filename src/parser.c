@@ -9,6 +9,13 @@
 #include <string.h>
 
 static ASTStmt *parse_statement(Parser *parser);
+static ASTStmt *parse_var_decl_stmt(Parser *parser);
+static ASTStmt *parse_if_stmt(Parser *parser);
+static ASTStmt *parse_block_stmt(Parser *parser);
+static ASTStmt *parse_return_stmt(Parser *parser);
+static ASTStmt *parse_expr_stmt(Parser *parser);
+static bool stmt_needs_terminator(ASTStmt *stmt);
+
 static ASTExpr *parse_expression(Parser *parser);
 static ASTExpr *parse_primary(Parser *parser);
 static ASTExpr *parse_precedence(Parser *parser, int min_precedence);
@@ -43,88 +50,187 @@ ASTScript *parser_parse(Parser *parser) {
             return NULL;
         }
 
-        if (parser->current.type != TOKEN_SEMICOLON) {
-            parser_error(parser, "expected ';' after statement", parser->current);
-            ast_stmt_free(stmt);
-            ast_script_free(script);
-
-            return NULL;
-        }
-
         ast_script_add_statement(script, stmt);
-
-        parser_next_token(parser);
     }
 
     return script;
 }
 
 static ASTStmt *parse_statement(Parser *parser) {
+    ASTStmt *stmt = NULL;
+
     switch (parser->current.type) {
     case TOKEN_LET: {
-        parser_next_token(parser); // eat "let"
-
-        if (parser->current.type != TOKEN_IDENT) {
-            parser_error(parser, "expected identifier after 'let'", parser->current);
-            return NULL;
-        }
-
-        Token name = parser->current;
-
-        parser_next_token(parser);
-
-        if (parser->current.type == TOKEN_SEMICOLON) {
-            return ast_var_decl_stmt_create(name.lexeme, NULL);
-        }
-
-        if (parser->current.type != TOKEN_EQUAL) {
-            parser_error(parser, "expected ';' or '='", parser->current);
-            return NULL;
-        }
-
-        parser_next_token(parser); // eat '='
-
-        ASTExpr *initializer = parse_expression(parser);
-        if (!initializer) {
-            return NULL;
-        }
-
-        return ast_var_decl_stmt_create(name.lexeme, initializer);
+        stmt = parse_var_decl_stmt(parser);
+        break;
+    }
+    case TOKEN_IF: {
+        stmt = parse_if_stmt(parser);
+        break;
+    }
+    case TOKEN_LBRACE: {
+        stmt = parse_block_stmt(parser);
+        break;
     }
     case TOKEN_RETURN: {
-        parser_next_token(parser); // eat "return"
-
-        ASTExpr *result = parse_expression(parser);
-        if (!result) {
-            return NULL;
-        }
-        return ast_return_stmt_create(result);
+        stmt = parse_return_stmt(parser);
+        break;
     }
     default: {
-        ASTExpr *expr = parse_expression(parser);
-        if (expr == NULL) {
-            return NULL;
-        }
-
-        if (parser->current.type != TOKEN_EQUAL) {
-            return ast_expr_stmt_create(expr);
-        }
-
-        if (expr->type != EXPR_VARIABLE) {
-            parser_error(parser, "expression is not assignable", parser->current);
-            ast_expr_free(expr);
-            return NULL;
-        }
-
-        parser_next_token(parser); // eat '='
-
-        ASTExpr *value = parse_expression(parser);
-        if (!value) {
-            return NULL;
-        }
-
-        return ast_assign_stmt_create(expr, value);
+        stmt = parse_expr_stmt(parser);
+        break;
     }
+    }
+
+    if (!stmt) {
+        return NULL;
+    }
+
+    if (!stmt_needs_terminator(stmt)) {
+        return stmt;
+    }
+
+    if (parser->current.type != TOKEN_SEMICOLON) {
+        parser_error(parser, "expected ';' after statement", parser->current);
+        ast_stmt_free(stmt);
+
+        return NULL;
+    }
+
+    parser_next_token(parser);
+
+    return stmt;
+}
+
+static ASTStmt *parse_var_decl_stmt(Parser *parser) {
+
+    parser_next_token(parser); // eat "let"
+
+    if (parser->current.type != TOKEN_IDENT) {
+        parser_error(parser, "expected identifier after 'let'", parser->current);
+        return NULL;
+    }
+
+    Token name = parser->current;
+
+    parser_next_token(parser); // eat identifier
+
+    if (parser->current.type == TOKEN_SEMICOLON) {
+        return ast_var_decl_stmt_create(name.lexeme, NULL);
+    }
+
+    if (parser->current.type != TOKEN_ASSIGN) {
+        parser_error(parser, "expected ';' or '='", parser->current);
+        return NULL;
+    }
+
+    parser_next_token(parser); // eat '='
+
+    ASTExpr *initializer = parse_expression(parser);
+    if (!initializer) {
+        parser_error(parser, "expected expression after '='", parser->current);
+        return NULL;
+    }
+
+    return ast_var_decl_stmt_create(name.lexeme, initializer);
+}
+
+static ASTStmt *parse_if_stmt(Parser *parser) {
+
+    parser_next_token(parser); // eat "if"
+
+    ASTExpr *condition = parse_expression(parser);
+    if (!condition) {
+        parser_error(parser, "expected expression after 'if'", parser->current);
+        return NULL;
+    }
+
+    ASTStmt *then_block = parse_block_stmt(parser);
+    if (!then_block) {
+        return NULL;
+    }
+
+    if (parser->current.type != TOKEN_ELSE) {
+        return ast_if_stmt_create(condition, then_block, NULL);
+    }
+
+    parser_next_token(parser); // eat "else"
+    ASTStmt *else_block = parse_block_stmt(parser);
+    if (!else_block) {
+        return NULL;
+    }
+
+    return ast_if_stmt_create(condition, then_block, else_block);
+}
+
+static ASTStmt *parse_block_stmt(Parser *parser) {
+    if (parser->current.type != TOKEN_LBRACE) {
+        parser_error(parser, "expected '{'", parser->current);
+        return NULL;
+    }
+
+    parser_next_token(parser); // eat '{'
+
+    ASTStmtList list = ast_stmt_list_create();
+    while (parser->current.type != TOKEN_RBRACE) {
+        ASTStmt *stmt = parse_statement(parser);
+
+        if (!stmt) {
+            return NULL;
+        }
+
+        ast_stmt_list_add(&list, stmt);
+    }
+
+    parser_next_token(parser); // eat '}'
+
+    return ast_block_stmt_create(list);
+}
+
+static ASTStmt *parse_return_stmt(Parser *parser) {
+    parser_next_token(parser); // eat "return"
+
+    ASTExpr *result = parse_expression(parser);
+    if (!result) {
+        return NULL;
+    }
+
+    return ast_return_stmt_create(result);
+}
+
+static ASTStmt *parse_expr_stmt(Parser *parser) {
+    ASTExpr *expr = parse_expression(parser);
+    if (expr == NULL) {
+        return NULL;
+    }
+
+    if (parser->current.type != TOKEN_ASSIGN) {
+        return ast_expr_stmt_create(expr);
+    }
+
+    if (expr->type != EXPR_VARIABLE) {
+        parser_error(parser, "expression is not assignable", parser->current);
+        ast_expr_free(expr);
+        return NULL;
+    }
+
+    parser_next_token(parser); // eat '='
+
+    ASTExpr *value = parse_expression(parser);
+    if (!value) {
+        return NULL;
+    }
+
+    return ast_assign_stmt_create(expr, value);
+}
+
+static bool stmt_needs_terminator(ASTStmt *stmt) {
+    switch (stmt->type) {
+    case STMT_IF:
+    case STMT_BLOCK:
+        return false;
+    default:
+        return true;
     }
 }
 
@@ -168,7 +274,7 @@ static ASTExpr *parse_primary(Parser *parser) {
 
         parser_next_token(parser); // eat number
 
-        Variant variant = {.type = VARIANT_NUMBER, .number = value};
+        Variant variant = {.type = VARIANT_NUMBER, .number_var = value};
         return ast_literal_expr_create(variant);
     }
     case TOKEN_IDENT: {
@@ -205,12 +311,20 @@ static ASTExpr *parse_primary(Parser *parser) {
 
 static int get_precedence(TokenType type) {
     switch (type) {
+    case TOKEN_EQUAL:
+    case TOKEN_NEQUAL:
+        return 1;
+    case TOKEN_LESS:
+    case TOKEN_GREATER:
+    case TOKEN_LEQUAL:
+    case TOKEN_GEQUAL:
+        return 2;
     case TOKEN_PLUS:
     case TOKEN_MINUS:
-        return 1;
+        return 3;
     case TOKEN_MUL:
     case TOKEN_DIV:
-        return 2;
+        return 4;
     default:
         return 0; // Not a binary operator
     }
@@ -218,6 +332,18 @@ static int get_precedence(TokenType type) {
 
 static BinOp parse_bin_op(TokenType type) {
     switch (type) {
+    case TOKEN_EQUAL:
+        return BIN_OP_EQUAL;
+    case TOKEN_NEQUAL:
+        return BIN_OP_NEQUAL;
+    case TOKEN_LESS:
+        return BIN_OP_LESS;
+    case TOKEN_GREATER:
+        return BIN_OP_GREATER;
+    case TOKEN_LEQUAL:
+        return BIN_OP_LEQUAL;
+    case TOKEN_GEQUAL:
+        return BIN_OP_GEQUAL;
     case TOKEN_PLUS:
         return BIN_OP_ADD;
     case TOKEN_MINUS:

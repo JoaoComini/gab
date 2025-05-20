@@ -25,12 +25,13 @@ typedef uint32_t Instruction;
     Encodes I-type instructions in a 32-bit integer
     op: OpCode (6-bit)
     rd: Destination register (7-bit)
-    kx: Constant index (19 bit)
+    kx | imm: Constant index (19 bit) or immediate value
 */
 #define VM_ENCODE_I(op, rd, kx) (((op) << 26) | ((rd) << 19) | ((kx) & 0x7FFFF))
 
 #define VM_DECODE_I_RD(instr) (((instr) >> 19) & 0x7F) // Destination register
 #define VM_DECODE_I_KX(instr) ((instr) & 0x7FFFF)      // 19-bit constant/index
+#define VM_DECODE_I_IMM(instr) ((instr) & 0x7FFFF)     // 19-bit immediate value
 
 #define VM_DECODE_OPCODE(instr) ((instr) >> 26) // Get OpCode (default to all types)
 
@@ -40,28 +41,35 @@ typedef uint32_t Instruction;
 // Maximum registers supported with 7-bit
 #define VM_MAX_REGISTERS ((1 << 7) - 1)
 
+// Sentinel value for registers
+#define VM_INVALID_REGISTER VM_MAX_REGISTERS + 1
+
 // Initial number of the instructions array in a Chunk
 #define VM_CHUNK_INITIAL_CAPACITY 4
 
 typedef struct {
     ConstantPool *const_pool;
     Instruction *instructions;
-    size_t instructions_capacity;
-    size_t instructions_size;
+    size_t capacity;
+    size_t size;
 } Chunk;
 
 Chunk *chunk_create();
-void chunk_add_instruction(Chunk *chunk, Instruction instruction);
+size_t chunk_add_instruction(Chunk *chunk, Instruction instruction);
+void chunk_patch_instruction(Chunk *chunk, size_t index, Instruction instruction);
 void chunk_free(Chunk *chunk);
 
 typedef struct {
     Variant registers[VM_MAX_REGISTERS];
 
     size_t instruction_pointer;
+
+    Variant result;
 } VM;
 
 VM *vm_create();
 void vm_execute(VM *vm, const char *source);
+Variant vm_get_result(VM *vm);
 void vm_free(VM *vm);
 
 #endif

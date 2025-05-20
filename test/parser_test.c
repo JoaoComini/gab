@@ -13,13 +13,13 @@ static void test_single_number() {
     ASTScript *script = parser_parse(&parser);
     assert(parser.ok);
     assert(script != NULL);
-    assert(script->statements_size == 1);
+    assert(script->statements.size == 1);
 
-    ASTStmt *stmt = script->statements[0];
+    ASTStmt *stmt = script->statements.data[0];
     assert(stmt->type == STMT_EXPR);
     assert(stmt->expr.value->type == EXPR_LITERAL);
     assert(stmt->expr.value->literal.value.type == VARIANT_NUMBER);
-    assert(stmt->expr.value->literal.value.number == 42.0);
+    assert(stmt->expr.value->literal.value.number_var == 42.0);
 
     ast_script_free(script);
 }
@@ -30,12 +30,12 @@ static void test_multiple_statements() {
     ASTScript *script = parser_parse(&parser);
     assert(parser.ok);
     assert(script != NULL);
-    assert(script->statements_size == 2);
+    assert(script->statements.size == 2);
 
-    ASTStmt *first = script->statements[0];
+    ASTStmt *first = script->statements.data[0];
     assert(first->type == STMT_EXPR);
 
-    ASTStmt *second = script->statements[1];
+    ASTStmt *second = script->statements.data[1];
     assert(second->type == STMT_EXPR);
 
     ast_script_free(script);
@@ -47,15 +47,15 @@ static void test_simple_addition() {
     ASTScript *script = parser_parse(&parser);
     assert(parser.ok);
     assert(script != NULL);
-    assert(script->statements_size == 1);
+    assert(script->statements.size == 1);
 
-    ASTStmt *stmt = script->statements[0];
+    ASTStmt *stmt = script->statements.data[0];
     assert(stmt->type == STMT_EXPR);
     assert(stmt->expr.value->bin_op.op == BIN_OP_ADD);
     assert(stmt->expr.value->bin_op.left->type == EXPR_LITERAL);
-    assert(stmt->expr.value->bin_op.left->literal.value.number == 3.0);
+    assert(stmt->expr.value->bin_op.left->literal.value.number_var == 3.0);
     assert(stmt->expr.value->bin_op.right->type == EXPR_LITERAL);
-    assert(stmt->expr.value->bin_op.right->literal.value.number == 4.0);
+    assert(stmt->expr.value->bin_op.right->literal.value.number_var == 4.0);
 
     ast_script_free(script);
 }
@@ -66,9 +66,9 @@ static void test_operator_precedence() {
     ASTScript *script = parser_parse(&parser);
     assert(parser.ok);
     assert(script != NULL);
-    assert(script->statements_size == 1);
+    assert(script->statements.size == 1);
 
-    ASTStmt *stmt = script->statements[0];
+    ASTStmt *stmt = script->statements.data[0];
     assert(stmt->type == STMT_EXPR);
 
     ASTExpr *expr = stmt->expr.value;
@@ -77,15 +77,15 @@ static void test_operator_precedence() {
     assert(expr->type == EXPR_BIN_OP);
     assert(expr->bin_op.op == BIN_OP_ADD);
     assert(expr->bin_op.left->type == EXPR_LITERAL);
-    assert(expr->bin_op.left->literal.value.number == 3.0);
+    assert(expr->bin_op.left->literal.value.number_var == 3.0);
 
     ASTExpr *rhs = expr->bin_op.right;
     assert(rhs->type == EXPR_BIN_OP);
     assert(rhs->bin_op.op == BIN_OP_MUL);
     assert(rhs->bin_op.left->type == EXPR_LITERAL);
-    assert(rhs->bin_op.left->literal.value.number == 4.0);
+    assert(rhs->bin_op.left->literal.value.number_var == 4.0);
     assert(rhs->bin_op.right->type == EXPR_LITERAL);
-    assert(rhs->bin_op.right->literal.value.number == 2.0);
+    assert(rhs->bin_op.right->literal.value.number_var == 2.0);
 
     ast_script_free(script);
 }
@@ -96,9 +96,9 @@ static void test_parentheses() {
     ASTScript *script = parser_parse(&parser);
     assert(parser.ok);
     assert(script != NULL);
-    assert(script->statements_size == 1);
+    assert(script->statements.size == 1);
 
-    ASTStmt *stmt = script->statements[0];
+    ASTStmt *stmt = script->statements.data[0];
     assert(stmt->type == STMT_EXPR);
 
     ASTExpr *expr = stmt->expr.value;
@@ -111,12 +111,12 @@ static void test_parentheses() {
     assert(lhs->type == EXPR_BIN_OP);
     assert(lhs->bin_op.op == BIN_OP_ADD);
     assert(lhs->bin_op.left->type == EXPR_LITERAL);
-    assert(lhs->bin_op.left->literal.value.number == 3.0);
+    assert(lhs->bin_op.left->literal.value.number_var == 3.0);
     assert(lhs->bin_op.right->type == EXPR_LITERAL);
-    assert(lhs->bin_op.right->literal.value.number == 4.0);
+    assert(lhs->bin_op.right->literal.value.number_var == 4.0);
 
     assert(expr->bin_op.right->type == EXPR_LITERAL);
-    assert(expr->bin_op.right->literal.value.number == 2.0);
+    assert(expr->bin_op.right->literal.value.number_var == 2.0);
 
     ast_script_free(script);
 }
@@ -128,9 +128,9 @@ static void test_variables() {
     ASTScript *script = parser_parse(&parser);
     assert(script != NULL);
 
-    assert(script->statements_size == 3);
+    assert(script->statements.size == 3);
 
-    ASTStmt *stmt = script->statements[2];
+    ASTStmt *stmt = script->statements.data[2];
     assert(stmt->type == STMT_EXPR);
 
     ASTExpr *expr = stmt->expr.value;
@@ -147,7 +147,7 @@ static void test_variables() {
     assert(string_ref_equals_cstr(rhs->bin_op.right->variable.name, "y"));
 
     assert(expr->bin_op.left->type == EXPR_LITERAL);
-    assert(expr->bin_op.left->literal.value.number == 2.0);
+    assert(expr->bin_op.left->literal.value.number_var == 2.0);
 
     ast_script_free(script);
 }
@@ -158,9 +158,9 @@ static void test_declaration() {
     ASTScript *script = parser_parse(&parser);
     assert(script != NULL);
 
-    assert(script->statements_size == 1);
+    assert(script->statements.size == 1);
 
-    ASTStmt *stmt = script->statements[0];
+    ASTStmt *stmt = script->statements.data[0];
     assert(stmt->type == STMT_VAR_DECL);
 
     assert(string_ref_equals_cstr(stmt->var_decl.name, "x"));
@@ -172,11 +172,11 @@ static void test_declaration() {
 
     ASTExpr *lhs = initializer->bin_op.left;
     assert(lhs->type == EXPR_LITERAL);
-    assert(lhs->literal.value.number == 2);
+    assert(lhs->literal.value.number_var == 2);
 
     ASTExpr *rhs = initializer->bin_op.right;
     assert(rhs->type == EXPR_LITERAL);
-    assert(rhs->literal.value.number == 3);
+    assert(rhs->literal.value.number_var == 3);
 
     ast_script_free(script);
 }
@@ -187,9 +187,9 @@ static void test_unintialized_declaration() {
     ASTScript *script = parser_parse(&parser);
     assert(script != NULL);
 
-    assert(script->statements_size == 1);
+    assert(script->statements.size == 1);
 
-    ASTStmt *stmt = script->statements[0];
+    ASTStmt *stmt = script->statements.data[0];
     assert(stmt->type == STMT_VAR_DECL);
 
     assert(string_ref_equals_cstr(stmt->var_decl.name, "x"));
@@ -204,9 +204,9 @@ static void test_assignment() {
     ASTScript *script = parser_parse(&parser);
     assert(script != NULL);
 
-    assert(script->statements_size == 1);
+    assert(script->statements.size == 1);
 
-    ASTStmt *stmt = script->statements[0];
+    ASTStmt *stmt = script->statements.data[0];
     assert(stmt->type == STMT_ASSIGN);
 
     ASTExpr *target = stmt->assign.target;
@@ -215,7 +215,47 @@ static void test_assignment() {
 
     ASTExpr *value = stmt->assign.value;
     assert(value->type == EXPR_LITERAL);
-    assert(value->literal.value.number == 2.0);
+    assert(value->literal.value.number_var == 2.0);
+
+    ast_script_free(script);
+}
+
+static void test_block() {
+    Lexer lexer = lexer_create("{ let x = 2; x = 1; }");
+    Parser parser = parser_create(&lexer);
+    ASTScript *script = parser_parse(&parser);
+    assert(script != NULL);
+
+    assert(script->statements.size == 1);
+
+    ASTStmt *stmt = script->statements.data[0];
+    assert(stmt->type == STMT_BLOCK);
+    assert(stmt->block.list.size == 2);
+
+    ast_script_free(script);
+}
+
+static void test_if() {
+    Lexer lexer = lexer_create("if 2 < 1 { 10; } else { 20; }");
+    Parser parser = parser_create(&lexer);
+    ASTScript *script = parser_parse(&parser);
+    assert(script != NULL);
+
+    assert(script->statements.size == 1);
+
+    ASTStmt *stmt = script->statements.data[0];
+    assert(stmt->type == STMT_IF);
+
+    ASTExpr *condition = stmt->ifstmt.condition;
+    assert(condition->type == EXPR_BIN_OP);
+
+    ASTStmt *then_block = stmt->ifstmt.then_block;
+    assert(then_block->type == STMT_BLOCK);
+    assert(then_block->block.list.data[0]->type == STMT_EXPR);
+
+    ASTStmt *else_block = stmt->ifstmt.else_block;
+    assert(else_block->type == STMT_BLOCK);
+    assert(else_block->block.list.data[0]->type == STMT_EXPR);
 
     ast_script_free(script);
 }
@@ -226,19 +266,19 @@ static void test_return() {
     ASTScript *script = parser_parse(&parser);
     assert(script != NULL);
 
-    assert(script->statements_size == 1);
+    assert(script->statements.size == 1);
 
-    ASTStmt *stmt = script->statements[0];
+    ASTStmt *stmt = script->statements.data[0];
     assert(stmt->type == STMT_RETURN);
 
     ASTExpr *result = stmt->ret.result;
     assert(result->type == EXPR_LITERAL);
-    assert(result->literal.value.number == 2.0);
+    assert(result->literal.value.number_var == 2.0);
 
     ast_script_free(script);
 }
 static void test_invalid_token() {
-    Lexer lexer = lexer_create("3 + $");
+    Lexer lexer = lexer_create("3 + $;");
     Parser parser = parser_create(&lexer);
     ASTScript *ast = parser_parse(&parser);
 
@@ -312,7 +352,8 @@ int main() {
     test_declaration();
     test_unintialized_declaration();
     test_assignment();
-    test_assignment();
+    test_block();
+    test_if();
 
     return 0;
 }

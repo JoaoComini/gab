@@ -22,17 +22,24 @@ static void test_numbers() {
     Lexer lexer = lexer_create("42 3.14 .5");
     assert_number(&lexer, 42);
     assert_number(&lexer, 3.14);
-    assert_number(&lexer, 0.5);  // .5 → 0.5
+    assert_number(&lexer, 0.5); // .5 → 0.5
     assert_token(&lexer, TOKEN_EOF);
 }
 
 static void test_operators() {
-    Lexer lexer = lexer_create("+-*/=");
+    Lexer lexer = lexer_create("+ - * / = ! < > == != <= >=");
     assert_token(&lexer, TOKEN_PLUS);
     assert_token(&lexer, TOKEN_MINUS);
     assert_token(&lexer, TOKEN_MUL);
     assert_token(&lexer, TOKEN_DIV);
+    assert_token(&lexer, TOKEN_ASSIGN);
+    assert_token(&lexer, TOKEN_NOT);
+    assert_token(&lexer, TOKEN_LESS);
+    assert_token(&lexer, TOKEN_GREATER);
     assert_token(&lexer, TOKEN_EQUAL);
+    assert_token(&lexer, TOKEN_NEQUAL);
+    assert_token(&lexer, TOKEN_LEQUAL);
+    assert_token(&lexer, TOKEN_GEQUAL);
     assert_token(&lexer, TOKEN_EOF);
 }
 
@@ -40,6 +47,13 @@ static void test_parentheses() {
     Lexer lexer = lexer_create("( )");
     assert_token(&lexer, TOKEN_LPAREN);
     assert_token(&lexer, TOKEN_RPAREN);
+    assert_token(&lexer, TOKEN_EOF);
+}
+
+static void test_braces() {
+    Lexer lexer = lexer_create("{ }");
+    assert_token(&lexer, TOKEN_LBRACE);
+    assert_token(&lexer, TOKEN_RBRACE);
     assert_token(&lexer, TOKEN_EOF);
 }
 
@@ -58,9 +72,11 @@ static void test_identifiers() {
 }
 
 static void test_keywords() {
-    Lexer lexer = lexer_create("let return");
+    Lexer lexer = lexer_create("let return if else");
     assert_token(&lexer, TOKEN_LET);
     assert_token(&lexer, TOKEN_RETURN);
+    assert_token(&lexer, TOKEN_IF);
+    assert_token(&lexer, TOKEN_ELSE);
 }
 
 static void test_errors() {
@@ -73,6 +89,7 @@ int main(void) {
     test_numbers();
     test_operators();
     test_parentheses();
+    test_braces();
     test_whitespace();
     test_identifiers();
     test_keywords();
