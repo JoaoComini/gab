@@ -1,6 +1,7 @@
 #include "codegen.h"
 
 #include "ast.h"
+#include "type.h"
 #include "vm/constant_pool.h"
 #include "vm/opcode.h"
 #include "vm/vm.h"
@@ -25,6 +26,10 @@ static void codegen_if_stmt(CodegenState *state, ASTStmt *ast);
 static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast);
 static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node);
+static unsigned int codegen_bin_op_logical_expr(CodegenState *state, ASTExpr *node);
+
+static OpCode bin_op_to_float_op(BinOp bin_op);
+static OpCode bin_op_to_int_op(BinOp bin_op);
 
 static unsigned int codegen_alloc_register(CodegenState *state);
 static void codegen_save_snapshot(CodegenState *state);
@@ -54,7 +59,7 @@ Chunk *codegen_generate(ASTScript *script) {
 }
 
 static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
-    switch (ast->type) {
+    switch (ast->kind) {
     case STMT_EXPR:
         codegen_expr(state, ast->expr.value);
         break;
@@ -98,7 +103,7 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTStmt *ast) {
     codegen_save_snapshot(state);
 
     unsigned int r1 = codegen_expr(state, ast->var_decl.initializer);
-    chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_MOVE, ast->var_decl.reg, r1, 0));
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_MOVE, ast->var_decl.symbol.reg, r1, 0));
 
     codegen_load_snapshot(state);
 }
@@ -145,7 +150,7 @@ static void codegen_if_stmt(CodegenState *state, ASTStmt *ast) {
 }
 
 static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
-    switch (ast->type) {
+    switch (ast->kind) {
     case EXPR_LITERAL:
         return codegen_literal_expr(state, ast);
     case EXPR_BIN_OP:
@@ -155,8 +160,23 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
     }
 }
 
+static Value value_from_literal(Literal lit) {
+    switch (lit.kind) {
+    case TYPE_INT:
+        return (Value){.type = TYPE_INT, .as_int = lit.as_int};
+    case TYPE_FLOAT:
+        return (Value){.type = TYPE_FLOAT, .as_float = lit.as_float};
+    case TYPE_BOOL:
+        return (Value){.type = TYPE_BOOL, .as_int = lit.as_int};
+    default:
+        break;
+    }
+
+    assert(0 && "unknown type");
+}
+
 static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node) {
-    unsigned int const_index = constpool_add(state->chunk->const_pool, node->literal.value);
+    unsigned int const_index = constpool_add(state->chunk->const_pool, value_from_literal(node->lit));
     unsigned int r1 = codegen_alloc_register(state);
     Instruction load_const = VM_ENCODE_I(OP_LOAD_CONST, r1, const_index);
 
@@ -166,44 +186,21 @@ static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node) {
 }
 
 static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node) {
+    switch (node->bin_op.op) {
+    case BIN_OP_AND:
+    case BIN_OP_OR:
+        return codegen_bin_op_logical_expr(state, node);
+    default:
+        break;
+    }
+
     unsigned int saved_reg = state->next_reg;
 
     unsigned int lhs = codegen_expr(state, node->bin_op.left);
     unsigned int rhs = codegen_expr(state, node->bin_op.right);
 
-    OpCode op_code;
-    switch (node->bin_op.op) {
-    case BIN_OP_ADD:
-        op_code = OP_ADD;
-        break;
-    case BIN_OP_SUB:
-        op_code = OP_SUB;
-        break;
-    case BIN_OP_MUL:
-        op_code = OP_MUL;
-        break;
-    case BIN_OP_DIV:
-        op_code = OP_DIV;
-        break;
-    case BIN_OP_LESS:
-        op_code = OP_CMP_LT;
-        break;
-    case BIN_OP_GREATER:
-        op_code = OP_CMP_GT;
-        break;
-    case BIN_OP_EQUAL:
-        op_code = OP_CMP_EQ;
-        break;
-    case BIN_OP_NEQUAL:
-        op_code = OP_CMP_NE;
-        break;
-    case BIN_OP_LEQUAL:
-        op_code = OP_CMP_LE;
-        break;
-    case BIN_OP_GEQUAL:
-        op_code = OP_CMP_GE;
-        break;
-    }
+    OpCode op_code = node->bin_op.left->type->kind == TYPE_FLOAT ? bin_op_to_float_op(node->bin_op.op)
+                                                                 : bin_op_to_int_op(node->bin_op.op);
 
     bool lhs_is_temp = lhs >= saved_reg;
     bool rhs_is_temp = rhs >= saved_reg;
@@ -223,6 +220,96 @@ static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node) {
     state->next_reg = result + 1;
 
     return result;
+}
+
+static unsigned int codegen_bin_op_logical_expr(CodegenState *state, ASTExpr *node) {
+    unsigned int saved_reg = state->next_reg;
+
+    unsigned int lhs = codegen_expr(state, node->bin_op.left);
+
+    CodegenLabel short_circuit = codegen_create_label(state);
+
+    OpCode jump_op = node->bin_op.op == BIN_OP_AND ? OP_JMP_IF_FALSE : OP_JMP_IF_TRUE;
+
+    state->next_reg = saved_reg;
+
+    unsigned int rhs = codegen_expr(state, node->bin_op.right);
+
+    bool lhs_is_temp = lhs >= saved_reg;
+    bool rhs_is_temp = rhs >= saved_reg;
+    unsigned int result;
+    if (lhs_is_temp) {
+        result = lhs;
+    } else if (rhs_is_temp) {
+        result = rhs;
+    } else { // if both registers aren't temporary
+        result = codegen_alloc_register(state);
+    }
+
+    if (rhs != result) {
+        Instruction instruction = VM_ENCODE_R(OP_MOVE, result, rhs, 0);
+        chunk_add_instruction(state->chunk, instruction);
+    }
+
+    codegen_patch_jump(state, short_circuit, jump_op, lhs);
+
+    state->next_reg = result + 1;
+
+    return result;
+}
+
+static OpCode bin_op_to_float_op(BinOp bin_op) {
+    switch (bin_op) {
+    case BIN_OP_ADD:
+        return OP_ADDF;
+    case BIN_OP_SUB:
+        return OP_SUBF;
+    case BIN_OP_MUL:
+        return OP_MULF;
+    case BIN_OP_DIV:
+        return OP_DIVF;
+    case BIN_OP_LESS:
+        return OP_CMP_LTF;
+    case BIN_OP_GREATER:
+        return OP_CMP_GTF;
+    case BIN_OP_EQUAL:
+        return OP_CMP_EQF;
+    case BIN_OP_NEQUAL:
+        return OP_CMP_NEF;
+    case BIN_OP_LEQUAL:
+        return OP_CMP_LEF;
+    case BIN_OP_GEQUAL:
+        return OP_CMP_GEF;
+    default:
+        assert(0 && "not a float operation");
+    }
+}
+
+static OpCode bin_op_to_int_op(BinOp bin_op) {
+    switch (bin_op) {
+    case BIN_OP_ADD:
+        return OP_ADDI;
+    case BIN_OP_SUB:
+        return OP_SUBI;
+    case BIN_OP_MUL:
+        return OP_MULI;
+    case BIN_OP_DIV:
+        return OP_DIVI;
+    case BIN_OP_LESS:
+        return OP_CMP_LTI;
+    case BIN_OP_GREATER:
+        return OP_CMP_GTI;
+    case BIN_OP_EQUAL:
+        return OP_CMP_EQI;
+    case BIN_OP_NEQUAL:
+        return OP_CMP_NEI;
+    case BIN_OP_LEQUAL:
+        return OP_CMP_LEI;
+    case BIN_OP_GEQUAL:
+        return OP_CMP_GEI;
+    default:
+        assert(0 && "not an int operation");
+    }
 }
 
 static unsigned int codegen_alloc_register(CodegenState *state) {

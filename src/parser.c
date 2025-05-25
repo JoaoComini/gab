@@ -2,7 +2,7 @@
 #include "ast.h"
 #include "lexer.h"
 #include "string_ref.h"
-#include "variant.h"
+#include "type.h"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -103,7 +103,6 @@ static ASTStmt *parse_statement(Parser *parser) {
 }
 
 static ASTStmt *parse_var_decl_stmt(Parser *parser) {
-
     parser_next_token(parser); // eat "let"
 
     if (parser->current.type != TOKEN_IDENT) {
@@ -115,8 +114,27 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser) {
 
     parser_next_token(parser); // eat identifier
 
+    TypeSpec *spec = NULL;
+    if (parser->current.type == TOKEN_COLON) {
+        parser_next_token(parser); // eat ':'
+
+        if (parser->current.type != TOKEN_IDENT) {
+            parser_error(parser, "expected type after ':'", parser->current);
+            return NULL;
+        }
+
+        spec = type_spec_create(parser->current.lexeme);
+
+        parser_next_token(parser);
+    }
+
     if (parser->current.type == TOKEN_SEMICOLON) {
-        return ast_var_decl_stmt_create(name.lexeme, NULL);
+        if (!spec) {
+            parser_error(parser, "expected type after identifier", parser->current);
+            return NULL;
+        }
+
+        return ast_var_decl_stmt_create(name.lexeme, spec, NULL);
     }
 
     if (parser->current.type != TOKEN_ASSIGN) {
@@ -132,7 +150,7 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser) {
         return NULL;
     }
 
-    return ast_var_decl_stmt_create(name.lexeme, initializer);
+    return ast_var_decl_stmt_create(name.lexeme, spec, initializer);
 }
 
 static ASTStmt *parse_if_stmt(Parser *parser) {
@@ -208,7 +226,7 @@ static ASTStmt *parse_expr_stmt(Parser *parser) {
         return ast_expr_stmt_create(expr);
     }
 
-    if (expr->type != EXPR_VARIABLE) {
+    if (expr->kind != EXPR_VARIABLE) {
         parser_error(parser, "expression is not assignable", parser->current);
         ast_expr_free(expr);
         return NULL;
@@ -225,7 +243,7 @@ static ASTStmt *parse_expr_stmt(Parser *parser) {
 }
 
 static bool stmt_needs_terminator(ASTStmt *stmt) {
-    switch (stmt->type) {
+    switch (stmt->kind) {
     case STMT_IF:
     case STMT_BLOCK:
         return false;
@@ -267,15 +285,35 @@ static ASTExpr *parse_precedence(Parser *parser, int min_precedence) {
 
 static ASTExpr *parse_primary(Parser *parser) {
     switch (parser->current.type) {
-    case TOKEN_NUMBER: {
+    case TOKEN_INT: {
+        char *temp = string_ref_to_cstr(parser->current.lexeme);
+        long value = strtol(temp, NULL, 10);
+        free(temp);
+
+        parser_next_token(parser); // eat integer
+
+        Literal lit = {.kind = TYPE_INT, .as_int = value};
+        return ast_literal_expr_create(lit);
+    }
+    case TOKEN_FLOAT: {
         char *temp = string_ref_to_cstr(parser->current.lexeme);
         double value = strtod(temp, NULL);
         free(temp);
 
-        parser_next_token(parser); // eat number
+        parser_next_token(parser); // eat float
 
-        Variant variant = {.type = VARIANT_NUMBER, .number_var = value};
-        return ast_literal_expr_create(variant);
+        Literal lit = {.kind = TYPE_FLOAT, .as_float = value};
+        return ast_literal_expr_create(lit);
+    }
+    case TOKEN_TRUE: {
+        parser_next_token(parser);
+
+        return ast_literal_expr_create((Literal){.kind = TYPE_BOOL, .as_int = 1});
+    }
+    case TOKEN_FALSE: {
+        parser_next_token(parser);
+
+        return ast_literal_expr_create((Literal){.kind = TYPE_BOOL, .as_int = 0});
     }
     case TOKEN_IDENT: {
         Token name = parser->current;
@@ -311,20 +349,23 @@ static ASTExpr *parse_primary(Parser *parser) {
 
 static int get_precedence(TokenType type) {
     switch (type) {
+    case TOKEN_AND:
+    case TOKEN_OR:
+        return 1;
     case TOKEN_EQUAL:
     case TOKEN_NEQUAL:
-        return 1;
+        return 2;
     case TOKEN_LESS:
     case TOKEN_GREATER:
     case TOKEN_LEQUAL:
     case TOKEN_GEQUAL:
-        return 2;
+        return 3;
     case TOKEN_PLUS:
     case TOKEN_MINUS:
-        return 3;
+        return 4;
     case TOKEN_MUL:
     case TOKEN_DIV:
-        return 4;
+        return 5;
     default:
         return 0; // Not a binary operator
     }
@@ -352,6 +393,10 @@ static BinOp parse_bin_op(TokenType type) {
         return BIN_OP_MUL;
     case TOKEN_DIV:
         return BIN_OP_DIV;
+    case TOKEN_AND:
+        return BIN_OP_AND;
+    case TOKEN_OR:
+        return BIN_OP_OR;
     default:
         break;
     }

@@ -6,7 +6,8 @@
 typedef enum {
     TOKEN_INVALID,   // Invalid token
     TOKEN_EOF,       // End of input
-    TOKEN_NUMBER,    // All numeric literals (e.g., 42, 3.14)
+    TOKEN_INT,       // Integer literals (1, 2 ,3)
+    TOKEN_FLOAT,     // Float literals (3.14)
                      // BEGIN OPERATORS
     TOKEN_PLUS,      // '+'
     TOKEN_MINUS,     // '-'
@@ -20,17 +21,22 @@ typedef enum {
     TOKEN_NEQUAL,    // "!="
     TOKEN_LEQUAL,    // "<="
     TOKEN_GEQUAL,    // ">="
+    TOKEN_AND,       // "&&"
+    TOKEN_OR,        // "||"
                      // END OPERATORS
     TOKEN_LPAREN,    // '('
     TOKEN_RPAREN,    // ')'
     TOKEN_LBRACE,    // '{'
     TOKEN_RBRACE,    // '}'
     TOKEN_SEMICOLON, // ';'
+    TOKEN_COLON,     // ':'
                      // BEGIN KEYWORDS
     TOKEN_LET,       // 'let'
     TOKEN_RETURN,    // 'return'
     TOKEN_IF,        // 'if'
     TOKEN_ELSE,      // 'else'
+    TOKEN_TRUE,      // 'true'
+    TOKEN_FALSE,     // 'false'
                      // END KEYWORDS
     TOKEN_IDENT,     // Variable and function names
 } TokenType;

@@ -1,38 +1,19 @@
 #ifndef GAB_SYMBOL_TABLE_H
 #define GAB_SYMBOL_TABLE_H
 
+#include "hash_map.h"
+#include "type.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 
-#define SYMBOL_TABLE_RESIZE_THRESHOLD 0.5
 #define SYMBOL_TABLE_INITIAL_CAPACITY 8
 
 typedef struct Symbol {
-    union {
-        unsigned int reg; // For locals/temporaries
-    };
+    unsigned int reg; // For locals/temporaries
+    Type *type;
 } Symbol;
 
-typedef struct SymbolEntry {
-    char *key; // Variable name (owned by the entry)
-    Symbol symbol;
-    struct SymbolEntry *next;
-} SymbolEntry;
-
-typedef struct {
-    SymbolEntry **buckets;
-    int capacity;
-    int size;
-} SymbolTable;
-
-SymbolTable *symbol_table_create(int initial_capacity);
-
-void symbol_table_free(SymbolTable *table);
-
-bool symbol_table_insert(SymbolTable *table, const char *key, size_t reg);
-
-SymbolEntry *symbol_table_lookup(SymbolTable *table, const char *key);
-
-void symbol_table_delete(SymbolTable *table, const char *key);
+GAB_HASH_MAP(SymbolTable, symbol_table, Symbol);
 
 #endif

@@ -1,7 +1,7 @@
-#include "variant.h"
+#include "type.h"
+#include "value.h"
 #include "vm/vm.h"
 #include <assert.h>
-#include <math.h>
 #include <stdio.h>
 
 static void test_chunk_creation() {
@@ -61,13 +61,14 @@ static void test_vm_execute() {
                    "let g = ((f + e) * (d - c)) / ((a + b) - (e / (d + 1)));\n"
                    "let h = g + f - e * (d + c - (b * a));\n"
                    "let i = (h / g) + (f - (e * (d / (c + (b - a)))));\n"
-                   "let result = ((i + h) * (g - f) + (e / d)) - ((c + b) * (a - 1));\n"
-                   "if result > 20000 { return 1; } else { return 0; }");
+                   "let result : int = ((i + h) * (g - f) + (e / d)) - ((c + b) * (a - 1));\n"
+                   "let compare = result == 13120;\n"
+                   "if compare { return true; } else { return false; }");
 
-    Variant result = vm_get_result(vm);
+    Value result = vm_get_result(vm);
 
-    assert(result.type == VARIANT_NUMBER);
-    assert(result.number_var == 1);
+    assert(result.type == TYPE_BOOL);
+    assert(result.as_int == 1);
 
     vm_free(vm);
 }

@@ -1,7 +1,7 @@
 #ifndef GAB_VM_H
 #define GAB_VM_H
 
-#include "variant.h"
+#include "value.h"
 #include "vm/constant_pool.h"
 #include <stdint.h>
 
@@ -60,16 +60,16 @@ void chunk_patch_instruction(Chunk *chunk, size_t index, Instruction instruction
 void chunk_free(Chunk *chunk);
 
 typedef struct {
-    Variant registers[VM_MAX_REGISTERS];
+    Value registers[VM_MAX_REGISTERS];
 
     size_t instruction_pointer;
 
-    Variant result;
+    Value result;
 } VM;
 
 VM *vm_create();
 void vm_execute(VM *vm, const char *source);
-Variant vm_get_result(VM *vm);
+Value vm_get_result(VM *vm);
 void vm_free(VM *vm);
 
 #endif

@@ -12,12 +12,12 @@ static void constpool_resize(ConstantPool *pool) {
         pool->capacity = pool->max_capacity;
     }
 
-    pool->constants = realloc(pool->constants, pool->capacity * sizeof(Variant));
+    pool->constants = realloc(pool->constants, pool->capacity * sizeof(Value));
 }
 
 ConstantPool *constpool_create(size_t max_capacity) {
     ConstantPool *pool = malloc(sizeof(ConstantPool));
-    pool->constants = malloc(CONSTPOLL_INITIAL_CAPACITY * sizeof(Variant));
+    pool->constants = malloc(CONSTPOLL_INITIAL_CAPACITY * sizeof(Value));
     pool->count = 0;
     pool->capacity = CONSTPOLL_INITIAL_CAPACITY;
     pool->max_capacity = max_capacity;
@@ -30,7 +30,7 @@ void constpool_free(ConstantPool *pool) {
     free(pool);
 }
 
-size_t constpool_add(ConstantPool *pool, Variant value) {
+size_t constpool_add(ConstantPool *pool, Value value) {
     assert(pool->count < pool->max_capacity);
 
     if (pool->count == pool->capacity) {
@@ -41,7 +41,7 @@ size_t constpool_add(ConstantPool *pool, Variant value) {
     return pool->count++;
 }
 
-Variant constpool_get(const ConstantPool *pool, size_t index) {
+Value constpool_get(const ConstantPool *pool, size_t index) {
     assert(index < pool->count);
 
     return pool->constants[index];

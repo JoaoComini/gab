@@ -1,4 +1,5 @@
 #include "scope.h"
+#include "string_ref.h"
 #include "symbol_table.h"
 #include "vm/vm.h"
 #include <assert.h>
@@ -27,9 +28,9 @@ void scope_free_register(Scope *scope) {
     scope->next_reg--;
 }
 
-SymbolEntry *scope_symbol_lookup(Scope *scope, const char *name) {
+Symbol *scope_symbol_lookup(Scope *scope, StringRef name) {
     while (scope) {
-        SymbolEntry *entry = symbol_table_lookup(scope->symbol_table, name);
+        Symbol *entry = symbol_table_lookup(scope->symbol_table, name);
         if (entry) {
             return entry;
         }

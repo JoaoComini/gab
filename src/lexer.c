@@ -11,9 +11,7 @@ char lexer_peek(Lexer *lexer) { return lexer->source[lexer->pos]; }
 void lexer_eat(Lexer *lexer) { lexer->pos++; }
 
 Token token_create(TokenType type) { return (Token){.type = type}; }
-Token token_create_ref(TokenType type, StringRef ref) {
-    return (Token){.type = type, .lexeme = ref};
-}
+Token token_create_ref(TokenType type, StringRef ref) { return (Token){.type = type, .lexeme = ref}; }
 
 static Token lexer_number(Lexer *lexer) {
     const char *begin = lexer->source + lexer->pos;
@@ -22,12 +20,15 @@ static Token lexer_number(Lexer *lexer) {
         lexer_eat(lexer);
     }
 
+    TokenType type = TOKEN_INT;
     if (lexer_peek(lexer) == '.') {
         lexer_eat(lexer);
 
         while (isdigit(lexer_peek(lexer))) {
             lexer_eat(lexer);
         }
+
+        type = TOKEN_FLOAT;
     }
 
     const char *end = lexer->source + lexer->pos;
@@ -35,7 +36,7 @@ static Token lexer_number(Lexer *lexer) {
 
     StringRef ref = {.data = begin, .length = length};
 
-    return token_create_ref(TOKEN_NUMBER, ref);
+    return token_create_ref(type, ref);
 }
 
 static Token lexer_identifier(Lexer *lexer) {
@@ -50,20 +51,28 @@ static Token lexer_identifier(Lexer *lexer) {
 
     StringRef ref = {.data = begin, .length = length};
 
-    if (ref.length == 3 && strncmp(ref.data, "let", ref.length) == 0) {
+    if (string_ref_equals_cstr(ref, "let")) {
         return token_create_ref(TOKEN_LET, ref);
     }
 
-    if (ref.length == 2 && strncmp(ref.data, "if", ref.length) == 0) {
+    if (string_ref_equals_cstr(ref, "if")) {
         return token_create_ref(TOKEN_IF, ref);
     }
 
-    if (ref.length == 4 && strncmp(ref.data, "else", ref.length) == 0) {
+    if (string_ref_equals_cstr(ref, "else")) {
         return token_create_ref(TOKEN_ELSE, ref);
     }
 
-    if (ref.length == 6 && strncmp(ref.data, "return", ref.length) == 0) {
+    if (string_ref_equals_cstr(ref, "return")) {
         return token_create_ref(TOKEN_RETURN, ref);
+    }
+
+    if (string_ref_equals_cstr(ref, "true")) {
+        return token_create_ref(TOKEN_TRUE, ref);
+    }
+
+    if (string_ref_equals_cstr(ref, "false")) {
+        return token_create_ref(TOKEN_FALSE, ref);
     }
 
     return token_create_ref(TOKEN_IDENT, ref);
@@ -71,12 +80,27 @@ static Token lexer_identifier(Lexer *lexer) {
 
 Lexer lexer_create(const char *source) { return (Lexer){.source = source, .pos = 0}; }
 
-Token lexer_handle_eq(Lexer *lexer, TokenType base_token, TokenType eq_tok) {
+Token lexer_handle_eq(Lexer *lexer, TokenType base_tok, TokenType eq_tok) {
     if (lexer_peek(lexer) == '=') {
         lexer_eat(lexer);
         return token_create(eq_tok);
     }
-    return token_create(base_token);
+    return token_create(base_tok);
+}
+
+Token lexer_handle_op_eq(Lexer *lexer, TokenType base_tok, TokenType eq_tok, char op_ch, TokenType op_tok) {
+    char ch = lexer_peek(lexer);
+    if (ch == '=') {
+        lexer_eat(lexer);
+        return token_create(eq_tok);
+    }
+
+    if (ch == op_ch) {
+        lexer_eat(lexer);
+        return token_create(op_tok);
+    }
+
+    return token_create(base_tok);
 }
 
 Token lexer_next(Lexer *lexer) {
@@ -122,8 +146,14 @@ Token lexer_next(Lexer *lexer) {
         return lexer_handle_eq(lexer, TOKEN_LESS, TOKEN_LEQUAL);
     case '>':
         return lexer_handle_eq(lexer, TOKEN_GREATER, TOKEN_GEQUAL);
+    case '&':
+        return lexer_handle_op_eq(lexer, TOKEN_INVALID, TOKEN_INVALID, '&', TOKEN_AND);
+    case '|':
+        return lexer_handle_op_eq(lexer, TOKEN_INVALID, TOKEN_INVALID, '|', TOKEN_OR);
     case ';':
         return token_create(TOKEN_SEMICOLON);
+    case ':':
+        return token_create(TOKEN_COLON);
     default:
         return token_create(TOKEN_INVALID);
     }

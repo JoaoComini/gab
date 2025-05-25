@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+StringRef string_ref_create(const char *data) { return (StringRef){.data = data, .length = strlen(data)}; }
+
 char *string_ref_to_cstr(StringRef ref) {
     char *cstr = malloc(ref.length + 1);
     memcpy(cstr, ref.data, ref.length);
@@ -11,5 +13,5 @@ char *string_ref_to_cstr(StringRef ref) {
 }
 
 bool string_ref_equals_cstr(StringRef ref, const char *cstr) {
-    return strncmp(ref.data, cstr, ref.length) == 0;
+    return strlen(cstr) == ref.length && strncmp(ref.data, cstr, ref.length) == 0;
 }

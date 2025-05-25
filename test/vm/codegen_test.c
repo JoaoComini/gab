@@ -1,20 +1,23 @@
 #include "ast.h"
 #include "string_ref.h"
-#include "variant.h"
+#include "type.h"
+#include "value.h"
 #include "vm/codegen.h"
 #include "vm/opcode.h"
 #include "vm/vm.h"
 #include <assert.h>
+#include <math.h>
+#include <stdlib.h>
 
 // Test number literal compilation
 static void test_number() {
-    Variant variant = {.type = VARIANT_NUMBER, .number_var = 42};
-    ASTExpr *num = ast_literal_expr_create(variant);
+    Literal lit = {.kind = TYPE_FLOAT, .as_float = 42.0};
+    ASTExpr *num = ast_literal_expr_create(lit);
     ASTStmt *stmt = ast_expr_stmt_create(num);
 
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, stmt);
-    ast_script_resolve_symbols(script);
+    ast_script_resolve(script);
 
     Chunk *chunk = codegen_generate(script);
 
@@ -28,64 +31,65 @@ static void test_number() {
 
     // Check constant pool
     assert(chunk->const_pool->count == 1);
-    assert(chunk->const_pool->constants[0].number_var == 42.0);
+    assert(chunk->const_pool->constants[0].as_float == 42.0);
 
     chunk_free(chunk);
     ast_script_free(script);
 }
 
 static void test_bin_op(OpCode expected_op, BinOp op) {
-    Variant var_left = {.type = VARIANT_NUMBER, .number_var = 10};
-    Variant var_right = {.type = VARIANT_NUMBER, .number_var = 5};
+    Literal var_left = {.kind = TYPE_FLOAT, .as_float = 10};
+    Literal var_right = {.kind = TYPE_FLOAT, .as_float = 5};
 
     ASTExpr *left = ast_literal_expr_create(var_left);
     ASTExpr *right = ast_literal_expr_create(var_right);
-    ASTExpr *cmp = ast_bin_op_expr_create(left, op, right);
-    ASTStmt *stmt = ast_expr_stmt_create(cmp);
+    ASTExpr *expr = ast_bin_op_expr_create(left, op, right);
+
+    ASTStmt *stmt = ast_expr_stmt_create(expr);
 
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, stmt);
-    ast_script_resolve_symbols(script);
+    ast_script_resolve(script);
 
     Chunk *chunk = codegen_generate(script);
 
     assert(chunk->size == 3); // LOAD_CONST, LOAD_CONST, CMP
 
-    Instruction cmp_inst = chunk->instructions[2];
-    assert(VM_DECODE_OPCODE(cmp_inst) == expected_op);
+    Instruction inst = chunk->instructions[2];
+    assert(VM_DECODE_OPCODE(inst) == expected_op);
 
     // R0 = 10, R1 = 5, R2 = result -> reusing R0 or R1 depends on the reg allocator
-    unsigned int rd = VM_DECODE_R_RD(cmp_inst);
-    unsigned int r1 = VM_DECODE_R_R1(cmp_inst);
-    unsigned int r2 = VM_DECODE_R_R2(cmp_inst);
+    unsigned int rd = VM_DECODE_R_RD(inst);
+    unsigned int r1 = VM_DECODE_R_R1(inst);
+    unsigned int r2 = VM_DECODE_R_R2(inst);
 
     // Check operand values from constant pool
-    assert(chunk->const_pool->constants[0].number_var == 10.0);
-    assert(chunk->const_pool->constants[1].number_var == 5.0);
+    assert(chunk->const_pool->constants[0].as_float == 10.0);
+    assert(chunk->const_pool->constants[1].as_float == 5.0);
 
     chunk_free(chunk);
     ast_script_free(script);
 }
 
-static void test_add() { test_bin_op(OP_ADD, BIN_OP_ADD); }
-static void test_sub() { test_bin_op(OP_SUB, BIN_OP_SUB); }
-static void test_mul() { test_bin_op(OP_MUL, BIN_OP_MUL); }
-static void test_div() { test_bin_op(OP_DIV, BIN_OP_DIV); }
-static void test_cmp_equal() { test_bin_op(OP_CMP_EQ, BIN_OP_EQUAL); }
-static void test_cmp_nequal() { test_bin_op(OP_CMP_NE, BIN_OP_NEQUAL); }
-static void test_cmp_less() { test_bin_op(OP_CMP_LT, BIN_OP_LESS); }
-static void test_cmp_lequal() { test_bin_op(OP_CMP_LE, BIN_OP_LEQUAL); }
-static void test_cmp_greater() { test_bin_op(OP_CMP_GT, BIN_OP_GREATER); }
-static void test_cmp_gequal() { test_bin_op(OP_CMP_GE, BIN_OP_GEQUAL); }
+static void test_add() { test_bin_op(OP_ADDF, BIN_OP_ADD); }
+static void test_sub() { test_bin_op(OP_SUBF, BIN_OP_SUB); }
+static void test_mul() { test_bin_op(OP_MULF, BIN_OP_MUL); }
+static void test_div() { test_bin_op(OP_DIVF, BIN_OP_DIV); }
+static void test_cmp_equal() { test_bin_op(OP_CMP_EQF, BIN_OP_EQUAL); }
+static void test_cmp_nequal() { test_bin_op(OP_CMP_NEF, BIN_OP_NEQUAL); }
+static void test_cmp_less() { test_bin_op(OP_CMP_LTF, BIN_OP_LESS); }
+static void test_cmp_lequal() { test_bin_op(OP_CMP_LEF, BIN_OP_LEQUAL); }
+static void test_cmp_greater() { test_bin_op(OP_CMP_GTF, BIN_OP_GREATER); }
+static void test_cmp_gequal() { test_bin_op(OP_CMP_GEF, BIN_OP_GEQUAL); }
 
 static void test_return() {
-    Variant var = {.type = VARIANT_NUMBER, .number_var = 3};
+    Literal var = {.kind = TYPE_FLOAT, .as_float = 3};
     ASTExpr *result = ast_literal_expr_create(var);
     ASTStmt *stmt = ast_return_stmt_create(result);
 
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, stmt);
-    ast_script_resolve_symbols(script);
+    ast_script_resolve(script);
 
     Chunk *chunk = codegen_generate(script);
 
@@ -105,16 +109,15 @@ static void test_return() {
 }
 
 static void test_var_decl() {
-    Variant var = {.type = VARIANT_NUMBER, .number_var = 3};
+    Literal var = {.kind = TYPE_FLOAT, .as_float = 3};
     ASTExpr *inititalizer = ast_literal_expr_create(var);
 
-    char var_name[] = {"x"};
-    StringRef ref = {.data = var_name, .length = 1};
-    ASTStmt *stmt = ast_var_decl_stmt_create(ref, inititalizer);
+    StringRef ref = string_ref_create("x");
+    ASTStmt *stmt = ast_var_decl_stmt_create(ref, NULL, inititalizer);
 
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, stmt);
-    ast_script_resolve_symbols(script);
+    ast_script_resolve(script);
 
     Chunk *chunk = codegen_generate(script);
 
@@ -138,22 +141,21 @@ static void test_var_decl() {
 }
 
 static void test_variable_access() {
-    char var_name[] = {"x"};
-    StringRef ref = {.data = var_name, .length = 1};
+    StringRef ref = string_ref_create("x");
 
-    Variant three = {.type = VARIANT_NUMBER, .number_var = 3};
+    Literal three = {.kind = TYPE_FLOAT, .as_float = 3};
     ASTExpr *inititalizer = ast_literal_expr_create(three);
-    ASTStmt *var_decl = ast_var_decl_stmt_create(ref, inititalizer); // let x = 3;
+    ASTStmt *var_decl = ast_var_decl_stmt_create(ref, NULL, inititalizer); // let x = 3;
 
     ASTExpr *target_expr = ast_variable_expr_create(ref);
-    Variant two = {.type = VARIANT_NUMBER, .number_var = 2};
+    Literal two = {.kind = TYPE_FLOAT, .as_float = 2};
     ASTExpr *value_expr = ast_literal_expr_create(two);
     ASTStmt *assign_stmt = ast_assign_stmt_create(target_expr, value_expr); // x = 2;
 
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, var_decl);
     ast_script_add_statement(script, assign_stmt);
-    ast_script_resolve_symbols(script);
+    ast_script_resolve(script);
 
     Chunk *chunk = codegen_generate(script);
 
@@ -189,14 +191,14 @@ static void test_variable_access() {
 
 static void test_if_statement() {
     // Create condition: 10 > 5
-    Variant var_left = {.type = VARIANT_NUMBER, .number_var = 10};
-    Variant var_right = {.type = VARIANT_NUMBER, .number_var = 5};
+    Literal var_left = {.kind = TYPE_FLOAT, .as_float = 10};
+    Literal var_right = {.kind = TYPE_FLOAT, .as_float = 5};
     ASTExpr *left = ast_literal_expr_create(var_left);
     ASTExpr *right = ast_literal_expr_create(var_right);
     ASTExpr *cond = ast_bin_op_expr_create(left, BIN_OP_GREATER, right);
 
     // Create then block: return 1
-    Variant then_val = {.type = VARIANT_NUMBER, .number_var = 1};
+    Literal then_val = {.kind = TYPE_FLOAT, .as_float = 1};
     ASTExpr *then_expr = ast_literal_expr_create(then_val);
     ASTStmt *then_stmt = ast_return_stmt_create(then_expr);
 
@@ -209,7 +211,7 @@ static void test_if_statement() {
 
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, if_stmt);
-    ast_script_resolve_symbols(script);
+    ast_script_resolve(script);
 
     Chunk *chunk = codegen_generate(script);
 
@@ -232,7 +234,7 @@ static void test_if_statement() {
     assert(VM_DECODE_I_RD(load2) == 1);
 
     Instruction cmp = chunk->instructions[2];
-    assert(VM_DECODE_OPCODE(cmp) == OP_CMP_GT);
+    assert(VM_DECODE_OPCODE(cmp) == OP_CMP_GTF);
     assert(VM_DECODE_R_RD(cmp) == 0);
     assert(VM_DECODE_R_R1(cmp) == 0);
     assert(VM_DECODE_R_R2(cmp) == 1);
@@ -258,14 +260,14 @@ static void test_if_statement() {
 
 static void test_if_else_statement() {
     // Create condition: 5 > 10
-    Variant var_left = {.type = VARIANT_NUMBER, .number_var = 5};
-    Variant var_right = {.type = VARIANT_NUMBER, .number_var = 10};
+    Literal var_left = {.kind = TYPE_FLOAT, .as_float = 5};
+    Literal var_right = {.kind = TYPE_FLOAT, .as_float = 10};
     ASTExpr *left = ast_literal_expr_create(var_left);
     ASTExpr *right = ast_literal_expr_create(var_right);
     ASTExpr *cond = ast_bin_op_expr_create(left, BIN_OP_GREATER, right);
 
     // Create then block: return 1
-    Variant then_val = {.type = VARIANT_NUMBER, .number_var = 1};
+    Literal then_val = {.kind = TYPE_FLOAT, .as_float = 1};
     ASTExpr *then_expr = ast_literal_expr_create(then_val);
     ASTStmt *then_stmt = ast_return_stmt_create(then_expr);
     ASTStmtList then_block_list = ast_stmt_list_create();
@@ -273,7 +275,7 @@ static void test_if_else_statement() {
     ASTStmt *then_block = ast_block_stmt_create(then_block_list);
 
     // Create else block: return 0
-    Variant else_val = {.type = VARIANT_NUMBER, .number_var = 0};
+    Literal else_val = {.kind = TYPE_FLOAT, .as_float = 0};
     ASTExpr *else_expr = ast_literal_expr_create(else_val);
     ASTStmt *else_stmt = ast_return_stmt_create(else_expr);
     ASTStmtList else_block_list = ast_stmt_list_create();
@@ -285,7 +287,7 @@ static void test_if_else_statement() {
 
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, if_stmt);
-    ast_script_resolve_symbols(script);
+    ast_script_resolve(script);
 
     Chunk *chunk = codegen_generate(script);
 
@@ -303,7 +305,7 @@ static void test_if_else_statement() {
 
     // Verify condition
     Instruction cmp = chunk->instructions[2];
-    assert(VM_DECODE_OPCODE(cmp) == OP_CMP_GT);
+    assert(VM_DECODE_OPCODE(cmp) == OP_CMP_GTF);
 
     // Verify if-false jump to else block
     Instruction jmp_false = chunk->instructions[3];

@@ -1,8 +1,10 @@
 #include "ast.h"
 #include "lexer.h"
+#include "parser.h"
 #include "string_ref.h"
+#include "type.h"
+
 #include <assert.h>
-#include <parser.h>
 #include <stdbool.h>
 #include <string.h>
 
@@ -16,10 +18,33 @@ static void test_single_number() {
     assert(script->statements.size == 1);
 
     ASTStmt *stmt = script->statements.data[0];
-    assert(stmt->type == STMT_EXPR);
-    assert(stmt->expr.value->type == EXPR_LITERAL);
-    assert(stmt->expr.value->literal.value.type == VARIANT_NUMBER);
-    assert(stmt->expr.value->literal.value.number_var == 42.0);
+    assert(stmt->kind == STMT_EXPR);
+    assert(stmt->expr.value->kind == EXPR_LITERAL);
+    assert(stmt->expr.value->lit.kind == TYPE_INT);
+    assert(stmt->expr.value->lit.as_int == 42);
+
+    ast_script_free(script);
+}
+
+static void test_booleans() {
+    Lexer lexer = lexer_create("true; false;");
+    Parser parser = parser_create(&lexer);
+    ASTScript *script = parser_parse(&parser);
+    assert(parser.ok);
+    assert(script != NULL);
+    assert(script->statements.size == 2);
+
+    ASTStmt *true_stmt = script->statements.data[0];
+    assert(true_stmt->kind == STMT_EXPR);
+    assert(true_stmt->expr.value->kind == EXPR_LITERAL);
+    assert(true_stmt->expr.value->lit.kind == TYPE_BOOL);
+    assert(true_stmt->expr.value->lit.as_int == 1);
+
+    ASTStmt *false_stmt = script->statements.data[1];
+    assert(false_stmt->kind == STMT_EXPR);
+    assert(false_stmt->expr.value->kind == EXPR_LITERAL);
+    assert(false_stmt->expr.value->lit.kind == TYPE_BOOL);
+    assert(false_stmt->expr.value->lit.as_int == 0);
 
     ast_script_free(script);
 }
@@ -33,10 +58,10 @@ static void test_multiple_statements() {
     assert(script->statements.size == 2);
 
     ASTStmt *first = script->statements.data[0];
-    assert(first->type == STMT_EXPR);
+    assert(first->kind == STMT_EXPR);
 
     ASTStmt *second = script->statements.data[1];
-    assert(second->type == STMT_EXPR);
+    assert(second->kind == STMT_EXPR);
 
     ast_script_free(script);
 }
@@ -50,12 +75,12 @@ static void test_simple_addition() {
     assert(script->statements.size == 1);
 
     ASTStmt *stmt = script->statements.data[0];
-    assert(stmt->type == STMT_EXPR);
+    assert(stmt->kind == STMT_EXPR);
     assert(stmt->expr.value->bin_op.op == BIN_OP_ADD);
-    assert(stmt->expr.value->bin_op.left->type == EXPR_LITERAL);
-    assert(stmt->expr.value->bin_op.left->literal.value.number_var == 3.0);
-    assert(stmt->expr.value->bin_op.right->type == EXPR_LITERAL);
-    assert(stmt->expr.value->bin_op.right->literal.value.number_var == 4.0);
+    assert(stmt->expr.value->bin_op.left->kind == EXPR_LITERAL);
+    assert(stmt->expr.value->bin_op.left->lit.as_int == 3);
+    assert(stmt->expr.value->bin_op.right->kind == EXPR_LITERAL);
+    assert(stmt->expr.value->bin_op.right->lit.as_int == 4);
 
     ast_script_free(script);
 }
@@ -69,23 +94,23 @@ static void test_operator_precedence() {
     assert(script->statements.size == 1);
 
     ASTStmt *stmt = script->statements.data[0];
-    assert(stmt->type == STMT_EXPR);
+    assert(stmt->kind == STMT_EXPR);
 
     ASTExpr *expr = stmt->expr.value;
 
     // Expect: 3 + (4 * 2)
-    assert(expr->type == EXPR_BIN_OP);
+    assert(expr->kind == EXPR_BIN_OP);
     assert(expr->bin_op.op == BIN_OP_ADD);
-    assert(expr->bin_op.left->type == EXPR_LITERAL);
-    assert(expr->bin_op.left->literal.value.number_var == 3.0);
+    assert(expr->bin_op.left->kind == EXPR_LITERAL);
+    assert(expr->bin_op.left->lit.as_int == 3.0);
 
     ASTExpr *rhs = expr->bin_op.right;
-    assert(rhs->type == EXPR_BIN_OP);
+    assert(rhs->kind == EXPR_BIN_OP);
     assert(rhs->bin_op.op == BIN_OP_MUL);
-    assert(rhs->bin_op.left->type == EXPR_LITERAL);
-    assert(rhs->bin_op.left->literal.value.number_var == 4.0);
-    assert(rhs->bin_op.right->type == EXPR_LITERAL);
-    assert(rhs->bin_op.right->literal.value.number_var == 2.0);
+    assert(rhs->bin_op.left->kind == EXPR_LITERAL);
+    assert(rhs->bin_op.left->lit.as_int == 4.0);
+    assert(rhs->bin_op.right->kind == EXPR_LITERAL);
+    assert(rhs->bin_op.right->lit.as_int == 2.0);
 
     ast_script_free(script);
 }
@@ -99,24 +124,24 @@ static void test_parentheses() {
     assert(script->statements.size == 1);
 
     ASTStmt *stmt = script->statements.data[0];
-    assert(stmt->type == STMT_EXPR);
+    assert(stmt->kind == STMT_EXPR);
 
     ASTExpr *expr = stmt->expr.value;
 
     // Expect: (3 + 4) * 2
-    assert(expr->type == EXPR_BIN_OP);
+    assert(expr->kind == EXPR_BIN_OP);
     assert(expr->bin_op.op == BIN_OP_MUL);
 
     ASTExpr *lhs = expr->bin_op.left;
-    assert(lhs->type == EXPR_BIN_OP);
+    assert(lhs->kind == EXPR_BIN_OP);
     assert(lhs->bin_op.op == BIN_OP_ADD);
-    assert(lhs->bin_op.left->type == EXPR_LITERAL);
-    assert(lhs->bin_op.left->literal.value.number_var == 3.0);
-    assert(lhs->bin_op.right->type == EXPR_LITERAL);
-    assert(lhs->bin_op.right->literal.value.number_var == 4.0);
+    assert(lhs->bin_op.left->kind == EXPR_LITERAL);
+    assert(lhs->bin_op.left->lit.as_int == 3.0);
+    assert(lhs->bin_op.right->kind == EXPR_LITERAL);
+    assert(lhs->bin_op.right->lit.as_int == 4.0);
 
-    assert(expr->bin_op.right->type == EXPR_LITERAL);
-    assert(expr->bin_op.right->literal.value.number_var == 2.0);
+    assert(expr->bin_op.right->kind == EXPR_LITERAL);
+    assert(expr->bin_op.right->lit.as_int == 2.0);
 
     ast_script_free(script);
 }
@@ -131,23 +156,23 @@ static void test_variables() {
     assert(script->statements.size == 3);
 
     ASTStmt *stmt = script->statements.data[2];
-    assert(stmt->type == STMT_EXPR);
+    assert(stmt->kind == STMT_EXPR);
 
     ASTExpr *expr = stmt->expr.value;
 
-    assert(expr->type == EXPR_BIN_OP);
+    assert(expr->kind == EXPR_BIN_OP);
     assert(expr->bin_op.op == BIN_OP_ADD);
 
     ASTExpr *rhs = expr->bin_op.right;
-    assert(rhs->type == EXPR_BIN_OP);
+    assert(rhs->kind == EXPR_BIN_OP);
     assert(rhs->bin_op.op == BIN_OP_MUL);
-    assert(rhs->bin_op.left->type == EXPR_VARIABLE);
-    assert(string_ref_equals_cstr(rhs->bin_op.left->variable.name, "x"));
-    assert(rhs->bin_op.right->type == EXPR_VARIABLE);
-    assert(string_ref_equals_cstr(rhs->bin_op.right->variable.name, "y"));
+    assert(rhs->bin_op.left->kind == EXPR_VARIABLE);
+    assert(string_ref_equals_cstr(rhs->bin_op.left->var.name, "x"));
+    assert(rhs->bin_op.right->kind == EXPR_VARIABLE);
+    assert(string_ref_equals_cstr(rhs->bin_op.right->var.name, "y"));
 
-    assert(expr->bin_op.left->type == EXPR_LITERAL);
-    assert(expr->bin_op.left->literal.value.number_var == 2.0);
+    assert(expr->bin_op.left->kind == EXPR_LITERAL);
+    assert(expr->bin_op.left->lit.as_int == 2.0);
 
     ast_script_free(script);
 }
@@ -161,28 +186,28 @@ static void test_declaration() {
     assert(script->statements.size == 1);
 
     ASTStmt *stmt = script->statements.data[0];
-    assert(stmt->type == STMT_VAR_DECL);
+    assert(stmt->kind == STMT_VAR_DECL);
 
     assert(string_ref_equals_cstr(stmt->var_decl.name, "x"));
 
     ASTExpr *initializer = stmt->var_decl.initializer;
 
-    assert(initializer->type == EXPR_BIN_OP);
+    assert(initializer->kind == EXPR_BIN_OP);
     assert(initializer->bin_op.op == BIN_OP_ADD);
 
     ASTExpr *lhs = initializer->bin_op.left;
-    assert(lhs->type == EXPR_LITERAL);
-    assert(lhs->literal.value.number_var == 2);
+    assert(lhs->kind == EXPR_LITERAL);
+    assert(lhs->lit.as_int == 2);
 
     ASTExpr *rhs = initializer->bin_op.right;
-    assert(rhs->type == EXPR_LITERAL);
-    assert(rhs->literal.value.number_var == 3);
+    assert(rhs->kind == EXPR_LITERAL);
+    assert(rhs->lit.as_int == 3);
 
     ast_script_free(script);
 }
 
 static void test_unintialized_declaration() {
-    Lexer lexer = lexer_create("let x;");
+    Lexer lexer = lexer_create("let x: int;");
     Parser parser = parser_create(&lexer);
     ASTScript *script = parser_parse(&parser);
     assert(script != NULL);
@@ -190,10 +215,22 @@ static void test_unintialized_declaration() {
     assert(script->statements.size == 1);
 
     ASTStmt *stmt = script->statements.data[0];
-    assert(stmt->type == STMT_VAR_DECL);
+    assert(stmt->kind == STMT_VAR_DECL);
 
     assert(string_ref_equals_cstr(stmt->var_decl.name, "x"));
     assert(stmt->var_decl.initializer == NULL);
+
+    ast_script_free(script);
+}
+
+static void test_untyped_and_unintialized_declaration() {
+    Lexer lexer = lexer_create("let x;");
+    Parser parser = parser_create(&lexer);
+    ASTScript *script = parser_parse(&parser);
+
+    assert(!parser.ok);
+    assert(strcmp(parser.error.message, "expected type after identifier") == 0);
+    assert(script == NULL);
 
     ast_script_free(script);
 }
@@ -207,15 +244,15 @@ static void test_assignment() {
     assert(script->statements.size == 1);
 
     ASTStmt *stmt = script->statements.data[0];
-    assert(stmt->type == STMT_ASSIGN);
+    assert(stmt->kind == STMT_ASSIGN);
 
     ASTExpr *target = stmt->assign.target;
-    assert(target->type == EXPR_VARIABLE);
-    assert(string_ref_equals_cstr(target->variable.name, "x"));
+    assert(target->kind == EXPR_VARIABLE);
+    assert(string_ref_equals_cstr(target->var.name, "x"));
 
     ASTExpr *value = stmt->assign.value;
-    assert(value->type == EXPR_LITERAL);
-    assert(value->literal.value.number_var == 2.0);
+    assert(value->kind == EXPR_LITERAL);
+    assert(value->lit.as_int == 2.0);
 
     ast_script_free(script);
 }
@@ -229,7 +266,7 @@ static void test_block() {
     assert(script->statements.size == 1);
 
     ASTStmt *stmt = script->statements.data[0];
-    assert(stmt->type == STMT_BLOCK);
+    assert(stmt->kind == STMT_BLOCK);
     assert(stmt->block.list.size == 2);
 
     ast_script_free(script);
@@ -244,18 +281,18 @@ static void test_if() {
     assert(script->statements.size == 1);
 
     ASTStmt *stmt = script->statements.data[0];
-    assert(stmt->type == STMT_IF);
+    assert(stmt->kind == STMT_IF);
 
     ASTExpr *condition = stmt->ifstmt.condition;
-    assert(condition->type == EXPR_BIN_OP);
+    assert(condition->kind == EXPR_BIN_OP);
 
     ASTStmt *then_block = stmt->ifstmt.then_block;
-    assert(then_block->type == STMT_BLOCK);
-    assert(then_block->block.list.data[0]->type == STMT_EXPR);
+    assert(then_block->kind == STMT_BLOCK);
+    assert(then_block->block.list.data[0]->kind == STMT_EXPR);
 
     ASTStmt *else_block = stmt->ifstmt.else_block;
-    assert(else_block->type == STMT_BLOCK);
-    assert(else_block->block.list.data[0]->type == STMT_EXPR);
+    assert(else_block->kind == STMT_BLOCK);
+    assert(else_block->block.list.data[0]->kind == STMT_EXPR);
 
     ast_script_free(script);
 }
@@ -269,11 +306,11 @@ static void test_return() {
     assert(script->statements.size == 1);
 
     ASTStmt *stmt = script->statements.data[0];
-    assert(stmt->type == STMT_RETURN);
+    assert(stmt->kind == STMT_RETURN);
 
     ASTExpr *result = stmt->ret.result;
-    assert(result->type == EXPR_LITERAL);
-    assert(result->literal.value.number_var == 2.0);
+    assert(result->kind == EXPR_LITERAL);
+    assert(result->lit.as_float == 2.0);
 
     ast_script_free(script);
 }
@@ -339,6 +376,7 @@ static void test_expression_not_assignable() {
 
 int main() {
     test_single_number();
+    test_booleans();
     test_multiple_statements();
     test_simple_addition();
     test_operator_precedence();
@@ -351,6 +389,7 @@ int main() {
     test_variables();
     test_declaration();
     test_unintialized_declaration();
+    test_untyped_and_unintialized_declaration();
     test_assignment();
     test_block();
     test_if();

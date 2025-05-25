@@ -13,7 +13,8 @@ add_library(gab
     src/lexer.c
     src/parser.c
     src/string_ref.c
-    src/symbol_table.c
+    src/type.c
+    src/type_registry.c
     src/vm/constant_pool.c
     src/vm/vm.c
     src/vm/codegen.c
@@ -29,3 +30,4 @@ target_include_directories(gab PUBLIC src/)
 
 enable_testing()
 add_subdirectory(test)
+

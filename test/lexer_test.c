@@ -7,27 +7,23 @@ static void assert_token(Lexer *lexer, TokenType expected_type) {
     assert(token.type == expected_type);
 }
 
-static void assert_number(Lexer *lexer, double expected_value) {
-    Token token = lexer_next(lexer);
-    assert(token.type == TOKEN_NUMBER);
-}
-
 static void assert_identifier(Lexer *lexer, char *expected_name) {
     Token token = lexer_next(lexer);
     assert(token.type == TOKEN_IDENT);
-    assert(strncmp(token.lexeme.data, expected_name, token.lexeme.length) == 0);
+    assert(strlen(expected_name) == token.lexeme.length &&
+           strncmp(token.lexeme.data, expected_name, token.lexeme.length) == 0);
 }
 
 static void test_numbers() {
     Lexer lexer = lexer_create("42 3.14 .5");
-    assert_number(&lexer, 42);
-    assert_number(&lexer, 3.14);
-    assert_number(&lexer, 0.5); // .5 → 0.5
+    assert_token(&lexer, TOKEN_INT);
+    assert_token(&lexer, TOKEN_FLOAT);
+    assert_token(&lexer, TOKEN_FLOAT);
     assert_token(&lexer, TOKEN_EOF);
 }
 
 static void test_operators() {
-    Lexer lexer = lexer_create("+ - * / = ! < > == != <= >=");
+    Lexer lexer = lexer_create("+ - * / = ! < > == != <= >= && ||");
     assert_token(&lexer, TOKEN_PLUS);
     assert_token(&lexer, TOKEN_MINUS);
     assert_token(&lexer, TOKEN_MUL);
@@ -40,6 +36,8 @@ static void test_operators() {
     assert_token(&lexer, TOKEN_NEQUAL);
     assert_token(&lexer, TOKEN_LEQUAL);
     assert_token(&lexer, TOKEN_GEQUAL);
+    assert_token(&lexer, TOKEN_AND);
+    assert_token(&lexer, TOKEN_OR);
     assert_token(&lexer, TOKEN_EOF);
 }
 
@@ -57,9 +55,16 @@ static void test_braces() {
     assert_token(&lexer, TOKEN_EOF);
 }
 
+static void test_colons() {
+    Lexer lexer = lexer_create("; :");
+    assert_token(&lexer, TOKEN_SEMICOLON);
+    assert_token(&lexer, TOKEN_COLON);
+    assert_token(&lexer, TOKEN_EOF);
+}
+
 static void test_whitespace() {
     Lexer lexer = lexer_create("  \t\n42 \n + ");
-    assert_number(&lexer, 42);
+    assert_token(&lexer, TOKEN_INT);
     assert_token(&lexer, TOKEN_PLUS);
     assert_token(&lexer, TOKEN_EOF);
 }
@@ -72,16 +77,18 @@ static void test_identifiers() {
 }
 
 static void test_keywords() {
-    Lexer lexer = lexer_create("let return if else");
+    Lexer lexer = lexer_create("let return if else true false");
     assert_token(&lexer, TOKEN_LET);
     assert_token(&lexer, TOKEN_RETURN);
     assert_token(&lexer, TOKEN_IF);
     assert_token(&lexer, TOKEN_ELSE);
+    assert_token(&lexer, TOKEN_TRUE);
+    assert_token(&lexer, TOKEN_FALSE);
 }
 
 static void test_errors() {
     Lexer lexer = lexer_create("42 $ +");
-    assert_number(&lexer, 42);
+    assert_token(&lexer, TOKEN_INT);
     assert_token(&lexer, TOKEN_INVALID); // '$' is invalid
 }
 
@@ -90,6 +97,7 @@ int main(void) {
     test_operators();
     test_parentheses();
     test_braces();
+    test_colons();
     test_whitespace();
     test_identifiers();
     test_keywords();

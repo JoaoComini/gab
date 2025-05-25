@@ -3,15 +3,25 @@
 
 #include "string_ref.h"
 #include "symbol_table.h"
-#include "variant.h"
+#include "type.h"
+#include "type_registry.h"
+
 #include <stddef.h>
 #include <stdlib.h>
+
+typedef struct {
+    TypeKind kind;
+    union {
+        int32_t as_int;
+        float as_float;
+    };
+} Literal;
 
 typedef enum {
     EXPR_LITERAL,
     EXPR_BIN_OP,
     EXPR_VARIABLE,
-} ExprType;
+} ExprKind;
 
 typedef enum {
     BIN_OP_ADD,
@@ -24,14 +34,15 @@ typedef enum {
     BIN_OP_NEQUAL,
     BIN_OP_LEQUAL,
     BIN_OP_GEQUAL,
+    BIN_OP_AND,
+    BIN_OP_OR,
 } BinOp;
 
 typedef struct ASTExpr {
-    ExprType type;
+    ExprKind kind;
+
     union {
-        struct {
-            Variant value;
-        } literal;
+        Literal lit;
 
         struct {
             struct ASTExpr *left;
@@ -41,13 +52,14 @@ typedef struct ASTExpr {
 
         struct {
             StringRef name;
-        } variable;
+        } var;
     };
 
+    Type *type;    // Filled during type resolution
     Symbol symbol; // Filled during symbol resolution
 } ASTExpr;
 
-ASTExpr *ast_literal_expr_create(Variant value);
+ASTExpr *ast_literal_expr_create(Literal value);
 ASTExpr *ast_bin_op_expr_create(ASTExpr *left, BinOp op, ASTExpr *right);
 ASTExpr *ast_variable_expr_create(StringRef name);
 void ast_expr_free(ASTExpr *node);
@@ -70,10 +82,10 @@ typedef enum {
     STMT_BLOCK,
     STMT_IF,
     STMT_RETURN,
-} StmtType;
+} StmtKind;
 
 typedef struct ASTStmt {
-    StmtType type;
+    StmtKind kind;
 
     union {
         struct {
@@ -82,9 +94,10 @@ typedef struct ASTStmt {
 
         struct {
             StringRef name;
+            TypeSpec *type_spec;
             ASTExpr *initializer;
 
-            int reg; // Filled during symbol resolution
+            Symbol symbol; // Filled during symbol/type resolution
         } var_decl;
 
         struct {
@@ -110,7 +123,7 @@ typedef struct ASTStmt {
 } ASTStmt;
 
 ASTStmt *ast_expr_stmt_create(ASTExpr *value);
-ASTStmt *ast_var_decl_stmt_create(StringRef name, ASTExpr *initializer);
+ASTStmt *ast_var_decl_stmt_create(StringRef name, TypeSpec *type, ASTExpr *initializer);
 ASTStmt *ast_assign_stmt_create(ASTExpr *target, ASTExpr *value);
 ASTStmt *ast_if_stmt_create(ASTExpr *condition, ASTStmt *then_block, ASTStmt *else_block);
 ASTStmt *ast_block_stmt_create(ASTStmtList list);
@@ -119,6 +132,7 @@ void ast_stmt_free(ASTStmt *stmt);
 
 typedef struct ASTScript {
     SymbolTable *symbol_table;
+    TypeRegistry *type_registry;
 
     ASTStmtList statements;
     int vars_count;
@@ -126,7 +140,7 @@ typedef struct ASTScript {
 
 ASTScript *ast_script_create();
 void ast_script_add_statement(ASTScript *script, ASTStmt *stmt);
-void ast_script_resolve_symbols(ASTScript *script);
+void ast_script_resolve(ASTScript *script);
 void ast_script_free(ASTScript *script);
 
 #endif
