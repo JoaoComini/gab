@@ -2,8 +2,8 @@
 #include "ast.h"
 #include "lexer.h"
 #include "parser.h"
-#include "type.h"
 #include "string/string.h"
+#include "type.h"
 #include "vm/codegen.h"
 #include "vm/constant_pool.h"
 #include "vm/opcode.h"
@@ -311,7 +311,7 @@ void vm_execute(VM *vm, const char *source) {
     }
 
     chunk_free(chunk);
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 Value vm_get_result(VM *vm) { return vm->result; }

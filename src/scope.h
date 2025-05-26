@@ -1,26 +1,25 @@
 #ifndef GAB_SCOPE_H
 #define GAB_SCOPE_H
 
-#include "symbol_table.h"
 #include "string/string.h"
+#include "symbol_table.h"
 
 typedef struct Scope {
     SymbolTable *symbol_table;
-    int next_reg;
+    int var_offset;
 
     struct Scope *parent;
 } Scope;
 
 // Initialize a new scope
 Scope *scope_create(Scope *parent);
+void scope_init(Scope *scope, Scope *parent);
 
 // Free a scope (and its symbol table)
+void scope_destroy(Scope *scope);
 void scope_free(Scope *scope);
 
-// Allocate a new register
-int scope_alloc_register(Scope *scope);
-void scope_free_register(Scope *scope);
-
 Symbol *scope_symbol_lookup(Scope *scope, String *name);
+Symbol *scope_decl_var(Scope *scope, String *name, Type *type);
 
 #endif

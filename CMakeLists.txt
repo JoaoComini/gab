@@ -14,12 +14,12 @@ add_library(gab
     src/parser.c
     src/type.c
     src/type_registry.c
+    src/scope.c
     src/string/string_ref.c
     src/string/string.c
     src/vm/constant_pool.c
     src/vm/vm.c
     src/vm/codegen.c
-    src/vm/scope.c
 )
 
 find_library(MATH_LIBRARY m)

@@ -162,10 +162,21 @@ ASTScript *ast_script_create() {
     ASTScript *script = malloc(sizeof(ASTScript));
     script->statements = ast_stmt_list_create();
     script->vars_count = 0;
-    script->symbol_table = symbol_table_create(SYMBOL_TABLE_INITIAL_CAPACITY);
+    script->global_scope = scope_create(NULL);
     script->type_registry = type_registry_create();
 
     return script;
+}
+
+void ast_script_destroy(ASTScript *script) {
+    if (!script)
+        return;
+
+    scope_destroy(script->global_scope);
+    type_registry_destroy(script->type_registry);
+    ast_stmt_list_free(script->statements);
+
+    free(script);
 }
 
 void ast_script_add_statement(ASTScript *script, ASTStmt *stmt) {
@@ -180,15 +191,15 @@ bool is_ordered_type(Type *t) { return is_numeric_type(t) || is_boolean_type(t);
 
 bool is_comparable_type(Type *t) { return is_numeric_type(t) || is_boolean_type(t); }
 
-void ast_script_expr_visit(ASTScript *script, ASTExpr *expr) {
+void ast_script_expr_visit(ASTScript *script, ASTExpr *expr, Scope *scope) {
     if (!expr) {
         return;
     }
 
     switch (expr->kind) {
     case EXPR_BIN_OP: {
-        ast_script_expr_visit(script, expr->bin_op.left);
-        ast_script_expr_visit(script, expr->bin_op.right);
+        ast_script_expr_visit(script, expr->bin_op.left, scope);
+        ast_script_expr_visit(script, expr->bin_op.right, scope);
 
         Type *left_type = expr->bin_op.left->type;
         Type *right_type = expr->bin_op.right->type;
@@ -224,8 +235,7 @@ void ast_script_expr_visit(ASTScript *script, ASTExpr *expr) {
         break;
     }
     case EXPR_VARIABLE: {
-        Symbol *entry = symbol_table_lookup(script->symbol_table, string_from_ref(expr->var.name));
-
+        Symbol *entry = scope_symbol_lookup(scope, string_from_ref(expr->var.name));
         assert(entry && "undeclared variable");
 
         expr->symbol = *entry;
@@ -241,18 +251,18 @@ void ast_script_expr_visit(ASTScript *script, ASTExpr *expr) {
     }
 }
 
-void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt) {
+void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt, Scope *scope) {
     if (!stmt) {
         return;
     }
 
     switch (stmt->kind) {
     case STMT_EXPR: {
-        ast_script_expr_visit(script, stmt->expr.value);
+        ast_script_expr_visit(script, stmt->expr.value, scope);
         break;
     }
     case STMT_VAR_DECL: {
-        ast_script_expr_visit(script, stmt->var_decl.initializer);
+        ast_script_expr_visit(script, stmt->var_decl.initializer, scope);
 
         Type *type;
         if (stmt->var_decl.type_spec) {
@@ -271,19 +281,17 @@ void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt) {
             type = stmt->var_decl.initializer->type;
         }
 
-        Symbol symbol = (Symbol){.reg = script->vars_count, .type = type};
+        Symbol *var = scope_decl_var(scope, string_from_ref(stmt->var_decl.name), type);
 
-        bool ok = symbol_table_insert(script->symbol_table, string_from_ref(stmt->var_decl.name), symbol);
+        assert(var && "variable already declared in this scope");
 
-        assert(ok && "variable already declared");
-
-        stmt->var_decl.symbol = symbol;
+        stmt->var_decl.symbol = *var;
         script->vars_count++;
         break;
     }
     case STMT_ASSIGN: {
-        ast_script_expr_visit(script, stmt->assign.target);
-        ast_script_expr_visit(script, stmt->assign.value);
+        ast_script_expr_visit(script, stmt->assign.target, scope);
+        ast_script_expr_visit(script, stmt->assign.value, scope);
 
         Type *target_type = stmt->assign.target->type;
         Type *value_type = stmt->assign.value->type;
@@ -292,19 +300,28 @@ void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt) {
         break;
     }
     case STMT_IF: {
-        ast_script_expr_visit(script, stmt->ifstmt.condition);
-        ast_script_stmt_visit(script, stmt->ifstmt.then_block);
-        ast_script_stmt_visit(script, stmt->ifstmt.else_block);
+        ast_script_expr_visit(script, stmt->ifstmt.condition, scope);
+        ast_script_stmt_visit(script, stmt->ifstmt.then_block, scope);
+        ast_script_stmt_visit(script, stmt->ifstmt.else_block, scope);
         break;
     }
     case STMT_BLOCK: {
+        Scope block_scope;
+        scope_init(&block_scope, scope);
+
         for (int i = 0; i < stmt->block.list.size; i++) {
-            ast_script_stmt_visit(script, stmt->block.list.data[i]);
+            ast_script_stmt_visit(script, stmt->block.list.data[i], &block_scope);
         }
+
+        if (block_scope.var_offset > script->vars_count) {
+            script->vars_count = block_scope.var_offset;
+        }
+
+        scope_free(&block_scope);
         break;
     }
     case STMT_RETURN: {
-        ast_script_expr_visit(script, stmt->ret.result);
+        ast_script_expr_visit(script, stmt->ret.result, scope);
         break;
     }
     }
@@ -312,17 +329,6 @@ void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt) {
 
 void ast_script_resolve(ASTScript *script) {
     for (int i = 0; i < script->statements.size; i++) {
-        ast_script_stmt_visit(script, script->statements.data[i]);
+        ast_script_stmt_visit(script, script->statements.data[i], script->global_scope);
     }
-}
-
-void ast_script_free(ASTScript *script) {
-    if (!script)
-        return;
-
-    symbol_table_destroy(script->symbol_table);
-    type_registry_destroy(script->type_registry);
-    ast_stmt_list_free(script->statements);
-
-    free(script);
 }

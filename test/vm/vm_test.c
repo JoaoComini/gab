@@ -63,7 +63,7 @@ static void test_vm_execute() {
                    "let i = (h / g) + (f - (e * (d / (c + (b - a)))));\n"
                    "let result : int = ((i + h) * (g - f) + (e / d)) - ((c + b) * (a - 1));\n"
                    "let compare = result == 13120;\n"
-                   "if compare { return true; } else { return false; }");
+                   "if compare { let a = 10; return true; } else { return false; }");
 
     Value result = vm_get_result(vm);
 

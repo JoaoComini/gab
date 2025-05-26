@@ -1,7 +1,6 @@
 #include "ast.h"
+#include "string/string.h"
 #include "type.h"
-#include "string/string.h"
-#include "string/string.h"
 #include "value.h"
 #include "vm/codegen.h"
 #include "vm/opcode.h"
@@ -34,7 +33,7 @@ static void test_number() {
     assert(chunk->const_pool->constants[0].as_float == 42.0);
 
     chunk_free(chunk);
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 static void test_bin_op(OpCode expected_op, BinOp op) {
@@ -68,7 +67,7 @@ static void test_bin_op(OpCode expected_op, BinOp op) {
     assert(chunk->const_pool->constants[1].as_float == 5.0);
 
     chunk_free(chunk);
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 static void test_add() { test_bin_op(OP_ADDF, BIN_OP_ADD); }
@@ -105,7 +104,7 @@ static void test_return() {
     assert(VM_DECODE_OPCODE(ret) == OP_RETURN);
 
     chunk_free(chunk);
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 static void test_var_decl() {
@@ -137,7 +136,7 @@ static void test_var_decl() {
     assert(VM_DECODE_R_R1(move) == 1);
 
     chunk_free(chunk);
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 static void test_variable_access() {
@@ -186,7 +185,7 @@ static void test_variable_access() {
     assert(VM_DECODE_R_R1(move2) == 1);
 
     chunk_free(chunk);
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 static void test_if_statement() {
@@ -255,7 +254,7 @@ static void test_if_statement() {
     assert(VM_DECODE_R_R1(ret) == 0);
 
     chunk_free(chunk);
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 static void test_if_else_statement() {
@@ -318,7 +317,7 @@ static void test_if_else_statement() {
     assert(VM_DECODE_I_IMM(jmp) == 2); // Jump to end
 
     chunk_free(chunk);
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 int main(void) {

@@ -1,9 +1,8 @@
 #include "ast.h"
 #include "lexer.h"
 #include "parser.h"
+#include "string/string.h"
 #include "type.h"
-#include "string/string.h"
-#include "string/string.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -24,7 +23,7 @@ static void test_single_number() {
     assert(stmt->expr.value->lit.kind == TYPE_INT);
     assert(stmt->expr.value->lit.as_int == 42);
 
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 static void test_booleans() {
@@ -47,7 +46,7 @@ static void test_booleans() {
     assert(false_stmt->expr.value->lit.kind == TYPE_BOOL);
     assert(false_stmt->expr.value->lit.as_int == 0);
 
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 static void test_multiple_statements() {
@@ -64,7 +63,7 @@ static void test_multiple_statements() {
     ASTStmt *second = script->statements.data[1];
     assert(second->kind == STMT_EXPR);
 
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 static void test_simple_addition() {
@@ -83,7 +82,7 @@ static void test_simple_addition() {
     assert(stmt->expr.value->bin_op.right->kind == EXPR_LITERAL);
     assert(stmt->expr.value->bin_op.right->lit.as_int == 4);
 
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 static void test_operator_precedence() {
@@ -113,7 +112,7 @@ static void test_operator_precedence() {
     assert(rhs->bin_op.right->kind == EXPR_LITERAL);
     assert(rhs->bin_op.right->lit.as_int == 2.0);
 
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 static void test_parentheses() {
@@ -144,7 +143,7 @@ static void test_parentheses() {
     assert(expr->bin_op.right->kind == EXPR_LITERAL);
     assert(expr->bin_op.right->lit.as_int == 2.0);
 
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 static void test_variables() {
@@ -175,7 +174,7 @@ static void test_variables() {
     assert(expr->bin_op.left->kind == EXPR_LITERAL);
     assert(expr->bin_op.left->lit.as_int == 2.0);
 
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 static void test_declaration() {
@@ -204,7 +203,7 @@ static void test_declaration() {
     assert(rhs->kind == EXPR_LITERAL);
     assert(rhs->lit.as_int == 3);
 
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 static void test_unintialized_declaration() {
@@ -221,7 +220,7 @@ static void test_unintialized_declaration() {
     assert(string_ref_equals_cstr(stmt->var_decl.name, "x"));
     assert(stmt->var_decl.initializer == NULL);
 
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 static void test_untyped_and_unintialized_declaration() {
@@ -233,7 +232,7 @@ static void test_untyped_and_unintialized_declaration() {
     assert(strcmp(parser.error.message, "expected type after identifier") == 0);
     assert(script == NULL);
 
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 static void test_assignment() {
@@ -255,7 +254,7 @@ static void test_assignment() {
     assert(value->kind == EXPR_LITERAL);
     assert(value->lit.as_int == 2.0);
 
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 static void test_block() {
@@ -270,7 +269,7 @@ static void test_block() {
     assert(stmt->kind == STMT_BLOCK);
     assert(stmt->block.list.size == 2);
 
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 static void test_if() {
@@ -295,7 +294,7 @@ static void test_if() {
     assert(else_block->kind == STMT_BLOCK);
     assert(else_block->block.list.data[0]->kind == STMT_EXPR);
 
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 
 static void test_return() {
@@ -313,7 +312,7 @@ static void test_return() {
     assert(result->kind == EXPR_LITERAL);
     assert(result->lit.as_float == 2.0);
 
-    ast_script_free(script);
+    ast_script_destroy(script);
 }
 static void test_invalid_token() {
     Lexer lexer = lexer_create("3 + $;");

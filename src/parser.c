@@ -1,8 +1,8 @@
 #include "parser.h"
 #include "ast.h"
 #include "lexer.h"
-#include "type.h"
 #include "string/string.h"
+#include "type.h"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -46,7 +46,7 @@ ASTScript *parser_parse(Parser *parser) {
 
         ASTStmt *stmt = parse_statement(parser);
         if (!stmt) {
-            ast_script_free(script);
+            ast_script_destroy(script);
             return NULL;
         }
 

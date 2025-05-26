@@ -1,7 +1,7 @@
 #ifndef GAB_AST_H
 #define GAB_AST_H
 
-#include "string/string.h"
+#include "scope.h"
 #include "string/string_ref.h"
 #include "symbol_table.h"
 #include "type.h"
@@ -133,7 +133,7 @@ ASTStmt *ast_return_stmt_create(ASTExpr *result);
 void ast_stmt_free(ASTStmt *stmt);
 
 typedef struct ASTScript {
-    SymbolTable *symbol_table;
+    Scope *global_scope;
     TypeRegistry *type_registry;
 
     ASTStmtList statements;
@@ -143,6 +143,6 @@ typedef struct ASTScript {
 ASTScript *ast_script_create();
 void ast_script_add_statement(ASTScript *script, ASTStmt *stmt);
 void ast_script_resolve(ASTScript *script);
-void ast_script_free(ASTScript *script);
+void ast_script_destroy(ASTScript *script);
 
 #endif
