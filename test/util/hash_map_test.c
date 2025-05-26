@@ -15,7 +15,7 @@ static void test_create_and_free() {
     assert(table != NULL);
     assert(table->capacity == 8);
     assert(table->size == 0);
-    test_map_free(table);
+    test_map_destroy(table);
 }
 
 static void test_basic_insert_and_lookup() {
@@ -36,7 +36,7 @@ static void test_basic_insert_and_lookup() {
 
     assert(test_map_lookup(table, 2) == NULL);
 
-    test_map_free(table);
+    test_map_destroy(table);
 }
 
 static void test_duplicate_insert() {
@@ -51,7 +51,7 @@ static void test_duplicate_insert() {
     int *x = test_map_lookup(table, 0);
     assert(*x == 0);
 
-    test_map_free(table);
+    test_map_destroy(table);
 }
 
 static void test_delete() {
@@ -69,7 +69,7 @@ static void test_delete() {
     test_map_delete(table, 2);
     assert(table->size == 1);
 
-    test_map_free(table);
+    test_map_destroy(table);
 }
 
 static void test_collision_handling() {
@@ -84,7 +84,7 @@ static void test_collision_handling() {
     assert(test_map_lookup(table, 1) != NULL);
     assert(test_map_lookup(table, 2) != NULL);
 
-    test_map_free(table);
+    test_map_destroy(table);
 }
 
 static void test_resize() {
@@ -102,7 +102,7 @@ static void test_resize() {
     assert(test_map_lookup(table, 1) != NULL);
     assert(test_map_lookup(table, 2) != NULL);
 
-    test_map_free(table);
+    test_map_destroy(table);
 }
 
 static void test_delete_all() {
@@ -123,7 +123,7 @@ static void test_delete_all() {
         assert(test_map_lookup(table, keys[i]) == NULL);
     }
 
-    test_map_free(table);
+    test_map_destroy(table);
 }
 
 static void test_stress() {
@@ -147,7 +147,7 @@ static void test_stress() {
 
     assert(table->size == NUM_ENTRIES / 2);
 
-    test_map_free(table);
+    test_map_destroy(table);
 }
 
 int main() {

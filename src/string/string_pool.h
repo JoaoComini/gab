@@ -2,15 +2,22 @@
 #define GAB_STRING_POOL_H
 
 #include "string/string.h"
+#include "util/hash.h"
 #include "util/hash_map.h"
 
-#define STRING_POOL_INITIAL_CAPACITY 128
+#include <string.h>
 
-#define string_pool_hash(key) key
-#define string_pool_key_equals(key, other) key == other
+#define string_pool_hash(key) hash_dj2b_cstr(key.data, key.length)
+#define string_pool_key_equals(key, other)                                                                   \
+    (key.length == other.length) && (memcmp(key.data, other.data, key.length) == 0)
 #define string_pool_key_dup(key) key
-#define string_pool_entry_free(key, value) free(value.data);
+#define string_pool_entry_free(key, value) string_destroy(value);
 
-GAB_HASH_MAP(StringPool, string_pool, size_t, String)
+typedef struct {
+    const char *data; // Shared with String
+    size_t length;
+} StringKey;
+
+GAB_HASH_MAP(StringPool, string_pool, StringKey, String *)
 
 #endif

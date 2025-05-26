@@ -1,10 +1,10 @@
 #include "ast.h"
 
+#include "string/string.h"
+#include "string/string_ref.h"
 #include "symbol_table.h"
 #include "type.h"
 #include "type_registry.h"
-#include "string/string.h"
-#include "string/string_ref.h"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -111,7 +111,7 @@ void ast_stmt_free(ASTStmt *stmt) {
     case STMT_VAR_DECL:
         ast_expr_free(stmt->var_decl.initializer);
         if (stmt->var_decl.type_spec) {
-            type_spec_free(stmt->var_decl.type_spec);
+            type_spec_destroy(stmt->var_decl.type_spec);
         }
         break;
     case STMT_ASSIGN:
@@ -138,14 +138,17 @@ ASTStmtList ast_stmt_list_create() {
     return (ASTStmtList){
         .data = NULL,
         .size = 0,
+        .capacity = 0,
     };
 }
 
 void ast_stmt_list_add(ASTStmtList *list, ASTStmt *stmt) {
-    list->size++;
+    if (list->size >= list->capacity) {
+        list->capacity = list->capacity == 0 ? 1 : list->capacity * 2;
+        list->data = realloc(list->data, list->capacity * sizeof(ASTStmt *));
+    }
 
-    list->data = realloc(list->data, list->size * sizeof(ASTStmt *));
-    list->data[list->size - 1] = stmt;
+    list->data[list->size++] = stmt;
 }
 
 void ast_stmt_list_free(ASTStmtList list) {
@@ -160,9 +163,7 @@ ASTScript *ast_script_create() {
     script->statements = ast_stmt_list_create();
     script->vars_count = 0;
     script->symbol_table = symbol_table_create(SYMBOL_TABLE_INITIAL_CAPACITY);
-    script->type_registry = type_registry_create(TYPE_REGISTRY_INITIAL_CAPACITY);
-
-    type_registry_register_builtin(script->type_registry);
+    script->type_registry = type_registry_create();
 
     return script;
 }
@@ -256,7 +257,7 @@ void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt) {
         Type *type;
         if (stmt->var_decl.type_spec) {
             Type *decl_type =
-                type_registry_lookup(script->type_registry, string_from_ref(stmt->var_decl.type_spec->name));
+                type_registry_get(script->type_registry, string_from_ref(stmt->var_decl.type_spec->name));
             assert(decl_type && "unknown type");
 
             if (stmt->var_decl.initializer) {

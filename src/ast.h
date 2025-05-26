@@ -1,11 +1,11 @@
 #ifndef GAB_AST_H
 #define GAB_AST_H
 
+#include "string/string.h"
+#include "string/string_ref.h"
 #include "symbol_table.h"
 #include "type.h"
 #include "type_registry.h"
-#include "string/string.h"
-#include "string/string_ref.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -69,6 +69,7 @@ typedef struct ASTStmt ASTStmt;
 
 typedef struct ASTStmtList {
     ASTStmt **data;
+    size_t capacity;
     size_t size;
 } ASTStmtList;
 
