@@ -1,6 +1,6 @@
 #include "scope.h"
-#include "string_ref.h"
 #include "symbol_table.h"
+#include "string/string.h"
 #include "vm/vm.h"
 #include <assert.h>
 #include <stdlib.h>
@@ -28,7 +28,7 @@ void scope_free_register(Scope *scope) {
     scope->next_reg--;
 }
 
-Symbol *scope_symbol_lookup(Scope *scope, StringRef name) {
+Symbol *scope_symbol_lookup(Scope *scope, String *name) {
     while (scope) {
         Symbol *entry = symbol_table_lookup(scope->symbol_table, name);
         if (entry) {

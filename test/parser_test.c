@@ -1,8 +1,9 @@
 #include "ast.h"
 #include "lexer.h"
 #include "parser.h"
-#include "string_ref.h"
 #include "type.h"
+#include "string/string.h"
+#include "string/string.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -375,6 +376,8 @@ static void test_expression_not_assignable() {
 }
 
 int main() {
+    string_init();
+
     test_single_number();
     test_booleans();
     test_multiple_statements();
@@ -393,6 +396,8 @@ int main() {
     test_assignment();
     test_block();
     test_if();
+
+    string_deinit();
 
     return 0;
 }

@@ -1,12 +1,12 @@
 #include "ast.h"
-#include "string_ref.h"
 #include "type.h"
+#include "string/string.h"
+#include "string/string.h"
 #include "value.h"
 #include "vm/codegen.h"
 #include "vm/opcode.h"
 #include "vm/vm.h"
 #include <assert.h>
-#include <math.h>
 #include <stdlib.h>
 
 // Test number literal compilation
@@ -322,6 +322,8 @@ static void test_if_else_statement() {
 }
 
 int main(void) {
+    string_init();
+
     test_number();
     test_add();
     test_sub();
@@ -340,5 +342,7 @@ int main(void) {
 
     test_if_statement();
     test_if_else_statement();
+
+    string_deinit();
     return 0;
 }

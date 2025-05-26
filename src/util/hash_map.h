@@ -1,25 +1,12 @@
 #ifndef GAB_HASH_MAP_H
 #define GAB_HASH_MAP_H
 
-#include "string_ref.h"
 #include <stdbool.h>
 #include <stdlib.h>
-#include <string.h>
 
-static size_t djb2_hash(StringRef str) {
-    size_t hash = 5381;
-
-    for (int i = 0; i < str.length; i++) {
-        int ch = str.data[i];
-        hash = ((hash << 5) + hash) + ch;
-    }
-
-    return hash;
-}
-
-#define GAB_HASH_MAP(Name, Alias, ValueType)                                                                 \
+#define GAB_HASH_MAP(Name, Alias, KeyType, ValueType)                                                        \
     typedef struct Name##Entry {                                                                             \
-        char *key;                                                                                           \
+        KeyType key;                                                                                         \
         size_t hash;                                                                                         \
         ValueType value;                                                                                     \
         struct Name##Entry *next;                                                                            \
@@ -31,11 +18,15 @@ static size_t djb2_hash(StringRef str) {
         size_t size;                                                                                         \
     } Name;                                                                                                  \
                                                                                                              \
-    static Name *Alias##_create(size_t capacity) {                                                           \
-        Name *map = malloc(sizeof(Name));                                                                    \
+    static void Alias##_init(Name *map, size_t capacity) {                                                   \
         map->buckets = calloc(capacity, sizeof(Name##Entry *));                                              \
         map->capacity = capacity;                                                                            \
         map->size = 0;                                                                                       \
+    }                                                                                                        \
+                                                                                                             \
+    static Name *Alias##_create(size_t capacity) {                                                           \
+        Name *map = malloc(sizeof(Name));                                                                    \
+        Alias##_init(map, capacity);                                                                         \
         return map;                                                                                          \
     }                                                                                                        \
                                                                                                              \
@@ -59,38 +50,38 @@ static size_t djb2_hash(StringRef str) {
         map->capacity = new_cap;                                                                             \
     }                                                                                                        \
                                                                                                              \
-    static bool Alias##_insert(Name *map, StringRef key, ValueType value) {                                  \
+    static ValueType *Alias##_insert(Name *map, KeyType key, ValueType value) {                              \
         if (map->size >= map->capacity * 0.5) {                                                              \
             Alias##_resize(map);                                                                             \
         }                                                                                                    \
                                                                                                              \
-        size_t hash = djb2_hash(key);                                                                        \
+        size_t hash = Alias##_hash(key);                                                                     \
         size_t idx = hash % map->capacity;                                                                   \
         Name##Entry *entry = map->buckets[idx];                                                              \
                                                                                                              \
         while (entry) {                                                                                      \
-            if (string_ref_equals_cstr(key, entry->key)) {                                                   \
-                return false;                                                                                \
+            if (Alias##_key_equals(key, entry->key)) {                                                       \
+                return NULL;                                                                                 \
             }                                                                                                \
             entry = entry->next;                                                                             \
         }                                                                                                    \
                                                                                                              \
         Name##Entry *new_entry = malloc(sizeof(Name##Entry));                                                \
-        new_entry->key = string_ref_to_cstr(key);                                                            \
+        new_entry->key = Alias##_key_dup(key);                                                               \
         new_entry->hash = hash;                                                                              \
         new_entry->value = value;                                                                            \
         new_entry->next = map->buckets[idx];                                                                 \
         map->buckets[idx] = new_entry;                                                                       \
         map->size++;                                                                                         \
-        return true;                                                                                         \
+        return &map->buckets[idx]->value;                                                                    \
     }                                                                                                        \
                                                                                                              \
-    static ValueType *Alias##_lookup(Name *map, StringRef key) {                                             \
-        size_t idx = djb2_hash(key) % map->capacity;                                                         \
+    static ValueType *Alias##_lookup(Name *map, KeyType key) {                                               \
+        size_t idx = Alias##_hash(key) % map->capacity;                                                      \
         Name##Entry *entry = map->buckets[idx];                                                              \
                                                                                                              \
         while (entry) {                                                                                      \
-            if (string_ref_equals_cstr(key, entry->key)) {                                                   \
+            if (Alias##_key_equals(key, entry->key)) {                                                       \
                 return &entry->value;                                                                        \
             }                                                                                                \
             entry = entry->next;                                                                             \
@@ -98,23 +89,23 @@ static size_t djb2_hash(StringRef str) {
         return NULL;                                                                                         \
     }                                                                                                        \
                                                                                                              \
-    static bool Alias##_delete(Name *map, StringRef key) {                                                   \
+    static bool Alias##_delete(Name *map, KeyType key) {                                                     \
         if (map->size == 0)                                                                                  \
             return false;                                                                                    \
                                                                                                              \
-        size_t idx = djb2_hash(key) % map->capacity;                                                         \
+        size_t idx = Alias##_hash(key) % map->capacity;                                                      \
         Name##Entry *entry = map->buckets[idx];                                                              \
         Name##Entry *prev = NULL;                                                                            \
                                                                                                              \
         while (entry) {                                                                                      \
-            if (string_ref_equals_cstr(key, entry->key)) {                                                   \
+            if (Alias##_key_equals(key, entry->key)) {                                                       \
                 if (prev) {                                                                                  \
                     prev->next = entry->next;                                                                \
                 } else {                                                                                     \
                     map->buckets[idx] = entry->next;                                                         \
                 }                                                                                            \
                                                                                                              \
-                free(entry->key);                                                                            \
+                Alias##_entry_free(entry->key, entry->value);                                                \
                 free(entry);                                                                                 \
                 map->size--;                                                                                 \
                 return true;                                                                                 \
@@ -131,12 +122,16 @@ static size_t djb2_hash(StringRef str) {
             Name##Entry *entry = map->buckets[i];                                                            \
             while (entry) {                                                                                  \
                 Name##Entry *next = entry->next;                                                             \
-                free(entry->key);                                                                            \
+                Alias##_entry_free(entry->key, entry->value);                                                \
                 free(entry);                                                                                 \
                 entry = next;                                                                                \
             }                                                                                                \
         }                                                                                                    \
         free(map->buckets);                                                                                  \
+    }                                                                                                        \
+                                                                                                             \
+    static void Alias##_destroy(Name *map) {                                                                 \
+        Alias##_free(map);                                                                                   \
         free(map);                                                                                           \
     }
 

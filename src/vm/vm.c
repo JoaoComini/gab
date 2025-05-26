@@ -3,6 +3,7 @@
 #include "lexer.h"
 #include "parser.h"
 #include "type.h"
+#include "string/string.h"
 #include "vm/codegen.h"
 #include "vm/constant_pool.h"
 #include "vm/opcode.h"
@@ -50,6 +51,9 @@ VM *vm_create() {
     vm->instruction_pointer = 0;
 
     memset(vm->registers, 0, sizeof(vm->registers));
+
+    string_init();
+
     return vm;
 }
 
@@ -312,4 +316,7 @@ void vm_execute(VM *vm, const char *source) {
 
 Value vm_get_result(VM *vm) { return vm->result; }
 
-void vm_free(VM *vm) { free(vm); }
+void vm_free(VM *vm) {
+    string_deinit();
+    free(vm);
+}

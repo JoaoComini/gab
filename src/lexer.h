@@ -1,7 +1,7 @@
 #ifndef LEXER_H
 #define LEXER_H
 
-#include "string_ref.h"
+#include "string/string.h"
 
 typedef enum {
     TOKEN_INVALID,   // Invalid token

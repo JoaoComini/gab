@@ -1,28 +1,31 @@
 #include "type_registry.h"
 
-#include "string_ref.h"
 #include "type.h"
 
 #include <assert.h>
 
-const Type INT_TYPE = (Type){.kind = TYPE_INT, .name = (StringRef){.data = "int", .length = 3}};
-const Type FLOAT_TYPE = (Type){.kind = TYPE_FLOAT, .name = (StringRef){.data = "float", .length = 5}};
-const Type BOOL_TYPE = (Type){.kind = TYPE_BOOL, .name = (StringRef){.data = "bool", .length = 4}};
+static Type *INT_TYPE = NULL;
+static Type *FLOAT_TYPE = NULL;
+static Type *BOOL_TYPE = NULL;
 
 void type_registry_register_builtin(TypeRegistry *registry) {
-    type_registry_insert(registry, INT_TYPE.name, INT_TYPE);
-    type_registry_insert(registry, FLOAT_TYPE.name, FLOAT_TYPE);
-    type_registry_insert(registry, BOOL_TYPE.name, BOOL_TYPE);
+    Type int_type = (Type){.kind = TYPE_INT, .name = string_from_cstr("int")};
+    Type float_type = (Type){.kind = TYPE_FLOAT, .name = string_from_cstr("float")};
+    Type bool_type = (Type){.kind = TYPE_BOOL, .name = string_from_cstr("bool")};
+
+    INT_TYPE = type_registry_insert(registry, int_type.name, int_type);
+    FLOAT_TYPE = type_registry_insert(registry, float_type.name, float_type);
+    BOOL_TYPE = type_registry_insert(registry, bool_type.name, bool_type);
 }
 
 Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind kind) {
     switch (kind) {
     case TYPE_INT:
-        return type_registry_lookup(registry, string_ref_create("int"));
+        return INT_TYPE;
     case TYPE_FLOAT:
-        return type_registry_lookup(registry, string_ref_create("float"));
+        return FLOAT_TYPE;
     case TYPE_BOOL:
-        return type_registry_lookup(registry, string_ref_create("bool"));
+        return BOOL_TYPE;
     default:
         break;
     }

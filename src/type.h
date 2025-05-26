@@ -1,7 +1,8 @@
 #ifndef GAB_TYPE_H
 #define GAB_TYPE_H
 
-#include "string_ref.h"
+#include "string/string.h"
+#include "string/string_ref.h"
 
 typedef enum {
     TYPE_INT,
@@ -12,7 +13,7 @@ typedef enum {
 
 typedef struct {
     TypeKind kind;
-    StringRef name;
+    String *name;
 } Type;
 
 typedef struct {

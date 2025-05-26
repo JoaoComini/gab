@@ -1,8 +1,8 @@
 #include "parser.h"
 #include "ast.h"
 #include "lexer.h"
-#include "string_ref.h"
 #include "type.h"
+#include "string/string.h"
 
 #include <assert.h>
 #include <stdlib.h>

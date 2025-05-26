@@ -1,8 +1,11 @@
 #include "ast.h"
-#include "string_ref.h"
+
 #include "symbol_table.h"
 #include "type.h"
 #include "type_registry.h"
+#include "string/string.h"
+#include "string/string_ref.h"
+
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
@@ -220,7 +223,7 @@ void ast_script_expr_visit(ASTScript *script, ASTExpr *expr) {
         break;
     }
     case EXPR_VARIABLE: {
-        Symbol *entry = symbol_table_lookup(script->symbol_table, expr->var.name);
+        Symbol *entry = symbol_table_lookup(script->symbol_table, string_from_ref(expr->var.name));
 
         assert(entry && "undeclared variable");
 
@@ -252,7 +255,8 @@ void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt) {
 
         Type *type;
         if (stmt->var_decl.type_spec) {
-            Type *decl_type = type_registry_lookup(script->type_registry, stmt->var_decl.type_spec->name);
+            Type *decl_type =
+                type_registry_lookup(script->type_registry, string_from_ref(stmt->var_decl.type_spec->name));
             assert(decl_type && "unknown type");
 
             if (stmt->var_decl.initializer) {
@@ -268,7 +272,7 @@ void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt) {
 
         Symbol symbol = (Symbol){.reg = script->vars_count, .type = type};
 
-        bool ok = symbol_table_insert(script->symbol_table, stmt->var_decl.name, symbol);
+        bool ok = symbol_table_insert(script->symbol_table, string_from_ref(stmt->var_decl.name), symbol);
 
         assert(ok && "variable already declared");
 
@@ -315,7 +319,8 @@ void ast_script_free(ASTScript *script) {
     if (!script)
         return;
 
-    symbol_table_free(script->symbol_table);
+    symbol_table_destroy(script->symbol_table);
+    type_registry_destroy(script->type_registry);
     ast_stmt_list_free(script->statements);
 
     free(script);

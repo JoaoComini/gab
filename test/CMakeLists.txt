@@ -2,7 +2,7 @@ set(
     TEST_SOURCES
     lexer_test.c
     parser_test.c
-    hash_map_test.c
+    util/hash_map_test.c
     vm/constant_pool_test.c
     vm/codegen_test.c
     vm/vm_test.c

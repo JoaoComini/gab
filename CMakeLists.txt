@@ -12,9 +12,10 @@ add_library(gab
     src/ast.c
     src/lexer.c
     src/parser.c
-    src/string_ref.c
     src/type.c
     src/type_registry.c
+    src/string/string_ref.c
+    src/string/string.c
     src/vm/constant_pool.c
     src/vm/vm.c
     src/vm/codegen.c

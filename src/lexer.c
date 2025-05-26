@@ -1,5 +1,5 @@
 #include "lexer.h"
-#include "string_ref.h"
+#include "string/string.h"
 
 #include <assert.h>
 #include <ctype.h>

@@ -1,8 +1,8 @@
 #ifndef GAB_SCOPE_H
 #define GAB_SCOPE_H
 
-#include "string_ref.h"
 #include "symbol_table.h"
+#include "string/string.h"
 
 typedef struct Scope {
     SymbolTable *symbol_table;
@@ -21,6 +21,6 @@ void scope_free(Scope *scope);
 int scope_alloc_register(Scope *scope);
 void scope_free_register(Scope *scope);
 
-Symbol *scope_symbol_lookup(Scope *scope, StringRef name);
+Symbol *scope_symbol_lookup(Scope *scope, String *name);
 
 #endif
