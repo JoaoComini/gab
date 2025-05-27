@@ -56,9 +56,10 @@ static void test_braces() {
 }
 
 static void test_colons() {
-    Lexer lexer = lexer_create("; :");
+    Lexer lexer = lexer_create("; : ,");
     assert_token(&lexer, TOKEN_SEMICOLON);
     assert_token(&lexer, TOKEN_COLON);
+    assert_token(&lexer, TOKEN_COMMA);
     assert_token(&lexer, TOKEN_EOF);
 }
 
@@ -77,11 +78,12 @@ static void test_identifiers() {
 }
 
 static void test_keywords() {
-    Lexer lexer = lexer_create("let return if else true false");
+    Lexer lexer = lexer_create("let return if else func true false");
     assert_token(&lexer, TOKEN_LET);
     assert_token(&lexer, TOKEN_RETURN);
     assert_token(&lexer, TOKEN_IF);
     assert_token(&lexer, TOKEN_ELSE);
+    assert_token(&lexer, TOKEN_FUNC);
     assert_token(&lexer, TOKEN_TRUE);
     assert_token(&lexer, TOKEN_FALSE);
 }

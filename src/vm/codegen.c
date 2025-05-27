@@ -1,7 +1,11 @@
 #include "codegen.h"
 
-#include "ast.h"
+#include "ast/ast.h"
+#include "ast/expr.h"
+#include "ast/stmt.h"
+#include "scope.h"
 #include "type.h"
+#include "vm/chunk.h"
 #include "vm/constant_pool.h"
 #include "vm/opcode.h"
 #include "vm/vm.h"
@@ -17,16 +21,18 @@ typedef struct {
 } CodegenState;
 
 static void codegen_stmt(CodegenState *state, ASTStmt *ast);
-static void codegen_return_stmt(CodegenState *state, ASTStmt *ast);
-static void codegen_var_decl_stmt(CodegenState *state, ASTStmt *ast);
-static void codegen_assign_stmt(CodegenState *state, ASTStmt *ast);
-static void codegen_block_stmt(CodegenState *state, ASTStmt *ast);
-static void codegen_if_stmt(CodegenState *state, ASTStmt *ast);
+static void codegen_return_stmt(CodegenState *state, ASTReturnStmt *ast);
+static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast);
+static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast);
+static void codegen_block_stmt(CodegenState *state, ASTBlockStmt *ast);
+static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast);
+static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast);
 
 static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast);
 static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_bin_op_logical_expr(CodegenState *state, ASTExpr *node);
+static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node);
 
 static OpCode bin_op_to_float_op(BinOp bin_op);
 static OpCode bin_op_to_int_op(BinOp bin_op);
@@ -46,8 +52,8 @@ void codegen_patch_jump(CodegenState *state, CodegenLabel label, OpCode op, unsi
 Chunk *codegen_generate(ASTScript *script) {
     CodegenState state = {
         .chunk = chunk_create(),
-        .first_reg = script->vars_count,
-        .next_reg = script->vars_count,
+        .first_reg = script->vars_count + 1,
+        .next_reg = script->vars_count + 1,
         .snapshot_index = 0,
     };
 
@@ -64,78 +70,95 @@ static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
         codegen_expr(state, ast->expr.value);
         break;
     case STMT_RETURN: {
-        codegen_return_stmt(state, ast);
+        codegen_return_stmt(state, &ast->ret);
         break;
     }
     case STMT_VAR_DECL: {
-        codegen_var_decl_stmt(state, ast);
+        codegen_var_decl_stmt(state, &ast->var_decl);
         break;
     }
     case STMT_ASSIGN: {
-        codegen_assign_stmt(state, ast);
+        codegen_assign_stmt(state, &ast->assign);
         break;
     }
     case STMT_BLOCK: {
-        codegen_block_stmt(state, ast);
+        codegen_block_stmt(state, &ast->block);
         break;
     }
     case STMT_IF: {
-        codegen_if_stmt(state, ast);
+        codegen_if_stmt(state, &ast->ifstmt);
         break;
     }
+    case STMT_FUNC_DECL:
+        codegen_func_decl_stmt(state, &ast->func_decl);
+        break;
     }
 }
 
-static void codegen_return_stmt(CodegenState *state, ASTStmt *ast) {
+static void codegen_return_stmt(CodegenState *state, ASTReturnStmt *ast) {
     codegen_save_snapshot(state);
 
-    unsigned int reg = codegen_expr(state, ast->ret.result);
+    unsigned int reg = codegen_expr(state, ast->result);
     chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RETURN, 0, reg, 0));
 
     codegen_load_snapshot(state);
 }
 
-static void codegen_var_decl_stmt(CodegenState *state, ASTStmt *ast) {
-    if (!ast->var_decl.initializer) {
+static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
+    if (!ast->initializer) {
         return;
     }
 
     codegen_save_snapshot(state);
 
-    unsigned int r1 = codegen_expr(state, ast->var_decl.initializer);
-    chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_MOVE, ast->var_decl.symbol.reg, r1, 0));
+    Instruction instruction;
+    if (ast->symbol.scope == SCOPE_GLOBAL) {
+        unsigned int r1 = codegen_expr(state, ast->initializer);
+        instruction = VM_ENCODE_I(OP_STORE_GLOBAL, r1, ast->symbol.offset);
+    } else {
+        unsigned int r1 = codegen_expr(state, ast->initializer);
+        instruction = VM_ENCODE_R(OP_MOVE, ast->symbol.offset + 1, r1, 0);
+    }
 
+    chunk_add_instruction(state->chunk, instruction);
     codegen_load_snapshot(state);
 }
 
-static void codegen_assign_stmt(CodegenState *state, ASTStmt *ast) {
+static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
     codegen_save_snapshot(state);
 
-    unsigned int rd = codegen_expr(state, ast->assign.target);
-    unsigned int r1 = codegen_expr(state, ast->assign.value);
+    Instruction instruction;
+    if (ast->target->kind == EXPR_VARIABLE && ast->target->symbol.scope == SCOPE_GLOBAL) {
+        unsigned int r1 = codegen_expr(state, ast->value);
+        instruction = VM_ENCODE_I(OP_STORE_GLOBAL, r1, ast->target->symbol.offset);
+    } else {
+        unsigned int rd = codegen_expr(state, ast->target);
+        unsigned int r1 = codegen_expr(state, ast->value);
 
-    chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_MOVE, rd, r1, 0));
+        instruction = VM_ENCODE_R(OP_MOVE, rd, r1, 0);
+    }
 
+    chunk_add_instruction(state->chunk, instruction);
     codegen_load_snapshot(state);
 }
 
-static void codegen_block_stmt(CodegenState *state, ASTStmt *ast) {
-    for (int i = 0; i < ast->block.list.size; i++) {
-        codegen_stmt(state, ast->block.list.data[i]);
+static void codegen_block_stmt(CodegenState *state, ASTBlockStmt *ast) {
+    for (int i = 0; i < ast->list.size; i++) {
+        codegen_stmt(state, ast->list.data[i]);
     }
 }
 
-static void codegen_if_stmt(CodegenState *state, ASTStmt *ast) {
+static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast) {
     unsigned int saved_reg = state->next_reg;
 
-    unsigned int cond_reg = codegen_expr(state, ast->ifstmt.condition);
+    unsigned int cond_reg = codegen_expr(state, ast->condition);
     CodegenLabel if_false = codegen_create_label(state);
 
     state->next_reg = saved_reg;
 
-    codegen_stmt(state, ast->ifstmt.then_block);
+    codegen_stmt(state, ast->then_block);
 
-    if (!ast->ifstmt.else_block) {
+    if (!ast->else_block) {
         codegen_patch_jump(state, if_false, OP_JMP_IF_FALSE, cond_reg);
         return;
     }
@@ -144,19 +167,21 @@ static void codegen_if_stmt(CodegenState *state, ASTStmt *ast) {
 
     codegen_patch_jump(state, if_false, OP_JMP_IF_FALSE, cond_reg);
 
-    codegen_stmt(state, ast->ifstmt.else_block);
+    codegen_stmt(state, ast->else_block);
 
     codegen_patch_jump(state, end, OP_JMP, 0);
 }
+
+static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {}
 
 static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
     switch (ast->kind) {
     case EXPR_LITERAL:
         return codegen_literal_expr(state, ast);
+    case EXPR_VARIABLE:
+        return codegen_variable_expr(state, ast);
     case EXPR_BIN_OP:
         return codegen_bin_op_expr(state, ast);
-    case EXPR_VARIABLE:
-        return ast->symbol.reg;
     }
 }
 
@@ -183,6 +208,19 @@ static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node) {
     chunk_add_instruction(state->chunk, load_const);
 
     return r1;
+}
+
+static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node) {
+    if (node->symbol.scope == SCOPE_LOCAL) {
+        return node->symbol.offset + 1;
+    }
+
+    unsigned int rd = codegen_alloc_register(state);
+    Instruction load_global = VM_ENCODE_I(OP_LOAD_GLOBAL, rd, node->symbol.offset);
+
+    chunk_add_instruction(state->chunk, load_global);
+
+    return rd;
 }
 
 static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node) {
@@ -331,6 +369,6 @@ CodegenLabel codegen_create_label(CodegenState *state) {
 }
 
 void codegen_patch_jump(CodegenState *state, CodegenLabel label, OpCode op, unsigned int reg) {
-    Instruction patch = VM_ENCODE_I(op, reg, state->chunk->size - label.position - 1);
+    Instruction patch = VM_ENCODE_I(op, reg, state->chunk->instructions.size - label.position - 1);
     chunk_patch_instruction(state->chunk, label.position, patch);
 }

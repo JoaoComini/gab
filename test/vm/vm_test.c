@@ -1,53 +1,8 @@
 #include "type.h"
 #include "value.h"
 #include "vm/vm.h"
+
 #include <assert.h>
-#include <stdio.h>
-
-static void test_chunk_creation() {
-    Chunk *chunk = chunk_create();
-
-    // Verify initial state
-    assert(chunk != NULL);
-    assert(chunk->instructions != NULL);
-    assert(chunk->size == 0);
-    assert(chunk->capacity == VM_CHUNK_INITIAL_CAPACITY);
-    assert(chunk->const_pool != NULL);
-
-    chunk_free(chunk);
-}
-
-static void test_instruction_addition() {
-    Chunk *chunk = chunk_create();
-    const Instruction instructions[] = {0xDEADBEEF, 0xCAFEBABE, 0x12345678};
-
-    for (size_t i = 0; i < 3; i++) {
-        chunk_add_instruction(chunk, instructions[i]);
-        assert(chunk->size == i + 1);
-        assert(chunk->instructions[i] == instructions[i]);
-    }
-
-    assert(chunk->capacity == VM_CHUNK_INITIAL_CAPACITY);
-
-    chunk_free(chunk);
-}
-
-static void test_chunk_resize() {
-    Chunk *chunk = chunk_create();
-
-    for (size_t i = 0; i < VM_CHUNK_INITIAL_CAPACITY; i++) {
-        chunk_add_instruction(chunk, i);
-    }
-
-    assert(chunk->capacity == VM_CHUNK_INITIAL_CAPACITY);
-
-    // Trigger resize
-    chunk_add_instruction(chunk, 0xFFFF);
-    assert(chunk->capacity == VM_CHUNK_INITIAL_CAPACITY * 2);
-    assert(chunk->size == VM_CHUNK_INITIAL_CAPACITY + 1);
-
-    chunk_free(chunk);
-}
 
 static void test_vm_execute() {
     VM *vm = vm_create();
@@ -63,7 +18,7 @@ static void test_vm_execute() {
                    "let i = (h / g) + (f - (e * (d / (c + (b - a)))));\n"
                    "let result : int = ((i + h) * (g - f) + (e / d)) - ((c + b) * (a - 1));\n"
                    "let compare = result == 13120;\n"
-                   "if compare { let a = 10; return true; } else { return false; }");
+                   "if compare { let a = 10; let b = 2; return a * b == 20; } else { return false; }");
 
     Value result = vm_get_result(vm);
 
@@ -74,9 +29,6 @@ static void test_vm_execute() {
 }
 
 int main() {
-    test_chunk_creation();
-    test_instruction_addition();
-    test_chunk_resize();
     test_vm_execute();
 
     return 0;

@@ -1,20 +1,37 @@
-#include "ast.h"
+#include "ast/ast.h"
 #include "lexer.h"
 #include "parser.h"
-#include "string/string.h"
 #include "type.h"
 
 #include <assert.h>
 #include <stdbool.h>
 #include <string.h>
 
+static ASTScript *assert_parse(const char *code) {
+    ASTScript *script = ast_script_create();
+    Lexer lexer = lexer_create(code);
+    Parser parser = parser_create(&lexer);
+    bool ok = parser_parse(&parser, script);
+    assert(ok);
+
+    return script;
+}
+
+static void assert_parse_error(const char *code, const char *expected_error) {
+    ASTScript *script = ast_script_create();
+    Lexer lexer = lexer_create(code);
+    Parser parser = parser_create(&lexer);
+    bool ok = parser_parse(&parser, script);
+    assert(!ok);
+
+    assert(strcmp(parser.error.message, expected_error) == 0);
+
+    ast_script_destroy(script);
+}
+
 // --- Test Cases ---
 static void test_single_number() {
-    Lexer lexer = lexer_create("42;");
-    Parser parser = parser_create(&lexer);
-    ASTScript *script = parser_parse(&parser);
-    assert(parser.ok);
-    assert(script != NULL);
+    ASTScript *script = assert_parse("42;");
     assert(script->statements.size == 1);
 
     ASTStmt *stmt = script->statements.data[0];
@@ -27,11 +44,7 @@ static void test_single_number() {
 }
 
 static void test_booleans() {
-    Lexer lexer = lexer_create("true; false;");
-    Parser parser = parser_create(&lexer);
-    ASTScript *script = parser_parse(&parser);
-    assert(parser.ok);
-    assert(script != NULL);
+    ASTScript *script = assert_parse("true; false;");
     assert(script->statements.size == 2);
 
     ASTStmt *true_stmt = script->statements.data[0];
@@ -50,11 +63,7 @@ static void test_booleans() {
 }
 
 static void test_multiple_statements() {
-    Lexer lexer = lexer_create("42; 3 + 5;");
-    Parser parser = parser_create(&lexer);
-    ASTScript *script = parser_parse(&parser);
-    assert(parser.ok);
-    assert(script != NULL);
+    ASTScript *script = assert_parse("42; 3 + 5;");
     assert(script->statements.size == 2);
 
     ASTStmt *first = script->statements.data[0];
@@ -67,11 +76,7 @@ static void test_multiple_statements() {
 }
 
 static void test_simple_addition() {
-    Lexer lexer = lexer_create("3 + 4;");
-    Parser parser = parser_create(&lexer);
-    ASTScript *script = parser_parse(&parser);
-    assert(parser.ok);
-    assert(script != NULL);
+    ASTScript *script = assert_parse("3 + 4;");
     assert(script->statements.size == 1);
 
     ASTStmt *stmt = script->statements.data[0];
@@ -86,11 +91,7 @@ static void test_simple_addition() {
 }
 
 static void test_operator_precedence() {
-    Lexer lexer = lexer_create("3 + 4 * 2;");
-    Parser parser = parser_create(&lexer);
-    ASTScript *script = parser_parse(&parser);
-    assert(parser.ok);
-    assert(script != NULL);
+    ASTScript *script = assert_parse("3 + 4 * 2;");
     assert(script->statements.size == 1);
 
     ASTStmt *stmt = script->statements.data[0];
@@ -116,11 +117,7 @@ static void test_operator_precedence() {
 }
 
 static void test_parentheses() {
-    Lexer lexer = lexer_create("(3 + 4) * 2;");
-    Parser parser = parser_create(&lexer);
-    ASTScript *script = parser_parse(&parser);
-    assert(parser.ok);
-    assert(script != NULL);
+    ASTScript *script = assert_parse("(3 + 4) * 2;");
     assert(script->statements.size == 1);
 
     ASTStmt *stmt = script->statements.data[0];
@@ -147,11 +144,7 @@ static void test_parentheses() {
 }
 
 static void test_variables() {
-    Lexer lexer = lexer_create("let x = 2; let y = 3; 2 + (x * y);");
-
-    Parser parser = parser_create(&lexer);
-    ASTScript *script = parser_parse(&parser);
-    assert(script != NULL);
+    ASTScript *script = assert_parse("let x = 2; let y = 3; 2 + (x * y);");
 
     assert(script->statements.size == 3);
 
@@ -177,11 +170,8 @@ static void test_variables() {
     ast_script_destroy(script);
 }
 
-static void test_declaration() {
-    Lexer lexer = lexer_create("let x = 2 + 3;");
-    Parser parser = parser_create(&lexer);
-    ASTScript *script = parser_parse(&parser);
-    assert(script != NULL);
+static void test_var_declaration() {
+    ASTScript *script = assert_parse("let x = 2 + 3;");
 
     assert(script->statements.size == 1);
 
@@ -206,11 +196,8 @@ static void test_declaration() {
     ast_script_destroy(script);
 }
 
-static void test_unintialized_declaration() {
-    Lexer lexer = lexer_create("let x: int;");
-    Parser parser = parser_create(&lexer);
-    ASTScript *script = parser_parse(&parser);
-    assert(script != NULL);
+static void test_var_uninit_declaration() {
+    ASTScript *script = assert_parse("let x: int;");
 
     assert(script->statements.size == 1);
 
@@ -223,23 +210,81 @@ static void test_unintialized_declaration() {
     ast_script_destroy(script);
 }
 
-static void test_untyped_and_unintialized_declaration() {
-    Lexer lexer = lexer_create("let x;");
-    Parser parser = parser_create(&lexer);
-    ASTScript *script = parser_parse(&parser);
+static void test_var_untyped_uninti_declaration() {
+    assert_parse_error("let x;", "expected type after identifier");
+}
 
-    assert(!parser.ok);
-    assert(strcmp(parser.error.message, "expected type after identifier") == 0);
-    assert(script == NULL);
+static void test_func_declaration() {
+    ASTScript *script = assert_parse("func add(x : int, y : int): int {"
+                                     "    return x + y;"
+                                     "}");
+
+    assert(script->statements.size == 1);
+
+    ASTStmt *stmt = script->statements.data[0];
+    assert(stmt->kind == STMT_FUNC_DECL);
+
+    assert(string_ref_equals_cstr(stmt->func_decl.name, "add"));
+    assert(string_ref_equals_cstr(stmt->func_decl.return_type->name, "int"));
+
+    ASTFieldList params = stmt->func_decl.params;
+    assert(string_ref_equals_cstr(params.data[0]->name, "x"));
+    assert(string_ref_equals_cstr(params.data[1]->name, "y"));
+
+    ASTStmt *body = stmt->func_decl.body;
+    assert(body->kind == STMT_BLOCK);
+    assert(body->block.list.data[0]->kind == STMT_RETURN);
 
     ast_script_destroy(script);
 }
 
+static void test_unit_func_declaration() {
+    ASTScript *script = assert_parse("func test(x : int, y : int) {"
+                                     "    let a = x + y;"
+                                     "}");
+
+    assert(script->statements.size == 1);
+
+    ASTStmt *stmt = script->statements.data[0];
+    assert(stmt->kind == STMT_FUNC_DECL);
+
+    assert(string_ref_equals_cstr(stmt->func_decl.name, "test"));
+    assert(stmt->func_decl.return_type == NULL);
+
+    ASTFieldList params = stmt->func_decl.params;
+    assert(string_ref_equals_cstr(params.data[0]->name, "x"));
+    assert(string_ref_equals_cstr(params.data[1]->name, "y"));
+
+    ASTStmt *body = stmt->func_decl.body;
+    assert(body->kind == STMT_BLOCK);
+    assert(body->block.list.data[0]->kind == STMT_VAR_DECL);
+
+    ast_script_destroy(script);
+}
+
+static void test_no_params_func_declaration() {
+    ASTScript *script = assert_parse("func test() {"
+                                     "    return true;"
+                                     "}");
+
+    assert(script->statements.size == 1);
+
+    ASTStmt *stmt = script->statements.data[0];
+    assert(stmt->kind == STMT_FUNC_DECL);
+    assert(string_ref_equals_cstr(stmt->func_decl.name, "test"));
+    assert(string_ref_equals_cstr(stmt->func_decl.return_type->name, "bool"));
+
+    ASTFieldList params = stmt->func_decl.params;
+    assert(params.size == 0);
+
+    ASTStmt *body = stmt->func_decl.body;
+    assert(body->kind == STMT_BLOCK);
+    assert(body->block.list.data[0]->kind == STMT_RETURN);
+
+    ast_script_destroy(script);
+}
 static void test_assignment() {
-    Lexer lexer = lexer_create("x = 2;");
-    Parser parser = parser_create(&lexer);
-    ASTScript *script = parser_parse(&parser);
-    assert(script != NULL);
+    ASTScript *script = assert_parse("x = 2;");
 
     assert(script->statements.size == 1);
 
@@ -258,10 +303,7 @@ static void test_assignment() {
 }
 
 static void test_block() {
-    Lexer lexer = lexer_create("{ let x = 2; x = 1; }");
-    Parser parser = parser_create(&lexer);
-    ASTScript *script = parser_parse(&parser);
-    assert(script != NULL);
+    ASTScript *script = assert_parse("{ let x = 2; x = 1; }");
 
     assert(script->statements.size == 1);
 
@@ -273,9 +315,7 @@ static void test_block() {
 }
 
 static void test_if() {
-    Lexer lexer = lexer_create("if 2 < 1 { 10; } else { 20; }");
-    Parser parser = parser_create(&lexer);
-    ASTScript *script = parser_parse(&parser);
+    ASTScript *script = assert_parse("if 2 < 1 { 10; } else { 20; }");
     assert(script != NULL);
 
     assert(script->statements.size == 1);
@@ -298,10 +338,7 @@ static void test_if() {
 }
 
 static void test_return() {
-    Lexer lexer = lexer_create("return 2;");
-    Parser parser = parser_create(&lexer);
-    ASTScript *script = parser_parse(&parser);
-    assert(script != NULL);
+    ASTScript *script = assert_parse("return 2;");
 
     assert(script->statements.size == 1);
 
@@ -314,65 +351,17 @@ static void test_return() {
 
     ast_script_destroy(script);
 }
-static void test_invalid_token() {
-    Lexer lexer = lexer_create("3 + $;");
-    Parser parser = parser_create(&lexer);
-    ASTScript *ast = parser_parse(&parser);
+static void test_invalid_token() { assert_parse_error("3 + $;", "expected expression"); }
 
-    assert(!parser.ok);
-    assert(strcmp(parser.error.message, "expected expression") == 0);
-    assert(ast == NULL); // Should fail
-}
+static void test_missing_paren() { assert_parse_error("(3 + 4", "expected ')'"); }
 
-static void test_missing_paren() {
-    Lexer lexer = lexer_create("(3 + 4");
-    Parser parser = parser_create(&lexer);
-    ASTScript *ast = parser_parse(&parser);
+static void test_missing_identifier() { assert_parse_error("let ;", "expected identifier after 'let'"); }
 
-    assert(!parser.ok);
-    assert(strcmp(parser.error.message, "expected ')'") == 0);
-    assert(ast == NULL); // Should fail
-}
+static void test_invalid_declaration() { assert_parse_error("let a b", "expected ';' or '='"); }
 
-static void test_missing_identifier() {
-    Lexer lexer = lexer_create("let ;");
-    Parser parser = parser_create(&lexer);
-    ASTScript *ast = parser_parse(&parser);
+static void test_missing_semicolon() { assert_parse_error("3 + 5", "expected ';' after statement"); }
 
-    assert(!parser.ok);
-    assert(strcmp(parser.error.message, "expected identifier after 'let'") == 0);
-    assert(ast == NULL); // Should fail
-}
-
-static void test_invalid_declaration() {
-    Lexer lexer = lexer_create("let a b");
-    Parser parser = parser_create(&lexer);
-    ASTScript *ast = parser_parse(&parser);
-
-    assert(!parser.ok);
-    assert(strcmp(parser.error.message, "expected ';' or '='") == 0);
-    assert(ast == NULL); // Should fail
-}
-
-static void test_missing_semicolon() {
-    Lexer lexer = lexer_create("3 + 5");
-    Parser parser = parser_create(&lexer);
-    ASTScript *ast = parser_parse(&parser);
-
-    assert(!parser.ok);
-    assert(strcmp(parser.error.message, "expected ';' after statement") == 0);
-    assert(ast == NULL); // Should fail
-}
-
-static void test_expression_not_assignable() {
-    Lexer lexer = lexer_create("2 = 1");
-    Parser parser = parser_create(&lexer);
-    ASTScript *ast = parser_parse(&parser);
-
-    assert(!parser.ok);
-    assert(strcmp(parser.error.message, "expression is not assignable") == 0);
-    assert(ast == NULL);
-}
+static void test_expression_not_assignable() { assert_parse_error("2 = 1", "expression is not assignable"); }
 
 int main() {
     string_init();
@@ -389,9 +378,11 @@ int main() {
     test_invalid_declaration();
     test_missing_semicolon();
     test_variables();
-    test_declaration();
-    test_unintialized_declaration();
-    test_untyped_and_unintialized_declaration();
+    test_var_declaration();
+    test_var_uninit_declaration();
+    test_var_untyped_uninti_declaration();
+    test_func_declaration();
+    test_unit_func_declaration();
     test_assignment();
     test_block();
     test_if();

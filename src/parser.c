@@ -1,7 +1,7 @@
 #include "parser.h"
-#include "ast.h"
+#include "ast/ast.h"
 #include "lexer.h"
-#include "string/string.h"
+#include "string/string_ref.h"
 #include "type.h"
 
 #include <assert.h>
@@ -10,6 +10,7 @@
 
 static ASTStmt *parse_statement(Parser *parser);
 static ASTStmt *parse_var_decl_stmt(Parser *parser);
+static ASTStmt *parse_func_decl_stmt(Parser *parser);
 static ASTStmt *parse_if_stmt(Parser *parser);
 static ASTStmt *parse_block_stmt(Parser *parser);
 static ASTStmt *parse_return_stmt(Parser *parser);
@@ -27,15 +28,12 @@ static void parser_error(Parser *parser, const char *message, Token token);
 Parser parser_create(Lexer *lexer) {
     return (Parser){
         .lexer = lexer,
-        .ok = true,
     };
 }
 
 void parser_next_token(Parser *parser) { parser->current = lexer_next(parser->lexer); }
 
-ASTScript *parser_parse(Parser *parser) {
-    ASTScript *script = ast_script_create();
-
+bool parser_parse(Parser *parser, ASTScript *script) {
     parser_next_token(parser);
 
     while (parser->current.type != TOKEN_EOF) {
@@ -46,14 +44,13 @@ ASTScript *parser_parse(Parser *parser) {
 
         ASTStmt *stmt = parse_statement(parser);
         if (!stmt) {
-            ast_script_destroy(script);
-            return NULL;
+            return false;
         }
 
         ast_script_add_statement(script, stmt);
     }
 
-    return script;
+    return true;
 }
 
 static ASTStmt *parse_statement(Parser *parser) {
@@ -62,6 +59,10 @@ static ASTStmt *parse_statement(Parser *parser) {
     switch (parser->current.type) {
     case TOKEN_LET: {
         stmt = parse_var_decl_stmt(parser);
+        break;
+    }
+    case TOKEN_FUNC: {
+        stmt = parse_func_decl_stmt(parser);
         break;
     }
     case TOKEN_IF: {
@@ -92,7 +93,7 @@ static ASTStmt *parse_statement(Parser *parser) {
 
     if (parser->current.type != TOKEN_SEMICOLON) {
         parser_error(parser, "expected ';' after statement", parser->current);
-        ast_stmt_free(stmt);
+        ast_stmt_destroy(stmt);
 
         return NULL;
     }
@@ -205,6 +206,92 @@ static ASTStmt *parse_block_stmt(Parser *parser) {
     return ast_block_stmt_create(list);
 }
 
+static ASTStmt *parse_func_decl_stmt(Parser *parser) {
+    parser_next_token(parser); // eat "func"
+
+    if (parser->current.type != TOKEN_IDENT) {
+        parser_error(parser, "expected identifier", parser->current);
+        return NULL;
+    }
+
+    StringRef func_name = parser->current.lexeme;
+    parser_next_token(parser); // eat func name
+
+    if (parser->current.type != TOKEN_LPAREN) {
+        parser_error(parser, "expected '('", parser->current);
+        return NULL;
+    }
+
+    parser_next_token(parser); // eat '(';
+
+    ASTFieldList func_params = ast_field_list_create();
+    while (parser->current.type != TOKEN_RPAREN) {
+        if (parser->current.type != TOKEN_IDENT) {
+            parser_error(parser, "expected identifier", parser->current);
+            return NULL;
+        }
+
+        StringRef param_name = parser->current.lexeme;
+        parser_next_token(parser); // eat param name
+
+        if (parser->current.type != TOKEN_COLON) {
+            parser_error(parser, "expected ':'", parser->current);
+            ast_field_list_free(&func_params);
+            return NULL;
+        }
+
+        parser_next_token(parser); // eat ':'
+
+        if (parser->current.type != TOKEN_IDENT) {
+            parser_error(parser, "expected type after ':'", parser->current);
+            ast_field_list_free(&func_params);
+            return NULL;
+        }
+
+        TypeSpec *param_type = type_spec_create(parser->current.lexeme);
+        parser_next_token(parser); // eat param type
+
+        if (parser->current.type != TOKEN_COMMA && parser->current.type != TOKEN_RPAREN) {
+            parser_error(parser, "expected ')'", parser->current);
+            ast_field_list_free(&func_params);
+            return NULL;
+        }
+
+        if (parser->current.type == TOKEN_COMMA) {
+            parser_next_token(parser); // eat ','
+        }
+
+        ASTField *param = ast_field_create(param_name, param_type);
+
+        ast_field_list_add(&func_params, param);
+    }
+
+    parser_next_token(parser); // eat ')'
+
+    TypeSpec *func_type = NULL;
+    if (parser->current.type == TOKEN_COLON) {
+        parser_next_token(parser); // eat ':'
+
+        if (parser->current.type != TOKEN_IDENT) {
+            parser_error(parser, "expected type after ':'", parser->current);
+            ast_field_list_free(&func_params);
+            return NULL;
+        }
+
+        func_type = type_spec_create(parser->current.lexeme);
+
+        parser_next_token(parser); // eat return type
+    }
+
+    ASTStmt *func_body = parse_block_stmt(parser);
+    if (!func_body) {
+        ast_field_list_free(&func_params);
+        return NULL;
+    }
+
+    return ast_func_decl_stmt_create(func_name, func_type, func_params, func_body);
+}
+
 static ASTStmt *parse_return_stmt(Parser *parser) {
     parser_next_token(parser); // eat "return"
 
@@ -246,6 +333,7 @@ static bool stmt_needs_terminator(ASTStmt *stmt) {
     switch (stmt->kind) {
     case STMT_IF:
     case STMT_BLOCK:
+    case STMT_FUNC_DECL:
         return false;
     default:
         return true;
@@ -408,5 +496,4 @@ static void parser_error(Parser *parser, const char *message, Token token) {
     parser->error.message = message;
     parser->error.line = token.line;
     parser->error.column = token.column;
-    parser->ok = false;
 }

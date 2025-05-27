@@ -1,5 +1,6 @@
 #include "ast.h"
 
+#include "scope.h"
 #include "string/string.h"
 #include "string/string_ref.h"
 #include "symbol_table.h"
@@ -10,171 +11,16 @@
 #include <stdlib.h>
 #include <string.h>
 
-ASTExpr *ast_expr_create() { return malloc(sizeof(ASTExpr)); }
-
-ASTExpr *ast_literal_expr_create(Literal value) {
-    ASTExpr *node = ast_expr_create();
-    node->kind = EXPR_LITERAL;
-    node->lit = value;
-    return node;
-}
-
-ASTExpr *ast_bin_op_expr_create(ASTExpr *left, BinOp op, ASTExpr *right) {
-    ASTExpr *node = ast_expr_create();
-    node->kind = EXPR_BIN_OP;
-    node->bin_op.left = left;
-    node->bin_op.right = right;
-    node->bin_op.op = op;
-    return node;
-}
-
-ASTExpr *ast_variable_expr_create(StringRef name) {
-    ASTExpr *node = ast_expr_create();
-    node->kind = EXPR_VARIABLE;
-    node->var.name = name;
-    return node;
-}
-
-ASTStmt *ast_stmt_create() { return malloc(sizeof(ASTStmt)); }
-
-ASTStmt *ast_expr_stmt_create(ASTExpr *value) {
-    ASTStmt *stmt = ast_stmt_create();
-    stmt->kind = STMT_EXPR;
-    stmt->expr.value = value;
-    return stmt;
-}
-
-ASTStmt *ast_var_decl_stmt_create(StringRef name, TypeSpec *type_spec, ASTExpr *initializer) {
-    ASTStmt *stmt = ast_stmt_create();
-    stmt->kind = STMT_VAR_DECL;
-    stmt->var_decl.name = name;
-    stmt->var_decl.type_spec = type_spec;
-    stmt->var_decl.initializer = initializer;
-    return stmt;
-}
-
-ASTStmt *ast_assign_stmt_create(ASTExpr *target, ASTExpr *value) {
-    ASTStmt *stmt = ast_stmt_create();
-    stmt->kind = STMT_ASSIGN;
-    stmt->assign.target = target;
-    stmt->assign.value = value;
-    return stmt;
-}
-
-ASTStmt *ast_if_stmt_create(ASTExpr *condition, ASTStmt *then_block, ASTStmt *else_block) {
-    ASTStmt *stmt = ast_stmt_create();
-    stmt->kind = STMT_IF;
-    stmt->ifstmt.condition = condition;
-    stmt->ifstmt.then_block = then_block;
-    stmt->ifstmt.else_block = else_block;
-    return stmt;
-}
-
-ASTStmt *ast_block_stmt_create(ASTStmtList list) {
-    ASTStmt *stmt = ast_stmt_create();
-    stmt->kind = STMT_BLOCK;
-    stmt->block.list = list;
-    return stmt;
-}
-
-ASTStmt *ast_return_stmt_create(ASTExpr *result) {
-    ASTStmt *stmt = ast_stmt_create();
-    stmt->kind = STMT_RETURN;
-    stmt->ret.result = result;
-    return stmt;
-}
-
-void ast_expr_free(ASTExpr *expr) {
-    if (!expr)
-        return;
-
-    switch (expr->kind) {
-    case EXPR_BIN_OP:
-        ast_expr_free(expr->bin_op.left);
-        ast_expr_free(expr->bin_op.right);
-        break;
-    default:
-        break;
-    }
-
-    free(expr);
-}
-
-void ast_stmt_free(ASTStmt *stmt) {
-    if (!stmt)
-        return;
-
-    switch (stmt->kind) {
-    case STMT_EXPR:
-        ast_expr_free(stmt->expr.value);
-        break;
-    case STMT_VAR_DECL:
-        ast_expr_free(stmt->var_decl.initializer);
-        if (stmt->var_decl.type_spec) {
-            type_spec_destroy(stmt->var_decl.type_spec);
-        }
-        break;
-    case STMT_ASSIGN:
-        ast_expr_free(stmt->assign.target);
-        ast_expr_free(stmt->assign.value);
-        break;
-    case STMT_IF:
-        ast_expr_free(stmt->ifstmt.condition);
-        ast_stmt_free(stmt->ifstmt.then_block);
-        ast_stmt_free(stmt->ifstmt.else_block);
-        break;
-    case STMT_BLOCK:
-        ast_stmt_list_free(stmt->block.list);
-        break;
-    case STMT_RETURN:
-        ast_expr_free(stmt->ret.result);
-        break;
-    }
-
-    free(stmt);
-}
-
-ASTStmtList ast_stmt_list_create() {
-    return (ASTStmtList){
-        .data = NULL,
-        .size = 0,
-        .capacity = 0,
-    };
-}
-
-void ast_stmt_list_add(ASTStmtList *list, ASTStmt *stmt) {
-    if (list->size >= list->capacity) {
-        list->capacity = list->capacity == 0 ? 1 : list->capacity * 2;
-        list->data = realloc(list->data, list->capacity * sizeof(ASTStmt *));
-    }
-
-    list->data[list->size++] = stmt;
-}
-
-void ast_stmt_list_free(ASTStmtList list) {
-    for (int i = 0; i < list.size; i++) {
-        ast_stmt_free(list.data[i]);
-    }
-    free(list.data);
-}
-
 ASTScript *ast_script_create() {
     ASTScript *script = malloc(sizeof(ASTScript));
     script->statements = ast_stmt_list_create();
     script->vars_count = 0;
-    script->global_scope = scope_create(NULL);
-    script->type_registry = type_registry_create();
 
     return script;
 }
 
 void ast_script_destroy(ASTScript *script) {
-    if (!script)
-        return;
-
-    scope_destroy(script->global_scope);
-    type_registry_destroy(script->type_registry);
-    ast_stmt_list_free(script->statements);
+    ast_stmt_list_free(&script->statements);
 
     free(script);
 }
@@ -231,7 +77,7 @@ void ast_script_expr_visit(ASTScript *script, ASTExpr *expr, Scope *scope) {
             break;
         }
 
-        expr->type = type_registry_get_builtin(script->type_registry, TYPE_BOOL);
+        expr->type = type_registry_get_builtin(scope->type_registry, TYPE_BOOL);
         break;
     }
     case EXPR_VARIABLE: {
@@ -239,16 +85,27 @@ void ast_script_expr_visit(ASTScript *script, ASTExpr *expr, Scope *scope) {
         assert(entry && "undeclared variable");
 
         expr->symbol = *entry;
-        expr->type = entry->type;
+        expr->type = entry->var.type;
         break;
     }
     case EXPR_LITERAL: {
-        expr->type = type_registry_get_builtin(script->type_registry, expr->lit.kind);
+        expr->type = type_registry_get_builtin(scope->type_registry, expr->lit.kind);
         break;
     }
     default:
         break;
     }
+}
+
+Type *ast_script_resolve_type(Scope *scope, TypeSpec *spec) {
+    if (!spec) {
+        return NULL;
+    }
+
+    Type *type = type_registry_get(scope->type_registry, string_from_ref(spec->name));
+    assert(type && "unknown type");
+
+    return type;
 }
 
 void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt, Scope *scope) {
@@ -266,13 +123,10 @@ void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt, Scope *scope) {
 
         Type *type;
         if (stmt->var_decl.type_spec) {
-            Type *decl_type =
-                type_registry_get(script->type_registry, string_from_ref(stmt->var_decl.type_spec->name));
-            assert(decl_type && "unknown type");
+            Type *decl_type = ast_script_resolve_type(scope, stmt->var_decl.type_spec);
 
             if (stmt->var_decl.initializer) {
                 Type *init_type = stmt->var_decl.initializer->type;
-
                 assert(decl_type == init_type && "mismatched types in assignment");
             }
 
@@ -282,11 +136,36 @@ void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt, Scope *scope) {
         }
 
         Symbol *var = scope_decl_var(scope, string_from_ref(stmt->var_decl.name), type);
-
         assert(var && "variable already declared in this scope");
 
         stmt->var_decl.symbol = *var;
-        script->vars_count++;
+        break;
+    }
+    case STMT_FUNC_DECL: {
+        Scope func_scope;
+        scope_init(&func_scope, SCOPE_LOCAL, NULL);
+
+        for (int i = 0; i < stmt->func_decl.params.size; i++) {
+            ASTField *param = stmt->func_decl.params.data[i];
+
+            String *param_name = string_from_ref(param->name);
+            Type *param_type = ast_script_resolve_type(scope, param->type_spec);
+
+            Symbol *symbol = scope_decl_var(&func_scope, param_name, param_type);
+            assert(symbol && "variable already declared in this scope");
+
+            param->symbol = *symbol;
+        }
+
+        StringRef func_name = stmt->func_decl.name;
+        Type *func_return_type = ast_script_resolve_type(scope, stmt->func_decl.return_type);
+
+        ast_script_stmt_visit(script, stmt->func_decl.body, &func_scope);
+
+        Symbol *func = scope_decl_func(scope, string_from_ref(func_name), func_return_type);
+        assert(func && "function already declared in this scope");
+
+        stmt->func_decl.symbol = *func;
         break;
     }
     case STMT_ASSIGN: {
@@ -307,7 +186,7 @@ void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt, Scope *scope) {
     }
     case STMT_BLOCK: {
         Scope block_scope;
-        scope_init(&block_scope, scope);
+        scope_init(&block_scope, SCOPE_LOCAL, scope);
 
         for (int i = 0; i < stmt->block.list.size; i++) {
             ast_script_stmt_visit(script, stmt->block.list.data[i], &block_scope);
@@ -327,8 +206,10 @@ void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt, Scope *scope) {
     }
 }
 
-void ast_script_resolve(ASTScript *script) {
+void ast_script_resolve(ASTScript *script, Scope *global_scope) {
     for (int i = 0; i < script->statements.size; i++) {
-        ast_script_stmt_visit(script, script->statements.data[i], script->global_scope);
+        ast_script_stmt_visit(script, script->statements.data[i], global_scope);
     }
+
+    script->vars_count += global_scope->var_offset;
 }

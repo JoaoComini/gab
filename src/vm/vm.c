@@ -1,60 +1,38 @@
 #include "vm/vm.h"
-#include "ast.h"
+
+#include "ast/ast.h"
 #include "lexer.h"
 #include "parser.h"
+#include "scope.h"
 #include "string/string.h"
 #include "type.h"
+#include "vm/chunk.h"
 #include "vm/codegen.h"
 #include "vm/constant_pool.h"
 #include "vm/opcode.h"
+
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-Chunk *chunk_create() {
-    Chunk *chunk = malloc(sizeof(Chunk));
-    chunk->instructions = malloc(sizeof(Instruction) * VM_CHUNK_INITIAL_CAPACITY);
-    chunk->size = 0;
-    chunk->capacity = VM_CHUNK_INITIAL_CAPACITY;
-    chunk->const_pool = constpool_create(VM_MAX_CONSTANTS);
-    return chunk;
-}
-
-size_t chunk_add_instruction(Chunk *chunk, Instruction instruction) {
-    if (chunk->size >= chunk->capacity) {
-        chunk->capacity *= 2;
-        chunk->instructions = realloc(chunk->instructions, chunk->capacity * sizeof(Instruction));
-    }
-
-    chunk->instructions[chunk->size++] = instruction;
-
-    return chunk->size - 1;
-}
-
-void chunk_patch_instruction(Chunk *chunk, size_t index, Instruction instruction) {
-    assert(index < chunk->size);
-
-    chunk->instructions[index] = instruction;
-}
-
-void chunk_free(Chunk *chunk) {
-    constpool_free(chunk->const_pool);
-
-    free(chunk->instructions);
-    free(chunk);
-}
-
 VM *vm_create() {
+    string_init();
+
     VM *vm = malloc(sizeof(VM));
     vm->instruction_pointer = 0;
 
+    scope_init(&vm->global_scope, SCOPE_GLOBAL, NULL);
     memset(vm->registers, 0, sizeof(vm->registers));
 
-    string_init();
-
     return vm;
+}
+
+void vm_free(VM *vm) {
+    free(vm);
+
+    string_deinit();
 }
 
 float vm_addf(VM *vm, size_t r1, size_t r2) {
@@ -155,17 +133,20 @@ void vm_conditional(VM *vm, Instruction instruction, bool (*func)(VM *, size_t, 
 void vm_execute(VM *vm, const char *source) {
     Lexer lexer = lexer_create(source);
     Parser parser = parser_create(&lexer);
-    ASTScript *script = parser_parse(&parser);
+    ASTScript *script = ast_script_create();
+    bool ok = parser_parse(&parser, script);
 
-    ast_script_resolve(script);
+    ast_script_resolve(script, &vm->global_scope);
+
+    value_list_resize(&vm->global_data, vm->global_scope.var_offset);
 
     Chunk *chunk = codegen_generate(script);
 
     vm->instruction_pointer = 0;
 
     bool returned = false;
-    while (!returned && vm->instruction_pointer < chunk->size) {
-        Instruction instruction = chunk->instructions[vm->instruction_pointer];
+    while (!returned && vm->instruction_pointer < chunk->instructions.size) {
+        Instruction instruction = instruction_list_get(&chunk->instructions, vm->instruction_pointer);
 
         OpCode op = VM_DECODE_OPCODE(instruction);
         switch (op) {
@@ -274,7 +255,7 @@ void vm_execute(VM *vm, const char *source) {
         }
         case OP_RETURN: {
             size_t r1 = VM_DECODE_R_R1(instruction);
-            vm->result = vm->registers[r1];
+            vm->registers[0] = vm->registers[r1];
             returned = true;
             break;
         }
@@ -303,6 +284,19 @@ void vm_execute(VM *vm, const char *source) {
             }
 
             break;
+        }
+        case OP_LOAD_GLOBAL: {
+            size_t rd = VM_DECODE_I_RD(instruction);
+            size_t index = VM_DECODE_I_IMM(instruction);
+
+            vm->registers[rd] = value_list_get(&vm->global_data, index);
+            break;
+        }
+        case OP_STORE_GLOBAL: {
+            size_t rd = VM_DECODE_I_RD(instruction);
+            size_t index = VM_DECODE_I_IMM(instruction);
+
+            value_list_emplace(&vm->global_data, index, vm->registers[rd]);
             break;
         }
         }
@@ -314,9 +308,4 @@ void vm_execute(VM *vm, const char *source) {
     ast_script_destroy(script);
 }
 
-Value vm_get_result(VM *vm) { return vm->result; }
-
-void vm_free(VM *vm) {
-    string_deinit();
-    free(vm);
-}
+Value vm_get_result(VM *vm) { return vm->registers[0]; }

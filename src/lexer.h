@@ -1,7 +1,7 @@
 #ifndef LEXER_H
 #define LEXER_H
 
-#include "string/string.h"
+#include "string/string_ref.h"
 
 typedef enum {
     TOKEN_INVALID,   // Invalid token
@@ -30,8 +30,10 @@ typedef enum {
     TOKEN_RBRACE,    // '}'
     TOKEN_SEMICOLON, // ';'
     TOKEN_COLON,     // ':'
+    TOKEN_COMMA,     // ','
                      // BEGIN KEYWORDS
     TOKEN_LET,       // 'let'
+    TOKEN_FUNC,      // 'func'
     TOKEN_RETURN,    // 'return'
     TOKEN_IF,        // 'if'
     TOKEN_ELSE,      // 'else'

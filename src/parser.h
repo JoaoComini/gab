@@ -1,7 +1,7 @@
 #ifndef GAB_PARSER_H
 #define GAB_PARSER_H
 
-#include "ast.h"
+#include "ast/ast.h"
 #include "lexer.h"
 
 #include <stdbool.h>
@@ -18,11 +18,10 @@ typedef struct {
     Token current;
 
     ParseError error;
-    bool ok;
 } Parser;
 
 Parser parser_create(Lexer *lexer);
 
-ASTScript *parser_parse(Parser *parser);
+bool parser_parse(Parser *parser, ASTScript *script);
 
 #endif

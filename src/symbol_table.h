@@ -1,6 +1,7 @@
 #ifndef GAB_SYMBOL_TABLE_H
 #define GAB_SYMBOL_TABLE_H
 
+#include "scope.h"
 #include "string/string.h"
 #include "type.h"
 #include "util/hash_map.h"
@@ -10,9 +11,26 @@
 
 #define SYMBOL_TABLE_INITIAL_CAPACITY 8
 
+typedef enum {
+    SYMBOL_VAR,
+    SYMBOL_FUNC,
+} SymbolKind;
+
 typedef struct Symbol {
-    unsigned int reg; // For locals/temporaries
-    Type *type;
+    SymbolKind kind;
+    ScopeKind scope;
+
+    unsigned int offset;
+
+    union {
+        struct {
+            Type *type;
+        } var;
+
+        struct {
+            Type *return_type;
+        } func;
+    };
 } Symbol;
 
 #define symbol_table_hash(key) (size_t)key

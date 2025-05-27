@@ -9,15 +9,18 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_C_COMPILER clang)
 
 add_library(gab
-    src/ast.c
     src/lexer.c
     src/parser.c
     src/type.c
     src/type_registry.c
     src/scope.c
+    src/ast/ast.c
+    src/ast/expr.c
+    src/ast/stmt.c
     src/string/string_ref.c
     src/string/string.c
     src/vm/constant_pool.c
+    src/vm/chunk.c
     src/vm/vm.c
     src/vm/codegen.c
 )

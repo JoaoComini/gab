@@ -1,11 +1,11 @@
 #ifndef GAB_VM_H
 #define GAB_VM_H
 
+#include "scope.h"
+#include "util/list.h"
 #include "value.h"
-#include "vm/constant_pool.h"
-#include <stdint.h>
 
-typedef uint32_t Instruction;
+#include <stdint.h>
 
 /*
     Encodes R-type instructions in a 32-bit integer
@@ -44,27 +44,16 @@ typedef uint32_t Instruction;
 // Sentinel value for registers
 #define VM_INVALID_REGISTER VM_MAX_REGISTERS + 1
 
-// Initial number of the instructions array in a Chunk
-#define VM_CHUNK_INITIAL_CAPACITY 4
+#define value_list_item_free
+GAB_LIST(ValueList, value_list, Value);
 
 typedef struct {
-    ConstantPool *const_pool;
-    Instruction *instructions;
-    size_t capacity;
-    size_t size;
-} Chunk;
+    Scope global_scope;
+    ValueList global_data;
 
-Chunk *chunk_create();
-size_t chunk_add_instruction(Chunk *chunk, Instruction instruction);
-void chunk_patch_instruction(Chunk *chunk, size_t index, Instruction instruction);
-void chunk_free(Chunk *chunk);
-
-typedef struct {
     Value registers[VM_MAX_REGISTERS];
 
     size_t instruction_pointer;
-
-    Value result;
 } VM;
 
 VM *vm_create();

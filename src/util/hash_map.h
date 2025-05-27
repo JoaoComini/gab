@@ -12,7 +12,7 @@
         struct Name##Entry *next;                                                                            \
     } Name##Entry;                                                                                           \
                                                                                                              \
-    typedef struct {                                                                                         \
+    typedef struct Name {                                                                                    \
         Name##Entry **buckets;                                                                               \
         size_t capacity;                                                                                     \
         size_t size;                                                                                         \

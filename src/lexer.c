@@ -63,6 +63,10 @@ static Token lexer_identifier(Lexer *lexer) {
         return token_create_ref(TOKEN_ELSE, ref);
     }
 
+    if (string_ref_equals_cstr(ref, "func")) {
+        return token_create_ref(TOKEN_FUNC, ref);
+    }
+
     if (string_ref_equals_cstr(ref, "return")) {
         return token_create_ref(TOKEN_RETURN, ref);
     }
@@ -154,6 +158,8 @@ Token lexer_next(Lexer *lexer) {
         return token_create(TOKEN_SEMICOLON);
     case ':':
         return token_create(TOKEN_COLON);
+    case ',':
+        return token_create(TOKEN_COMMA);
     default:
         return token_create(TOKEN_INVALID);
     }

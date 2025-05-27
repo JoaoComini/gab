@@ -1,10 +1,11 @@
 #include "scope.h"
 #include "string/string.h"
+#include "symbol_table.h"
 #include "type.h"
 #include <assert.h>
 
 static void test_create_and_free() {
-    Scope *scope = scope_create(NULL);
+    Scope *scope = scope_create(SCOPE_LOCAL, NULL);
     assert(scope->symbol_table != NULL);
     assert(scope->var_offset == 0);
     assert(scope->parent == NULL);
@@ -13,8 +14,8 @@ static void test_create_and_free() {
 }
 
 static void test_nested_scopes() {
-    Scope *parent = scope_create(NULL);
-    Scope *child = scope_create(parent);
+    Scope *parent = scope_create(SCOPE_LOCAL, NULL);
+    Scope *child = scope_create(SCOPE_LOCAL, parent);
 
     assert(child->parent == parent);
     assert(child->var_offset == 0); // Starts fresh for offset
@@ -24,13 +25,13 @@ static void test_nested_scopes() {
 }
 
 static void test_var_declaration() {
-    Scope *scope = scope_create(NULL);
+    Scope *scope = scope_create(SCOPE_LOCAL, NULL);
     String *name = string_from_cstr("x");
     Type *type = type_create(TYPE_INT, string_from_cstr("int"));
 
     Symbol *sym = scope_decl_var(scope, name, type);
     assert(sym != NULL);
-    assert(sym->reg == 0);
+    assert(sym->offset == 0);
     assert(scope->var_offset == 1);
 
     // Check lookup
@@ -42,7 +43,7 @@ static void test_var_declaration() {
 }
 
 static void test_shadowing() {
-    Scope *parent = scope_create(NULL);
+    Scope *parent = scope_create(SCOPE_LOCAL, NULL);
 
     String *name = string_from_cstr("x");
     Type *int_type = type_create(TYPE_INT, string_from_cstr("int"));
@@ -50,13 +51,13 @@ static void test_shadowing() {
 
     // Declare in parent
     Symbol *parent_sym = scope_decl_var(parent, name, int_type);
-    assert(parent_sym->reg == 0);
+    assert(parent_sym->offset == 0);
 
-    Scope *child = scope_create(parent);
+    Scope *child = scope_create(SCOPE_LOCAL, parent);
 
     // Declare same name in child
     Symbol *child_sym = scope_decl_var(child, name, float_type);
-    assert(child_sym->reg == 1);
+    assert(child_sym->offset == 1);
     assert(child->var_offset == 2);
 
     // Lookup in child should find child's version
