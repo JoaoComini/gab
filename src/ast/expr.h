@@ -52,8 +52,8 @@ typedef struct ASTExpr {
         } var;
     };
 
-    Type *type;    // Filled during type resolution
-    Symbol symbol; // Filled during symbol resolution
+    Type *type;     // Filled during type resolution
+    Symbol *symbol; // Filled during symbol resolution
 } ASTExpr;
 
 ASTExpr *ast_literal_expr_create(Literal value);

@@ -23,13 +23,19 @@ VM *vm_create() {
     VM *vm = malloc(sizeof(VM));
     vm->instruction_pointer = 0;
 
-    scope_init(&vm->global_scope, SCOPE_GLOBAL, NULL);
+    vm->global_data = value_list_create();
+    vm->global_funcs = func_proto_list_create();
+
+    scope_init(&vm->global_scope, NULL);
     memset(vm->registers, 0, sizeof(vm->registers));
 
     return vm;
 }
 
 void vm_free(VM *vm) {
+    value_list_free(&vm->global_data);
+    func_proto_list_free(&vm->global_funcs);
+
     free(vm);
 
     string_deinit();
@@ -138,9 +144,7 @@ void vm_execute(VM *vm, const char *source) {
 
     ast_script_resolve(script, &vm->global_scope);
 
-    value_list_resize(&vm->global_data, vm->global_scope.var_offset);
-
-    Chunk *chunk = codegen_generate(script);
+    Chunk *chunk = codegen_generate(script, &vm->global_data, &vm->global_funcs);
 
     vm->instruction_pointer = 0;
 
@@ -307,5 +311,3 @@ void vm_execute(VM *vm, const char *source) {
     chunk_free(chunk);
     ast_script_destroy(script);
 }
-
-Value vm_get_result(VM *vm) { return vm->registers[0]; }

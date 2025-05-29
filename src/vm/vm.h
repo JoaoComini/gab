@@ -4,6 +4,7 @@
 #include "scope.h"
 #include "util/list.h"
 #include "value.h"
+#include "vm/chunk.h"
 
 #include <stdint.h>
 
@@ -48,8 +49,19 @@
 GAB_LIST(ValueList, value_list, Value);
 
 typedef struct {
+    Chunk *chunk;
+    int arity;
+    int max_registers;
+} FuncPrototype;
+
+#define func_proto_list_item_free
+GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype)
+
+typedef struct {
     Scope global_scope;
+
     ValueList global_data;
+    FuncProtoList global_funcs;
 
     Value registers[VM_MAX_REGISTERS];
 
@@ -58,7 +70,6 @@ typedef struct {
 
 VM *vm_create();
 void vm_execute(VM *vm, const char *source);
-Value vm_get_result(VM *vm);
 void vm_free(VM *vm);
 
 #endif

@@ -5,18 +5,17 @@
 #include <assert.h>
 #include <stdlib.h>
 
-Scope *scope_create(ScopeKind kind, Scope *parent) {
+Scope *scope_create(Scope *parent) {
     Scope *scope = malloc(sizeof(Scope));
-    scope_init(scope, kind, parent);
+    scope_init(scope, parent);
     return scope;
 }
 
-void scope_init(Scope *scope, ScopeKind kind, Scope *parent) {
-    scope->kind = kind;
+void scope_init(Scope *scope, Scope *parent) {
     scope->symbol_table = symbol_table_create(SYMBOL_TABLE_INITIAL_CAPACITY);
     scope->type_registry = parent && parent->type_registry ? parent->type_registry : type_registry_create();
-    scope->var_offset = parent ? parent->var_offset : 0;
     scope->parent = parent;
+    scope->depth = parent ? parent->depth + 1 : 0;
 }
 
 void scope_destroy(Scope *scope) {
@@ -36,9 +35,9 @@ void scope_free(Scope *scope) {
 
 Symbol *scope_symbol_lookup(Scope *scope, String *name) {
     while (scope) {
-        Symbol *entry = symbol_table_lookup(scope->symbol_table, name);
+        Symbol **entry = symbol_table_lookup(scope->symbol_table, name);
         if (entry) {
-            return entry;
+            return *entry;
         }
 
         scope = scope->parent;
@@ -48,30 +47,27 @@ Symbol *scope_symbol_lookup(Scope *scope, String *name) {
 }
 
 Symbol *scope_decl_var(Scope *scope, String *name, Type *type) {
-    Symbol sym;
-    sym.scope = scope->kind;
-    sym.offset = scope->var_offset;
-    sym.var.type = type;
+    Symbol *sym = malloc(sizeof(Symbol));
+    sym->scope_depth = scope->depth;
+    sym->var.type = type;
 
-    Symbol *decl = symbol_table_insert(scope->symbol_table, name, sym);
+    Symbol **decl = symbol_table_insert(scope->symbol_table, name, sym);
     if (!decl) {
         return NULL;
     }
 
-    scope->var_offset++;
-
-    return decl;
+    return *decl;
 }
 
 Symbol *scope_decl_func(Scope *scope, String *name, Type *return_type) {
-    Symbol sym;
-    sym.scope = scope->kind;
-    sym.func.return_type = return_type;
+    Symbol *sym = malloc(sizeof(Symbol));
+    sym->scope_depth = scope->depth;
+    sym->func.return_type = return_type;
 
-    Symbol *decl = symbol_table_insert(scope->symbol_table, name, sym);
+    Symbol **decl = symbol_table_insert(scope->symbol_table, name, sym);
     if (!decl) {
         return NULL;
     }
 
-    return decl;
+    return *decl;
 }

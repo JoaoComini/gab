@@ -1,10 +1,12 @@
 #include "ast/ast.h"
+#include "ast/stmt.h"
 #include "lexer.h"
 #include "parser.h"
 #include "type.h"
 
 #include <assert.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 
 static ASTScript *assert_parse(const char *code) {
@@ -29,12 +31,22 @@ static void assert_parse_error(const char *code, const char *expected_error) {
     ast_script_destroy(script);
 }
 
+char code_buffer[100];
+static const char *func_wrap(const char *code) {
+    snprintf(code_buffer, sizeof(code_buffer), "func test() { %s }", code);
+
+    return code_buffer;
+}
+
+static ASTStmtList func_unwrap(ASTScript *script) {
+    return script->statements.data[0]->func_decl.body->block.list;
+}
+
 // --- Test Cases ---
 static void test_single_number() {
-    ASTScript *script = assert_parse("42;");
-    assert(script->statements.size == 1);
+    ASTScript *script = assert_parse(func_wrap("42;"));
 
-    ASTStmt *stmt = script->statements.data[0];
+    ASTStmt *stmt = func_unwrap(script).data[0];
     assert(stmt->kind == STMT_EXPR);
     assert(stmt->expr.value->kind == EXPR_LITERAL);
     assert(stmt->expr.value->lit.kind == TYPE_INT);
@@ -44,16 +56,15 @@ static void test_single_number() {
 }
 
 static void test_booleans() {
-    ASTScript *script = assert_parse("true; false;");
-    assert(script->statements.size == 2);
+    ASTScript *script = assert_parse(func_wrap("true; false;"));
 
-    ASTStmt *true_stmt = script->statements.data[0];
+    ASTStmt *true_stmt = func_unwrap(script).data[0];
     assert(true_stmt->kind == STMT_EXPR);
     assert(true_stmt->expr.value->kind == EXPR_LITERAL);
     assert(true_stmt->expr.value->lit.kind == TYPE_BOOL);
     assert(true_stmt->expr.value->lit.as_int == 1);
 
-    ASTStmt *false_stmt = script->statements.data[1];
+    ASTStmt *false_stmt = func_unwrap(script).data[1];
     assert(false_stmt->kind == STMT_EXPR);
     assert(false_stmt->expr.value->kind == EXPR_LITERAL);
     assert(false_stmt->expr.value->lit.kind == TYPE_BOOL);
@@ -63,23 +74,21 @@ static void test_booleans() {
 }
 
 static void test_multiple_statements() {
-    ASTScript *script = assert_parse("42; 3 + 5;");
-    assert(script->statements.size == 2);
+    ASTScript *script = assert_parse(func_wrap("42; 3 + 5;"));
 
-    ASTStmt *first = script->statements.data[0];
+    ASTStmt *first = func_unwrap(script).data[0];
     assert(first->kind == STMT_EXPR);
 
-    ASTStmt *second = script->statements.data[1];
+    ASTStmt *second = func_unwrap(script).data[1];
     assert(second->kind == STMT_EXPR);
 
     ast_script_destroy(script);
 }
 
 static void test_simple_addition() {
-    ASTScript *script = assert_parse("3 + 4;");
-    assert(script->statements.size == 1);
+    ASTScript *script = assert_parse(func_wrap("3 + 4;"));
 
-    ASTStmt *stmt = script->statements.data[0];
+    ASTStmt *stmt = func_unwrap(script).data[0];
     assert(stmt->kind == STMT_EXPR);
     assert(stmt->expr.value->bin_op.op == BIN_OP_ADD);
     assert(stmt->expr.value->bin_op.left->kind == EXPR_LITERAL);
@@ -91,10 +100,9 @@ static void test_simple_addition() {
 }
 
 static void test_operator_precedence() {
-    ASTScript *script = assert_parse("3 + 4 * 2;");
-    assert(script->statements.size == 1);
+    ASTScript *script = assert_parse(func_wrap("3 + 4 * 2;"));
 
-    ASTStmt *stmt = script->statements.data[0];
+    ASTStmt *stmt = func_unwrap(script).data[0];
     assert(stmt->kind == STMT_EXPR);
 
     ASTExpr *expr = stmt->expr.value;
@@ -117,10 +125,9 @@ static void test_operator_precedence() {
 }
 
 static void test_parentheses() {
-    ASTScript *script = assert_parse("(3 + 4) * 2;");
-    assert(script->statements.size == 1);
+    ASTScript *script = assert_parse(func_wrap("(3 + 4) * 2;"));
 
-    ASTStmt *stmt = script->statements.data[0];
+    ASTStmt *stmt = func_unwrap(script).data[0];
     assert(stmt->kind == STMT_EXPR);
 
     ASTExpr *expr = stmt->expr.value;
@@ -144,11 +151,9 @@ static void test_parentheses() {
 }
 
 static void test_variables() {
-    ASTScript *script = assert_parse("let x = 2; let y = 3; 2 + (x * y);");
+    ASTScript *script = assert_parse(func_wrap("let x = 2; let y = 3; 2 + (x * y);"));
 
-    assert(script->statements.size == 3);
-
-    ASTStmt *stmt = script->statements.data[2];
+    ASTStmt *stmt = func_unwrap(script).data[2];
     assert(stmt->kind == STMT_EXPR);
 
     ASTExpr *expr = stmt->expr.value;
@@ -171,11 +176,9 @@ static void test_variables() {
 }
 
 static void test_var_declaration() {
-    ASTScript *script = assert_parse("let x = 2 + 3;");
+    ASTScript *script = assert_parse(func_wrap("let x = 2 + 3;"));
 
-    assert(script->statements.size == 1);
-
-    ASTStmt *stmt = script->statements.data[0];
+    ASTStmt *stmt = func_unwrap(script).data[0];
     assert(stmt->kind == STMT_VAR_DECL);
 
     assert(string_ref_equals_cstr(stmt->var_decl.name, "x"));
@@ -197,11 +200,9 @@ static void test_var_declaration() {
 }
 
 static void test_var_uninit_declaration() {
-    ASTScript *script = assert_parse("let x: int;");
+    ASTScript *script = assert_parse(func_wrap("let x: int;"));
 
-    assert(script->statements.size == 1);
-
-    ASTStmt *stmt = script->statements.data[0];
+    ASTStmt *stmt = func_unwrap(script).data[0];
     assert(stmt->kind == STMT_VAR_DECL);
 
     assert(string_ref_equals_cstr(stmt->var_decl.name, "x"));
@@ -211,15 +212,13 @@ static void test_var_uninit_declaration() {
 }
 
 static void test_var_untyped_uninti_declaration() {
-    assert_parse_error("let x;", "expected type after identifier");
+    assert_parse_error(func_wrap("let x;"), "expected type after identifier");
 }
 
 static void test_func_declaration() {
     ASTScript *script = assert_parse("func add(x : int, y : int): int {"
                                      "    return x + y;"
                                      "}");
-
-    assert(script->statements.size == 1);
 
     ASTStmt *stmt = script->statements.data[0];
     assert(stmt->kind == STMT_FUNC_DECL);
@@ -243,8 +242,6 @@ static void test_unit_func_declaration() {
                                      "    let a = x + y;"
                                      "}");
 
-    assert(script->statements.size == 1);
-
     ASTStmt *stmt = script->statements.data[0];
     assert(stmt->kind == STMT_FUNC_DECL);
 
@@ -267,8 +264,6 @@ static void test_no_params_func_declaration() {
                                      "    return true;"
                                      "}");
 
-    assert(script->statements.size == 1);
-
     ASTStmt *stmt = script->statements.data[0];
     assert(stmt->kind == STMT_FUNC_DECL);
     assert(string_ref_equals_cstr(stmt->func_decl.name, "test"));
@@ -284,11 +279,9 @@ static void test_no_params_func_declaration() {
     ast_script_destroy(script);
 }
 static void test_assignment() {
-    ASTScript *script = assert_parse("x = 2;");
+    ASTScript *script = assert_parse(func_wrap("x = 2;"));
 
-    assert(script->statements.size == 1);
-
-    ASTStmt *stmt = script->statements.data[0];
+    ASTStmt *stmt = func_unwrap(script).data[0];
     assert(stmt->kind == STMT_ASSIGN);
 
     ASTExpr *target = stmt->assign.target;
@@ -303,11 +296,9 @@ static void test_assignment() {
 }
 
 static void test_block() {
-    ASTScript *script = assert_parse("{ let x = 2; x = 1; }");
+    ASTScript *script = assert_parse(func_wrap("{ let x = 2; x = 1; }"));
 
-    assert(script->statements.size == 1);
-
-    ASTStmt *stmt = script->statements.data[0];
+    ASTStmt *stmt = func_unwrap(script).data[0];
     assert(stmt->kind == STMT_BLOCK);
     assert(stmt->block.list.size == 2);
 
@@ -315,12 +306,9 @@ static void test_block() {
 }
 
 static void test_if() {
-    ASTScript *script = assert_parse("if 2 < 1 { 10; } else { 20; }");
-    assert(script != NULL);
+    ASTScript *script = assert_parse(func_wrap("if 2 < 1 { 10; } else { 20; }"));
 
-    assert(script->statements.size == 1);
-
-    ASTStmt *stmt = script->statements.data[0];
+    ASTStmt *stmt = func_unwrap(script).data[0];
     assert(stmt->kind == STMT_IF);
 
     ASTExpr *condition = stmt->ifstmt.condition;
@@ -338,11 +326,9 @@ static void test_if() {
 }
 
 static void test_return() {
-    ASTScript *script = assert_parse("return 2;");
+    ASTScript *script = assert_parse(func_wrap("return 2;"));
 
-    assert(script->statements.size == 1);
-
-    ASTStmt *stmt = script->statements.data[0];
+    ASTStmt *stmt = func_unwrap(script).data[0];
     assert(stmt->kind == STMT_RETURN);
 
     ASTExpr *result = stmt->ret.result;
@@ -351,17 +337,22 @@ static void test_return() {
 
     ast_script_destroy(script);
 }
-static void test_invalid_token() { assert_parse_error("3 + $;", "expected expression"); }
 
-static void test_missing_paren() { assert_parse_error("(3 + 4", "expected ')'"); }
+static void test_invalid_token() { assert_parse_error(func_wrap("3 + $;"), "expected expression"); }
 
-static void test_missing_identifier() { assert_parse_error("let ;", "expected identifier after 'let'"); }
+static void test_missing_paren() { assert_parse_error(func_wrap("(3 + 4"), "expected ')'"); }
 
-static void test_invalid_declaration() { assert_parse_error("let a b", "expected ';' or '='"); }
+static void test_missing_identifier() {
+    assert_parse_error(func_wrap("let ;"), "expected identifier after 'let'");
+}
 
-static void test_missing_semicolon() { assert_parse_error("3 + 5", "expected ';' after statement"); }
+static void test_invalid_declaration() { assert_parse_error(func_wrap("let a b"), "expected ';' or '='"); }
 
-static void test_expression_not_assignable() { assert_parse_error("2 = 1", "expression is not assignable"); }
+static void test_missing_semicolon() { assert_parse_error(func_wrap("3 + 5"), "expected ';'"); }
+
+static void test_expression_not_assignable() {
+    assert_parse_error(func_wrap("2 = 1"), "expression is not assignable");
+}
 
 int main() {
     string_init();

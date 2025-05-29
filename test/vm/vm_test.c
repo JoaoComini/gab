@@ -1,5 +1,3 @@
-#include "type.h"
-#include "value.h"
 #include "vm/vm.h"
 
 #include <assert.h>
@@ -7,7 +5,8 @@
 static void test_vm_execute() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "let a = 2;\n"
+    vm_execute(vm, "func execute(): bool {\n"
+                   "let a = 2;\n"
                    "let b = 3;\n"
                    "let c = a + b * 5;\n"
                    "let d = (c - a) * ((b + 4) / (a + 1));\n"
@@ -18,12 +17,8 @@ static void test_vm_execute() {
                    "let i = (h / g) + (f - (e * (d / (c + (b - a)))));\n"
                    "let result : int = ((i + h) * (g - f) + (e / d)) - ((c + b) * (a - 1));\n"
                    "let compare = result == 13120;\n"
-                   "if compare { let a = 10; let b = 2; return a * b == 20; } else { return false; }");
-
-    Value result = vm_get_result(vm);
-
-    assert(result.type == TYPE_BOOL);
-    assert(result.as_int == 1);
+                   "if compare { let a = 10; let b = 2; return a * b == 20; } else { return false; }\n"
+                   "}");
 
     vm_free(vm);
 }

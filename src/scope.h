@@ -7,25 +7,17 @@
 typedef struct SymbolTable SymbolTable;
 typedef struct Symbol Symbol;
 
-typedef enum {
-    SCOPE_GLOBAL,
-    SCOPE_LOCAL,
-} ScopeKind;
-
 typedef struct Scope {
-    ScopeKind kind;
-
     SymbolTable *symbol_table;
     TypeRegistry *type_registry;
 
-    int var_offset;
-
     struct Scope *parent;
+    int depth;
 } Scope;
 
 // Initialize a new scope
-Scope *scope_create(ScopeKind kind, Scope *parent);
-void scope_init(Scope *scope, ScopeKind kind, Scope *parent);
+Scope *scope_create(Scope *parent);
+void scope_init(Scope *scope, Scope *parent);
 
 // Free a scope (and its symbol table)
 void scope_destroy(Scope *scope);

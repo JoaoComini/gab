@@ -8,7 +8,6 @@
 
 typedef struct ASTScript {
     ASTStmtList statements;
-    int vars_count;
 } ASTScript;
 
 ASTScript *ast_script_create();

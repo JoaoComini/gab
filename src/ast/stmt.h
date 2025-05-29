@@ -11,7 +11,7 @@ typedef struct ASTField {
     StringRef name;
     TypeSpec *type_spec;
 
-    Symbol symbol; // Filled during symbol/type resolution
+    Symbol *symbol; // Filled during symbol/type resolution
 } ASTField;
 
 ASTField *ast_field_create(StringRef name, TypeSpec *type_spec);
@@ -45,7 +45,7 @@ typedef struct {
     TypeSpec *type_spec;
     ASTExpr *initializer;
 
-    Symbol symbol; // Filled during symbol/type resolution
+    Symbol *symbol; // Filled during symbol/type resolution
 } ASTVarDecl;
 
 typedef struct {
@@ -54,7 +54,7 @@ typedef struct {
     ASTFieldList params;
     struct ASTStmt *body;
 
-    Symbol symbol;
+    Symbol *symbol;
 } ASTFuncDecl;
 
 typedef struct {

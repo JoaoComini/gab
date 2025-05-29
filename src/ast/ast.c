@@ -14,7 +14,6 @@
 ASTScript *ast_script_create() {
     ASTScript *script = malloc(sizeof(ASTScript));
     script->statements = ast_stmt_list_create();
-    script->vars_count = 0;
 
     return script;
 }
@@ -84,7 +83,7 @@ void ast_script_expr_visit(ASTScript *script, ASTExpr *expr, Scope *scope) {
         Symbol *entry = scope_symbol_lookup(scope, string_from_ref(expr->var.name));
         assert(entry && "undeclared variable");
 
-        expr->symbol = *entry;
+        expr->symbol = entry;
         expr->type = entry->var.type;
         break;
     }
@@ -138,12 +137,12 @@ void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt, Scope *scope) {
         Symbol *var = scope_decl_var(scope, string_from_ref(stmt->var_decl.name), type);
         assert(var && "variable already declared in this scope");
 
-        stmt->var_decl.symbol = *var;
+        stmt->var_decl.symbol = var;
         break;
     }
     case STMT_FUNC_DECL: {
         Scope func_scope;
-        scope_init(&func_scope, SCOPE_LOCAL, NULL);
+        scope_init(&func_scope, scope);
 
         for (int i = 0; i < stmt->func_decl.params.size; i++) {
             ASTField *param = stmt->func_decl.params.data[i];
@@ -154,7 +153,7 @@ void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt, Scope *scope) {
             Symbol *symbol = scope_decl_var(&func_scope, param_name, param_type);
             assert(symbol && "variable already declared in this scope");
 
-            param->symbol = *symbol;
+            param->symbol = symbol;
         }
 
         StringRef func_name = stmt->func_decl.name;
@@ -165,7 +164,9 @@ void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt, Scope *scope) {
         Symbol *func = scope_decl_func(scope, string_from_ref(func_name), func_return_type);
         assert(func && "function already declared in this scope");
 
-        stmt->func_decl.symbol = *func;
+        stmt->func_decl.symbol = func;
+
+        scope_free(&func_scope);
         break;
     }
     case STMT_ASSIGN: {
@@ -186,14 +187,10 @@ void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt, Scope *scope) {
     }
     case STMT_BLOCK: {
         Scope block_scope;
-        scope_init(&block_scope, SCOPE_LOCAL, scope);
+        scope_init(&block_scope, scope);
 
         for (int i = 0; i < stmt->block.list.size; i++) {
             ast_script_stmt_visit(script, stmt->block.list.data[i], &block_scope);
-        }
-
-        if (block_scope.var_offset > script->vars_count) {
-            script->vars_count = block_scope.var_offset;
         }
 
         scope_free(&block_scope);
@@ -210,6 +207,4 @@ void ast_script_resolve(ASTScript *script, Scope *global_scope) {
     for (int i = 0; i < script->statements.size; i++) {
         ast_script_stmt_visit(script, script->statements.data[i], global_scope);
     }
-
-    script->vars_count += global_scope->var_offset;
 }

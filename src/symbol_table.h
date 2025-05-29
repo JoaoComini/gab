@@ -18,9 +18,9 @@ typedef enum {
 
 typedef struct Symbol {
     SymbolKind kind;
-    ScopeKind scope;
 
     unsigned int offset;
+    int scope_depth;
 
     union {
         struct {
@@ -38,6 +38,6 @@ typedef struct Symbol {
 #define symbol_table_key_dup(key) key
 #define symbol_table_entry_free(key, value)
 
-GAB_HASH_MAP(SymbolTable, symbol_table, String *, Symbol);
+GAB_HASH_MAP(SymbolTable, symbol_table, String *, Symbol *);
 
 #endif

@@ -15,6 +15,7 @@ ASTStmt *ast_var_decl_stmt_create(StringRef name, TypeSpec *type_spec, ASTExpr *
     stmt->var_decl.name = name;
     stmt->var_decl.type_spec = type_spec;
     stmt->var_decl.initializer = initializer;
+    stmt->var_decl.symbol = NULL;
     return stmt;
 }
 
@@ -26,6 +27,7 @@ ASTStmt *ast_func_decl_stmt_create(StringRef name, TypeSpec *return_type, ASTFie
     stmt->func_decl.return_type = return_type;
     stmt->func_decl.params = params;
     stmt->func_decl.body = body;
+    stmt->func_decl.symbol = NULL;
     return stmt;
 }
 
@@ -73,6 +75,10 @@ void ast_stmt_destroy(ASTStmt *stmt) {
         if (stmt->var_decl.type_spec) {
             type_spec_destroy(stmt->var_decl.type_spec);
         }
+
+        if (stmt->var_decl.symbol) {
+            free(stmt->var_decl.symbol);
+        }
         break;
     case STMT_FUNC_DECL:
         if (stmt->func_decl.return_type) {
@@ -80,6 +86,9 @@ void ast_stmt_destroy(ASTStmt *stmt) {
         }
         ast_field_list_free(&stmt->func_decl.params);
         ast_stmt_destroy(stmt->func_decl.body);
+        if (stmt->func_decl.symbol) {
+            free(stmt->func_decl.symbol);
+        }
         break;
     case STMT_ASSIGN:
         ast_expr_free(stmt->assign.target);
@@ -105,11 +114,15 @@ ASTField *ast_field_create(StringRef name, TypeSpec *type_spec) {
     ASTField *field = malloc(sizeof(ASTField));
     field->name = name;
     field->type_spec = type_spec;
+    field->symbol = NULL;
 
     return field;
 }
 
 void ast_field_destroy(ASTField *field) {
     type_spec_destroy(field->type_spec);
+    if (field->symbol) {
+        free(field->symbol);
+    }
     free(field);
 }
