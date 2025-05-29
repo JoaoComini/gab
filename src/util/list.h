@@ -65,7 +65,4 @@
         free(list->data);                                                                                    \
     }
 
-#define int_list_item_free(item)
-GAB_LIST(IntList, int_list, int);
-
 #endif

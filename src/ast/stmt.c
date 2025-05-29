@@ -75,10 +75,6 @@ void ast_stmt_destroy(ASTStmt *stmt) {
         if (stmt->var_decl.type_spec) {
             type_spec_destroy(stmt->var_decl.type_spec);
         }
-
-        if (stmt->var_decl.symbol) {
-            free(stmt->var_decl.symbol);
-        }
         break;
     case STMT_FUNC_DECL:
         if (stmt->func_decl.return_type) {
@@ -86,9 +82,6 @@ void ast_stmt_destroy(ASTStmt *stmt) {
         }
         ast_field_list_free(&stmt->func_decl.params);
         ast_stmt_destroy(stmt->func_decl.body);
-        if (stmt->func_decl.symbol) {
-            free(stmt->func_decl.symbol);
-        }
         break;
     case STMT_ASSIGN:
         ast_expr_free(stmt->assign.target);
@@ -121,8 +114,5 @@ ASTField *ast_field_create(StringRef name, TypeSpec *type_spec) {
 
 void ast_field_destroy(ASTField *field) {
     type_spec_destroy(field->type_spec);
-    if (field->symbol) {
-        free(field->symbol);
-    }
     free(field);
 }

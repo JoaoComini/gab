@@ -1,3 +1,4 @@
+#include "arena.h"
 #include "ast/ast.h"
 #include "ast/stmt.h"
 #include "scope.h"
@@ -13,19 +14,21 @@
 #include <assert.h>
 #include <stdlib.h>
 
+Arena *arena = NULL;
+
 // Test number literal compilation
 static void test_number() {
     Literal lit = {.kind = TYPE_FLOAT, .as_float = 42.0};
     ASTExpr *num = ast_literal_expr_create(lit);
     ASTStmt *stmt = ast_expr_stmt_create(num);
 
-    ValueList global_data = value_list_create();
-    FuncProtoList global_funcs = func_proto_list_create();
-    Scope *scope = scope_create(NULL);
+    Scope *scope = scope_create(arena, NULL);
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, stmt);
-    ast_script_resolve(script, scope);
+    ast_script_resolve(arena, script, scope);
 
+    ValueList global_data = value_list_create();
+    FuncProtoList global_funcs = func_proto_list_create();
     Chunk *chunk = codegen_generate(script, &global_data, &global_funcs);
 
     // Verify chunk contains:
@@ -42,7 +45,6 @@ static void test_number() {
 
     chunk_free(chunk);
     ast_script_destroy(script);
-    scope_destroy(scope);
     func_proto_list_free(&global_funcs);
 }
 
@@ -56,13 +58,13 @@ static void test_bin_op(OpCode expected_op, BinOp op) {
 
     ASTStmt *stmt = ast_expr_stmt_create(expr);
 
-    ValueList global_data = value_list_create();
-    FuncProtoList global_funcs = func_proto_list_create();
-    Scope *scope = scope_create(NULL);
+    Scope *scope = scope_create(arena, NULL);
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, stmt);
-    ast_script_resolve(script, scope);
+    ast_script_resolve(arena, script, scope);
 
+    ValueList global_data = value_list_create();
+    FuncProtoList global_funcs = func_proto_list_create();
     Chunk *chunk = codegen_generate(script, &global_data, &global_funcs);
 
     assert(chunk->instructions.size == 3); // LOAD_CONST, LOAD_CONST, CMP
@@ -81,7 +83,6 @@ static void test_bin_op(OpCode expected_op, BinOp op) {
 
     chunk_free(chunk);
     ast_script_destroy(script);
-    scope_destroy(scope);
     func_proto_list_free(&global_funcs);
 }
 
@@ -96,38 +97,6 @@ static void test_cmp_lequal() { test_bin_op(OP_CMP_LEF, BIN_OP_LEQUAL); }
 static void test_cmp_greater() { test_bin_op(OP_CMP_GTF, BIN_OP_GREATER); }
 static void test_cmp_gequal() { test_bin_op(OP_CMP_GEF, BIN_OP_GEQUAL); }
 
-static void test_return() {
-    Literal var = {.kind = TYPE_FLOAT, .as_float = 3};
-    ASTExpr *result = ast_literal_expr_create(var);
-    ASTStmt *stmt = ast_return_stmt_create(result);
-
-    Scope *scope = scope_create(NULL);
-    ASTScript *script = ast_script_create();
-    ast_script_add_statement(script, stmt);
-    ast_script_resolve(script, scope);
-
-    ValueList global_data = value_list_create();
-    FuncProtoList global_funcs = func_proto_list_create();
-
-    Chunk *chunk = codegen_generate(script, &global_data, &global_funcs);
-
-    // Expected instructions:
-    // 1. LOAD_CONST R0, [3.0]
-    // 2, RETURN R0
-    assert(chunk->instructions.size == 2);
-
-    Instruction load = chunk->instructions.data[0];
-    assert(VM_DECODE_OPCODE(load) == OP_LOAD_CONST);
-
-    Instruction ret = chunk->instructions.data[1];
-    assert(VM_DECODE_OPCODE(ret) == OP_RETURN);
-
-    chunk_free(chunk);
-    ast_script_destroy(script);
-    scope_destroy(scope);
-    func_proto_list_free(&global_funcs);
-}
-
 static void test_var_decl() {
     Literal var = {.kind = TYPE_FLOAT, .as_float = 3};
     ASTExpr *inititalizer = ast_literal_expr_create(var);
@@ -135,10 +104,10 @@ static void test_var_decl() {
     StringRef ref = string_ref_create("x");
     ASTStmt *stmt = ast_var_decl_stmt_create(ref, NULL, inititalizer);
 
-    Scope *scope = scope_create(NULL);
+    Scope *scope = scope_create(arena, NULL);
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, stmt);
-    ast_script_resolve(script, scope);
+    ast_script_resolve(arena, script, scope);
 
     ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
@@ -163,8 +132,8 @@ static void test_var_decl() {
 
     chunk_free(chunk);
     ast_script_destroy(script);
-    scope_destroy(scope);
     func_proto_list_free(&global_funcs);
+    value_list_free(&global_data);
 }
 
 static void test_variable_access() {
@@ -181,11 +150,11 @@ static void test_variable_access() {
 
     ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
-    Scope *scope = scope_create(NULL);
+    Scope *scope = scope_create(arena, NULL);
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, var_decl);
     ast_script_add_statement(script, assign_stmt);
-    ast_script_resolve(script, scope);
+    ast_script_resolve(arena, script, scope);
 
     Chunk *chunk = codegen_generate(script, &global_data, &global_funcs);
 
@@ -217,8 +186,8 @@ static void test_variable_access() {
 
     chunk_free(chunk);
     ast_script_destroy(script);
-    scope_destroy(scope);
     func_proto_list_free(&global_funcs);
+    value_list_free(&global_data);
 }
 
 static void test_if_statement() {
@@ -229,10 +198,10 @@ static void test_if_statement() {
     ASTExpr *right = ast_literal_expr_create(var_right);
     ASTExpr *cond = ast_bin_op_expr_create(left, BIN_OP_GREATER, right);
 
-    // Create then block: return 1
+    // Create then block: 1
     Literal then_val = {.kind = TYPE_FLOAT, .as_float = 1};
     ASTExpr *then_expr = ast_literal_expr_create(then_val);
-    ASTStmt *then_stmt = ast_return_stmt_create(then_expr);
+    ASTStmt *then_stmt = ast_expr_stmt_create(then_expr);
 
     ASTStmtList then_block_list = ast_stmt_list_create();
     ast_stmt_list_add(&then_block_list, then_stmt);
@@ -243,10 +212,10 @@ static void test_if_statement() {
 
     ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
-    Scope *scope = scope_create(NULL);
+    Scope *scope = scope_create(arena, NULL);
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, if_stmt);
-    ast_script_resolve(script, scope);
+    ast_script_resolve(arena, script, scope);
 
     Chunk *chunk = codegen_generate(script, &global_data, &global_funcs);
 
@@ -256,8 +225,7 @@ static void test_if_statement() {
     // 3. CMP_GT R2, R0, R1
     // 4. JMP_IF_FALSE R2, +2 (skip then block)
     // 5. LOAD_CONST R3, 1
-    // 6. RETURN R3
-    assert(chunk->instructions.size == 6);
+    assert(chunk->instructions.size == 5);
 
     // Verify condition
     Instruction load1 = chunk->instructions.data[0];
@@ -278,20 +246,15 @@ static void test_if_statement() {
     Instruction jmp = chunk->instructions.data[3];
     assert(VM_DECODE_OPCODE(jmp) == OP_JMP_IF_FALSE);
     assert(VM_DECODE_I_RD(jmp) == 2);  // Condition register
-    assert(VM_DECODE_I_IMM(jmp) == 2); // Skip 2 instructions (to end)
+    assert(VM_DECODE_I_IMM(jmp) == 1); // Skip 1 instruction (to end)
 
     // Verify then block
     Instruction then_load = chunk->instructions.data[4];
     assert(VM_DECODE_OPCODE(then_load) == OP_LOAD_CONST);
     assert(VM_DECODE_I_RD(then_load) == 3);
 
-    Instruction ret = chunk->instructions.data[5];
-    assert(VM_DECODE_OPCODE(ret) == OP_RETURN);
-    assert(VM_DECODE_R_R1(ret) == 3);
-
     chunk_free(chunk);
     ast_script_destroy(script);
-    scope_destroy(scope);
     func_proto_list_free(&global_funcs);
 }
 
@@ -303,18 +266,18 @@ static void test_if_else_statement() {
     ASTExpr *right = ast_literal_expr_create(var_right);
     ASTExpr *cond = ast_bin_op_expr_create(left, BIN_OP_GREATER, right);
 
-    // Create then block: return 1
+    // Create then block: 1
     Literal then_val = {.kind = TYPE_FLOAT, .as_float = 1};
     ASTExpr *then_expr = ast_literal_expr_create(then_val);
-    ASTStmt *then_stmt = ast_return_stmt_create(then_expr);
+    ASTStmt *then_stmt = ast_expr_stmt_create(then_expr);
     ASTStmtList then_block_list = ast_stmt_list_create();
     ast_stmt_list_add(&then_block_list, then_stmt);
     ASTStmt *then_block = ast_block_stmt_create(then_block_list);
 
-    // Create else block: return 0
+    // Create else block: 0
     Literal else_val = {.kind = TYPE_FLOAT, .as_float = 0};
     ASTExpr *else_expr = ast_literal_expr_create(else_val);
-    ASTStmt *else_stmt = ast_return_stmt_create(else_expr);
+    ASTStmt *else_stmt = ast_expr_stmt_create(else_expr);
     ASTStmtList else_block_list = ast_stmt_list_create();
     ast_stmt_list_add(&else_block_list, else_stmt);
     ASTStmt *else_block = ast_block_stmt_create(else_block_list);
@@ -324,10 +287,10 @@ static void test_if_else_statement() {
 
     ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
-    Scope *scope = scope_create(NULL);
+    Scope *scope = scope_create(arena, NULL);
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, if_stmt);
-    ast_script_resolve(script, scope);
+    ast_script_resolve(arena, script, scope);
 
     Chunk *chunk = codegen_generate(script, &global_data, &global_funcs);
 
@@ -337,11 +300,9 @@ static void test_if_else_statement() {
     // 3. CMP_GT R0, R0, R1
     // 4. JMP_IF_FALSE R0, +3 (skip to else block)
     // 5. LOAD_CONST R1, 1
-    // 6. RETURN R1
-    // 7. JMP +2 (skip else block)
-    // 8. LOAD_CONST R1, 0
-    // 9. RETURN R1
-    assert(chunk->instructions.size == 9);
+    // 6. JMP +2 (skip else block)
+    // 7. LOAD_CONST R1, 0
+    assert(chunk->instructions.size == 7);
 
     // Verify condition
     Instruction cmp = chunk->instructions.data[2];
@@ -350,16 +311,15 @@ static void test_if_else_statement() {
     // Verify if-false jump to else block
     Instruction jmp_false = chunk->instructions.data[3];
     assert(VM_DECODE_OPCODE(jmp_false) == OP_JMP_IF_FALSE);
-    assert(VM_DECODE_I_IMM(jmp_false) == 3); // Jump to else block
+    assert(VM_DECODE_I_IMM(jmp_false) == 2); // Jump to else block
 
     // Verify unconditional jump over else block
-    Instruction jmp = chunk->instructions.data[6];
+    Instruction jmp = chunk->instructions.data[5];
     assert(VM_DECODE_OPCODE(jmp) == OP_JMP);
-    assert(VM_DECODE_I_IMM(jmp) == 2); // Jump to end
+    assert(VM_DECODE_I_IMM(jmp) == 1); // Jump to end
 
     chunk_free(chunk);
     ast_script_destroy(script);
-    scope_destroy(scope);
     func_proto_list_free(&global_funcs);
 }
 
@@ -392,9 +352,9 @@ static void test_func_decl() {
     ast_script_add_statement(script, func);
 
     Scope global_scope;
-    scope_init(&global_scope, NULL);
+    scope_init(&global_scope, arena, NULL);
 
-    ast_script_resolve(script, &global_scope);
+    ast_script_resolve(arena, script, &global_scope);
 
     // 5. Set up codegen environment
     ValueList global_data = value_list_create();
@@ -430,14 +390,14 @@ static void test_func_decl() {
 
     // 9. Cleanup
     chunk_free(chunk);
-    ast_stmt_destroy(func);
+    ast_script_destroy(script);
     func_proto_list_free(&global_funcs);
     value_list_free(&global_data);
-    scope_free(&global_scope);
 }
 
 int main(void) {
     string_init();
+    arena = arena_create(128);
 
     test_number();
     test_add();
@@ -451,7 +411,6 @@ int main(void) {
     test_cmp_greater();
     test_cmp_gequal();
 
-    test_return();
     test_var_decl();
     test_variable_access();
 
@@ -460,6 +419,7 @@ int main(void) {
 
     test_func_decl();
 
+    arena_destroy(arena);
     string_deinit();
     return 0;
 }

@@ -1,8 +1,8 @@
 #include "type.h"
 #include <stdlib.h>
 
-Type *type_create(TypeKind kind, String *name) {
-    Type *type = malloc(sizeof(Type));
+Type *type_create(Arena *arena, TypeKind kind, String *name) {
+    Type *type = arena_alloc(arena, sizeof(Type));
     type->kind = kind;
     type->name = name;
 

@@ -1,6 +1,7 @@
 #ifndef GAB_VM_H
 #define GAB_VM_H
 
+#include "arena.h"
 #include "scope.h"
 #include "util/list.h"
 #include "value.h"
@@ -54,10 +55,13 @@ typedef struct {
     int max_registers;
 } FuncPrototype;
 
-#define func_proto_list_item_free
+#define func_proto_list_item_free(item) chunk_free(item.chunk)
 GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype)
 
 typedef struct {
+    Arena *persistent_arena;
+    Arena *transient_arena;
+
     Scope global_scope;
 
     ValueList global_data;

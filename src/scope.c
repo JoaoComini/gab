@@ -1,36 +1,23 @@
 #include "scope.h"
+#include "arena.h"
 #include "string/string.h"
 #include "symbol_table.h"
 #include "type_registry.h"
 #include <assert.h>
-#include <stdlib.h>
 
-Scope *scope_create(Scope *parent) {
-    Scope *scope = malloc(sizeof(Scope));
-    scope_init(scope, parent);
+Scope *scope_create(Arena *arena, Scope *parent) {
+    Scope *scope = arena_alloc(arena, sizeof(Scope));
+    scope_init(scope, arena, parent);
     return scope;
 }
 
-void scope_init(Scope *scope, Scope *parent) {
-    scope->symbol_table = symbol_table_create(SYMBOL_TABLE_INITIAL_CAPACITY);
-    scope->type_registry = parent && parent->type_registry ? parent->type_registry : type_registry_create();
+void scope_init(Scope *scope, Arena *arena, Scope *parent) {
+    scope->arena = arena;
+    scope->symbol_table = symbol_table_create_alloc(arena_allocator(arena), SYMBOL_TABLE_INITIAL_CAPACITY);
+    scope->type_registry =
+        parent && parent->type_registry ? parent->type_registry : type_registry_create(arena);
     scope->parent = parent;
     scope->depth = parent ? parent->depth + 1 : 0;
-}
-
-void scope_destroy(Scope *scope) {
-    scope_free(scope);
-    free(scope);
-}
-
-void scope_free(Scope *scope) {
-    symbol_table_destroy(scope->symbol_table);
-
-    if (scope->parent) {
-        return;
-    }
-
-    type_registry_destroy(scope->type_registry);
 }
 
 Symbol *scope_symbol_lookup(Scope *scope, String *name) {
@@ -47,7 +34,7 @@ Symbol *scope_symbol_lookup(Scope *scope, String *name) {
 }
 
 Symbol *scope_decl_var(Scope *scope, String *name, Type *type) {
-    Symbol *sym = malloc(sizeof(Symbol));
+    Symbol *sym = arena_alloc(scope->arena, sizeof(Symbol));
     sym->scope_depth = scope->depth;
     sym->var.type = type;
 
@@ -60,7 +47,7 @@ Symbol *scope_decl_var(Scope *scope, String *name, Type *type) {
 }
 
 Symbol *scope_decl_func(Scope *scope, String *name, Type *return_type) {
-    Symbol *sym = malloc(sizeof(Symbol));
+    Symbol *sym = arena_alloc(scope->arena, sizeof(Symbol));
     sym->scope_depth = scope->depth;
     sym->func.return_type = return_type;
 

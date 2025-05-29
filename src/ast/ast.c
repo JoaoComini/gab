@@ -28,6 +28,25 @@ void ast_script_add_statement(ASTScript *script, ASTStmt *stmt) {
     ast_stmt_list_add(&script->statements, stmt);
 }
 
+typedef struct {
+    Type *return_type;
+} FuncContext;
+
+typedef struct {
+    Arena *arena;
+
+    Scope *global_scope;
+    Scope *current_scope;
+
+    FuncContext func_context;
+} ResolverState;
+
+void resolver_enter_scope(ResolverState *state) {
+    state->current_scope = scope_create(state->arena, state->current_scope);
+}
+
+void resolver_exit_scope(ResolverState *state) { state->current_scope = state->current_scope->parent; }
+
 bool is_numeric_type(Type *t) { return t->kind == TYPE_INT || t->kind == TYPE_FLOAT; }
 
 bool is_boolean_type(Type *t) { return t->kind == TYPE_BOOL; }
@@ -36,22 +55,21 @@ bool is_ordered_type(Type *t) { return is_numeric_type(t) || is_boolean_type(t);
 
 bool is_comparable_type(Type *t) { return is_numeric_type(t) || is_boolean_type(t); }
 
-void ast_script_expr_visit(ASTScript *script, ASTExpr *expr, Scope *scope) {
+void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
     if (!expr) {
         return;
     }
 
     switch (expr->kind) {
     case EXPR_BIN_OP: {
-        ast_script_expr_visit(script, expr->bin_op.left, scope);
-        ast_script_expr_visit(script, expr->bin_op.right, scope);
+        ast_script_expr_visit(state, expr->bin_op.left);
+        ast_script_expr_visit(state, expr->bin_op.right);
 
         Type *left_type = expr->bin_op.left->type;
         Type *right_type = expr->bin_op.right->type;
 
         assert(left_type == right_type && "mismatched types in binary operation");
 
-        // Validate operator compatibility with type
         switch (expr->bin_op.op) {
         case BIN_OP_ADD:
         case BIN_OP_SUB:
@@ -76,11 +94,11 @@ void ast_script_expr_visit(ASTScript *script, ASTExpr *expr, Scope *scope) {
             break;
         }
 
-        expr->type = type_registry_get_builtin(scope->type_registry, TYPE_BOOL);
+        expr->type = type_registry_get_builtin(state->current_scope->type_registry, TYPE_BOOL);
         break;
     }
     case EXPR_VARIABLE: {
-        Symbol *entry = scope_symbol_lookup(scope, string_from_ref(expr->var.name));
+        Symbol *entry = scope_symbol_lookup(state->current_scope, string_from_ref(expr->var.name));
         assert(entry && "undeclared variable");
 
         expr->symbol = entry;
@@ -88,7 +106,7 @@ void ast_script_expr_visit(ASTScript *script, ASTExpr *expr, Scope *scope) {
         break;
     }
     case EXPR_LITERAL: {
-        expr->type = type_registry_get_builtin(scope->type_registry, expr->lit.kind);
+        expr->type = type_registry_get_builtin(state->current_scope->type_registry, expr->lit.kind);
         break;
     }
     default:
@@ -107,22 +125,22 @@ Type *ast_script_resolve_type(Scope *scope, TypeSpec *spec) {
     return type;
 }
 
-void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt, Scope *scope) {
+void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
     if (!stmt) {
         return;
     }
 
     switch (stmt->kind) {
     case STMT_EXPR: {
-        ast_script_expr_visit(script, stmt->expr.value, scope);
+        ast_script_expr_visit(state, stmt->expr.value);
         break;
     }
     case STMT_VAR_DECL: {
-        ast_script_expr_visit(script, stmt->var_decl.initializer, scope);
+        ast_script_expr_visit(state, stmt->var_decl.initializer);
 
         Type *type;
         if (stmt->var_decl.type_spec) {
-            Type *decl_type = ast_script_resolve_type(scope, stmt->var_decl.type_spec);
+            Type *decl_type = ast_script_resolve_type(state->current_scope, stmt->var_decl.type_spec);
 
             if (stmt->var_decl.initializer) {
                 Type *init_type = stmt->var_decl.initializer->type;
@@ -134,44 +152,49 @@ void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt, Scope *scope) {
             type = stmt->var_decl.initializer->type;
         }
 
-        Symbol *var = scope_decl_var(scope, string_from_ref(stmt->var_decl.name), type);
+        Symbol *var = scope_decl_var(state->current_scope, string_from_ref(stmt->var_decl.name), type);
         assert(var && "variable already declared in this scope");
 
         stmt->var_decl.symbol = var;
         break;
     }
     case STMT_FUNC_DECL: {
-        Scope func_scope;
-        scope_init(&func_scope, scope);
+        resolver_enter_scope(state);
 
         for (int i = 0; i < stmt->func_decl.params.size; i++) {
             ASTField *param = stmt->func_decl.params.data[i];
 
             String *param_name = string_from_ref(param->name);
-            Type *param_type = ast_script_resolve_type(scope, param->type_spec);
+            Type *param_type = ast_script_resolve_type(state->current_scope, param->type_spec);
 
-            Symbol *symbol = scope_decl_var(&func_scope, param_name, param_type);
+            Symbol *symbol = scope_decl_var(state->current_scope, param_name, param_type);
             assert(symbol && "variable already declared in this scope");
 
             param->symbol = symbol;
         }
 
         StringRef func_name = stmt->func_decl.name;
-        Type *func_return_type = ast_script_resolve_type(scope, stmt->func_decl.return_type);
+        Type *func_return_type = ast_script_resolve_type(state->current_scope, stmt->func_decl.return_type);
 
-        ast_script_stmt_visit(script, stmt->func_decl.body, &func_scope);
-
-        Symbol *func = scope_decl_func(scope, string_from_ref(func_name), func_return_type);
+        Symbol *func = scope_decl_func(state->current_scope, string_from_ref(func_name), func_return_type);
         assert(func && "function already declared in this scope");
 
         stmt->func_decl.symbol = func;
 
-        scope_free(&func_scope);
+        FuncContext previous_context = state->func_context;
+
+        state->func_context.return_type = func_return_type;
+
+        ast_script_stmt_visit(state, stmt->func_decl.body);
+
+        state->func_context = previous_context;
+
+        resolver_exit_scope(state);
         break;
     }
     case STMT_ASSIGN: {
-        ast_script_expr_visit(script, stmt->assign.target, scope);
-        ast_script_expr_visit(script, stmt->assign.value, scope);
+        ast_script_expr_visit(state, stmt->assign.target);
+        ast_script_expr_visit(state, stmt->assign.value);
 
         Type *target_type = stmt->assign.target->type;
         Type *value_type = stmt->assign.value->type;
@@ -180,31 +203,45 @@ void ast_script_stmt_visit(ASTScript *script, ASTStmt *stmt, Scope *scope) {
         break;
     }
     case STMT_IF: {
-        ast_script_expr_visit(script, stmt->ifstmt.condition, scope);
-        ast_script_stmt_visit(script, stmt->ifstmt.then_block, scope);
-        ast_script_stmt_visit(script, stmt->ifstmt.else_block, scope);
+        ast_script_expr_visit(state, stmt->ifstmt.condition);
+        ast_script_stmt_visit(state, stmt->ifstmt.then_block);
+        ast_script_stmt_visit(state, stmt->ifstmt.else_block);
         break;
     }
     case STMT_BLOCK: {
-        Scope block_scope;
-        scope_init(&block_scope, scope);
+        resolver_enter_scope(state);
 
         for (int i = 0; i < stmt->block.list.size; i++) {
-            ast_script_stmt_visit(script, stmt->block.list.data[i], &block_scope);
+            ast_script_stmt_visit(state, stmt->block.list.data[i]);
         }
 
-        scope_free(&block_scope);
+        resolver_exit_scope(state);
         break;
     }
     case STMT_RETURN: {
-        ast_script_expr_visit(script, stmt->ret.result, scope);
+        ast_script_expr_visit(state, stmt->ret.result);
+
+        Type *expected = state->func_context.return_type;
+        Type *actual = stmt->ret.result ? stmt->ret.result->type : NULL;
+
+        assert(actual == expected && "return type does not match function return type");
         break;
     }
     }
 }
 
-void ast_script_resolve(ASTScript *script, Scope *global_scope) {
+void ast_script_resolve(Arena *arena, ASTScript *script, Scope *global_scope) {
+    ResolverState state = {
+        .arena = arena,
+        .global_scope = global_scope,
+        .current_scope = global_scope,
+        .func_context =
+            {
+                .return_type = NULL,
+            },
+    };
+
     for (int i = 0; i < script->statements.size; i++) {
-        ast_script_stmt_visit(script, script->statements.data[i], global_scope);
+        ast_script_stmt_visit(&state, script->statements.data[i]);
     }
 }

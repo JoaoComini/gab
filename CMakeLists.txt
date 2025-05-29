@@ -9,6 +9,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_C_COMPILER clang)
 
 add_library(gab
+    src/arena.c
     src/lexer.c
     src/parser.c
     src/type.c

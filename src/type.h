@@ -1,6 +1,7 @@
 #ifndef GAB_TYPE_H
 #define GAB_TYPE_H
 
+#include "arena.h"
 #include "string/string.h"
 #include "string/string_ref.h"
 
@@ -16,7 +17,7 @@ typedef struct {
     String *name;
 } Type;
 
-Type *type_create(TypeKind kind, String *name);
+Type *type_create(Arena *arena, TypeKind kind, String *name);
 void type_destroy(Type *type);
 
 typedef struct {

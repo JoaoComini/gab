@@ -1,5 +1,6 @@
 #include "string.h"
 
+#include "allocator.h"
 #include "string/string.h"
 #include "string/string_pool.h"
 #include "string/string_ref.h"
@@ -9,7 +10,31 @@
 
 static StringPool string_pool = {0};
 
-void string_init() { string_pool_init(&string_pool, STRING_POOL_INITIAL_CAPACITY); }
+static void *string_pool_allocator_alloc(void *ctx, size_t size) {
+    (void)ctx;
+    return malloc(size);
+}
+
+static void string_pool_allocator_free(void *ctx, void *ptr) {
+    (void)ctx;
+    StringPoolEntry *entry = ptr;
+
+    if (entry->value) {
+        string_destroy(entry->value);
+    }
+    free(entry);
+}
+
+static const Allocator string_pool_allocator = (Allocator){
+    .alloc = &string_pool_allocator_alloc,
+    .free = &string_pool_allocator_free,
+    .ctx = NULL,
+};
+
+void string_init() {
+    string_pool_init_alloc(&string_pool, string_pool_allocator, STRING_POOL_INITIAL_CAPACITY);
+}
+
 void string_deinit() { string_pool_free(&string_pool); }
 
 String *string_from_cstr_len(const char *cstr, size_t length) {

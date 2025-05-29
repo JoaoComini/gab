@@ -1,6 +1,7 @@
 #ifndef GAB_TYPE_REGISTRY_H
 #define GAB_TYPE_REGISTRY_H
 
+#include "arena.h"
 #include "string/string.h"
 #include "type.h"
 #include "util/hash_map.h"
@@ -10,7 +11,6 @@
 #define type_map_hash(key) (size_t)key
 #define type_map_key_equals(key, other) key == other
 #define type_map_key_dup(key) key
-#define type_map_entry_free(key, value) type_destroy(value)
 
 GAB_HASH_MAP(TypeMap, type_map, String *, Type *)
 
@@ -21,11 +21,13 @@ typedef struct {
 } TypeBuiltins;
 
 typedef struct {
+    Arena *arena;
+
     TypeMap *map;
     TypeBuiltins builtins;
 } TypeRegistry;
 
-TypeRegistry *type_registry_create();
+TypeRegistry *type_registry_create(Arena *arena);
 void type_registry_destroy(TypeRegistry *registry);
 
 Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind type);

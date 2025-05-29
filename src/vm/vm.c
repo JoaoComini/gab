@@ -1,5 +1,6 @@
 #include "vm/vm.h"
 
+#include "arena.h"
 #include "ast/ast.h"
 #include "lexer.h"
 #include "parser.h"
@@ -17,6 +18,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define ARENA_BLOCK_SIZE 2048
+
 VM *vm_create() {
     string_init();
 
@@ -26,7 +29,10 @@ VM *vm_create() {
     vm->global_data = value_list_create();
     vm->global_funcs = func_proto_list_create();
 
-    scope_init(&vm->global_scope, NULL);
+    vm->persistent_arena = arena_create(ARENA_BLOCK_SIZE);
+    vm->transient_arena = arena_create(ARENA_BLOCK_SIZE);
+
+    scope_init(&vm->global_scope, vm->persistent_arena, NULL);
     memset(vm->registers, 0, sizeof(vm->registers));
 
     return vm;
@@ -35,6 +41,9 @@ VM *vm_create() {
 void vm_free(VM *vm) {
     value_list_free(&vm->global_data);
     func_proto_list_free(&vm->global_funcs);
+
+    arena_destroy(vm->persistent_arena);
+    arena_destroy(vm->transient_arena);
 
     free(vm);
 
@@ -142,7 +151,7 @@ void vm_execute(VM *vm, const char *source) {
     ASTScript *script = ast_script_create();
     bool ok = parser_parse(&parser, script);
 
-    ast_script_resolve(script, &vm->global_scope);
+    ast_script_resolve(vm->transient_arena, script, &vm->global_scope);
 
     Chunk *chunk = codegen_generate(script, &vm->global_data, &vm->global_funcs);
 
@@ -308,6 +317,7 @@ void vm_execute(VM *vm, const char *source) {
         vm->instruction_pointer += 1;
     }
 
+    arena_reset(vm->transient_arena);
     chunk_free(chunk);
     ast_script_destroy(script);
 }
