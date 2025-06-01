@@ -1,5 +1,6 @@
 #include "ast.h"
 
+#include "ast/expr.h"
 #include "scope.h"
 #include "string/string.h"
 #include "string/string_ref.h"
@@ -97,9 +98,9 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         expr->type = type_registry_get_builtin(state->current_scope->type_registry, TYPE_BOOL);
         break;
     }
-    case EXPR_VARIABLE: {
-        Symbol *entry = scope_symbol_lookup(state->current_scope, string_from_ref(expr->var.name));
-        assert(entry && "undeclared variable");
+    case EXPR_IDENTIFIER: {
+        Symbol *entry = scope_symbol_lookup(state->current_scope, string_from_ref(expr->ident.name));
+        assert(entry && "variable not found in this scope");
 
         expr->symbol = entry;
         expr->type = entry->var.type;
@@ -107,6 +108,34 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
     }
     case EXPR_LITERAL: {
         expr->type = type_registry_get_builtin(state->current_scope->type_registry, expr->lit.kind);
+        break;
+    }
+    case EXPR_CALL: {
+        assert(expr->call.target->kind == EXPR_IDENTIFIER);
+
+        Symbol *entry =
+            scope_symbol_lookup(state->current_scope, string_from_ref(expr->call.target->ident.name));
+
+        assert(entry && "function not found in this scope");
+
+        assert(entry->kind == SYMBOL_FUNC && "expression is not callable");
+
+        size_t arg_count = expr->call.params.size;
+        size_t param_count = entry->func.signature->params.size;
+
+        assert(arg_count == param_count && "unexpected number of arguments");
+
+        for (size_t i = 0; i < arg_count; i++) {
+            ASTExpr *arg = ast_expr_list_get(&expr->call.params, i);
+            ast_script_expr_visit(state, arg);
+
+            Type *type = type_list_get(&entry->func.signature->params, i);
+
+            assert(type == arg->type && "mismatched types on function arguments");
+        }
+
+        expr->type = entry->func.signature->return_type;
+        expr->symbol = entry;
         break;
     }
     default:
@@ -161,6 +190,7 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
     case STMT_FUNC_DECL: {
         resolver_enter_scope(state);
 
+        TypeList params = type_list_create();
         for (int i = 0; i < stmt->func_decl.params.size; i++) {
             ASTField *param = stmt->func_decl.params.data[i];
 
@@ -170,17 +200,13 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
             Symbol *symbol = scope_decl_var(state->current_scope, param_name, param_type);
             assert(symbol && "variable already declared in this scope");
 
+            type_list_add(&params, param_type);
+
             param->symbol = symbol;
         }
 
         StringRef func_name = stmt->func_decl.name;
         Type *func_return_type = ast_script_resolve_type(state->current_scope, stmt->func_decl.return_type);
-
-        Symbol *func = scope_decl_func(state->current_scope, string_from_ref(func_name), func_return_type);
-        assert(func && "function already declared in this scope");
-
-        stmt->func_decl.symbol = func;
-
         FuncContext previous_context = state->func_context;
 
         state->func_context.return_type = func_return_type;
@@ -190,6 +216,13 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         state->func_context = previous_context;
 
         resolver_exit_scope(state);
+
+        Symbol *func =
+            scope_decl_func(state->current_scope, string_from_ref(func_name), params, func_return_type);
+        assert(func && "function already declared in this scope");
+
+        stmt->func_decl.symbol = func;
+
         break;
     }
     case STMT_ASSIGN: {

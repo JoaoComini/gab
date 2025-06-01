@@ -147,7 +147,7 @@ void vm_conditional(VM *vm, Instruction instruction, bool (*func)(VM *, size_t, 
 
 void vm_execute(VM *vm, const char *source) {
     Lexer lexer = lexer_create(source);
-    Parser parser = parser_create(&lexer);
+    Parser parser = parser_create(vm->transient_arena, &lexer);
     ASTScript *script = ast_script_create();
     bool ok = parser_parse(&parser, script);
 

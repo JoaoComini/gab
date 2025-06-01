@@ -3,6 +3,7 @@
 
 #include "symbol_table.h"
 #include "type.h"
+#include "util/list.h"
 
 #include <stdint.h>
 
@@ -17,7 +18,8 @@ typedef struct {
 typedef enum {
     EXPR_LITERAL,
     EXPR_BIN_OP,
-    EXPR_VARIABLE,
+    EXPR_IDENTIFIER,
+    EXPR_CALL,
 } ExprKind;
 
 typedef enum {
@@ -35,6 +37,11 @@ typedef enum {
     BIN_OP_OR,
 } BinOp;
 
+typedef struct ASTExpr ASTExpr;
+
+#define ast_expr_list_item_free
+GAB_LIST(ASTExprList, ast_expr_list, ASTExpr *);
+
 typedef struct ASTExpr {
     ExprKind kind;
 
@@ -49,16 +56,22 @@ typedef struct ASTExpr {
 
         struct {
             StringRef name;
-        } var;
+        } ident;
+
+        struct {
+            // add(a, b);
+            struct ASTExpr *target;
+            struct ASTExprList params;
+        } call;
     };
 
     Type *type;     // Filled during type resolution
     Symbol *symbol; // Filled during symbol resolution
 } ASTExpr;
 
-ASTExpr *ast_literal_expr_create(Literal value);
-ASTExpr *ast_bin_op_expr_create(ASTExpr *left, BinOp op, ASTExpr *right);
-ASTExpr *ast_variable_expr_create(StringRef name);
-void ast_expr_free(ASTExpr *node);
+ASTExpr *ast_literal_expr_create(Arena *arena, Literal value);
+ASTExpr *ast_bin_op_expr_create(Arena *arena, ASTExpr *left, ASTExpr *right, BinOp op);
+ASTExpr *ast_identifier_expr_create(Arena *arena, StringRef name);
+ASTExpr *ast_call_expr_create(Arena *arena, ASTExpr *target, ASTExprList params);
 
 #endif

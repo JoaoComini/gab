@@ -1,4 +1,6 @@
+#include "arena.h"
 #include "ast/ast.h"
+#include "ast/expr.h"
 #include "ast/stmt.h"
 #include "lexer.h"
 #include "parser.h"
@@ -9,10 +11,12 @@
 #include <stdio.h>
 #include <string.h>
 
+static Arena *arena = NULL;
+
 static ASTScript *assert_parse(const char *code) {
     ASTScript *script = ast_script_create();
     Lexer lexer = lexer_create(code);
-    Parser parser = parser_create(&lexer);
+    Parser parser = parser_create(arena, &lexer);
     bool ok = parser_parse(&parser, script);
     assert(ok);
 
@@ -22,7 +26,7 @@ static ASTScript *assert_parse(const char *code) {
 static void assert_parse_error(const char *code, const char *expected_error) {
     ASTScript *script = ast_script_create();
     Lexer lexer = lexer_create(code);
-    Parser parser = parser_create(&lexer);
+    Parser parser = parser_create(arena, &lexer);
     bool ok = parser_parse(&parser, script);
     assert(!ok);
 
@@ -164,10 +168,10 @@ static void test_variables() {
     ASTExpr *rhs = expr->bin_op.right;
     assert(rhs->kind == EXPR_BIN_OP);
     assert(rhs->bin_op.op == BIN_OP_MUL);
-    assert(rhs->bin_op.left->kind == EXPR_VARIABLE);
-    assert(string_ref_equals_cstr(rhs->bin_op.left->var.name, "x"));
-    assert(rhs->bin_op.right->kind == EXPR_VARIABLE);
-    assert(string_ref_equals_cstr(rhs->bin_op.right->var.name, "y"));
+    assert(rhs->bin_op.left->kind == EXPR_IDENTIFIER);
+    assert(string_ref_equals_cstr(rhs->bin_op.left->ident.name, "x"));
+    assert(rhs->bin_op.right->kind == EXPR_IDENTIFIER);
+    assert(string_ref_equals_cstr(rhs->bin_op.right->ident.name, "y"));
 
     assert(expr->bin_op.left->kind == EXPR_LITERAL);
     assert(expr->bin_op.left->lit.as_int == 2.0);
@@ -285,8 +289,8 @@ static void test_assignment() {
     assert(stmt->kind == STMT_ASSIGN);
 
     ASTExpr *target = stmt->assign.target;
-    assert(target->kind == EXPR_VARIABLE);
-    assert(string_ref_equals_cstr(target->var.name, "x"));
+    assert(target->kind == EXPR_IDENTIFIER);
+    assert(string_ref_equals_cstr(target->ident.name, "x"));
 
     ASTExpr *value = stmt->assign.value;
     assert(value->kind == EXPR_LITERAL);
@@ -326,7 +330,7 @@ static void test_if() {
 }
 
 static void test_return() {
-    ASTScript *script = assert_parse(func_wrap("return 2;"));
+    ASTScript *script = assert_parse(func_wrap("return 2.0;"));
 
     ASTStmt *stmt = func_unwrap(script).data[0];
     assert(stmt->kind == STMT_RETURN);
@@ -334,6 +338,34 @@ static void test_return() {
     ASTExpr *result = stmt->ret.result;
     assert(result->kind == EXPR_LITERAL);
     assert(result->lit.as_float == 2.0);
+
+    ast_script_destroy(script);
+}
+
+static void test_empty_call_expr() {
+    ASTScript *script = assert_parse(func_wrap("call();"));
+
+    ASTStmt *stmt = func_unwrap(script).data[0];
+    assert(stmt->kind == STMT_EXPR);
+
+    ASTExpr *call = stmt->expr.value;
+    assert(call->kind == EXPR_CALL);
+    assert(call->call.target->kind == EXPR_IDENTIFIER);
+    assert(call->call.params.size == 0);
+
+    ast_script_destroy(script);
+}
+
+static void test_call_args_expr() {
+    ASTScript *script = assert_parse(func_wrap("call(a, b);"));
+
+    ASTStmt *stmt = func_unwrap(script).data[0];
+    assert(stmt->kind == STMT_EXPR);
+
+    ASTExpr *call = stmt->expr.value;
+    assert(call->kind == EXPR_CALL);
+    assert(call->call.target->kind == EXPR_IDENTIFIER);
+    assert(call->call.params.size == 2);
 
     ast_script_destroy(script);
 }
@@ -357,6 +389,8 @@ static void test_expression_not_assignable() {
 int main() {
     string_init();
 
+    arena = arena_create(1024);
+
     test_single_number();
     test_booleans();
     test_multiple_statements();
@@ -377,6 +411,11 @@ int main() {
     test_assignment();
     test_block();
     test_if();
+    test_return();
+    test_empty_call_expr();
+    test_call_args_expr();
+
+    arena_destroy(arena);
 
     string_deinit();
 

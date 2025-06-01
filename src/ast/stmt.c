@@ -68,10 +68,8 @@ void ast_stmt_destroy(ASTStmt *stmt) {
 
     switch (stmt->kind) {
     case STMT_EXPR:
-        ast_expr_free(stmt->expr.value);
         break;
     case STMT_VAR_DECL:
-        ast_expr_free(stmt->var_decl.initializer);
         if (stmt->var_decl.type_spec) {
             type_spec_destroy(stmt->var_decl.type_spec);
         }
@@ -84,11 +82,8 @@ void ast_stmt_destroy(ASTStmt *stmt) {
         ast_stmt_destroy(stmt->func_decl.body);
         break;
     case STMT_ASSIGN:
-        ast_expr_free(stmt->assign.target);
-        ast_expr_free(stmt->assign.value);
         break;
     case STMT_IF:
-        ast_expr_free(stmt->ifstmt.condition);
         ast_stmt_destroy(stmt->ifstmt.then_block);
         ast_stmt_destroy(stmt->ifstmt.else_block);
         break;
@@ -96,7 +91,6 @@ void ast_stmt_destroy(ASTStmt *stmt) {
         ast_stmt_list_free(&stmt->block.list);
         break;
     case STMT_RETURN:
-        ast_expr_free(stmt->ret.result);
         break;
     }
 

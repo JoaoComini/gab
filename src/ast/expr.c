@@ -1,42 +1,36 @@
 #include "expr.h"
+#include "arena.h"
 
-ASTExpr *ast_expr_create() { return malloc(sizeof(ASTExpr)); }
+ASTExpr *ast_expr_create(Arena *arena) { return arena_alloc(arena, sizeof(ASTExpr)); }
 
-ASTExpr *ast_literal_expr_create(Literal value) {
-    ASTExpr *node = ast_expr_create();
-    node->kind = EXPR_LITERAL;
-    node->lit = value;
-    return node;
+ASTExpr *ast_literal_expr_create(Arena *arena, Literal value) {
+    ASTExpr *expr = ast_expr_create(arena);
+    expr->kind = EXPR_LITERAL;
+    expr->lit = value;
+    return expr;
 }
 
-ASTExpr *ast_bin_op_expr_create(ASTExpr *left, BinOp op, ASTExpr *right) {
-    ASTExpr *node = ast_expr_create();
-    node->kind = EXPR_BIN_OP;
-    node->bin_op.left = left;
-    node->bin_op.right = right;
-    node->bin_op.op = op;
-    return node;
+ASTExpr *ast_bin_op_expr_create(Arena *arena, ASTExpr *left, ASTExpr *right, BinOp op) {
+    ASTExpr *expr = ast_expr_create(arena);
+    expr->kind = EXPR_BIN_OP;
+    expr->bin_op.left = left;
+    expr->bin_op.right = right;
+    expr->bin_op.op = op;
+    return expr;
 }
 
-ASTExpr *ast_variable_expr_create(StringRef name) {
-    ASTExpr *node = ast_expr_create();
-    node->kind = EXPR_VARIABLE;
-    node->var.name = name;
-    return node;
+ASTExpr *ast_identifier_expr_create(Arena *arena, StringRef name) {
+    ASTExpr *expr = ast_expr_create(arena);
+    expr->kind = EXPR_IDENTIFIER;
+    expr->ident.name = name;
+    return expr;
 }
 
-void ast_expr_free(ASTExpr *expr) {
-    if (!expr)
-        return;
+ASTExpr *ast_call_expr_create(Arena *arena, ASTExpr *target, ASTExprList params) {
+    ASTExpr *expr = ast_expr_create(arena);
+    expr->kind = EXPR_CALL;
+    expr->call.target = target;
+    expr->call.params = params;
 
-    switch (expr->kind) {
-    case EXPR_BIN_OP:
-        ast_expr_free(expr->bin_op.left);
-        ast_expr_free(expr->bin_op.right);
-        break;
-    default:
-        break;
-    }
-
-    free(expr);
+    return expr;
 }

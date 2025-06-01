@@ -1,4 +1,5 @@
 #include "type.h"
+#include "arena.h"
 #include <stdlib.h>
 
 Type *type_create(Arena *arena, TypeKind kind, String *name) {
@@ -19,3 +20,11 @@ TypeSpec *type_spec_create(StringRef name) {
 }
 
 void type_spec_destroy(TypeSpec *spec) { free(spec); }
+
+FuncSignature *func_signature_create(Arena *arena, TypeList params, Type *return_type) {
+    FuncSignature *signature = arena_alloc(arena, sizeof(FuncSignature));
+    signature->params = params;
+    signature->return_type = return_type;
+
+    return signature;
+}

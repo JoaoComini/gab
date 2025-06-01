@@ -28,7 +28,7 @@ typedef struct Symbol {
         } var;
 
         struct {
-            Type *return_type;
+            FuncSignature *signature;
         } func;
     };
 } Symbol;

@@ -11,12 +11,16 @@
 #include "vm/vm.h"
 #include <assert.h>
 
+typedef unsigned int Register;
+
 typedef struct {
     Chunk *chunk;
-    unsigned int next_reg;
+    Register next_reg;
+    int decl_var_count;
 
     ValueList *global_data;
     FuncProtoList *global_funcs;
+
 } CodegenState;
 
 static void codegen_stmt(CodegenState *state, ASTStmt *ast);
@@ -27,29 +31,33 @@ static void codegen_block_stmt(CodegenState *state, ASTBlockStmt *ast);
 static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast);
 static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast);
 
-static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast);
-static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node);
-static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node);
-static unsigned int codegen_bin_op_logical_expr(CodegenState *state, ASTExpr *node);
-static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node);
+static Register codegen_expr_alloc(CodegenState *state, ASTExpr *expr);
+static void codegen_expr(CodegenState *state, ASTExpr *ast, Register reg);
+static void codegen_literal_expr(CodegenState *state, ASTExpr *node, Register reg);
+static void codegen_identifier_expr(CodegenState *state, ASTExpr *node, Register reg);
+static void codegen_call_expr(CodegenState *state, ASTExpr *node, Register reg);
+static void codegen_bin_op_expr(CodegenState *state, ASTExpr *node, Register reg);
+static void codegen_bin_op_logical_expr(CodegenState *state, ASTExpr *node, Register reg);
 
 static OpCode bin_op_to_float_op(BinOp bin_op);
 static OpCode bin_op_to_int_op(BinOp bin_op);
 
-static unsigned int codegen_alloc_register(CodegenState *state);
+static Register codegen_alloc_register(CodegenState *state);
+static void codegen_free_register(CodegenState *state, Register reg);
 
 typedef struct {
     size_t position;
-    unsigned int cond_reg;
+    Register cond_reg;
 } CodegenLabel;
 
 CodegenLabel codegen_create_label(CodegenState *state);
-void codegen_patch_jump(CodegenState *state, CodegenLabel label, OpCode op, unsigned int reg);
+void codegen_patch_jump(CodegenState *state, CodegenLabel label, OpCode op, Register reg);
 
 Chunk *codegen_generate(ASTScript *script, ValueList *global_data, FuncProtoList *global_funcs) {
     CodegenState state = {
         .chunk = chunk_create(),
         .next_reg = 0,
+        .decl_var_count = 0,
         .global_data = global_data,
         .global_funcs = global_funcs,
     };
@@ -64,7 +72,7 @@ Chunk *codegen_generate(ASTScript *script, ValueList *global_data, FuncProtoList
 static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
     switch (ast->kind) {
     case STMT_EXPR:
-        codegen_expr(state, ast->expr.value);
+        codegen_expr_alloc(state, ast->expr.value);
         break;
     case STMT_RETURN: {
         codegen_return_stmt(state, &ast->ret);
@@ -93,49 +101,47 @@ static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
 }
 
 static void codegen_return_stmt(CodegenState *state, ASTReturnStmt *ast) {
-    unsigned int reg = codegen_expr(state, ast->result);
+    Register reg = codegen_expr_alloc(state, ast->result);
     chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RETURN, 0, reg, 0));
 }
 
 static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
-    if (ast->symbol->scope_depth == 0) {
+    if (ast->symbol->scope_depth > 0) {
+        ast->symbol->offset = codegen_alloc_register(state);
+        state->decl_var_count++;
+    } else {
         Value value;
         value_list_add(state->global_data, value);
         ast->symbol->offset = state->global_data->size - 1;
-    } else {
-        ast->symbol->offset = codegen_alloc_register(state);
     }
 
     if (!ast->initializer) {
         return;
     }
 
-    unsigned int r1 = codegen_expr(state, ast->initializer);
-
-    Instruction instruction;
-    if (ast->symbol->scope_depth == 0) {
-        instruction = VM_ENCODE_I(OP_STORE_GLOBAL, r1, ast->symbol->offset);
-
-    } else {
-        instruction = VM_ENCODE_R(OP_MOVE, ast->symbol->offset, r1, 0);
+    if (ast->symbol->scope_depth > 0) {
+        codegen_expr(state, ast->initializer, ast->symbol->offset);
+        return;
     }
 
-    chunk_add_instruction(state->chunk, instruction);
+    Register r1 = codegen_expr_alloc(state, ast->initializer);
+    Instruction store = VM_ENCODE_I(OP_STORE_GLOBAL, r1, ast->symbol->offset);
+    chunk_add_instruction(state->chunk, store);
+
+    codegen_free_register(state, r1);
 }
 
 static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
-    Instruction instruction;
-    if (ast->target->kind == EXPR_VARIABLE && ast->target->symbol->scope_depth == 0) {
-        unsigned int r1 = codegen_expr(state, ast->value);
-        instruction = VM_ENCODE_I(OP_STORE_GLOBAL, r1, ast->target->symbol->offset);
-    } else {
-        unsigned int rd = codegen_expr(state, ast->target);
-        unsigned int r1 = codegen_expr(state, ast->value);
-
-        instruction = VM_ENCODE_R(OP_MOVE, rd, r1, 0);
+    if (ast->target->symbol->scope_depth > 0) {
+        codegen_expr(state, ast->value, ast->target->symbol->offset);
+        return;
     }
 
-    chunk_add_instruction(state->chunk, instruction);
+    Register r1 = codegen_expr_alloc(state, ast->value);
+    Instruction store = VM_ENCODE_I(OP_STORE_GLOBAL, r1, ast->target->symbol->offset);
+    chunk_add_instruction(state->chunk, store);
+
+    codegen_free_register(state, r1);
 }
 
 static void codegen_block_stmt(CodegenState *state, ASTBlockStmt *ast) {
@@ -145,8 +151,10 @@ static void codegen_block_stmt(CodegenState *state, ASTBlockStmt *ast) {
 }
 
 static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast) {
-    unsigned int cond_reg = codegen_expr(state, ast->condition);
+    Register cond_reg = codegen_expr_alloc(state, ast->condition);
     CodegenLabel if_false = codegen_create_label(state);
+
+    codegen_free_register(state, cond_reg);
 
     codegen_stmt(state, ast->then_block);
 
@@ -167,7 +175,7 @@ static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast) {
 static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
     Chunk *func_chunk = chunk_create();
 
-    unsigned int func_next_reg = 1;
+    Register func_next_reg = 1;
 
     for (int i = 0; i < ast->params.size; i++) {
         ast->params.data[i]->symbol->offset = func_next_reg++;
@@ -194,14 +202,28 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
     ast->symbol->offset = state->global_funcs->size - 1;
 }
 
-static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
+static Register codegen_expr_alloc(CodegenState *state, ASTExpr *ast) {
+    Register reg = codegen_alloc_register(state);
+
+    codegen_expr(state, ast, reg);
+
+    return reg;
+}
+
+static void codegen_expr(CodegenState *state, ASTExpr *ast, Register reg) {
     switch (ast->kind) {
     case EXPR_LITERAL:
-        return codegen_literal_expr(state, ast);
-    case EXPR_VARIABLE:
-        return codegen_variable_expr(state, ast);
+        codegen_literal_expr(state, ast, reg);
+        break;
+    case EXPR_IDENTIFIER:
+        codegen_identifier_expr(state, ast, reg);
+        break;
+    case EXPR_CALL:
+        codegen_call_expr(state, ast, reg);
+        break;
     case EXPR_BIN_OP:
-        return codegen_bin_op_expr(state, ast);
+        codegen_bin_op_expr(state, ast, reg);
+        break;
     }
 }
 
@@ -220,67 +242,71 @@ static Value value_from_literal(Literal lit) {
     assert(0 && "unknown type");
 }
 
-static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node) {
-    unsigned int const_index = constpool_add(state->chunk->const_pool, value_from_literal(node->lit));
-    unsigned int r1 = codegen_alloc_register(state);
-    Instruction load_const = VM_ENCODE_I(OP_LOAD_CONST, r1, const_index);
+static void codegen_literal_expr(CodegenState *state, ASTExpr *node, Register reg) {
+    Register const_index = constpool_add(state->chunk->const_pool, value_from_literal(node->lit));
+    Instruction load_const = VM_ENCODE_I(OP_LOAD_CONST, reg, const_index);
 
     chunk_add_instruction(state->chunk, load_const);
-
-    return r1;
 }
 
-static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node) {
+static void codegen_identifier_expr(CodegenState *state, ASTExpr *node, Register reg) {
     if (node->symbol->scope_depth > 0) {
-        return node->symbol->offset;
+        Instruction move = VM_ENCODE_R(OP_MOVE, reg, node->symbol->offset, 0);
+        chunk_add_instruction(state->chunk, move);
+        return;
     }
 
-    unsigned int rd = codegen_alloc_register(state);
-    Instruction load_global = VM_ENCODE_I(OP_LOAD_GLOBAL, rd, node->symbol->offset);
-
+    Instruction load_global = VM_ENCODE_I(OP_LOAD_GLOBAL, reg, node->symbol->offset);
     chunk_add_instruction(state->chunk, load_global);
-
-    return rd;
 }
 
-static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node) {
+static void codegen_call_expr(CodegenState *state, ASTExpr *node, Register reg) {
+    assert(node->symbol->scope_depth == 0 && "only global functions are supported by now");
+
+    codegen_expr(state, node->call.target, reg);
+
+    size_t arg_count = node->call.params.size;
+
+    for (size_t i = 0; i < arg_count; i++) {
+        ASTExpr *arg = ast_expr_list_get(&node->call.params, i);
+        codegen_expr_alloc(state, arg);
+    }
+
+    Instruction call = VM_ENCODE_R(OP_CALL, reg, arg_count, 0);
+    chunk_add_instruction(state->chunk, call);
+}
+
+static void codegen_bin_op_expr(CodegenState *state, ASTExpr *node, Register reg) {
     switch (node->bin_op.op) {
     case BIN_OP_AND:
     case BIN_OP_OR:
-        return codegen_bin_op_logical_expr(state, node);
+        return codegen_bin_op_logical_expr(state, node, reg);
     default:
         break;
     }
 
-    unsigned int lhs = codegen_expr(state, node->bin_op.left);
-    unsigned int rhs = codegen_expr(state, node->bin_op.right);
-    unsigned int result = codegen_alloc_register(state);
+    codegen_expr(state, node->bin_op.left, reg);
+    Register rhs = codegen_expr_alloc(state, node->bin_op.right);
 
     OpCode op_code = node->bin_op.left->type->kind == TYPE_FLOAT ? bin_op_to_float_op(node->bin_op.op)
                                                                  : bin_op_to_int_op(node->bin_op.op);
 
-    Instruction instruction = VM_ENCODE_R(op_code, result, lhs, rhs);
+    Instruction instruction = VM_ENCODE_R(op_code, reg, reg, rhs);
     chunk_add_instruction(state->chunk, instruction);
 
-    return result;
+    codegen_free_register(state, rhs);
 }
 
-static unsigned int codegen_bin_op_logical_expr(CodegenState *state, ASTExpr *node) {
-    unsigned int lhs = codegen_expr(state, node->bin_op.left);
+static void codegen_bin_op_logical_expr(CodegenState *state, ASTExpr *node, Register reg) {
+    codegen_expr(state, node->bin_op.left, reg);
 
     CodegenLabel short_circuit = codegen_create_label(state);
 
     OpCode jump_op = node->bin_op.op == BIN_OP_AND ? OP_JMP_IF_FALSE : OP_JMP_IF_TRUE;
 
-    unsigned int rhs = codegen_expr(state, node->bin_op.right);
-    unsigned int result = codegen_alloc_register(state);
+    codegen_expr(state, node->bin_op.right, reg);
 
-    Instruction move = VM_ENCODE_R(OP_MOVE, result, rhs, 0);
-    chunk_add_instruction(state->chunk, move);
-
-    codegen_patch_jump(state, short_circuit, jump_op, lhs);
-
-    return result;
+    codegen_patch_jump(state, short_circuit, jump_op, reg);
 }
 
 static OpCode bin_op_to_float_op(BinOp bin_op) {
@@ -337,17 +363,25 @@ static OpCode bin_op_to_int_op(BinOp bin_op) {
     }
 }
 
-static unsigned int codegen_alloc_register(CodegenState *state) {
+static Register codegen_alloc_register(CodegenState *state) {
     assert(state->next_reg < VM_MAX_REGISTERS);
 
     return state->next_reg++;
+}
+
+static void codegen_free_register(CodegenState *state, Register reg) {
+    if (reg < state->decl_var_count) {
+        return;
+    }
+
+    state->next_reg--;
 }
 
 CodegenLabel codegen_create_label(CodegenState *state) {
     return (CodegenLabel){.position = chunk_add_instruction(state->chunk, 0)};
 }
 
-void codegen_patch_jump(CodegenState *state, CodegenLabel label, OpCode op, unsigned int reg) {
+void codegen_patch_jump(CodegenState *state, CodegenLabel label, OpCode op, Register reg) {
     Instruction patch = VM_ENCODE_I(op, reg, state->chunk->instructions.size - label.position - 1);
     chunk_patch_instruction(state->chunk, label.position, patch);
 }

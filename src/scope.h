@@ -24,6 +24,6 @@ void scope_init(Scope *scope, Arena *arena, Scope *parent);
 
 Symbol *scope_symbol_lookup(Scope *scope, String *name);
 Symbol *scope_decl_var(Scope *scope, String *name, Type *type);
-Symbol *scope_decl_func(Scope *scope, String *name, Type *return_type);
+Symbol *scope_decl_func(Scope *scope, String *name, TypeList params, Type *return_type);
 
 #endif

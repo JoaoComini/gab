@@ -13,14 +13,15 @@ typedef struct {
 } ParseError;
 
 typedef struct {
-    Lexer *lexer;
+    Arena *arena;
 
+    Lexer *lexer;
     Token current;
 
     ParseError error;
 } Parser;
 
-Parser parser_create(Lexer *lexer);
+Parser parser_create(Arena *arena, Lexer *lexer);
 
 bool parser_parse(Parser *parser, ASTScript *script);
 

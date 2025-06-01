@@ -2,6 +2,7 @@
 #include "arena.h"
 #include "string/string.h"
 #include "symbol_table.h"
+#include "type.h"
 #include "type_registry.h"
 #include <assert.h>
 
@@ -35,6 +36,7 @@ Symbol *scope_symbol_lookup(Scope *scope, String *name) {
 
 Symbol *scope_decl_var(Scope *scope, String *name, Type *type) {
     Symbol *sym = arena_alloc(scope->arena, sizeof(Symbol));
+    sym->kind = SYMBOL_VAR;
     sym->scope_depth = scope->depth;
     sym->var.type = type;
 
@@ -46,10 +48,11 @@ Symbol *scope_decl_var(Scope *scope, String *name, Type *type) {
     return *decl;
 }
 
-Symbol *scope_decl_func(Scope *scope, String *name, Type *return_type) {
+Symbol *scope_decl_func(Scope *scope, String *name, TypeList params, Type *return_type) {
     Symbol *sym = arena_alloc(scope->arena, sizeof(Symbol));
+    sym->kind = SYMBOL_FUNC;
     sym->scope_depth = scope->depth;
-    sym->func.return_type = return_type;
+    sym->func.signature = func_signature_create(scope->arena, params, return_type);
 
     Symbol **decl = symbol_table_insert(scope->symbol_table, name, sym);
     if (!decl) {

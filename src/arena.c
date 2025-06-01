@@ -67,7 +67,6 @@ void arena_reset(Arena *arena) {
         block = block->next;
     }
 
-    // reset current pointer to the first block
     arena->current_block = arena->first_block;
 }
 

@@ -22,14 +22,17 @@ static bool stmt_needs_terminator(ASTStmt *stmt);
 static ASTExpr *parse_expression(Parser *parser);
 static ASTExpr *parse_primary(Parser *parser);
 static ASTExpr *parse_precedence(Parser *parser, int min_precedence);
+static ASTExpr *parse_call_expr(Parser *parser, ASTExpr *target);
+
 static int get_precedence(TokenType type);
 static BinOp parse_bin_op(TokenType type);
 
 static bool parser_expect(Parser *parser, TokenType token, const char *message);
 static void parser_error(Parser *parser, const char *message);
 
-Parser parser_create(Lexer *lexer) {
+Parser parser_create(Arena *arena, Lexer *lexer) {
     return (Parser){
+        .arena = arena,
         .lexer = lexer,
     };
 }
@@ -340,9 +343,8 @@ static ASTStmt *parse_expr_stmt(Parser *parser) {
         return ast_expr_stmt_create(expr);
     }
 
-    if (expr->kind != EXPR_VARIABLE) {
+    if (expr->kind != EXPR_IDENTIFIER) {
         parser_error(parser, "expression is not assignable");
-        ast_expr_free(expr);
         return NULL;
     }
 
@@ -367,7 +369,7 @@ static bool stmt_needs_terminator(ASTStmt *stmt) {
     }
 }
 
-static ASTExpr *parse_expression(Parser *parser) { return parse_precedence(parser, 0); }
+static ASTExpr *parse_expression(Parser *parser) { return parse_precedence(parser, 1); }
 
 static ASTExpr *parse_precedence(Parser *parser, int min_precedence) {
     ASTExpr *lhs = parse_primary(parser);
@@ -375,11 +377,19 @@ static ASTExpr *parse_precedence(Parser *parser, int min_precedence) {
         return NULL;
 
     while (1) {
+        if (parser->current.type == TOKEN_LPAREN) {
+            lhs = parse_call_expr(parser, lhs);
+            if (!lhs) {
+                return NULL;
+            }
+            continue;
+        }
+
         Token token = parser->current;
         int precedence = get_precedence(token.type);
 
-        if (precedence == 0 || precedence < min_precedence) {
-            break;
+        if (precedence < min_precedence) {
+            return lhs;
         }
 
         parser_next_token(parser); // eat op
@@ -388,14 +398,11 @@ static ASTExpr *parse_precedence(Parser *parser, int min_precedence) {
         ASTExpr *rhs = parse_precedence(parser, precedence + 1);
 
         if (!rhs) {
-            ast_expr_free(lhs);
             return NULL;
         }
 
-        lhs = ast_bin_op_expr_create(lhs, op, rhs);
+        lhs = ast_bin_op_expr_create(parser->arena, lhs, rhs, op);
     }
-
-    return lhs;
 }
 
 static ASTExpr *parse_primary(Parser *parser) {
@@ -408,7 +415,7 @@ static ASTExpr *parse_primary(Parser *parser) {
         parser_next_token(parser); // eat integer
 
         Literal lit = {.kind = TYPE_INT, .as_int = value};
-        return ast_literal_expr_create(lit);
+        return ast_literal_expr_create(parser->arena, lit);
     }
     case TOKEN_FLOAT: {
         char *temp = string_ref_to_cstr(parser->current.lexeme);
@@ -418,24 +425,24 @@ static ASTExpr *parse_primary(Parser *parser) {
         parser_next_token(parser); // eat float
 
         Literal lit = {.kind = TYPE_FLOAT, .as_float = value};
-        return ast_literal_expr_create(lit);
+        return ast_literal_expr_create(parser->arena, lit);
     }
     case TOKEN_TRUE: {
         parser_next_token(parser);
 
-        return ast_literal_expr_create((Literal){.kind = TYPE_BOOL, .as_int = 1});
+        return ast_literal_expr_create(parser->arena, (Literal){.kind = TYPE_BOOL, .as_int = 1});
     }
     case TOKEN_FALSE: {
         parser_next_token(parser);
 
-        return ast_literal_expr_create((Literal){.kind = TYPE_BOOL, .as_int = 0});
+        return ast_literal_expr_create(parser->arena, (Literal){.kind = TYPE_BOOL, .as_int = 0});
     }
     case TOKEN_IDENT: {
         Token name = parser->current;
 
         parser_next_token(parser); // eat identifier
 
-        return ast_variable_expr_create(name.lexeme);
+        return ast_identifier_expr_create(parser->arena, name.lexeme);
     }
     case TOKEN_LPAREN: {
         parser_next_token(parser); // eat '('
@@ -447,7 +454,6 @@ static ASTExpr *parse_primary(Parser *parser) {
         }
 
         if (!parser_expect(parser, TOKEN_RPAREN, "expected ')'")) {
-            ast_expr_free(node);
             return NULL;
         }
 
@@ -459,6 +465,38 @@ static ASTExpr *parse_primary(Parser *parser) {
         parser_error(parser, "expected expression");
         return NULL;
     }
+}
+
+static ASTExpr *parse_call_expr(Parser *parser, ASTExpr *target) {
+    parser_next_token(parser); // eat '('
+
+    ASTExprList params = ast_expr_list_create();
+    while (parser->current.type != TOKEN_RPAREN) {
+        ASTExpr *arg = parse_expression(parser);
+        if (!arg) {
+            return NULL;
+        }
+
+        ast_expr_list_add(&params, arg);
+
+        if (parser->current.type == TOKEN_COMMA) {
+            parser_next_token(parser); // eat ','
+            continue;
+        }
+
+        if (parser->current.type != TOKEN_RPAREN) {
+            parser_error(parser, "expected ',' or ')' in function call");
+            return NULL;
+        }
+    }
+
+    if (!parser_expect(parser, TOKEN_RPAREN, "expected ')' after function call")) {
+        return NULL;
+    }
+
+    parser_next_token(parser); // eat ')'
+
+    return ast_call_expr_create(parser->arena, target, params);
 }
 
 static int get_precedence(TokenType type) {
