@@ -36,6 +36,7 @@ static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_bin_op_logical_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node);
+static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node);
 
 static OpCode bin_op_to_float_op(BinOp bin_op);
 static OpCode bin_op_to_int_op(BinOp bin_op);
@@ -187,6 +188,13 @@ static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast) {
 static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
     Chunk *func_chunk = chunk_create();
 
+    // The slot is reserved before the body is generated so that a recursive
+    // call inside it encodes a valid prototype index; the entry is filled in
+    // once codegen knows the chunk and register count.
+    func_proto_list_add(state->global_funcs, (FuncPrototype){0});
+    size_t proto_index = state->global_funcs->size - 1;
+    ast->symbol->offset = proto_index;
+
     unsigned int func_next_reg = 1;
 
     for (int i = 0; i < ast->params.size; i++) {
@@ -206,19 +214,17 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
 
     state->failed = state->failed || func_state.failed;
 
-    FuncPrototype proto = (FuncPrototype){
-        .chunk = func_chunk,
-        .arity = ast->params.size,
-        .max_registers = func_state.next_reg,
-    };
-
     if (func_chunk->instructions.size == 0 ||
         VM_DECODE_OPCODE(instruction_list_back(&func_chunk->instructions)) != OP_RETURN) {
         chunk_add_instruction(func_chunk, VM_ENCODE_R(OP_RETURN, 0, 0, 0));
     }
 
-    func_proto_list_add(state->global_funcs, proto);
-    ast->symbol->offset = state->global_funcs->size - 1;
+    func_proto_list_emplace(state->global_funcs, proto_index,
+                            (FuncPrototype){
+                                .chunk = func_chunk,
+                                .arity = ast->params.size,
+                                .max_registers = func_state.next_reg,
+                            });
 }
 
 static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
@@ -229,6 +235,8 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
         return codegen_variable_expr(state, ast);
     case EXPR_BIN_OP:
         return codegen_bin_op_expr(state, ast);
+    case EXPR_CALL:
+        return codegen_call_expr(state, ast);
     }
 
     assert(0 && "unknown expression kind");
@@ -259,6 +267,35 @@ static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node) {
     chunk_add_instruction(state->chunk, load_const);
 
     return r1;
+}
+
+// Arguments go into the registers immediately above the destination, which is
+// where the callee's frame expects them: its r0 is the return slot and its
+// parameters are r1..arity.
+static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
+    size_t arg_count = node->call.args.size;
+
+    // dest and the argument slots must be contiguous, so they are reserved
+    // before evaluating anything: an argument that is itself a call would
+    // otherwise allocate its own registers in the middle of them.
+    unsigned int dest = codegen_alloc_register(state, node->span);
+
+    for (size_t i = 0; i < arg_count; i++) {
+        codegen_alloc_register(state, node->call.args.data[i]->span);
+    }
+
+    for (size_t i = 0; i < arg_count; i++) {
+        ASTExpr *arg = node->call.args.data[i];
+
+        unsigned int arg_reg = codegen_expr(state, arg);
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_MOVE, dest + 1 + i, arg_reg, 0));
+    }
+
+    Instruction call = VM_ENCODE_R(OP_CALL, dest, node->symbol->offset, arg_count);
+    chunk_add_instruction(state->chunk, call);
+
+    return dest;
 }
 
 static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node) {

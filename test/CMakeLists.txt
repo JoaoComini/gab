@@ -8,6 +8,7 @@ set(
     type_layout_test.c
     util/hash_map_test.c
     vm/constant_pool_test.c
+    vm/call_test.c
     vm/codegen_test.c
     vm/chunk_test.c
     vm/vm_test.c

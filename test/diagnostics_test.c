@@ -268,6 +268,54 @@ static void test_reports_every_bad_field() {
     test_context_free(&ctx);
 }
 
+static void test_reports_wrong_argument_count() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "func f(a: int): int { return a; } func g(): int { return f(1, 2); }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_TYPE);
+    assert(strcmp(diagnostic->message, "expected 1 argument(s), found 2") == 0);
+
+    test_context_free(&ctx);
+}
+
+static void test_reports_wrong_argument_type() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "func f(a: int): int { return a; } func g(): int { return f(1.5); }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_TYPE);
+    assert(strcmp(diagnostic->message, "argument 1 is float, but int was declared") == 0);
+
+    test_context_free(&ctx);
+}
+
+static void test_reports_calling_a_non_function() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "func g(): int { let x: int = 1; return x(); }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_TYPE);
+    assert(strcmp(diagnostic->message, "this expression is not callable") == 0);
+
+    test_context_free(&ctx);
+}
+
 // Statement-level recovery: without it the parser would stop at the first bad
 // statement and the second would never be reported.
 static void test_parser_recovers_across_statements() {
@@ -359,6 +407,10 @@ int main(void) {
     test_rejects_shadowing_a_builtin();
     test_reports_self_referential_struct();
     test_reports_every_bad_field();
+
+    test_reports_wrong_argument_count();
+    test_reports_wrong_argument_type();
+    test_reports_calling_a_non_function();
 
     test_parser_recovers_across_statements();
     test_syntax_errors_name_the_found_token();

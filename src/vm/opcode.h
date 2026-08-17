@@ -31,6 +31,7 @@ typedef enum {
     OP_JMP,
     OP_JMP_IF_FALSE,
     OP_JMP_IF_TRUE,
+    OP_CALL,
     OP_RETURN
 } OpCode;
 

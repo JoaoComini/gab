@@ -199,6 +199,52 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         expr->type = entry->var.type;
         break;
     }
+    case EXPR_CALL: {
+        ast_script_expr_visit(state, expr->call.target);
+
+        for (size_t i = 0; i < expr->call.args.size; i++) {
+            ast_script_expr_visit(state, expr->call.args.data[i]);
+        }
+
+        Symbol *callee = expr->call.target->symbol;
+
+        if (!callee) {
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        if (callee->kind != SYMBOL_FUNC) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "this expression is not callable");
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        if (expr->call.args.size != callee->func.param_count) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %zu argument(s), found %zu",
+                       callee->func.param_count, expr->call.args.size);
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        for (size_t i = 0; i < expr->call.args.size; i++) {
+            ASTExpr *arg = expr->call.args.data[i];
+            Type *param_type = callee->func.params[i];
+
+            if (is_error_type(arg->type) || is_error_type(param_type)) {
+                continue;
+            }
+
+            if (arg->type != param_type) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, arg->span,
+                           "argument %zu is %s, but %s was declared", i + 1, type_name(arg->type),
+                           type_name(param_type));
+            }
+        }
+
+        expr->symbol = callee;
+        expr->type = callee->func.return_type;
+        break;
+    }
     case EXPR_LITERAL: {
         expr->type = type_registry_get_builtin(state->current_scope->type_registry, expr->lit.kind);
         break;
@@ -277,13 +323,41 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         break;
     }
     case STMT_FUNC_DECL: {
+        StringRef func_name = stmt->func_decl.name;
+        Type *func_return_type = ast_script_resolve_type(state, stmt->func_decl.return_type, stmt->span);
+
+        // Declared in the enclosing scope, before the body is visited, so that
+        // callers and the function itself can both see it.
+        Symbol *func =
+            scope_decl_func(state->current_scope, resolver_intern(state, func_name), func_return_type);
+
+        if (!func) {
+            char *name = string_ref_to_cstr(func_name);
+            diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' is already declared in this scope",
+                       name);
+            free(name);
+        }
+
+        stmt->func_decl.symbol = func;
+
+        size_t param_count = stmt->func_decl.params.size;
+
+        if (func && param_count > 0) {
+            func->func.params = arena_alloc(state->arena, param_count * sizeof(Type *));
+            func->func.param_count = param_count;
+        }
+
         resolver_enter_scope(state);
 
-        for (int i = 0; i < stmt->func_decl.params.size; i++) {
+        for (size_t i = 0; i < param_count; i++) {
             ASTField *param = stmt->func_decl.params.data[i];
 
             String *param_name = resolver_intern(state, param->name);
             Type *param_type = ast_script_resolve_type(state, param->type_spec, param->span);
+
+            if (func) {
+                func->func.params[i] = param_type;
+            }
 
             Symbol *symbol = scope_decl_var(state->current_scope, param_name, param_type);
 
@@ -296,21 +370,6 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
 
             param->symbol = symbol;
         }
-
-        StringRef func_name = stmt->func_decl.name;
-        Type *func_return_type = ast_script_resolve_type(state, stmt->func_decl.return_type, stmt->span);
-
-        Symbol *func =
-            scope_decl_func(state->current_scope, resolver_intern(state, func_name), func_return_type);
-
-        if (!func) {
-            char *name = string_ref_to_cstr(func_name);
-            diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' is already declared in this scope",
-                       name);
-            free(name);
-        }
-
-        stmt->func_decl.symbol = func;
 
         FuncContext previous_context = state->func_context;
 

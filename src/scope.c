@@ -36,6 +36,7 @@ Symbol *scope_symbol_lookup(Scope *scope, String *name) {
 
 Symbol *scope_decl_var(Scope *scope, String *name, Type *type) {
     Symbol *sym = arena_alloc(scope->arena, sizeof(Symbol));
+    sym->kind = SYMBOL_VAR;
     sym->scope_depth = scope->depth;
     sym->var.type = type;
 
@@ -49,8 +50,11 @@ Symbol *scope_decl_var(Scope *scope, String *name, Type *type) {
 
 Symbol *scope_decl_func(Scope *scope, String *name, Type *return_type) {
     Symbol *sym = arena_alloc(scope->arena, sizeof(Symbol));
+    sym->kind = SYMBOL_FUNC;
     sym->scope_depth = scope->depth;
     sym->func.return_type = return_type;
+    sym->func.params = NULL;
+    sym->func.param_count = 0;
 
     Symbol **decl = symbol_table_insert(scope->symbol_table, name, sym);
     if (!decl) {

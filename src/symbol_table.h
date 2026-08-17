@@ -29,6 +29,9 @@ typedef struct Symbol {
 
         struct {
             Type *return_type;
+
+            Type **params;
+            size_t param_count;
         } func;
     };
 } Symbol;

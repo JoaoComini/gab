@@ -513,10 +513,72 @@ static bool stmt_needs_terminator(ASTStmt *stmt) {
 
 static ASTExpr *parse_expression(Parser *parser) { return parse_precedence(parser, 0); }
 
+static void ast_expr_list_destroy(ASTExprList *list) {
+    for (size_t i = 0; i < list->size; i++) {
+        ast_expr_free(list->data[i]);
+    }
+
+    ast_expr_list_free(list);
+}
+
+// Parses the argument list of a call, with the '(' already current.
+static ASTExpr *parse_call_expr(Parser *parser, ASTExpr *target) {
+    Span span = parser_span(parser);
+
+    parser_next_token(parser); // eat '('
+
+    ASTExprList args = ast_expr_list_create();
+    bool ok = true;
+
+    while (ok && parser->current.type != TOKEN_RPAREN) {
+        if (parser->current.type == TOKEN_EOF) {
+            parser_error(parser, "expected ')' to close the argument list");
+            ok = false;
+            break;
+        }
+
+        ASTExpr *arg = parse_expression(parser);
+        if (!arg) {
+            ok = false;
+            break;
+        }
+
+        ast_expr_list_add(&args, arg);
+
+        if (parser->current.type != TOKEN_COMMA && parser->current.type != TOKEN_RPAREN) {
+            parser_error_found(parser, "expected ',' or ')' after argument");
+            ok = false;
+            break;
+        }
+
+        if (parser->current.type == TOKEN_COMMA) {
+            parser_next_token(parser); // eat ','
+        }
+    }
+
+    if (!ok) {
+        ast_expr_list_destroy(&args);
+        ast_expr_free(target);
+
+        return NULL;
+    }
+
+    parser_next_token(parser); // eat ')'
+
+    return ast_call_expr_create(span, target, args);
+}
+
 static ASTExpr *parse_precedence(Parser *parser, int min_precedence) {
     ASTExpr *lhs = parse_primary(parser);
     if (!lhs)
         return NULL;
+
+    while (parser->current.type == TOKEN_LPAREN) {
+        lhs = parse_call_expr(parser, lhs);
+        if (!lhs) {
+            return NULL;
+        }
+    }
 
     while (1) {
         Token token = parser->current;

@@ -4,6 +4,7 @@
 #include "diagnostics.h"
 #include "symbol_table.h"
 #include "type.h"
+#include "util/list.h"
 
 #include <stdint.h>
 
@@ -19,6 +20,7 @@ typedef enum {
     EXPR_LITERAL,
     EXPR_BIN_OP,
     EXPR_VARIABLE,
+    EXPR_CALL,
 } ExprKind;
 
 typedef enum {
@@ -36,6 +38,11 @@ typedef enum {
     BIN_OP_OR,
 } BinOp;
 
+typedef struct ASTExpr ASTExpr;
+
+#define ast_expr_list_item_free(item) (void)(item)
+GAB_LIST(ASTExprList, ast_expr_list, ASTExpr *)
+
 typedef struct ASTExpr {
     ExprKind kind;
 
@@ -51,6 +58,11 @@ typedef struct ASTExpr {
         struct {
             StringRef name;
         } var;
+
+        struct {
+            ASTExpr *target;
+            ASTExprList args;
+        } call;
     };
 
     Span span; // Source position, for diagnostics
@@ -62,6 +74,7 @@ typedef struct ASTExpr {
 ASTExpr *ast_literal_expr_create(Span span, Literal value);
 ASTExpr *ast_bin_op_expr_create(Span span, ASTExpr *left, BinOp op, ASTExpr *right);
 ASTExpr *ast_variable_expr_create(Span span, StringRef name);
+ASTExpr *ast_call_expr_create(Span span, ASTExpr *target, ASTExprList args);
 void ast_expr_free(ASTExpr *node);
 
 #endif

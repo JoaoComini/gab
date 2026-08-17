@@ -109,6 +109,12 @@ static void vm_pop_frame(VM *vm) {
     vm->instruction_pointer = frame.return_ip;
 }
 
+void func_proto_free(FuncPrototype proto) {
+    if (proto.chunk) {
+        chunk_free(proto.chunk);
+    }
+}
+
 void vm_free(VM *vm) {
     value_list_free(&vm->global_data);
     func_proto_list_free(&vm->global_funcs);
@@ -376,6 +382,29 @@ void vm_execute(VM *vm, const char *source) {
         case OP_CMP_GEI: {
             vm_conditional(vm, instruction, vm_less_equali);
             break;
+        }
+        case OP_CALL: {
+            unsigned int dest = VM_DECODE_R_RD(instruction);
+            size_t proto_index = VM_DECODE_R_R1(instruction);
+
+            const FuncPrototype *proto = &vm->global_funcs.data[proto_index];
+
+            // The callee's r0 is its return slot and its parameters are
+            // r1..arity, so basing it at dest lines its parameters up with the
+            // arguments the caller already placed above dest.
+            size_t base = frame->base + dest;
+
+            if (!vm_push_frame(vm, proto, base, vm->instruction_pointer + 1, dest)) {
+                fprintf(stderr, "<script>: call depth exceeded\n");
+
+                while (vm->frame_count > 0) {
+                    vm_pop_frame(vm);
+                }
+
+                break;
+            }
+
+            continue;
         }
         case OP_RETURN: {
             size_t r1 = VM_DECODE_R_R1(instruction);

@@ -66,7 +66,9 @@ typedef struct {
     unsigned int dest;
 } CallFrame;
 
-#define func_proto_list_item_free(item) chunk_free(item.chunk)
+void func_proto_free(FuncPrototype proto);
+
+#define func_proto_list_item_free(item) func_proto_free(item)
 GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype)
 
 typedef struct {

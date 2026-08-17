@@ -32,6 +32,14 @@ ASTExpr *ast_variable_expr_create(Span span, StringRef name) {
     return node;
 }
 
+ASTExpr *ast_call_expr_create(Span span, ASTExpr *target, ASTExprList args) {
+    ASTExpr *node = ast_expr_create(span);
+    node->kind = EXPR_CALL;
+    node->call.target = target;
+    node->call.args = args;
+    return node;
+}
+
 void ast_expr_free(ASTExpr *expr) {
     if (!expr)
         return;
@@ -40,6 +48,15 @@ void ast_expr_free(ASTExpr *expr) {
     case EXPR_BIN_OP:
         ast_expr_free(expr->bin_op.left);
         ast_expr_free(expr->bin_op.right);
+        break;
+    case EXPR_CALL:
+        ast_expr_free(expr->call.target);
+
+        for (size_t i = 0; i < expr->call.args.size; i++) {
+            ast_expr_free(expr->call.args.data[i]);
+        }
+
+        ast_expr_list_free(&expr->call.args);
         break;
     default:
         break;
