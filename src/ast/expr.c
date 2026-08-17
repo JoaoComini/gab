@@ -1,16 +1,23 @@
 #include "expr.h"
 
-ASTExpr *ast_expr_create() { return malloc(sizeof(ASTExpr)); }
+ASTExpr *ast_expr_create(Span span) {
+    ASTExpr *node = malloc(sizeof(ASTExpr));
+    node->span = span;
+    node->type = NULL;
+    node->symbol = NULL;
 
-ASTExpr *ast_literal_expr_create(Literal value) {
-    ASTExpr *node = ast_expr_create();
+    return node;
+}
+
+ASTExpr *ast_literal_expr_create(Span span, Literal value) {
+    ASTExpr *node = ast_expr_create(span);
     node->kind = EXPR_LITERAL;
     node->lit = value;
     return node;
 }
 
-ASTExpr *ast_bin_op_expr_create(ASTExpr *left, BinOp op, ASTExpr *right) {
-    ASTExpr *node = ast_expr_create();
+ASTExpr *ast_bin_op_expr_create(Span span, ASTExpr *left, BinOp op, ASTExpr *right) {
+    ASTExpr *node = ast_expr_create(span);
     node->kind = EXPR_BIN_OP;
     node->bin_op.left = left;
     node->bin_op.right = right;
@@ -18,8 +25,8 @@ ASTExpr *ast_bin_op_expr_create(ASTExpr *left, BinOp op, ASTExpr *right) {
     return node;
 }
 
-ASTExpr *ast_variable_expr_create(StringRef name) {
-    ASTExpr *node = ast_expr_create();
+ASTExpr *ast_variable_expr_create(Span span, StringRef name) {
+    ASTExpr *node = ast_expr_create(span);
     node->kind = EXPR_VARIABLE;
     node->var.name = name;
     return node;

@@ -10,6 +10,7 @@ set(CMAKE_C_COMPILER clang)
 
 add_library(gab
     src/arena.c
+    src/diagnostics.c
     src/lexer.c
     src/parser.c
     src/type.c

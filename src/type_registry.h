@@ -18,6 +18,7 @@ typedef struct {
     Type *int_type;
     Type *float_type;
     Type *bool_type;
+    Type *error_type;
 } TypeBuiltins;
 
 typedef struct {
@@ -32,5 +33,6 @@ void type_registry_destroy(TypeRegistry *registry);
 
 Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind type);
 Type *type_registry_get(TypeRegistry *registry, String *name);
+Type *type_registry_error_type(TypeRegistry *registry);
 
 #endif

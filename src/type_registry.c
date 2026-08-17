@@ -12,6 +12,10 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     registry->builtins.float_type = type_create(registry->arena, TYPE_FLOAT, string_from_cstr("float"));
     registry->builtins.bool_type = type_create(registry->arena, TYPE_BOOL, string_from_cstr("bool"));
 
+    // Poison type. Deliberately not inserted into the name map: no script can
+    // name it, it only arises from a failed resolution.
+    registry->builtins.error_type = type_create(registry->arena, TYPE_ERROR, string_from_cstr("<error>"));
+
     type_map_insert(registry->map, registry->builtins.int_type->name, registry->builtins.int_type);
     type_map_insert(registry->map, registry->builtins.float_type->name, registry->builtins.float_type);
     type_map_insert(registry->map, registry->builtins.bool_type->name, registry->builtins.bool_type);
@@ -29,8 +33,12 @@ TypeRegistry *type_registry_create(Arena *arena) {
 void type_registry_destroy(TypeRegistry *registry) { type_map_destroy(registry->map); }
 
 Type *type_registry_get(TypeRegistry *registry, String *name) {
-    return *type_map_lookup(registry->map, name);
+    Type **type = type_map_lookup(registry->map, name);
+
+    return type ? *type : NULL;
 }
+
+Type *type_registry_error_type(TypeRegistry *registry) { return registry->builtins.error_type; }
 
 Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind kind) {
     switch (kind) {
@@ -45,4 +53,5 @@ Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind kind) {
     }
 
     assert(0 && "type is not a builtin type");
+    abort();
 }

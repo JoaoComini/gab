@@ -10,6 +10,7 @@ typedef enum {
     TYPE_FLOAT,
     TYPE_BOOL,
     TYPE_UNKNOWN, // for inference or errors
+    TYPE_ERROR,   // poison: a failed resolution, already reported
 } TypeKind;
 
 typedef struct {

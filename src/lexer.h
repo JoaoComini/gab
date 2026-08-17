@@ -1,6 +1,7 @@
 #ifndef LEXER_H
 #define LEXER_H
 
+#include "diagnostics.h"
 #include "string/string_ref.h"
 
 typedef enum {
@@ -53,9 +54,21 @@ typedef struct {
 typedef struct {
     const char *source;
     int pos;
+    int line;
+    int column;
+
+    // Start position of the token currently being built, so a token points at
+    // its first character rather than its last.
+    int start_line;
+    int start_column;
+
+    Diagnostics *diagnostics; // invalid tokens are reported here
 } Lexer;
 
-Lexer lexer_create(const char *source);
+Lexer lexer_create(const char *source, Diagnostics *diagnostics);
 Token lexer_next(Lexer *lexer);
+
+Span token_span(Token token);
+const char *token_description(TokenType type);
 
 #endif

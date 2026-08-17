@@ -1,5 +1,7 @@
+#include "arena.h"
 #include "ast/ast.h"
 #include "ast/stmt.h"
+#include "diagnostics.h"
 #include "lexer.h"
 #include "parser.h"
 #include "type.h"
@@ -9,25 +11,57 @@
 #include <stdio.h>
 #include <string.h>
 
+#define TEST_ARENA_BLOCK_SIZE 2048
+
 static ASTScript *assert_parse(const char *code) {
+    Arena *arena = arena_create(TEST_ARENA_BLOCK_SIZE);
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, arena, "<test>");
+
     ASTScript *script = ast_script_create();
-    Lexer lexer = lexer_create(code);
-    Parser parser = parser_create(&lexer);
+    Lexer lexer = lexer_create(code, &diagnostics);
+    Parser parser = parser_create(&lexer, &diagnostics);
     bool ok = parser_parse(&parser, script);
     assert(ok);
+    assert(!diagnostics_has_errors(&diagnostics));
+
+    diagnostics_free(&diagnostics);
+    arena_destroy(arena);
 
     return script;
 }
 
 static void assert_parse_error(const char *code, const char *expected_error) {
+    Arena *arena = arena_create(TEST_ARENA_BLOCK_SIZE);
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, arena, "<test>");
+
     ASTScript *script = ast_script_create();
-    Lexer lexer = lexer_create(code);
-    Parser parser = parser_create(&lexer);
+    Lexer lexer = lexer_create(code, &diagnostics);
+    Parser parser = parser_create(&lexer, &diagnostics);
     bool ok = parser_parse(&parser, script);
     assert(!ok);
 
-    assert(strcmp(parser.error.message, expected_error) == 0);
+    assert(diagnostics_has_errors(&diagnostics));
 
+    // The expected message need not be the first: a bad character is reported
+    // by the lexer before the parser reports what it could not parse.
+    bool found = false;
+    for (size_t i = 0; i < diagnostics_count(&diagnostics); i++) {
+        if (strcmp(diagnostics_get(&diagnostics, i)->message, expected_error) == 0) {
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) {
+        diagnostics_print(&diagnostics, stderr);
+    }
+
+    assert(found);
+
+    diagnostics_free(&diagnostics);
+    arena_destroy(arena);
     ast_script_destroy(script);
 }
 
@@ -212,7 +246,7 @@ static void test_var_uninit_declaration() {
 }
 
 static void test_var_untyped_uninti_declaration() {
-    assert_parse_error(func_wrap("let x;"), "expected type after identifier");
+    assert_parse_error(func_wrap("let x;"), "expected a type or an initializer");
 }
 
 static void test_func_declaration() {
@@ -267,7 +301,7 @@ static void test_no_params_func_declaration() {
     ASTStmt *stmt = script->statements.data[0];
     assert(stmt->kind == STMT_FUNC_DECL);
     assert(string_ref_equals_cstr(stmt->func_decl.name, "test"));
-    assert(string_ref_equals_cstr(stmt->func_decl.return_type->name, "bool"));
+    assert(stmt->func_decl.return_type == NULL);
 
     ASTFieldList params = stmt->func_decl.params;
     assert(params.size == 0);
@@ -333,22 +367,27 @@ static void test_return() {
 
     ASTExpr *result = stmt->ret.result;
     assert(result->kind == EXPR_LITERAL);
-    assert(result->lit.as_float == 2.0);
+    assert(result->lit.kind == TYPE_INT);
+    assert(result->lit.as_int == 2);
 
     ast_script_destroy(script);
 }
 
-static void test_invalid_token() { assert_parse_error(func_wrap("3 + $;"), "expected expression"); }
-
-static void test_missing_paren() { assert_parse_error(func_wrap("(3 + 4"), "expected ')'"); }
-
-static void test_missing_identifier() {
-    assert_parse_error(func_wrap("let ;"), "expected identifier after 'let'");
+static void test_invalid_token() {
+    assert_parse_error(func_wrap("3 + $;"), "expected an expression, found invalid token");
 }
 
-static void test_invalid_declaration() { assert_parse_error(func_wrap("let a b"), "expected ';' or '='"); }
+static void test_missing_paren() { assert_parse_error(func_wrap("(3 + 4"), "expected ')', found '}'"); }
 
-static void test_missing_semicolon() { assert_parse_error(func_wrap("3 + 5"), "expected ';'"); }
+static void test_missing_identifier() {
+    assert_parse_error(func_wrap("let ;"), "expected a variable name after 'let', found ';'");
+}
+
+static void test_invalid_declaration() {
+    assert_parse_error(func_wrap("let a b"), "expected ';' or '=', found an identifier");
+}
+
+static void test_missing_semicolon() { assert_parse_error(func_wrap("3 + 5"), "expected ';', found '}'"); }
 
 static void test_expression_not_assignable() {
     assert_parse_error(func_wrap("2 = 1"), "expression is not assignable");
@@ -368,15 +407,18 @@ int main() {
     test_missing_identifier();
     test_invalid_declaration();
     test_missing_semicolon();
+    test_expression_not_assignable();
     test_variables();
     test_var_declaration();
     test_var_uninit_declaration();
     test_var_untyped_uninti_declaration();
     test_func_declaration();
     test_unit_func_declaration();
+    test_no_params_func_declaration();
     test_assignment();
     test_block();
     test_if();
+    test_return();
 
     string_deinit();
 

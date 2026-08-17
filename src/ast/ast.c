@@ -39,13 +39,62 @@ typedef struct {
     Scope *current_scope;
 
     FuncContext func_context;
+
+    Diagnostics *diagnostics;
 } ResolverState;
+
+static Type *resolver_error_type(ResolverState *state) {
+    return type_registry_error_type(state->current_scope->type_registry);
+}
+
+// A type that is already poisoned had its error reported at the origin, so any
+// further check involving it silently succeeds rather than cascading.
+static bool is_error_type(Type *type) { return !type || type->kind == TYPE_ERROR; }
+
+static const char *type_name(Type *type) {
+    if (!type) {
+        return "none";
+    }
+
+    return type->name->data;
+}
 
 void resolver_enter_scope(ResolverState *state) {
     state->current_scope = scope_create(state->arena, state->current_scope);
 }
 
 void resolver_exit_scope(ResolverState *state) { state->current_scope = state->current_scope->parent; }
+
+static const char *bin_op_name(BinOp op) {
+    switch (op) {
+    case BIN_OP_ADD:
+        return "+";
+    case BIN_OP_SUB:
+        return "-";
+    case BIN_OP_MUL:
+        return "*";
+    case BIN_OP_DIV:
+        return "/";
+    case BIN_OP_LESS:
+        return "<";
+    case BIN_OP_GREATER:
+        return ">";
+    case BIN_OP_EQUAL:
+        return "==";
+    case BIN_OP_NEQUAL:
+        return "!=";
+    case BIN_OP_LEQUAL:
+        return "<=";
+    case BIN_OP_GEQUAL:
+        return ">=";
+    case BIN_OP_AND:
+        return "&&";
+    case BIN_OP_OR:
+        return "||";
+    }
+
+    return "?";
+}
 
 bool is_numeric_type(Type *t) { return t->kind == TYPE_INT || t->kind == TYPE_FLOAT; }
 
@@ -68,29 +117,62 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         Type *left_type = expr->bin_op.left->type;
         Type *right_type = expr->bin_op.right->type;
 
-        assert(left_type == right_type && "mismatched types in binary operation");
+        if (is_error_type(left_type) || is_error_type(right_type)) {
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        const char *op_name = bin_op_name(expr->bin_op.op);
+
+        if (left_type != right_type) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot apply '%s' to %s and %s",
+                       op_name, type_name(left_type), type_name(right_type));
+            expr->type = resolver_error_type(state);
+            break;
+        }
 
         switch (expr->bin_op.op) {
         case BIN_OP_ADD:
         case BIN_OP_SUB:
         case BIN_OP_MUL:
         case BIN_OP_DIV:
-            assert(is_numeric_type(left_type) && "arithmetic ops only valid on numeric types");
+            if (!is_numeric_type(left_type)) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                           "'%s' requires a numeric type, found %s", op_name, type_name(left_type));
+                expr->type = resolver_error_type(state);
+                return;
+            }
+
             expr->type = left_type;
             return;
         case BIN_OP_EQUAL:
         case BIN_OP_NEQUAL:
-            assert(is_comparable_type(left_type) && "equality not supported for this type");
+            if (!is_comparable_type(left_type)) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "'%s' is not supported for %s",
+                           op_name, type_name(left_type));
+                expr->type = resolver_error_type(state);
+                return;
+            }
             break;
         case BIN_OP_LESS:
         case BIN_OP_GREATER:
         case BIN_OP_LEQUAL:
         case BIN_OP_GEQUAL:
-            assert(is_ordered_type(left_type) && "relational ops only valid on ordered types");
+            if (!is_ordered_type(left_type)) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                           "'%s' requires an ordered type, found %s", op_name, type_name(left_type));
+                expr->type = resolver_error_type(state);
+                return;
+            }
             break;
         case BIN_OP_AND:
         case BIN_OP_OR:
-            assert(is_boolean_type(left_type) && "logical ops only valid on boolean types");
+            if (!is_boolean_type(left_type)) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                           "'%s' requires a boolean type, found %s", op_name, type_name(left_type));
+                expr->type = resolver_error_type(state);
+                return;
+            }
             break;
         }
 
@@ -99,7 +181,15 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
     }
     case EXPR_VARIABLE: {
         Symbol *entry = scope_symbol_lookup(state->current_scope, string_from_ref(expr->var.name));
-        assert(entry && "undeclared variable");
+
+        if (!entry) {
+            char *name = string_ref_to_cstr(expr->var.name);
+            diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "undeclared variable '%s'", name);
+            free(name);
+
+            expr->type = resolver_error_type(state);
+            break;
+        }
 
         expr->symbol = entry;
         expr->type = entry->var.type;
@@ -114,13 +204,22 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
     }
 }
 
-Type *ast_script_resolve_type(Scope *scope, TypeSpec *spec) {
+// Returns NULL when there is no spec to resolve (an omitted type), and the
+// poison type when the spec names something that does not exist.
+Type *ast_script_resolve_type(ResolverState *state, TypeSpec *spec, Span span) {
     if (!spec) {
         return NULL;
     }
 
-    Type *type = type_registry_get(scope->type_registry, string_from_ref(spec->name));
-    assert(type && "unknown type");
+    Type *type = type_registry_get(state->current_scope->type_registry, string_from_ref(spec->name));
+
+    if (!type) {
+        char *name = string_ref_to_cstr(spec->name);
+        diag_error(state->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", name);
+        free(name);
+
+        return resolver_error_type(state);
+    }
 
     return type;
 }
@@ -140,20 +239,35 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
 
         Type *type;
         if (stmt->var_decl.type_spec) {
-            Type *decl_type = ast_script_resolve_type(state->current_scope, stmt->var_decl.type_spec);
+            Type *decl_type = ast_script_resolve_type(state, stmt->var_decl.type_spec, stmt->span);
 
             if (stmt->var_decl.initializer) {
                 Type *init_type = stmt->var_decl.initializer->type;
-                assert(decl_type == init_type && "mismatched types in assignment");
+
+                if (!is_error_type(decl_type) && !is_error_type(init_type) && decl_type != init_type) {
+                    diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->var_decl.initializer->span,
+                               "cannot initialize a variable of type %s with a value of type %s",
+                               type_name(decl_type), type_name(init_type));
+                    decl_type = resolver_error_type(state);
+                }
             }
 
             type = decl_type;
-        } else {
+        } else if (stmt->var_decl.initializer) {
             type = stmt->var_decl.initializer->type;
+        } else {
+            type = resolver_error_type(state);
         }
 
         Symbol *var = scope_decl_var(state->current_scope, string_from_ref(stmt->var_decl.name), type);
-        assert(var && "variable already declared in this scope");
+
+        if (!var) {
+            char *name = string_ref_to_cstr(stmt->var_decl.name);
+            diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' is already declared in this scope",
+                       name);
+            free(name);
+            break;
+        }
 
         stmt->var_decl.symbol = var;
         break;
@@ -165,19 +279,31 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
             ASTField *param = stmt->func_decl.params.data[i];
 
             String *param_name = string_from_ref(param->name);
-            Type *param_type = ast_script_resolve_type(state->current_scope, param->type_spec);
+            Type *param_type = ast_script_resolve_type(state, param->type_spec, param->span);
 
             Symbol *symbol = scope_decl_var(state->current_scope, param_name, param_type);
-            assert(symbol && "variable already declared in this scope");
+
+            if (!symbol) {
+                char *name = string_ref_to_cstr(param->name);
+                diag_error(state->diagnostics, GAB_ERR_NAME, param->span, "duplicate parameter '%s'", name);
+                free(name);
+                continue;
+            }
 
             param->symbol = symbol;
         }
 
         StringRef func_name = stmt->func_decl.name;
-        Type *func_return_type = ast_script_resolve_type(state->current_scope, stmt->func_decl.return_type);
+        Type *func_return_type = ast_script_resolve_type(state, stmt->func_decl.return_type, stmt->span);
 
         Symbol *func = scope_decl_func(state->current_scope, string_from_ref(func_name), func_return_type);
-        assert(func && "function already declared in this scope");
+
+        if (!func) {
+            char *name = string_ref_to_cstr(func_name);
+            diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' is already declared in this scope",
+                       name);
+            free(name);
+        }
 
         stmt->func_decl.symbol = func;
 
@@ -199,7 +325,11 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         Type *target_type = stmt->assign.target->type;
         Type *value_type = stmt->assign.value->type;
 
-        assert(target_type == value_type && "mismatched types in assignment");
+        if (!is_error_type(target_type) && !is_error_type(value_type) && target_type != value_type) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
+                       "cannot assign a value of type %s to a target of type %s", type_name(value_type),
+                       type_name(target_type));
+        }
         break;
     }
     case STMT_IF: {
@@ -224,13 +354,20 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         Type *expected = state->func_context.return_type;
         Type *actual = stmt->ret.result ? stmt->ret.result->type : NULL;
 
-        assert(actual == expected && "return type does not match function return type");
+        // A NULL type here means "no value", which is a distinct case from a
+        // poisoned one: it must still be checked against the declared type.
+        bool poisoned = (expected && expected->kind == TYPE_ERROR) || (actual && actual->kind == TYPE_ERROR);
+
+        if (!poisoned && actual != expected) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span, "returns %s, but %s was declared",
+                       type_name(actual), type_name(expected));
+        }
         break;
     }
     }
 }
 
-void ast_script_resolve(Arena *arena, ASTScript *script, Scope *global_scope) {
+bool ast_script_resolve(Arena *arena, ASTScript *script, Scope *global_scope, Diagnostics *diagnostics) {
     ResolverState state = {
         .arena = arena,
         .global_scope = global_scope,
@@ -239,9 +376,14 @@ void ast_script_resolve(Arena *arena, ASTScript *script, Scope *global_scope) {
             {
                 .return_type = NULL,
             },
+        .diagnostics = diagnostics,
     };
+
+    size_t errors_before = diagnostics_count(diagnostics);
 
     for (int i = 0; i < script->statements.size; i++) {
         ast_script_stmt_visit(&state, script->statements.data[i]);
     }
+
+    return diagnostics_count(diagnostics) == errors_before;
 }

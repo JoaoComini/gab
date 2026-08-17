@@ -1,6 +1,22 @@
+#include <arena.h>
 #include <assert.h>
+#include <diagnostics.h>
 #include <lexer.h>
 #include <string.h>
+
+#define TEST_ARENA_BLOCK_SIZE 2048
+
+static Arena *arena = NULL;
+static Diagnostics diagnostics;
+
+// Every case lexes into a fresh sink, so a test can assert on exactly what its
+// own source produced.
+static Lexer test_lexer(const char *source) {
+    diagnostics_free(&diagnostics);
+    diagnostics_init(&diagnostics, arena, "<test>");
+
+    return lexer_create(source, &diagnostics);
+}
 
 static void assert_token(Lexer *lexer, TokenType expected_type) {
     Token token = lexer_next(lexer);
@@ -15,7 +31,7 @@ static void assert_identifier(Lexer *lexer, char *expected_name) {
 }
 
 static void test_numbers() {
-    Lexer lexer = lexer_create("42 3.14 .5");
+    Lexer lexer = test_lexer("42 3.14 .5");
     assert_token(&lexer, TOKEN_INT);
     assert_token(&lexer, TOKEN_FLOAT);
     assert_token(&lexer, TOKEN_FLOAT);
@@ -23,7 +39,7 @@ static void test_numbers() {
 }
 
 static void test_operators() {
-    Lexer lexer = lexer_create("+ - * / = ! < > == != <= >= && ||");
+    Lexer lexer = test_lexer("+ - * / = ! < > == != <= >= && ||");
     assert_token(&lexer, TOKEN_PLUS);
     assert_token(&lexer, TOKEN_MINUS);
     assert_token(&lexer, TOKEN_MUL);
@@ -42,21 +58,21 @@ static void test_operators() {
 }
 
 static void test_parentheses() {
-    Lexer lexer = lexer_create("( )");
+    Lexer lexer = test_lexer("( )");
     assert_token(&lexer, TOKEN_LPAREN);
     assert_token(&lexer, TOKEN_RPAREN);
     assert_token(&lexer, TOKEN_EOF);
 }
 
 static void test_braces() {
-    Lexer lexer = lexer_create("{ }");
+    Lexer lexer = test_lexer("{ }");
     assert_token(&lexer, TOKEN_LBRACE);
     assert_token(&lexer, TOKEN_RBRACE);
     assert_token(&lexer, TOKEN_EOF);
 }
 
 static void test_colons() {
-    Lexer lexer = lexer_create("; : ,");
+    Lexer lexer = test_lexer("; : ,");
     assert_token(&lexer, TOKEN_SEMICOLON);
     assert_token(&lexer, TOKEN_COLON);
     assert_token(&lexer, TOKEN_COMMA);
@@ -64,21 +80,21 @@ static void test_colons() {
 }
 
 static void test_whitespace() {
-    Lexer lexer = lexer_create("  \t\n42 \n + ");
+    Lexer lexer = test_lexer("  \t\n42 \n + ");
     assert_token(&lexer, TOKEN_INT);
     assert_token(&lexer, TOKEN_PLUS);
     assert_token(&lexer, TOKEN_EOF);
 }
 
 static void test_identifiers() {
-    Lexer lexer = lexer_create("variable1 variable2");
+    Lexer lexer = test_lexer("variable1 variable2");
     assert_identifier(&lexer, "variable1");
     assert_identifier(&lexer, "variable2");
     assert_token(&lexer, TOKEN_EOF);
 }
 
 static void test_keywords() {
-    Lexer lexer = lexer_create("let return if else func true false");
+    Lexer lexer = test_lexer("let return if else func true false");
     assert_token(&lexer, TOKEN_LET);
     assert_token(&lexer, TOKEN_RETURN);
     assert_token(&lexer, TOKEN_IF);
@@ -89,12 +105,33 @@ static void test_keywords() {
 }
 
 static void test_errors() {
-    Lexer lexer = lexer_create("42 $ +");
+    Lexer lexer = test_lexer("42 $ +");
     assert_token(&lexer, TOKEN_INT);
     assert_token(&lexer, TOKEN_INVALID); // '$' is invalid
+
+    // The invalid token is also reported, rather than passing silently.
+    assert(diagnostics_count(&diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(&diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_SYNTAX);
+    assert(strcmp(diagnostic->message, "unexpected character '$'") == 0);
+    assert(diagnostic->span.line == 1);
+    assert(diagnostic->span.column == 4);
+}
+
+// Valid sources must not report anything.
+static void test_no_errors_on_valid_source() {
+    Lexer lexer = test_lexer("let x = 1 + 2;");
+    while (lexer_next(&lexer).type != TOKEN_EOF) {
+    }
+
+    assert(!diagnostics_has_errors(&diagnostics));
 }
 
 int main(void) {
+    arena = arena_create(TEST_ARENA_BLOCK_SIZE);
+    diagnostics_init(&diagnostics, arena, "<test>");
+
     test_numbers();
     test_operators();
     test_parentheses();
@@ -104,5 +141,9 @@ int main(void) {
     test_identifiers();
     test_keywords();
     test_errors();
+    test_no_errors_on_valid_source();
+
+    diagnostics_free(&diagnostics);
+    arena_destroy(arena);
     return 0;
 }

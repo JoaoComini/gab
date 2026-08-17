@@ -146,14 +146,31 @@ void vm_conditional(VM *vm, Instruction instruction, bool (*func)(VM *, size_t, 
 }
 
 void vm_execute(VM *vm, const char *source) {
-    Lexer lexer = lexer_create(source);
-    Parser parser = parser_create(&lexer);
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, vm->transient_arena, "<script>");
+
+    Lexer lexer = lexer_create(source, &diagnostics);
+    Parser parser = parser_create(&lexer, &diagnostics);
     ASTScript *script = ast_script_create();
-    bool ok = parser_parse(&parser, script);
 
-    ast_script_resolve(vm->transient_arena, script, &vm->global_scope);
+    // Each stage is a precondition for the next: a failure must stop the
+    // pipeline rather than let a malformed AST reach codegen.
+    Chunk *chunk = NULL;
 
-    Chunk *chunk = codegen_generate(script, &vm->global_data, &vm->global_funcs);
+    if (parser_parse(&parser, script) &&
+        ast_script_resolve(vm->transient_arena, script, &vm->global_scope, &diagnostics)) {
+        chunk = codegen_generate(script, &vm->global_data, &vm->global_funcs, &diagnostics);
+    }
+
+    if (!chunk) {
+        diagnostics_print(&diagnostics, stderr);
+
+        diagnostics_free(&diagnostics);
+        ast_script_destroy(script);
+        return;
+    }
+
+    diagnostics_free(&diagnostics);
 
     vm->instruction_pointer = 0;
 

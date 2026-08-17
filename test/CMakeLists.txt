@@ -1,5 +1,6 @@
 set(
     TEST_SOURCES
+    diagnostics_test.c
     lexer_test.c
     parser_test.c
     scope_test.c

@@ -1,16 +1,21 @@
 #include "stmt.h"
 
-ASTStmt *ast_stmt_create() { return malloc(sizeof(ASTStmt)); }
+ASTStmt *ast_stmt_create(Span span) {
+    ASTStmt *stmt = malloc(sizeof(ASTStmt));
+    stmt->span = span;
 
-ASTStmt *ast_expr_stmt_create(ASTExpr *value) {
-    ASTStmt *stmt = ast_stmt_create();
+    return stmt;
+}
+
+ASTStmt *ast_expr_stmt_create(Span span, ASTExpr *value) {
+    ASTStmt *stmt = ast_stmt_create(span);
     stmt->kind = STMT_EXPR;
     stmt->expr.value = value;
     return stmt;
 }
 
-ASTStmt *ast_var_decl_stmt_create(StringRef name, TypeSpec *type_spec, ASTExpr *initializer) {
-    ASTStmt *stmt = ast_stmt_create();
+ASTStmt *ast_var_decl_stmt_create(Span span, StringRef name, TypeSpec *type_spec, ASTExpr *initializer) {
+    ASTStmt *stmt = ast_stmt_create(span);
     stmt->kind = STMT_VAR_DECL;
     stmt->var_decl.name = name;
     stmt->var_decl.type_spec = type_spec;
@@ -19,9 +24,9 @@ ASTStmt *ast_var_decl_stmt_create(StringRef name, TypeSpec *type_spec, ASTExpr *
     return stmt;
 }
 
-ASTStmt *ast_func_decl_stmt_create(StringRef name, TypeSpec *return_type, ASTFieldList params,
+ASTStmt *ast_func_decl_stmt_create(Span span, StringRef name, TypeSpec *return_type, ASTFieldList params,
                                    ASTStmt *body) {
-    ASTStmt *stmt = ast_stmt_create();
+    ASTStmt *stmt = ast_stmt_create(span);
     stmt->kind = STMT_FUNC_DECL;
     stmt->func_decl.name = name;
     stmt->func_decl.return_type = return_type;
@@ -31,16 +36,16 @@ ASTStmt *ast_func_decl_stmt_create(StringRef name, TypeSpec *return_type, ASTFie
     return stmt;
 }
 
-ASTStmt *ast_assign_stmt_create(ASTExpr *target, ASTExpr *value) {
-    ASTStmt *stmt = ast_stmt_create();
+ASTStmt *ast_assign_stmt_create(Span span, ASTExpr *target, ASTExpr *value) {
+    ASTStmt *stmt = ast_stmt_create(span);
     stmt->kind = STMT_ASSIGN;
     stmt->assign.target = target;
     stmt->assign.value = value;
     return stmt;
 }
 
-ASTStmt *ast_if_stmt_create(ASTExpr *condition, ASTStmt *then_block, ASTStmt *else_block) {
-    ASTStmt *stmt = ast_stmt_create();
+ASTStmt *ast_if_stmt_create(Span span, ASTExpr *condition, ASTStmt *then_block, ASTStmt *else_block) {
+    ASTStmt *stmt = ast_stmt_create(span);
     stmt->kind = STMT_IF;
     stmt->ifstmt.condition = condition;
     stmt->ifstmt.then_block = then_block;
@@ -48,15 +53,15 @@ ASTStmt *ast_if_stmt_create(ASTExpr *condition, ASTStmt *then_block, ASTStmt *el
     return stmt;
 }
 
-ASTStmt *ast_block_stmt_create(ASTStmtList list) {
-    ASTStmt *stmt = ast_stmt_create();
+ASTStmt *ast_block_stmt_create(Span span, ASTStmtList list) {
+    ASTStmt *stmt = ast_stmt_create(span);
     stmt->kind = STMT_BLOCK;
     stmt->block.list = list;
     return stmt;
 }
 
-ASTStmt *ast_return_stmt_create(ASTExpr *result) {
-    ASTStmt *stmt = ast_stmt_create();
+ASTStmt *ast_return_stmt_create(Span span, ASTExpr *result) {
+    ASTStmt *stmt = ast_stmt_create(span);
     stmt->kind = STMT_RETURN;
     stmt->ret.result = result;
     return stmt;
@@ -103,8 +108,9 @@ void ast_stmt_destroy(ASTStmt *stmt) {
     free(stmt);
 }
 
-ASTField *ast_field_create(StringRef name, TypeSpec *type_spec) {
+ASTField *ast_field_create(Span span, StringRef name, TypeSpec *type_spec) {
     ASTField *field = malloc(sizeof(ASTField));
+    field->span = span;
     field->name = name;
     field->type_spec = type_spec;
     field->symbol = NULL;

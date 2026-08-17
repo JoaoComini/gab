@@ -21,22 +21,29 @@ static bool stmt_needs_terminator(ASTStmt *stmt);
 
 static ASTExpr *parse_expression(Parser *parser);
 static ASTExpr *parse_primary(Parser *parser);
+static void parser_synchronize(Parser *parser);
 static ASTExpr *parse_precedence(Parser *parser, int min_precedence);
 static int get_precedence(TokenType type);
 static BinOp parse_bin_op(TokenType type);
 
 static bool parser_expect(Parser *parser, TokenType token, const char *message);
+static void parser_error_found(Parser *parser, const char *message);
 static void parser_error(Parser *parser, const char *message);
 
-Parser parser_create(Lexer *lexer) {
+Parser parser_create(Lexer *lexer, Diagnostics *diagnostics) {
     return (Parser){
         .lexer = lexer,
+        .diagnostics = diagnostics,
     };
 }
 
 void parser_next_token(Parser *parser) { parser->current = lexer_next(parser->lexer); }
 
+static Span parser_span(Parser *parser) { return token_span(parser->current); }
+
 bool parser_parse(Parser *parser, ASTScript *script) {
+    size_t errors_before = diagnostics_count(parser->diagnostics);
+
     parser_next_token(parser);
 
     while (parser->current.type != TOKEN_EOF) {
@@ -47,13 +54,54 @@ bool parser_parse(Parser *parser, ASTScript *script) {
 
         ASTStmt *stmt = parse_decl_statement(parser);
         if (!stmt) {
-            return false;
+            // Recover to the next statement boundary so a script with several
+            // syntax errors reports all of them rather than just the first.
+            TokenType before = parser->current.type;
+            int before_pos = parser->lexer->pos;
+
+            parser_synchronize(parser);
+
+            // Synchronizing stops at '}' without consuming it, which at the top
+            // level would leave us stuck on a stray brace. Always make progress.
+            if (parser->current.type == before && parser->lexer->pos == before_pos) {
+                parser_next_token(parser);
+            }
+
+            continue;
         }
 
         ast_script_add_statement(script, stmt);
     }
 
-    return true;
+    return diagnostics_count(parser->diagnostics) == errors_before;
+}
+
+// Skip tokens until just past a statement boundary, so parsing can resume at
+// something that plausibly starts a new statement.
+static void parser_synchronize(Parser *parser) {
+    while (parser->current.type != TOKEN_EOF) {
+        if (parser->current.type == TOKEN_SEMICOLON) {
+            parser_next_token(parser);
+            return;
+        }
+
+        // Leave '}' for the enclosing block to consume; eating it here would
+        // strand that block and produce a spurious "expected '}'".
+        if (parser->current.type == TOKEN_RBRACE) {
+            return;
+        }
+
+        switch (parser->current.type) {
+        case TOKEN_LET:
+        case TOKEN_FUNC:
+        case TOKEN_IF:
+        case TOKEN_RETURN:
+            return;
+        default:
+            parser_next_token(parser);
+            break;
+        }
+    }
 }
 
 static ASTStmt *parse_decl_statement(Parser *parser) {
@@ -69,7 +117,7 @@ static ASTStmt *parse_decl_statement(Parser *parser) {
         break;
     }
     default: {
-        parser_error(parser, "expected declaration");
+        parser_error_found(parser, "expected a declaration ('let' or 'func')");
         return NULL;
     }
     }
@@ -141,9 +189,11 @@ static ASTStmt *parse_statement(Parser *parser) {
 }
 
 static ASTStmt *parse_var_decl_stmt(Parser *parser) {
+    Span span = parser_span(parser);
+
     parser_next_token(parser); // eat "let"
 
-    if (!parser_expect(parser, TOKEN_IDENT, "expected identifier after 'let'")) {
+    if (!parser_expect(parser, TOKEN_IDENT, "expected a variable name after 'let'")) {
         return NULL;
     }
 
@@ -155,7 +205,7 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser) {
     if (parser->current.type == TOKEN_COLON) {
         parser_next_token(parser); // eat ':'
 
-        if (!parser_expect(parser, TOKEN_IDENT, "expected type after ';")) {
+        if (!parser_expect(parser, TOKEN_IDENT, "expected a type after ':'")) {
             return NULL;
         }
 
@@ -166,14 +216,17 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser) {
 
     if (parser->current.type == TOKEN_SEMICOLON) {
         if (!spec) {
-            parser_error(parser, "expected type after identifier");
+            parser_error(parser, "expected a type or an initializer");
             return NULL;
         }
 
-        return ast_var_decl_stmt_create(name.lexeme, spec, NULL);
+        return ast_var_decl_stmt_create(span, name.lexeme, spec, NULL);
     }
 
     if (!parser_expect(parser, TOKEN_ASSIGN, "expected ';' or '='")) {
+        if (spec) {
+            type_spec_destroy(spec);
+        }
         return NULL;
     }
 
@@ -181,42 +234,49 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser) {
 
     ASTExpr *initializer = parse_expression(parser);
     if (!initializer) {
-        parser_error(parser, "expected expression after '='");
+        if (spec) {
+            type_spec_destroy(spec);
+        }
         return NULL;
     }
 
-    return ast_var_decl_stmt_create(name.lexeme, spec, initializer);
+    return ast_var_decl_stmt_create(span, name.lexeme, spec, initializer);
 }
 
 static ASTStmt *parse_if_stmt(Parser *parser) {
+    Span span = parser_span(parser);
 
     parser_next_token(parser); // eat "if"
 
     ASTExpr *condition = parse_expression(parser);
     if (!condition) {
-        parser_error(parser, "expected expression after 'if'");
         return NULL;
     }
 
     ASTStmt *then_block = parse_block_stmt(parser);
     if (!then_block) {
+        ast_expr_free(condition);
         return NULL;
     }
 
     if (parser->current.type != TOKEN_ELSE) {
-        return ast_if_stmt_create(condition, then_block, NULL);
+        return ast_if_stmt_create(span, condition, then_block, NULL);
     }
 
     parser_next_token(parser); // eat "else"
     ASTStmt *else_block = parse_block_stmt(parser);
     if (!else_block) {
+        ast_expr_free(condition);
+        ast_stmt_destroy(then_block);
         return NULL;
     }
 
-    return ast_if_stmt_create(condition, then_block, else_block);
+    return ast_if_stmt_create(span, condition, then_block, else_block);
 }
 
 static ASTStmt *parse_block_stmt(Parser *parser) {
+    Span span = parser_span(parser);
+
     if (!parser_expect(parser, TOKEN_LBRACE, "expected '{'")) {
         return NULL;
     }
@@ -225,10 +285,18 @@ static ASTStmt *parse_block_stmt(Parser *parser) {
 
     ASTStmtList list = ast_stmt_list_create();
     while (parser->current.type != TOKEN_RBRACE) {
+        if (parser->current.type == TOKEN_EOF) {
+            parser_error_found(parser, "expected '}' to close the block");
+            ast_stmt_list_free(&list);
+            return NULL;
+        }
+
         ASTStmt *stmt = parse_statement(parser);
 
         if (!stmt) {
-            return NULL;
+            // Recover within the block so later statements still get checked.
+            parser_synchronize(parser);
+            continue;
         }
 
         ast_stmt_list_add(&list, stmt);
@@ -236,20 +304,22 @@ static ASTStmt *parse_block_stmt(Parser *parser) {
 
     parser_next_token(parser); // eat '}'
 
-    return ast_block_stmt_create(list);
+    return ast_block_stmt_create(span, list);
 }
 
 static ASTStmt *parse_func_decl_stmt(Parser *parser) {
+    Span span = parser_span(parser);
+
     parser_next_token(parser); // eat "func"
 
-    if (!parser_expect(parser, TOKEN_IDENT, "expected identifier")) {
+    if (!parser_expect(parser, TOKEN_IDENT, "expected a function name")) {
         return NULL;
     }
 
     StringRef func_name = parser->current.lexeme;
     parser_next_token(parser); // eat func name
 
-    if (!parser_expect(parser, TOKEN_LPAREN, "expected '('")) {
+    if (!parser_expect(parser, TOKEN_LPAREN, "expected '(' after function name")) {
         return NULL;
     }
 
@@ -257,14 +327,15 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
     ASTFieldList func_params = ast_field_list_create();
     while (parser->current.type != TOKEN_RPAREN) {
-        if (!parser_expect(parser, TOKEN_IDENT, "expected identifier")) {
+        if (!parser_expect(parser, TOKEN_IDENT, "expected a parameter name")) {
             return NULL;
         }
 
+        Span param_span = parser_span(parser);
         StringRef param_name = parser->current.lexeme;
         parser_next_token(parser); // eat param name
 
-        if (!parser_expect(parser, TOKEN_COLON, "expected ';")) {
+        if (!parser_expect(parser, TOKEN_COLON, "expected ':' after parameter name")) {
             ast_field_list_free(&func_params);
             return NULL;
         }
@@ -280,7 +351,7 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
         parser_next_token(parser); // eat param type
 
         if (parser->current.type != TOKEN_COMMA && parser->current.type != TOKEN_RPAREN) {
-            parser_error(parser, "expected ')'");
+            parser_error_found(parser, "expected ',' or ')' after parameter");
             ast_field_list_free(&func_params);
             return NULL;
         }
@@ -289,7 +360,7 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
             parser_next_token(parser); // eat ','
         }
 
-        ASTField *param = ast_field_create(param_name, param_type);
+        ASTField *param = ast_field_create(param_span, param_name, param_type);
 
         ast_field_list_add(&func_params, param);
     }
@@ -316,10 +387,12 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
         return NULL;
     }
 
-    return ast_func_decl_stmt_create(func_name, func_type, func_params, func_body);
+    return ast_func_decl_stmt_create(span, func_name, func_type, func_params, func_body);
 }
 
 static ASTStmt *parse_return_stmt(Parser *parser) {
+    Span span = parser_span(parser);
+
     parser_next_token(parser); // eat "return"
 
     ASTExpr *result = parse_expression(parser);
@@ -327,17 +400,19 @@ static ASTStmt *parse_return_stmt(Parser *parser) {
         return NULL;
     }
 
-    return ast_return_stmt_create(result);
+    return ast_return_stmt_create(span, result);
 }
 
 static ASTStmt *parse_expr_stmt(Parser *parser) {
+    Span span = parser_span(parser);
+
     ASTExpr *expr = parse_expression(parser);
     if (expr == NULL) {
         return NULL;
     }
 
     if (parser->current.type != TOKEN_ASSIGN) {
-        return ast_expr_stmt_create(expr);
+        return ast_expr_stmt_create(span, expr);
     }
 
     if (expr->kind != EXPR_VARIABLE) {
@@ -350,10 +425,11 @@ static ASTStmt *parse_expr_stmt(Parser *parser) {
 
     ASTExpr *value = parse_expression(parser);
     if (!value) {
+        ast_expr_free(expr);
         return NULL;
     }
 
-    return ast_assign_stmt_create(expr, value);
+    return ast_assign_stmt_create(span, expr, value);
 }
 
 static bool stmt_needs_terminator(ASTStmt *stmt) {
@@ -392,13 +468,15 @@ static ASTExpr *parse_precedence(Parser *parser, int min_precedence) {
             return NULL;
         }
 
-        lhs = ast_bin_op_expr_create(lhs, op, rhs);
+        lhs = ast_bin_op_expr_create(token_span(token), lhs, op, rhs);
     }
 
     return lhs;
 }
 
 static ASTExpr *parse_primary(Parser *parser) {
+    Span span = parser_span(parser);
+
     switch (parser->current.type) {
     case TOKEN_INT: {
         char *temp = string_ref_to_cstr(parser->current.lexeme);
@@ -408,7 +486,7 @@ static ASTExpr *parse_primary(Parser *parser) {
         parser_next_token(parser); // eat integer
 
         Literal lit = {.kind = TYPE_INT, .as_int = value};
-        return ast_literal_expr_create(lit);
+        return ast_literal_expr_create(span, lit);
     }
     case TOKEN_FLOAT: {
         char *temp = string_ref_to_cstr(parser->current.lexeme);
@@ -418,24 +496,24 @@ static ASTExpr *parse_primary(Parser *parser) {
         parser_next_token(parser); // eat float
 
         Literal lit = {.kind = TYPE_FLOAT, .as_float = value};
-        return ast_literal_expr_create(lit);
+        return ast_literal_expr_create(span, lit);
     }
     case TOKEN_TRUE: {
         parser_next_token(parser);
 
-        return ast_literal_expr_create((Literal){.kind = TYPE_BOOL, .as_int = 1});
+        return ast_literal_expr_create(span, (Literal){.kind = TYPE_BOOL, .as_int = 1});
     }
     case TOKEN_FALSE: {
         parser_next_token(parser);
 
-        return ast_literal_expr_create((Literal){.kind = TYPE_BOOL, .as_int = 0});
+        return ast_literal_expr_create(span, (Literal){.kind = TYPE_BOOL, .as_int = 0});
     }
     case TOKEN_IDENT: {
         Token name = parser->current;
 
         parser_next_token(parser); // eat identifier
 
-        return ast_variable_expr_create(name.lexeme);
+        return ast_variable_expr_create(span, name.lexeme);
     }
     case TOKEN_LPAREN: {
         parser_next_token(parser); // eat '('
@@ -456,7 +534,7 @@ static ASTExpr *parse_primary(Parser *parser) {
         return node;
     }
     default:
-        parser_error(parser, "expected expression");
+        parser_error_found(parser, "expected an expression");
         return NULL;
     }
 }
@@ -516,11 +594,15 @@ static BinOp parse_bin_op(TokenType type) {
     }
 
     assert(0 && "Invalid token type");
+    abort();
 }
 
 static bool parser_expect(Parser *parser, TokenType token, const char *message) {
     if (parser->current.type != token) {
-        parser_error(parser, message);
+        // The caller says what was expected; only the parser knows what is
+        // actually there, so it supplies the second half.
+        diag_error(parser->diagnostics, GAB_ERR_SYNTAX, parser_span(parser), "%s, found %s", message,
+                   token_description(parser->current.type));
         return false;
     }
 
@@ -528,7 +610,12 @@ static bool parser_expect(Parser *parser, TokenType token, const char *message) 
 }
 
 static void parser_error(Parser *parser, const char *message) {
-    parser->error.message = message;
-    parser->error.line = parser->current.line;
-    parser->error.column = parser->current.column;
+    diag_error(parser->diagnostics, GAB_ERR_SYNTAX, parser_span(parser), "%s", message);
+}
+
+// For the cases that reject the current token without a specific expected type,
+// so they read the same as parser_expect's.
+static void parser_error_found(Parser *parser, const char *message) {
+    diag_error(parser->diagnostics, GAB_ERR_SYNTAX, parser_span(parser), "%s, found %s", message,
+               token_description(parser->current.type));
 }

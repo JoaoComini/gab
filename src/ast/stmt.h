@@ -11,10 +11,12 @@ typedef struct ASTField {
     StringRef name;
     TypeSpec *type_spec;
 
+    Span span; // Source position, for diagnostics
+
     Symbol *symbol; // Filled during symbol/type resolution
 } ASTField;
 
-ASTField *ast_field_create(StringRef name, TypeSpec *type_spec);
+ASTField *ast_field_create(Span span, StringRef name, TypeSpec *type_spec);
 void ast_field_destroy(ASTField *field);
 
 #define ast_field_list_item_free ast_field_destroy
@@ -89,14 +91,16 @@ typedef struct ASTStmt {
         ASTReturnStmt ret;
     };
 
+    Span span; // Source position, for diagnostics
 } ASTStmt;
 
-ASTStmt *ast_expr_stmt_create(ASTExpr *value);
-ASTStmt *ast_var_decl_stmt_create(StringRef name, TypeSpec *type, ASTExpr *initializer);
-ASTStmt *ast_func_decl_stmt_create(StringRef name, TypeSpec *return_type, ASTFieldList params, ASTStmt *body);
-ASTStmt *ast_assign_stmt_create(ASTExpr *target, ASTExpr *value);
-ASTStmt *ast_if_stmt_create(ASTExpr *condition, ASTStmt *then_block, ASTStmt *else_block);
-ASTStmt *ast_block_stmt_create(ASTStmtList list);
-ASTStmt *ast_return_stmt_create(ASTExpr *result);
+ASTStmt *ast_expr_stmt_create(Span span, ASTExpr *value);
+ASTStmt *ast_var_decl_stmt_create(Span span, StringRef name, TypeSpec *type, ASTExpr *initializer);
+ASTStmt *ast_func_decl_stmt_create(Span span, StringRef name, TypeSpec *return_type, ASTFieldList params,
+                                   ASTStmt *body);
+ASTStmt *ast_assign_stmt_create(Span span, ASTExpr *target, ASTExpr *value);
+ASTStmt *ast_if_stmt_create(Span span, ASTExpr *condition, ASTStmt *then_block, ASTStmt *else_block);
+ASTStmt *ast_block_stmt_create(Span span, ASTStmtList list);
+ASTStmt *ast_return_stmt_create(Span span, ASTExpr *result);
 
 #endif

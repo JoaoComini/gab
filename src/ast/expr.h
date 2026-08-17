@@ -1,6 +1,7 @@
 #ifndef GAB_AST_EXPR_H
 #define GAB_AST_EXPR_H
 
+#include "diagnostics.h"
 #include "symbol_table.h"
 #include "type.h"
 
@@ -52,13 +53,15 @@ typedef struct ASTExpr {
         } var;
     };
 
+    Span span; // Source position, for diagnostics
+
     Type *type;     // Filled during type resolution
     Symbol *symbol; // Filled during symbol resolution
 } ASTExpr;
 
-ASTExpr *ast_literal_expr_create(Literal value);
-ASTExpr *ast_bin_op_expr_create(ASTExpr *left, BinOp op, ASTExpr *right);
-ASTExpr *ast_variable_expr_create(StringRef name);
+ASTExpr *ast_literal_expr_create(Span span, Literal value);
+ASTExpr *ast_bin_op_expr_create(Span span, ASTExpr *left, BinOp op, ASTExpr *right);
+ASTExpr *ast_variable_expr_create(Span span, StringRef name);
 void ast_expr_free(ASTExpr *node);
 
 #endif

@@ -10,6 +10,7 @@
 #include "vm/opcode.h"
 #include "vm/vm.h"
 #include <assert.h>
+#include <stdlib.h>
 
 typedef struct {
     Chunk *chunk;
@@ -17,6 +18,9 @@ typedef struct {
 
     ValueList *global_data;
     FuncProtoList *global_funcs;
+
+    Diagnostics *diagnostics;
+    bool failed;
 } CodegenState;
 
 static void codegen_stmt(CodegenState *state, ASTStmt *ast);
@@ -36,7 +40,7 @@ static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node);
 static OpCode bin_op_to_float_op(BinOp bin_op);
 static OpCode bin_op_to_int_op(BinOp bin_op);
 
-static unsigned int codegen_alloc_register(CodegenState *state);
+static unsigned int codegen_alloc_register(CodegenState *state, Span span);
 
 typedef struct {
     size_t position;
@@ -46,16 +50,24 @@ typedef struct {
 CodegenLabel codegen_create_label(CodegenState *state);
 void codegen_patch_jump(CodegenState *state, CodegenLabel label, OpCode op, unsigned int reg);
 
-Chunk *codegen_generate(ASTScript *script, ValueList *global_data, FuncProtoList *global_funcs) {
+Chunk *codegen_generate(ASTScript *script, ValueList *global_data, FuncProtoList *global_funcs,
+                        Diagnostics *diagnostics) {
     CodegenState state = {
         .chunk = chunk_create(),
         .next_reg = 0,
         .global_data = global_data,
         .global_funcs = global_funcs,
+        .diagnostics = diagnostics,
+        .failed = false,
     };
 
     for (int i = 0; i < script->statements.size; i++) {
         codegen_stmt(&state, script->statements.data[i]);
+    }
+
+    if (state.failed) {
+        chunk_free(state.chunk);
+        return NULL;
     }
 
     return state.chunk;
@@ -103,7 +115,8 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
         value_list_add(state->global_data, value);
         ast->symbol->offset = state->global_data->size - 1;
     } else {
-        ast->symbol->offset = codegen_alloc_register(state);
+        ast->symbol->offset =
+            codegen_alloc_register(state, ast->initializer ? ast->initializer->span : (Span){0});
     }
 
     if (!ast->initializer) {
@@ -176,9 +189,15 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
     CodegenState func_state = (CodegenState){
         .chunk = func_chunk,
         .next_reg = func_next_reg,
+        .global_data = state->global_data,
+        .global_funcs = state->global_funcs,
+        .diagnostics = state->diagnostics,
+        .failed = false,
     };
 
     codegen_stmt(&func_state, ast->body);
+
+    state->failed = state->failed || func_state.failed;
 
     FuncPrototype proto = (FuncPrototype){
         .chunk = func_chunk,
@@ -203,6 +222,9 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
     case EXPR_BIN_OP:
         return codegen_bin_op_expr(state, ast);
     }
+
+    assert(0 && "unknown expression kind");
+    abort();
 }
 
 static Value value_from_literal(Literal lit) {
@@ -218,11 +240,12 @@ static Value value_from_literal(Literal lit) {
     }
 
     assert(0 && "unknown type");
+    abort();
 }
 
 static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node) {
     unsigned int const_index = constpool_add(state->chunk->const_pool, value_from_literal(node->lit));
-    unsigned int r1 = codegen_alloc_register(state);
+    unsigned int r1 = codegen_alloc_register(state, node->span);
     Instruction load_const = VM_ENCODE_I(OP_LOAD_CONST, r1, const_index);
 
     chunk_add_instruction(state->chunk, load_const);
@@ -235,7 +258,7 @@ static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node) {
         return node->symbol->offset;
     }
 
-    unsigned int rd = codegen_alloc_register(state);
+    unsigned int rd = codegen_alloc_register(state, node->span);
     Instruction load_global = VM_ENCODE_I(OP_LOAD_GLOBAL, rd, node->symbol->offset);
 
     chunk_add_instruction(state->chunk, load_global);
@@ -254,7 +277,7 @@ static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node) {
 
     unsigned int lhs = codegen_expr(state, node->bin_op.left);
     unsigned int rhs = codegen_expr(state, node->bin_op.right);
-    unsigned int result = codegen_alloc_register(state);
+    unsigned int result = codegen_alloc_register(state, node->span);
 
     OpCode op_code = node->bin_op.left->type->kind == TYPE_FLOAT ? bin_op_to_float_op(node->bin_op.op)
                                                                  : bin_op_to_int_op(node->bin_op.op);
@@ -273,7 +296,7 @@ static unsigned int codegen_bin_op_logical_expr(CodegenState *state, ASTExpr *no
     OpCode jump_op = node->bin_op.op == BIN_OP_AND ? OP_JMP_IF_FALSE : OP_JMP_IF_TRUE;
 
     unsigned int rhs = codegen_expr(state, node->bin_op.right);
-    unsigned int result = codegen_alloc_register(state);
+    unsigned int result = codegen_alloc_register(state, node->span);
 
     Instruction move = VM_ENCODE_R(OP_MOVE, result, rhs, 0);
     chunk_add_instruction(state->chunk, move);
@@ -307,6 +330,7 @@ static OpCode bin_op_to_float_op(BinOp bin_op) {
         return OP_CMP_GEF;
     default:
         assert(0 && "not a float operation");
+        abort();
     }
 }
 
@@ -334,11 +358,22 @@ static OpCode bin_op_to_int_op(BinOp bin_op) {
         return OP_CMP_GEI;
     default:
         assert(0 && "not an int operation");
+        abort();
     }
 }
 
-static unsigned int codegen_alloc_register(CodegenState *state) {
-    assert(state->next_reg < VM_MAX_REGISTERS);
+// Register exhaustion is a legitimate "program too complex" error rather than
+// an internal invariant, so it is reported instead of asserted. Register 0 is
+// returned as a placeholder; the failure flag stops the chunk being used.
+static unsigned int codegen_alloc_register(CodegenState *state, Span span) {
+    if (state->next_reg >= VM_MAX_REGISTERS) {
+        if (!state->failed) {
+            diag_error(state->diagnostics, GAB_ERR_CODEGEN, span, "expression too complex");
+        }
+
+        state->failed = true;
+        return 0;
+    }
 
     return state->next_reg++;
 }

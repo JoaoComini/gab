@@ -1,6 +1,7 @@
 #include "arena.h"
 #include "ast/ast.h"
 #include "ast/stmt.h"
+#include "diagnostics.h"
 #include "scope.h"
 #include "string/string.h"
 #include "string/string_ref.h"
@@ -12,24 +13,54 @@
 #include "vm/vm.h"
 
 #include <assert.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 Arena *arena = NULL;
 
+// These tests build the AST directly, so spans carry no meaning here.
+#define TEST_SPAN ((Span){.line = 1, .column = 1})
+
+// The sink is shared by every case; these tests all expect valid programs, so
+// nothing should ever land in it.
+static Diagnostics diagnostics;
+
+static void assert_resolve(ASTScript *script, Scope *scope) {
+    bool ok = ast_script_resolve(arena, script, scope, &diagnostics);
+
+    if (!ok) {
+        diagnostics_print(&diagnostics, stderr);
+    }
+
+    assert(ok);
+}
+
+static Chunk *assert_codegen(ASTScript *script, ValueList *global_data, FuncProtoList *global_funcs) {
+    Chunk *chunk = codegen_generate(script, global_data, global_funcs, &diagnostics);
+
+    if (!chunk) {
+        diagnostics_print(&diagnostics, stderr);
+    }
+
+    assert(chunk);
+
+    return chunk;
+}
+
 // Test number literal compilation
 static void test_number() {
     Literal lit = {.kind = TYPE_FLOAT, .as_float = 42.0};
-    ASTExpr *num = ast_literal_expr_create(lit);
-    ASTStmt *stmt = ast_expr_stmt_create(num);
+    ASTExpr *num = ast_literal_expr_create(TEST_SPAN, lit);
+    ASTStmt *stmt = ast_expr_stmt_create(TEST_SPAN, num);
 
     Scope *scope = scope_create(arena, NULL);
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, stmt);
-    ast_script_resolve(arena, script, scope);
+    assert_resolve(script, scope);
 
     ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
-    Chunk *chunk = codegen_generate(script, &global_data, &global_funcs);
+    Chunk *chunk = assert_codegen(script, &global_data, &global_funcs);
 
     // Verify chunk contains:
     // 1. LOAD_CONST R0, [const_index]
@@ -52,20 +83,20 @@ static void test_bin_op(OpCode expected_op, BinOp op) {
     Literal var_left = {.kind = TYPE_FLOAT, .as_float = 10};
     Literal var_right = {.kind = TYPE_FLOAT, .as_float = 5};
 
-    ASTExpr *left = ast_literal_expr_create(var_left);
-    ASTExpr *right = ast_literal_expr_create(var_right);
-    ASTExpr *expr = ast_bin_op_expr_create(left, op, right);
+    ASTExpr *left = ast_literal_expr_create(TEST_SPAN, var_left);
+    ASTExpr *right = ast_literal_expr_create(TEST_SPAN, var_right);
+    ASTExpr *expr = ast_bin_op_expr_create(TEST_SPAN, left, op, right);
 
-    ASTStmt *stmt = ast_expr_stmt_create(expr);
+    ASTStmt *stmt = ast_expr_stmt_create(TEST_SPAN, expr);
 
     Scope *scope = scope_create(arena, NULL);
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, stmt);
-    ast_script_resolve(arena, script, scope);
+    assert_resolve(script, scope);
 
     ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
-    Chunk *chunk = codegen_generate(script, &global_data, &global_funcs);
+    Chunk *chunk = assert_codegen(script, &global_data, &global_funcs);
 
     assert(chunk->instructions.size == 3); // LOAD_CONST, LOAD_CONST, CMP
 
@@ -99,20 +130,20 @@ static void test_cmp_gequal() { test_bin_op(OP_CMP_GEF, BIN_OP_GEQUAL); }
 
 static void test_var_decl() {
     Literal var = {.kind = TYPE_FLOAT, .as_float = 3};
-    ASTExpr *inititalizer = ast_literal_expr_create(var);
+    ASTExpr *inititalizer = ast_literal_expr_create(TEST_SPAN, var);
 
     StringRef ref = string_ref_create("x");
-    ASTStmt *stmt = ast_var_decl_stmt_create(ref, NULL, inititalizer);
+    ASTStmt *stmt = ast_var_decl_stmt_create(TEST_SPAN, ref, NULL, inititalizer);
 
     Scope *scope = scope_create(arena, NULL);
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, stmt);
-    ast_script_resolve(arena, script, scope);
+    assert_resolve(script, scope);
 
     ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
 
-    Chunk *chunk = codegen_generate(script, &global_data, &global_funcs);
+    Chunk *chunk = assert_codegen(script, &global_data, &global_funcs);
 
     assert(chunk->instructions.size == 2);
 
@@ -140,13 +171,13 @@ static void test_variable_access() {
     StringRef ref = string_ref_create("x");
 
     Literal three = {.kind = TYPE_FLOAT, .as_float = 3};
-    ASTExpr *inititalizer = ast_literal_expr_create(three);
-    ASTStmt *var_decl = ast_var_decl_stmt_create(ref, NULL, inititalizer); // let x = 3;
+    ASTExpr *inititalizer = ast_literal_expr_create(TEST_SPAN, three);
+    ASTStmt *var_decl = ast_var_decl_stmt_create(TEST_SPAN, ref, NULL, inititalizer); // let x = 3;
 
-    ASTExpr *target_expr = ast_variable_expr_create(ref);
+    ASTExpr *target_expr = ast_variable_expr_create(TEST_SPAN, ref);
     Literal two = {.kind = TYPE_FLOAT, .as_float = 2};
-    ASTExpr *value_expr = ast_literal_expr_create(two);
-    ASTStmt *assign_stmt = ast_assign_stmt_create(target_expr, value_expr); // x = 2;
+    ASTExpr *value_expr = ast_literal_expr_create(TEST_SPAN, two);
+    ASTStmt *assign_stmt = ast_assign_stmt_create(TEST_SPAN, target_expr, value_expr); // x = 2;
 
     ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
@@ -154,9 +185,9 @@ static void test_variable_access() {
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, var_decl);
     ast_script_add_statement(script, assign_stmt);
-    ast_script_resolve(arena, script, scope);
+    assert_resolve(script, scope);
 
-    Chunk *chunk = codegen_generate(script, &global_data, &global_funcs);
+    Chunk *chunk = assert_codegen(script, &global_data, &global_funcs);
 
     assert(chunk->instructions.size == 4);
 
@@ -194,30 +225,30 @@ static void test_if_statement() {
     // Create condition: 10 > 5
     Literal var_left = {.kind = TYPE_FLOAT, .as_float = 10};
     Literal var_right = {.kind = TYPE_FLOAT, .as_float = 5};
-    ASTExpr *left = ast_literal_expr_create(var_left);
-    ASTExpr *right = ast_literal_expr_create(var_right);
-    ASTExpr *cond = ast_bin_op_expr_create(left, BIN_OP_GREATER, right);
+    ASTExpr *left = ast_literal_expr_create(TEST_SPAN, var_left);
+    ASTExpr *right = ast_literal_expr_create(TEST_SPAN, var_right);
+    ASTExpr *cond = ast_bin_op_expr_create(TEST_SPAN, left, BIN_OP_GREATER, right);
 
     // Create then block: 1
     Literal then_val = {.kind = TYPE_FLOAT, .as_float = 1};
-    ASTExpr *then_expr = ast_literal_expr_create(then_val);
-    ASTStmt *then_stmt = ast_expr_stmt_create(then_expr);
+    ASTExpr *then_expr = ast_literal_expr_create(TEST_SPAN, then_val);
+    ASTStmt *then_stmt = ast_expr_stmt_create(TEST_SPAN, then_expr);
 
     ASTStmtList then_block_list = ast_stmt_list_create();
     ast_stmt_list_add(&then_block_list, then_stmt);
-    ASTStmt *then_block = ast_block_stmt_create(then_block_list);
+    ASTStmt *then_block = ast_block_stmt_create(TEST_SPAN, then_block_list);
 
     // Create if statement
-    ASTStmt *if_stmt = ast_if_stmt_create(cond, then_block, NULL);
+    ASTStmt *if_stmt = ast_if_stmt_create(TEST_SPAN, cond, then_block, NULL);
 
     ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
     Scope *scope = scope_create(arena, NULL);
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, if_stmt);
-    ast_script_resolve(arena, script, scope);
+    assert_resolve(script, scope);
 
-    Chunk *chunk = codegen_generate(script, &global_data, &global_funcs);
+    Chunk *chunk = assert_codegen(script, &global_data, &global_funcs);
 
     // Expected instructions:
     // 1. LOAD_CONST R0, 10
@@ -262,37 +293,37 @@ static void test_if_else_statement() {
     // Create condition: 5 > 10
     Literal var_left = {.kind = TYPE_FLOAT, .as_float = 5};
     Literal var_right = {.kind = TYPE_FLOAT, .as_float = 10};
-    ASTExpr *left = ast_literal_expr_create(var_left);
-    ASTExpr *right = ast_literal_expr_create(var_right);
-    ASTExpr *cond = ast_bin_op_expr_create(left, BIN_OP_GREATER, right);
+    ASTExpr *left = ast_literal_expr_create(TEST_SPAN, var_left);
+    ASTExpr *right = ast_literal_expr_create(TEST_SPAN, var_right);
+    ASTExpr *cond = ast_bin_op_expr_create(TEST_SPAN, left, BIN_OP_GREATER, right);
 
     // Create then block: 1
     Literal then_val = {.kind = TYPE_FLOAT, .as_float = 1};
-    ASTExpr *then_expr = ast_literal_expr_create(then_val);
-    ASTStmt *then_stmt = ast_expr_stmt_create(then_expr);
+    ASTExpr *then_expr = ast_literal_expr_create(TEST_SPAN, then_val);
+    ASTStmt *then_stmt = ast_expr_stmt_create(TEST_SPAN, then_expr);
     ASTStmtList then_block_list = ast_stmt_list_create();
     ast_stmt_list_add(&then_block_list, then_stmt);
-    ASTStmt *then_block = ast_block_stmt_create(then_block_list);
+    ASTStmt *then_block = ast_block_stmt_create(TEST_SPAN, then_block_list);
 
     // Create else block: 0
     Literal else_val = {.kind = TYPE_FLOAT, .as_float = 0};
-    ASTExpr *else_expr = ast_literal_expr_create(else_val);
-    ASTStmt *else_stmt = ast_expr_stmt_create(else_expr);
+    ASTExpr *else_expr = ast_literal_expr_create(TEST_SPAN, else_val);
+    ASTStmt *else_stmt = ast_expr_stmt_create(TEST_SPAN, else_expr);
     ASTStmtList else_block_list = ast_stmt_list_create();
     ast_stmt_list_add(&else_block_list, else_stmt);
-    ASTStmt *else_block = ast_block_stmt_create(else_block_list);
+    ASTStmt *else_block = ast_block_stmt_create(TEST_SPAN, else_block_list);
 
     // Create if-else statement
-    ASTStmt *if_stmt = ast_if_stmt_create(cond, then_block, else_block);
+    ASTStmt *if_stmt = ast_if_stmt_create(TEST_SPAN, cond, then_block, else_block);
 
     ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
     Scope *scope = scope_create(arena, NULL);
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, if_stmt);
-    ast_script_resolve(arena, script, scope);
+    assert_resolve(script, scope);
 
-    Chunk *chunk = codegen_generate(script, &global_data, &global_funcs);
+    Chunk *chunk = assert_codegen(script, &global_data, &global_funcs);
 
     // Expected instructions:
     // 1. LOAD_CONST R0, 5
@@ -328,25 +359,25 @@ static void test_func_decl() {
     StringRef a_ref = string_ref_create("a");
     StringRef b_ref = string_ref_create("b");
 
-    ASTField *param_a = ast_field_create(a_ref, type_spec_create(int_str));
-    ASTField *param_b = ast_field_create(b_ref, type_spec_create(int_str));
+    ASTField *param_a = ast_field_create(TEST_SPAN, a_ref, type_spec_create(int_str));
+    ASTField *param_b = ast_field_create(TEST_SPAN, b_ref, type_spec_create(int_str));
 
     ASTFieldList params = ast_field_list_create();
     ast_field_list_add(&params, param_a);
     ast_field_list_add(&params, param_b);
 
-    ASTExpr *a_var = ast_variable_expr_create(a_ref);
-    ASTExpr *b_var = ast_variable_expr_create(b_ref);
-    ASTExpr *add_expr = ast_bin_op_expr_create(a_var, BIN_OP_ADD, b_var);
-    ASTStmt *return_stmt = ast_return_stmt_create(add_expr);
+    ASTExpr *a_var = ast_variable_expr_create(TEST_SPAN, a_ref);
+    ASTExpr *b_var = ast_variable_expr_create(TEST_SPAN, b_ref);
+    ASTExpr *add_expr = ast_bin_op_expr_create(TEST_SPAN, a_var, BIN_OP_ADD, b_var);
+    ASTStmt *return_stmt = ast_return_stmt_create(TEST_SPAN, add_expr);
 
     ASTStmtList body_stmts = ast_stmt_list_create();
     ast_stmt_list_add(&body_stmts, return_stmt);
 
-    ASTStmt *body = ast_block_stmt_create(body_stmts);
+    ASTStmt *body = ast_block_stmt_create(TEST_SPAN, body_stmts);
 
     StringRef func_ref = string_ref_create("add");
-    ASTStmt *func = ast_func_decl_stmt_create(func_ref, type_spec_create(int_str), params, body);
+    ASTStmt *func = ast_func_decl_stmt_create(TEST_SPAN, func_ref, type_spec_create(int_str), params, body);
 
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, func);
@@ -354,13 +385,13 @@ static void test_func_decl() {
     Scope global_scope;
     scope_init(&global_scope, arena, NULL);
 
-    ast_script_resolve(arena, script, &global_scope);
+    assert_resolve(script, &global_scope);
 
     // 5. Set up codegen environment
     ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
 
-    Chunk *chunk = codegen_generate(script, &global_data, &global_funcs);
+    Chunk *chunk = assert_codegen(script, &global_data, &global_funcs);
 
     assert(chunk->instructions.size == 0);
 
@@ -398,6 +429,7 @@ static void test_func_decl() {
 int main(void) {
     string_init();
     arena = arena_create(128);
+    diagnostics_init(&diagnostics, arena, "<test>");
 
     test_number();
     test_add();
@@ -419,6 +451,7 @@ int main(void) {
 
     test_func_decl();
 
+    diagnostics_free(&diagnostics);
     arena_destroy(arena);
     string_deinit();
     return 0;
