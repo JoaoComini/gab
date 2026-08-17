@@ -51,7 +51,7 @@ CodegenLabel codegen_create_label(CodegenState *state);
 void codegen_patch_jump(CodegenState *state, CodegenLabel label, OpCode op, unsigned int reg);
 
 Chunk *codegen_generate(ASTScript *script, ValueList *global_data, FuncProtoList *global_funcs,
-                        Diagnostics *diagnostics) {
+                        Diagnostics *diagnostics, unsigned int *max_registers) {
     CodegenState state = {
         .chunk = chunk_create(),
         .next_reg = 0,
@@ -68,6 +68,10 @@ Chunk *codegen_generate(ASTScript *script, ValueList *global_data, FuncProtoList
     if (state.failed) {
         chunk_free(state.chunk);
         return NULL;
+    }
+
+    if (max_registers) {
+        *max_registers = state.next_reg;
     }
 
     return state.chunk;

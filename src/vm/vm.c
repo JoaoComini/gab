@@ -19,6 +19,7 @@
 #include <string.h>
 
 #define ARENA_BLOCK_SIZE 2048
+#define VM_INITIAL_STACK_SIZE 256
 
 VM *vm_create() {
     VM *vm = malloc(sizeof(VM));
@@ -35,9 +36,77 @@ VM *vm_create() {
     string_pool_init(&vm->strings, vm->persistent_arena);
 
     scope_init(&vm->global_scope, vm->persistent_arena, &vm->strings, NULL);
-    memset(vm->registers, 0, sizeof(vm->registers));
+
+    vm->stack_capacity = VM_INITIAL_STACK_SIZE;
+    vm->stack = calloc(vm->stack_capacity, sizeof(Value));
+    vm->registers = vm->stack;
+    vm->frame_count = 0;
 
     return vm;
+}
+
+// Registers are stack[base + r], so the stack must hold every register the
+// frame can address before it starts executing.
+static bool vm_reserve_stack(VM *vm, size_t needed) {
+    if (needed <= vm->stack_capacity) {
+        return true;
+    }
+
+    size_t capacity = vm->stack_capacity;
+    while (capacity < needed) {
+        capacity *= 2;
+    }
+
+    Value *stack = realloc(vm->stack, capacity * sizeof(Value));
+    if (!stack) {
+        return false;
+    }
+
+    memset(stack + vm->stack_capacity, 0, (capacity - vm->stack_capacity) * sizeof(Value));
+
+    // realloc may move the buffer, so anything pointing into it is rebased.
+    size_t offset = vm->frame_count > 0 ? vm->frames[vm->frame_count - 1].base : 0;
+
+    vm->stack = stack;
+    vm->stack_capacity = capacity;
+    vm->registers = stack + offset;
+
+    return true;
+}
+
+static bool vm_push_frame(VM *vm, const FuncPrototype *proto, size_t base, size_t return_ip,
+                          unsigned int dest) {
+    if (vm->frame_count == VM_MAX_CALL_DEPTH) {
+        return false;
+    }
+
+    if (!vm_reserve_stack(vm, base + proto->max_registers)) {
+        return false;
+    }
+
+    vm->frames[vm->frame_count++] = (CallFrame){
+        .proto = proto,
+        .return_ip = return_ip,
+        .base = base,
+        .dest = dest,
+    };
+
+    vm->registers = vm->stack + base;
+    vm->instruction_pointer = 0;
+
+    return true;
+}
+
+static void vm_pop_frame(VM *vm) {
+    CallFrame frame = vm->frames[--vm->frame_count];
+
+    if (vm->frame_count == 0) {
+        vm->registers = vm->stack;
+        return;
+    }
+
+    vm->registers = vm->stack + vm->frames[vm->frame_count - 1].base;
+    vm->instruction_pointer = frame.return_ip;
 }
 
 void vm_free(VM *vm) {
@@ -47,6 +116,8 @@ void vm_free(VM *vm) {
     // Frees the bucket array, which walks entries — must happen before the
     // arena holding the string payloads is destroyed.
     string_pool_free(&vm->strings);
+
+    free(vm->stack);
 
     arena_destroy(vm->persistent_arena);
     arena_destroy(vm->transient_arena);
@@ -160,10 +231,11 @@ void vm_execute(VM *vm, const char *source) {
     // Each stage is a precondition for the next: a failure must stop the
     // pipeline rather than let a malformed AST reach codegen.
     Chunk *chunk = NULL;
+    unsigned int max_registers = 0;
 
     if (parser_parse(&parser, script) &&
         ast_script_resolve(vm->transient_arena, script, &vm->global_scope, &diagnostics)) {
-        chunk = codegen_generate(script, &vm->global_data, &vm->global_funcs, &diagnostics);
+        chunk = codegen_generate(script, &vm->global_data, &vm->global_funcs, &diagnostics, &max_registers);
     }
 
     if (!chunk) {
@@ -176,10 +248,28 @@ void vm_execute(VM *vm, const char *source) {
 
     diagnostics_free(&diagnostics);
 
-    vm->instruction_pointer = 0;
+    // The top level runs as frame zero, so the interpreter has a single path
+    // and OP_RETURN means the same thing everywhere.
+    FuncPrototype top_level = {
+        .chunk = chunk,
+        .arity = 0,
+        .max_registers = (int)max_registers,
+    };
 
-    bool returned = false;
-    while (!returned && vm->instruction_pointer < chunk->instructions.size) {
+    vm->frame_count = 0;
+    if (!vm_push_frame(vm, &top_level, 0, 0, 0)) {
+        fprintf(stderr, "<script>: out of stack space\n");
+
+        chunk_free(chunk);
+        ast_script_destroy(script);
+        return;
+    }
+
+    while (vm->frame_count > 0 &&
+           vm->instruction_pointer < vm->frames[vm->frame_count - 1].proto->chunk->instructions.size) {
+        CallFrame *frame = &vm->frames[vm->frame_count - 1];
+        Chunk *chunk = frame->proto->chunk;
+
         Instruction instruction = instruction_list_get(&chunk->instructions, vm->instruction_pointer);
 
         OpCode op = VM_DECODE_OPCODE(instruction);
@@ -289,9 +379,20 @@ void vm_execute(VM *vm, const char *source) {
         }
         case OP_RETURN: {
             size_t r1 = VM_DECODE_R_R1(instruction);
-            vm->registers[0] = vm->registers[r1];
-            returned = true;
-            break;
+            Value result = vm->registers[r1];
+
+            unsigned int dest = frame->dest;
+            vm_pop_frame(vm);
+
+            if (vm->frame_count == 0) {
+                // Frame zero returning ends execution; r0 keeps the result so
+                // callers can still read it.
+                vm->stack[0] = result;
+                continue;
+            }
+
+            vm->registers[dest] = result;
+            continue;
         }
         case OP_JMP: {
             vm->instruction_pointer += VM_DECODE_I_IMM(instruction);
@@ -336,6 +437,12 @@ void vm_execute(VM *vm, const char *source) {
         }
 
         vm->instruction_pointer += 1;
+    }
+
+    // Top-level code has no trailing return, so the loop usually ends by
+    // running off the end of the chunk rather than through OP_RETURN.
+    while (vm->frame_count > 0) {
+        vm_pop_frame(vm);
     }
 
     arena_reset(vm->transient_arena);

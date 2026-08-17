@@ -37,7 +37,7 @@ static void assert_resolve(ASTScript *script, Scope *scope) {
 }
 
 static Chunk *assert_codegen(ASTScript *script, ValueList *global_data, FuncProtoList *global_funcs) {
-    Chunk *chunk = codegen_generate(script, global_data, global_funcs, &ctx.diagnostics);
+    Chunk *chunk = codegen_generate(script, global_data, global_funcs, &ctx.diagnostics, NULL);
 
     if (!chunk) {
         diagnostics_print(&ctx.diagnostics, stderr);

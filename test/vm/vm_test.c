@@ -85,8 +85,23 @@ static void test_struct_typed_local() {
     vm_free(vm);
 }
 
+// The top level runs as frame zero, so execution leaves no frame behind and the
+// VM is reusable for a second script.
+static void test_top_level_runs_as_frame_zero() {
+    VM *vm = vm_create();
+
+    vm_execute(vm, "func main() { let a = 2; }");
+    assert(vm->frame_count == 0);
+
+    vm_execute(vm, "let x: int = 7;");
+    assert(vm->frame_count == 0);
+
+    vm_free(vm);
+}
+
 int main() {
     test_vm_execute();
+    test_top_level_runs_as_frame_zero();
     test_two_vms_are_independent();
     test_empty_function_body();
     test_struct_typed_local();

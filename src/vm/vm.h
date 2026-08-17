@@ -56,6 +56,16 @@ typedef struct {
     int max_registers;
 } FuncPrototype;
 
+#define VM_MAX_CALL_DEPTH 256
+
+typedef struct {
+    const FuncPrototype *proto;
+
+    size_t return_ip;
+    size_t base;
+    unsigned int dest;
+} CallFrame;
+
 #define func_proto_list_item_free(item) chunk_free(item.chunk)
 GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype)
 
@@ -69,7 +79,14 @@ typedef struct {
     ValueList global_data;
     FuncProtoList global_funcs;
 
-    Value registers[VM_MAX_REGISTERS];
+    Value *stack;
+    size_t stack_capacity;
+
+    // Points at stack[frame->base], so a register access stays registers[r].
+    Value *registers;
+
+    CallFrame frames[VM_MAX_CALL_DEPTH];
+    size_t frame_count;
 
     size_t instruction_pointer;
 } VM;
