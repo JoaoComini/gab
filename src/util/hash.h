@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 
-size_t hash_dj2b_cstr(const char *str, size_t length) {
+static inline size_t hash_dj2b_cstr(const char *str, size_t length) {
     size_t hash = 5381;
 
     for (int i = 0; i < length; i++) {

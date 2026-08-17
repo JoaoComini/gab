@@ -47,6 +47,10 @@ static Type *resolver_error_type(ResolverState *state) {
     return type_registry_error_type(state->current_scope->type_registry);
 }
 
+static String *resolver_intern(ResolverState *state, StringRef ref) {
+    return string_from_ref(state->current_scope->strings, ref);
+}
+
 // A type that is already poisoned had its error reported at the origin, so any
 // further check involving it silently succeeds rather than cascading.
 static bool is_error_type(Type *type) { return !type || type->kind == TYPE_ERROR; }
@@ -60,7 +64,7 @@ static const char *type_name(Type *type) {
 }
 
 void resolver_enter_scope(ResolverState *state) {
-    state->current_scope = scope_create(state->arena, state->current_scope);
+    state->current_scope = scope_create(state->arena, state->current_scope->strings, state->current_scope);
 }
 
 void resolver_exit_scope(ResolverState *state) { state->current_scope = state->current_scope->parent; }
@@ -180,7 +184,7 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         break;
     }
     case EXPR_VARIABLE: {
-        Symbol *entry = scope_symbol_lookup(state->current_scope, string_from_ref(expr->var.name));
+        Symbol *entry = scope_symbol_lookup(state->current_scope, resolver_intern(state, expr->var.name));
 
         if (!entry) {
             char *name = string_ref_to_cstr(expr->var.name);
@@ -211,7 +215,7 @@ Type *ast_script_resolve_type(ResolverState *state, TypeSpec *spec, Span span) {
         return NULL;
     }
 
-    Type *type = type_registry_get(state->current_scope->type_registry, string_from_ref(spec->name));
+    Type *type = type_registry_get(state->current_scope->type_registry, resolver_intern(state, spec->name));
 
     if (!type) {
         char *name = string_ref_to_cstr(spec->name);
@@ -259,7 +263,7 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
             type = resolver_error_type(state);
         }
 
-        Symbol *var = scope_decl_var(state->current_scope, string_from_ref(stmt->var_decl.name), type);
+        Symbol *var = scope_decl_var(state->current_scope, resolver_intern(state, stmt->var_decl.name), type);
 
         if (!var) {
             char *name = string_ref_to_cstr(stmt->var_decl.name);
@@ -278,7 +282,7 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         for (int i = 0; i < stmt->func_decl.params.size; i++) {
             ASTField *param = stmt->func_decl.params.data[i];
 
-            String *param_name = string_from_ref(param->name);
+            String *param_name = resolver_intern(state, param->name);
             Type *param_type = ast_script_resolve_type(state, param->type_spec, param->span);
 
             Symbol *symbol = scope_decl_var(state->current_scope, param_name, param_type);
@@ -296,7 +300,8 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         StringRef func_name = stmt->func_decl.name;
         Type *func_return_type = ast_script_resolve_type(state, stmt->func_decl.return_type, stmt->span);
 
-        Symbol *func = scope_decl_func(state->current_scope, string_from_ref(func_name), func_return_type);
+        Symbol *func =
+            scope_decl_func(state->current_scope, resolver_intern(state, func_name), func_return_type);
 
         if (!func) {
             char *name = string_ref_to_cstr(func_name);

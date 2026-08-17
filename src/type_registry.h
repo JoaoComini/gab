@@ -24,11 +24,13 @@ typedef struct {
 typedef struct {
     Arena *arena;
 
+    StringPool *strings;
+
     TypeMap *map;
     TypeBuiltins builtins;
 } TypeRegistry;
 
-TypeRegistry *type_registry_create(Arena *arena);
+TypeRegistry *type_registry_create(Arena *arena, StringPool *strings);
 void type_registry_destroy(TypeRegistry *registry);
 
 Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind type);

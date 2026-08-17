@@ -21,8 +21,6 @@
 #define ARENA_BLOCK_SIZE 2048
 
 VM *vm_create() {
-    string_init();
-
     VM *vm = malloc(sizeof(VM));
     vm->instruction_pointer = 0;
 
@@ -32,7 +30,11 @@ VM *vm_create() {
     vm->persistent_arena = arena_create(ARENA_BLOCK_SIZE);
     vm->transient_arena = arena_create(ARENA_BLOCK_SIZE);
 
-    scope_init(&vm->global_scope, vm->persistent_arena, NULL);
+    // The pool must be live before the global scope: scope_init builds the
+    // TypeRegistry, which interns the builtin type names.
+    string_pool_init(&vm->strings, vm->persistent_arena);
+
+    scope_init(&vm->global_scope, vm->persistent_arena, &vm->strings, NULL);
     memset(vm->registers, 0, sizeof(vm->registers));
 
     return vm;
@@ -42,12 +44,14 @@ void vm_free(VM *vm) {
     value_list_free(&vm->global_data);
     func_proto_list_free(&vm->global_funcs);
 
+    // Frees the bucket array, which walks entries — must happen before the
+    // arena holding the string payloads is destroyed.
+    string_pool_free(&vm->strings);
+
     arena_destroy(vm->persistent_arena);
     arena_destroy(vm->transient_arena);
 
     free(vm);
-
-    string_deinit();
 }
 
 float vm_addf(VM *vm, size_t r1, size_t r2) {

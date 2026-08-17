@@ -13,14 +13,15 @@ typedef struct Scope {
 
     SymbolTable *symbol_table;
     TypeRegistry *type_registry;
+    StringPool *strings;
 
     struct Scope *parent;
     int depth;
 } Scope;
 
 // Initialize a new scope
-Scope *scope_create(Arena *arena, Scope *parent);
-void scope_init(Scope *scope, Arena *arena, Scope *parent);
+Scope *scope_create(Arena *arena, StringPool *strings, Scope *parent);
+void scope_init(Scope *scope, Arena *arena, StringPool *strings, Scope *parent);
 
 Symbol *scope_symbol_lookup(Scope *scope, String *name);
 Symbol *scope_decl_var(Scope *scope, String *name, Type *type);

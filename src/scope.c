@@ -5,17 +5,18 @@
 #include "type_registry.h"
 #include <assert.h>
 
-Scope *scope_create(Arena *arena, Scope *parent) {
+Scope *scope_create(Arena *arena, StringPool *strings, Scope *parent) {
     Scope *scope = arena_alloc(arena, sizeof(Scope));
-    scope_init(scope, arena, parent);
+    scope_init(scope, arena, strings, parent);
     return scope;
 }
 
-void scope_init(Scope *scope, Arena *arena, Scope *parent) {
+void scope_init(Scope *scope, Arena *arena, StringPool *strings, Scope *parent) {
     scope->arena = arena;
+    scope->strings = strings;
     scope->symbol_table = symbol_table_create_alloc(arena_allocator(arena), SYMBOL_TABLE_INITIAL_CAPACITY);
     scope->type_registry =
-        parent && parent->type_registry ? parent->type_registry : type_registry_create(arena);
+        parent && parent->type_registry ? parent->type_registry : type_registry_create(arena, strings);
     scope->parent = parent;
     scope->depth = parent ? parent->depth + 1 : 0;
 }

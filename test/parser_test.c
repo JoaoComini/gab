@@ -4,6 +4,7 @@
 #include "diagnostics.h"
 #include "lexer.h"
 #include "parser.h"
+#include "support/test_context.h"
 #include "type.h"
 
 #include <assert.h>
@@ -11,57 +12,53 @@
 #include <stdio.h>
 #include <string.h>
 
-#define TEST_ARENA_BLOCK_SIZE 2048
-
 static ASTScript *assert_parse(const char *code) {
-    Arena *arena = arena_create(TEST_ARENA_BLOCK_SIZE);
-    Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, arena, "<test>");
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
 
     ASTScript *script = ast_script_create();
-    Lexer lexer = lexer_create(code, &diagnostics);
-    Parser parser = parser_create(&lexer, &diagnostics);
+    Lexer lexer = lexer_create(code, diagnostics);
+    Parser parser = parser_create(&lexer, diagnostics);
     bool ok = parser_parse(&parser, script);
     assert(ok);
-    assert(!diagnostics_has_errors(&diagnostics));
+    assert(!diagnostics_has_errors(diagnostics));
 
-    diagnostics_free(&diagnostics);
-    arena_destroy(arena);
+    test_context_free(&ctx);
 
     return script;
 }
 
 static void assert_parse_error(const char *code, const char *expected_error) {
-    Arena *arena = arena_create(TEST_ARENA_BLOCK_SIZE);
-    Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, arena, "<test>");
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
 
     ASTScript *script = ast_script_create();
-    Lexer lexer = lexer_create(code, &diagnostics);
-    Parser parser = parser_create(&lexer, &diagnostics);
+    Lexer lexer = lexer_create(code, diagnostics);
+    Parser parser = parser_create(&lexer, diagnostics);
     bool ok = parser_parse(&parser, script);
     assert(!ok);
 
-    assert(diagnostics_has_errors(&diagnostics));
+    assert(diagnostics_has_errors(diagnostics));
 
     // The expected message need not be the first: a bad character is reported
     // by the lexer before the parser reports what it could not parse.
     bool found = false;
-    for (size_t i = 0; i < diagnostics_count(&diagnostics); i++) {
-        if (strcmp(diagnostics_get(&diagnostics, i)->message, expected_error) == 0) {
+    for (size_t i = 0; i < diagnostics_count(diagnostics); i++) {
+        if (strcmp(diagnostics_get(diagnostics, i)->message, expected_error) == 0) {
             found = true;
             break;
         }
     }
 
     if (!found) {
-        diagnostics_print(&diagnostics, stderr);
+        diagnostics_print(diagnostics, stderr);
     }
 
     assert(found);
 
-    diagnostics_free(&diagnostics);
-    arena_destroy(arena);
+    test_context_free(&ctx);
     ast_script_destroy(script);
 }
 
@@ -394,7 +391,6 @@ static void test_expression_not_assignable() {
 }
 
 int main() {
-    string_init();
 
     test_single_number();
     test_booleans();
@@ -419,8 +415,6 @@ int main() {
     test_block();
     test_if();
     test_return();
-
-    string_deinit();
 
     return 0;
 }

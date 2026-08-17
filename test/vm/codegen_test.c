@@ -5,6 +5,7 @@
 #include "scope.h"
 #include "string/string.h"
 #include "string/string_ref.h"
+#include "support/test_context.h"
 #include "type.h"
 #include "value.h"
 #include "vm/chunk.h"
@@ -16,30 +17,30 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-Arena *arena = NULL;
+static TestContext ctx;
+static Arena *arena = NULL;
 
 // These tests build the AST directly, so spans carry no meaning here.
 #define TEST_SPAN ((Span){.line = 1, .column = 1})
 
 // The sink is shared by every case; these tests all expect valid programs, so
 // nothing should ever land in it.
-static Diagnostics diagnostics;
 
 static void assert_resolve(ASTScript *script, Scope *scope) {
-    bool ok = ast_script_resolve(arena, script, scope, &diagnostics);
+    bool ok = ast_script_resolve(arena, script, scope, &ctx.diagnostics);
 
     if (!ok) {
-        diagnostics_print(&diagnostics, stderr);
+        diagnostics_print(&ctx.diagnostics, stderr);
     }
 
     assert(ok);
 }
 
 static Chunk *assert_codegen(ASTScript *script, ValueList *global_data, FuncProtoList *global_funcs) {
-    Chunk *chunk = codegen_generate(script, global_data, global_funcs, &diagnostics);
+    Chunk *chunk = codegen_generate(script, global_data, global_funcs, &ctx.diagnostics);
 
     if (!chunk) {
-        diagnostics_print(&diagnostics, stderr);
+        diagnostics_print(&ctx.diagnostics, stderr);
     }
 
     assert(chunk);
@@ -53,7 +54,7 @@ static void test_number() {
     ASTExpr *num = ast_literal_expr_create(TEST_SPAN, lit);
     ASTStmt *stmt = ast_expr_stmt_create(TEST_SPAN, num);
 
-    Scope *scope = scope_create(arena, NULL);
+    Scope *scope = scope_create(arena, &ctx.strings, NULL);
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, stmt);
     assert_resolve(script, scope);
@@ -89,7 +90,7 @@ static void test_bin_op(OpCode expected_op, BinOp op) {
 
     ASTStmt *stmt = ast_expr_stmt_create(TEST_SPAN, expr);
 
-    Scope *scope = scope_create(arena, NULL);
+    Scope *scope = scope_create(arena, &ctx.strings, NULL);
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, stmt);
     assert_resolve(script, scope);
@@ -135,7 +136,7 @@ static void test_var_decl() {
     StringRef ref = string_ref_create("x");
     ASTStmt *stmt = ast_var_decl_stmt_create(TEST_SPAN, ref, NULL, inititalizer);
 
-    Scope *scope = scope_create(arena, NULL);
+    Scope *scope = scope_create(arena, &ctx.strings, NULL);
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, stmt);
     assert_resolve(script, scope);
@@ -181,7 +182,7 @@ static void test_variable_access() {
 
     ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
-    Scope *scope = scope_create(arena, NULL);
+    Scope *scope = scope_create(arena, &ctx.strings, NULL);
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, var_decl);
     ast_script_add_statement(script, assign_stmt);
@@ -243,7 +244,7 @@ static void test_if_statement() {
 
     ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
-    Scope *scope = scope_create(arena, NULL);
+    Scope *scope = scope_create(arena, &ctx.strings, NULL);
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, if_stmt);
     assert_resolve(script, scope);
@@ -318,7 +319,7 @@ static void test_if_else_statement() {
 
     ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
-    Scope *scope = scope_create(arena, NULL);
+    Scope *scope = scope_create(arena, &ctx.strings, NULL);
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, if_stmt);
     assert_resolve(script, scope);
@@ -383,7 +384,7 @@ static void test_func_decl() {
     ast_script_add_statement(script, func);
 
     Scope global_scope;
-    scope_init(&global_scope, arena, NULL);
+    scope_init(&global_scope, arena, &ctx.strings, NULL);
 
     assert_resolve(script, &global_scope);
 
@@ -427,9 +428,8 @@ static void test_func_decl() {
 }
 
 int main(void) {
-    string_init();
-    arena = arena_create(128);
-    diagnostics_init(&diagnostics, arena, "<test>");
+    test_context_init(&ctx);
+    arena = ctx.arena;
 
     test_number();
     test_add();
@@ -451,8 +451,6 @@ int main(void) {
 
     test_func_decl();
 
-    diagnostics_free(&diagnostics);
-    arena_destroy(arena);
-    string_deinit();
+    test_context_free(&ctx);
     return 0;
 }

@@ -3,6 +3,7 @@
 
 #include "arena.h"
 #include "scope.h"
+#include "string/string_pool.h"
 #include "util/list.h"
 #include "value.h"
 #include "vm/chunk.h"
@@ -62,6 +63,7 @@ typedef struct {
     Arena *persistent_arena;
     Arena *transient_arena;
 
+    StringPool strings; // must outlive global_scope
     Scope global_scope;
 
     ValueList global_data;

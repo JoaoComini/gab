@@ -1,78 +1,43 @@
 #include "string.h"
 
-#include "allocator.h"
-#include "string/string.h"
+#include "arena.h"
 #include "string/string_pool.h"
 #include "string/string_ref.h"
 
-#include <stdlib.h>
 #include <string.h>
 
-static StringPool string_pool = {0};
-
-static void *string_pool_allocator_alloc(void *ctx, size_t size) {
-    (void)ctx;
-    return malloc(size);
+void string_pool_init(StringPool *pool, Arena *arena) {
+    string_map_init(&pool->map, STRING_POOL_INITIAL_CAPACITY);
+    pool->arena = arena;
 }
 
-static void string_pool_allocator_free(void *ctx, void *ptr) {
-    (void)ctx;
-    StringPoolEntry *entry = ptr;
+void string_pool_free(StringPool *pool) { string_map_free(&pool->map); }
 
-    if (entry->value) {
-        string_destroy(entry->value);
-    }
-    free(entry);
-}
-
-static const Allocator string_pool_allocator = (Allocator){
-    .alloc = &string_pool_allocator_alloc,
-    .free = &string_pool_allocator_free,
-    .ctx = NULL,
-};
-
-void string_init() {
-    string_pool_init_alloc(&string_pool, string_pool_allocator, STRING_POOL_INITIAL_CAPACITY);
-}
-
-void string_deinit() { string_pool_free(&string_pool); }
-
-String *string_from_cstr_len(const char *cstr, size_t length) {
+static String *string_from_cstr_len(StringPool *pool, const char *cstr, size_t length) {
     StringKey key = {.data = cstr, .length = length};
 
-    String **saved = string_pool_lookup(&string_pool, key);
+    String **saved = string_map_lookup(&pool->map, key);
 
     if (saved) {
         return *saved;
     }
 
-    String *string = malloc(sizeof(String));
+    String *string = arena_alloc(pool->arena, sizeof(String));
     string->length = length;
-    string->data = malloc(string->length + 1);
-    memcpy(string->data, cstr, string->length);
-    string->data[string->length] = '\0';
+
+    string->data = arena_alloc(pool->arena, length + 1);
+    memcpy(string->data, cstr, length);
+    string->data[length] = '\0';
 
     key.data = string->data;
 
-    return *string_pool_insert(&string_pool, key, string);
+    return *string_map_insert(&pool->map, key, string);
 }
 
-String *string_from_cstr(const char *cstr) { return string_from_cstr_len(cstr, strlen(cstr)); }
-String *string_from_ref(StringRef ref) { return string_from_cstr_len(ref.data, ref.length); }
-
-bool string_equals(const String *a, const String *b) {
-    if (a == b) {
-        return true;
-    }
-
-    if (a->length != b->length) {
-        return false;
-    }
-
-    return memcmp(a->data, b->data, a->length) == 0;
+String *string_from_cstr(StringPool *pool, const char *cstr) {
+    return string_from_cstr_len(pool, cstr, strlen(cstr));
 }
 
-void string_destroy(String *s) {
-    free(s->data);
-    free(s);
+String *string_from_ref(StringPool *pool, StringRef ref) {
+    return string_from_cstr_len(pool, ref.data, ref.length);
 }

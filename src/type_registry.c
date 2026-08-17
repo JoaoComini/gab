@@ -8,23 +8,28 @@
 #include <stdlib.h>
 
 void type_registry_register_builtins(TypeRegistry *registry) {
-    registry->builtins.int_type = type_create(registry->arena, TYPE_INT, string_from_cstr("int"));
-    registry->builtins.float_type = type_create(registry->arena, TYPE_FLOAT, string_from_cstr("float"));
-    registry->builtins.bool_type = type_create(registry->arena, TYPE_BOOL, string_from_cstr("bool"));
+    StringPool *strings = registry->strings;
+
+    registry->builtins.int_type = type_create(registry->arena, TYPE_INT, string_from_cstr(strings, "int"));
+    registry->builtins.float_type =
+        type_create(registry->arena, TYPE_FLOAT, string_from_cstr(strings, "float"));
+    registry->builtins.bool_type = type_create(registry->arena, TYPE_BOOL, string_from_cstr(strings, "bool"));
 
     // Poison type. Deliberately not inserted into the name map: no script can
     // name it, it only arises from a failed resolution.
-    registry->builtins.error_type = type_create(registry->arena, TYPE_ERROR, string_from_cstr("<error>"));
+    registry->builtins.error_type =
+        type_create(registry->arena, TYPE_ERROR, string_from_cstr(strings, "<error>"));
 
     type_map_insert(registry->map, registry->builtins.int_type->name, registry->builtins.int_type);
     type_map_insert(registry->map, registry->builtins.float_type->name, registry->builtins.float_type);
     type_map_insert(registry->map, registry->builtins.bool_type->name, registry->builtins.bool_type);
 }
 
-TypeRegistry *type_registry_create(Arena *arena) {
+TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
     registry->map = type_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
+    registry->strings = strings;
     type_registry_register_builtins(registry);
 
     return registry;
