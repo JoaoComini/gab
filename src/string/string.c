@@ -48,8 +48,9 @@ String *string_from_cstr_len(const char *cstr, size_t length) {
 
     String *string = malloc(sizeof(String));
     string->length = length;
-    string->data = malloc(string->length);
+    string->data = malloc(string->length + 1);
     memcpy(string->data, cstr, string->length);
+    string->data[string->length] = '\0';
 
     key.data = string->data;
 
