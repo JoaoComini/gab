@@ -1,5 +1,6 @@
 #include "arena.h"
 #include "allocator.h"
+#include "util/align.h"
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,10 +39,6 @@ void arena_destroy(Arena *arena) {
         block = next;
     }
     free(arena);
-}
-
-static size_t align_up(size_t offset, size_t alignment) {
-    return (offset + (alignment - 1)) & ~(alignment - 1);
 }
 
 void *arena_alloc(Arena *arena, size_t size) {

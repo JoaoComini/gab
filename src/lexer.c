@@ -90,6 +90,8 @@ const char *token_description(TokenType type) {
         return "'let'";
     case TOKEN_FUNC:
         return "'func'";
+    case TOKEN_STRUCT:
+        return "'struct'";
     case TOKEN_RETURN:
         return "'return'";
     case TOKEN_IF:
@@ -159,6 +161,10 @@ static Token lexer_identifier(Lexer *lexer) {
 
     if (string_ref_equals_cstr(ref, "func")) {
         return token_create_ref(lexer, TOKEN_FUNC, ref);
+    }
+
+    if (string_ref_equals_cstr(ref, "struct")) {
+        return token_create_ref(lexer, TOKEN_STRUCT, ref);
     }
 
     if (string_ref_equals_cstr(ref, "return")) {
@@ -240,12 +246,16 @@ Token lexer_next(Lexer *lexer) {
         return lexer_identifier(lexer);
     }
 
+    // Not eaten: advancing past the terminator would read out of bounds on any
+    // further call.
+    if (lexer_peek(lexer) == '\0') {
+        return token_create(lexer, TOKEN_EOF);
+    }
+
     char ch = lexer_peek(lexer);
     lexer_eat(lexer);
 
     switch (ch) {
-    case '\0':
-        return token_create(lexer, TOKEN_EOF);
     case '+':
         return token_create(lexer, TOKEN_PLUS);
     case '-':

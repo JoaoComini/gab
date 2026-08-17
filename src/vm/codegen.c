@@ -101,6 +101,9 @@ static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
     case STMT_FUNC_DECL:
         codegen_func_decl_stmt(state, &ast->func_decl);
         break;
+    case STMT_STRUCT_DECL:
+        // Types are resolved at compile time and emit no code.
+        break;
     }
 }
 
@@ -205,7 +208,8 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
         .max_registers = func_state.next_reg,
     };
 
-    if (VM_DECODE_OPCODE(instruction_list_back(&func_chunk->instructions)) != OP_RETURN) {
+    if (func_chunk->instructions.size == 0 ||
+        VM_DECODE_OPCODE(instruction_list_back(&func_chunk->instructions)) != OP_RETURN) {
         chunk_add_instruction(func_chunk, VM_ENCODE_R(OP_RETURN, 0, 0, 0));
     }
 

@@ -173,6 +173,101 @@ static void test_reports_duplicate_declaration() {
     test_context_free(&ctx);
 }
 
+static void test_reports_unknown_field_type() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "struct Broken { value: Nope }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_NAME);
+    assert(strcmp(diagnostic->message, "unknown type 'Nope'") == 0);
+
+    test_context_free(&ctx);
+}
+
+static void test_reports_duplicate_field() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "struct Broken { value: int, value: float }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_NAME);
+    assert(strcmp(diagnostic->message, "duplicate field 'value' in struct 'Broken'") == 0);
+
+    test_context_free(&ctx);
+}
+
+static void test_reports_duplicate_struct_name() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "struct Vec2 { x: float } struct Vec2 { y: float }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_NAME);
+    assert(strcmp(diagnostic->message, "type 'Vec2' is already declared") == 0);
+
+    test_context_free(&ctx);
+}
+
+// Declaring a struct named after a builtin would shadow it for every later
+// resolution, so it is rejected by the same duplicate check.
+static void test_rejects_shadowing_a_builtin() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "struct int { x: float }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+    assert(strcmp(diagnostics_get(diagnostics, 0)->message, "type 'int' is already declared") == 0);
+
+    test_context_free(&ctx);
+}
+
+// Without an explicit check this would surface as "unknown type 'Node'", since
+// the struct is registered only after its fields resolve.
+static void test_reports_self_referential_struct() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "struct Node { next: Node }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_TYPE);
+    assert(strcmp(diagnostic->message, "struct 'Node' cannot contain itself") == 0);
+
+    test_context_free(&ctx);
+}
+
+static void test_reports_every_bad_field() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "struct Broken { a: Nope, b: AlsoNope }");
+
+    assert(diagnostics_count(diagnostics) == 2);
+    assert(strcmp(diagnostics_get(diagnostics, 0)->message, "unknown type 'Nope'") == 0);
+    assert(strcmp(diagnostics_get(diagnostics, 1)->message, "unknown type 'AlsoNope'") == 0);
+
+    test_context_free(&ctx);
+}
+
 // Statement-level recovery: without it the parser would stop at the first bad
 // statement and the second would never be reported.
 static void test_parser_recovers_across_statements() {
@@ -257,6 +352,13 @@ int main(void) {
     test_reports_type_mismatch();
     test_reports_unknown_type();
     test_reports_duplicate_declaration();
+
+    test_reports_unknown_field_type();
+    test_reports_duplicate_field();
+    test_reports_duplicate_struct_name();
+    test_rejects_shadowing_a_builtin();
+    test_reports_self_referential_struct();
+    test_reports_every_bad_field();
 
     test_parser_recovers_across_statements();
     test_syntax_errors_name_the_found_token();

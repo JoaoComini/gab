@@ -13,6 +13,8 @@ static ASTStmt *parse_decl_statement(Parser *parser);
 static ASTStmt *parse_statement(Parser *parser);
 static ASTStmt *parse_var_decl_stmt(Parser *parser);
 static ASTStmt *parse_func_decl_stmt(Parser *parser);
+static ASTStmt *parse_struct_decl_stmt(Parser *parser);
+static ASTField *parse_field(Parser *parser, const char *name_message);
 static ASTStmt *parse_if_stmt(Parser *parser);
 static ASTStmt *parse_block_stmt(Parser *parser);
 static ASTStmt *parse_return_stmt(Parser *parser);
@@ -94,6 +96,7 @@ static void parser_synchronize(Parser *parser) {
         switch (parser->current.type) {
         case TOKEN_LET:
         case TOKEN_FUNC:
+        case TOKEN_STRUCT:
         case TOKEN_IF:
         case TOKEN_RETURN:
             return;
@@ -116,8 +119,12 @@ static ASTStmt *parse_decl_statement(Parser *parser) {
         stmt = parse_func_decl_stmt(parser);
         break;
     }
+    case TOKEN_STRUCT: {
+        stmt = parse_struct_decl_stmt(parser);
+        break;
+    }
     default: {
-        parser_error_found(parser, "expected a declaration ('let' or 'func')");
+        parser_error_found(parser, "expected a declaration ('let', 'func', or 'struct')");
         return NULL;
     }
     }
@@ -150,6 +157,10 @@ static ASTStmt *parse_statement(Parser *parser) {
     }
     case TOKEN_FUNC: {
         stmt = parse_func_decl_stmt(parser);
+        break;
+    }
+    case TOKEN_STRUCT: {
+        stmt = parse_struct_decl_stmt(parser);
         break;
     }
     case TOKEN_IF: {
@@ -307,6 +318,81 @@ static ASTStmt *parse_block_stmt(Parser *parser) {
     return ast_block_stmt_create(span, list);
 }
 
+static ASTField *parse_field(Parser *parser, const char *name_message) {
+    if (!parser_expect(parser, TOKEN_IDENT, name_message)) {
+        return NULL;
+    }
+
+    Span span = parser_span(parser);
+    StringRef name = parser->current.lexeme;
+    parser_next_token(parser); // eat name
+
+    if (!parser_expect(parser, TOKEN_COLON, "expected ':' after name")) {
+        return NULL;
+    }
+
+    parser_next_token(parser); // eat ':'
+
+    if (!parser_expect(parser, TOKEN_IDENT, "expected type after ':'")) {
+        return NULL;
+    }
+
+    TypeSpec *type = type_spec_create(parser->current.lexeme);
+    parser_next_token(parser); // eat type
+
+    return ast_field_create(span, name, type);
+}
+
+static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
+    Span span = parser_span(parser);
+
+    parser_next_token(parser); // eat "struct"
+
+    if (!parser_expect(parser, TOKEN_IDENT, "expected a struct name")) {
+        return NULL;
+    }
+
+    StringRef name = parser->current.lexeme;
+    parser_next_token(parser); // eat struct name
+
+    if (!parser_expect(parser, TOKEN_LBRACE, "expected '{' after struct name")) {
+        return NULL;
+    }
+
+    parser_next_token(parser); // eat '{'
+
+    ASTFieldList fields = ast_field_list_create();
+    while (parser->current.type != TOKEN_RBRACE) {
+        if (parser->current.type == TOKEN_EOF) {
+            parser_error(parser, "expected '}' to close the struct");
+            ast_field_list_free(&fields);
+            return NULL;
+        }
+
+        ASTField *field = parse_field(parser, "expected a field name");
+        if (!field) {
+            ast_field_list_free(&fields);
+            return NULL;
+        }
+
+        ast_field_list_add(&fields, field);
+
+        if (parser->current.type != TOKEN_COMMA && parser->current.type != TOKEN_RBRACE) {
+            parser_error_found(parser, "expected ',' or '}' after field");
+            ast_field_list_free(&fields);
+            return NULL;
+        }
+
+        if (parser->current.type == TOKEN_COMMA) {
+            parser_next_token(parser); // eat ','
+        }
+    }
+
+    parser_next_token(parser); // eat '}'
+
+    return ast_struct_decl_stmt_create(span, name, fields);
+}
+
 static ASTStmt *parse_func_decl_stmt(Parser *parser) {
     Span span = parser_span(parser);
 
@@ -327,28 +413,11 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
     ASTFieldList func_params = ast_field_list_create();
     while (parser->current.type != TOKEN_RPAREN) {
-        if (!parser_expect(parser, TOKEN_IDENT, "expected a parameter name")) {
-            return NULL;
-        }
-
-        Span param_span = parser_span(parser);
-        StringRef param_name = parser->current.lexeme;
-        parser_next_token(parser); // eat param name
-
-        if (!parser_expect(parser, TOKEN_COLON, "expected ':' after parameter name")) {
+        ASTField *param = parse_field(parser, "expected a parameter name");
+        if (!param) {
             ast_field_list_free(&func_params);
             return NULL;
         }
-
-        parser_next_token(parser); // eat ':'
-
-        if (!parser_expect(parser, TOKEN_IDENT, "expected type after ':'")) {
-            ast_field_list_free(&func_params);
-            return NULL;
-        }
-
-        TypeSpec *param_type = type_spec_create(parser->current.lexeme);
-        parser_next_token(parser); // eat param type
 
         if (parser->current.type != TOKEN_COMMA && parser->current.type != TOKEN_RPAREN) {
             parser_error_found(parser, "expected ',' or ')' after parameter");
@@ -359,8 +428,6 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
         if (parser->current.type == TOKEN_COMMA) {
             parser_next_token(parser); // eat ','
         }
-
-        ASTField *param = ast_field_create(param_span, param_name, param_type);
 
         ast_field_list_add(&func_params, param);
     }
@@ -437,6 +504,7 @@ static bool stmt_needs_terminator(ASTStmt *stmt) {
     case STMT_IF:
     case STMT_BLOCK:
     case STMT_FUNC_DECL:
+    case STMT_STRUCT_DECL:
         return false;
     default:
         return true;

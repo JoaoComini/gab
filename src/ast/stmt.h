@@ -32,6 +32,7 @@ typedef enum {
     STMT_EXPR,
     STMT_VAR_DECL,
     STMT_FUNC_DECL,
+    STMT_STRUCT_DECL,
     STMT_ASSIGN,
     STMT_BLOCK,
     STMT_IF,
@@ -60,6 +61,13 @@ typedef struct {
 } ASTFuncDecl;
 
 typedef struct {
+    StringRef name;
+    ASTFieldList fields;
+
+    Type *type;
+} ASTStructDecl;
+
+typedef struct {
     ASTExpr *target;
     ASTExpr *value;
 } ASTAssignStmt;
@@ -85,6 +93,7 @@ typedef struct ASTStmt {
         ASTExprStmt expr;
         ASTVarDecl var_decl;
         ASTFuncDecl func_decl;
+        ASTStructDecl struct_decl;
         ASTAssignStmt assign;
         ASTIfStmt ifstmt;
         ASTBlockStmt block;
@@ -98,6 +107,7 @@ ASTStmt *ast_expr_stmt_create(Span span, ASTExpr *value);
 ASTStmt *ast_var_decl_stmt_create(Span span, StringRef name, TypeSpec *type, ASTExpr *initializer);
 ASTStmt *ast_func_decl_stmt_create(Span span, StringRef name, TypeSpec *return_type, ASTFieldList params,
                                    ASTStmt *body);
+ASTStmt *ast_struct_decl_stmt_create(Span span, StringRef name, ASTFieldList fields);
 ASTStmt *ast_assign_stmt_create(Span span, ASTExpr *target, ASTExpr *value);
 ASTStmt *ast_if_stmt_create(Span span, ASTExpr *condition, ASTStmt *then_block, ASTStmt *else_block);
 ASTStmt *ast_block_stmt_create(Span span, ASTStmtList list);

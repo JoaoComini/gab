@@ -323,6 +323,59 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         resolver_exit_scope(state);
         break;
     }
+    case STMT_STRUCT_DECL: {
+        String *struct_name = resolver_intern(state, stmt->struct_decl.name);
+        TypeRegistry *registry = state->current_scope->type_registry;
+
+        if (type_registry_get(registry, struct_name)) {
+            diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "type '%s' is already declared",
+                       struct_name->data);
+            break;
+        }
+
+        Type *type = type_struct_create(state->arena, struct_name, stmt->struct_decl.fields.size);
+        bool poisoned = false;
+
+        for (size_t i = 0; i < stmt->struct_decl.fields.size; i++) {
+            ASTField *field = stmt->struct_decl.fields.data[i];
+            String *field_name = resolver_intern(state, field->name);
+
+            if (type_find_field(type, field_name)) {
+                diag_error(state->diagnostics, GAB_ERR_NAME, field->span,
+                           "duplicate field '%s' in struct '%s'", field_name->data, struct_name->data);
+                poisoned = true;
+                continue;
+            }
+
+            // The struct is registered only after its fields resolve, so a
+            // self-reference would otherwise surface as "unknown type".
+            if (string_ref_equals_cstr(field->type_spec->name, struct_name->data)) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, field->span, "struct '%s' cannot contain itself",
+                           struct_name->data);
+                poisoned = true;
+                continue;
+            }
+
+            Type *field_type = ast_script_resolve_type(state, field->type_spec, field->span);
+
+            if (is_error_type(field_type)) {
+                poisoned = true;
+                continue;
+            }
+
+            type_add_field(type, field_name, field_type);
+        }
+
+        if (poisoned) {
+            break;
+        }
+
+        type_layout_compute(type);
+        type_registry_register(registry, type);
+
+        stmt->struct_decl.type = type;
+        break;
+    }
     case STMT_ASSIGN: {
         ast_script_expr_visit(state, stmt->assign.target);
         ast_script_expr_visit(state, stmt->assign.value);

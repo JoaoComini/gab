@@ -1,6 +1,7 @@
 #include "vm/vm.h"
 
 #include "type_registry.h"
+#include "vm/opcode.h"
 
 #include <assert.h>
 #include <string.h>
@@ -55,9 +56,40 @@ static void test_two_vms_are_independent() {
     vm_free(second);
 }
 
+// A body that emits no instructions still needs its implicit return; without it
+// codegen read past the start of an empty instruction list.
+static void test_empty_function_body() {
+    VM *vm = vm_create();
+
+    vm_execute(vm, "func main() { }");
+
+    assert(vm->global_funcs.size == 1);
+
+    FuncPrototype *proto = &vm->global_funcs.data[0];
+    assert(proto->chunk->instructions.size == 1);
+    assert(VM_DECODE_OPCODE(instruction_list_get(&proto->chunk->instructions, 0)) == OP_RETURN);
+
+    vm_free(vm);
+}
+
+// Declaring a struct-typed local emits nothing, which is the same empty-chunk
+// path reached from a different direction.
+static void test_struct_typed_local() {
+    VM *vm = vm_create();
+
+    vm_execute(vm, "struct Vec3 { x: float, y: float, z: float }\n"
+                   "func main() { let v: Vec3; }");
+
+    assert(vm->global_funcs.size == 1);
+
+    vm_free(vm);
+}
+
 int main() {
     test_vm_execute();
     test_two_vms_are_independent();
+    test_empty_function_body();
+    test_struct_typed_local();
 
     return 0;
 }

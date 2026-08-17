@@ -246,6 +246,56 @@ static void test_var_untyped_uninti_declaration() {
     assert_parse_error(func_wrap("let x;"), "expected a type or an initializer");
 }
 
+static void test_struct_declaration() {
+    ASTScript *script = assert_parse("struct Vec3 { x: float, y: float, z: float }");
+
+    ASTStmt *stmt = script->statements.data[0];
+    assert(stmt->kind == STMT_STRUCT_DECL);
+    assert(string_ref_equals_cstr(stmt->struct_decl.name, "Vec3"));
+
+    ASTFieldList fields = stmt->struct_decl.fields;
+    assert(fields.size == 3);
+
+    assert(string_ref_equals_cstr(fields.data[0]->name, "x"));
+    assert(string_ref_equals_cstr(fields.data[0]->type_spec->name, "float"));
+    assert(string_ref_equals_cstr(fields.data[1]->name, "y"));
+    assert(string_ref_equals_cstr(fields.data[2]->name, "z"));
+
+    ast_script_destroy(script);
+}
+
+static void test_struct_trailing_comma() {
+    ASTScript *script = assert_parse("struct Pair { a: int, b: int, }");
+
+    ASTStmt *stmt = script->statements.data[0];
+    assert(stmt->kind == STMT_STRUCT_DECL);
+    assert(stmt->struct_decl.fields.size == 2);
+
+    ast_script_destroy(script);
+}
+
+static void test_empty_struct_declaration() {
+    ASTScript *script = assert_parse("struct Empty { }");
+
+    ASTStmt *stmt = script->statements.data[0];
+    assert(stmt->kind == STMT_STRUCT_DECL);
+    assert(stmt->struct_decl.fields.size == 0);
+
+    ast_script_destroy(script);
+}
+
+static void test_struct_missing_name() {
+    assert_parse_error("struct { x: int }", "expected a struct name, found '{'");
+}
+
+static void test_struct_missing_colon() {
+    assert_parse_error("struct Bad { x int }", "expected ':' after name, found an identifier");
+}
+
+static void test_struct_unterminated() {
+    assert_parse_error("struct Bad { x: int", "expected ',' or '}' after field, found end of input");
+}
+
 static void test_func_declaration() {
     ASTScript *script = assert_parse("func add(x : int, y : int): int {"
                                      "    return x + y;"
@@ -404,6 +454,13 @@ int main() {
     test_invalid_declaration();
     test_missing_semicolon();
     test_expression_not_assignable();
+
+    test_struct_declaration();
+    test_struct_trailing_comma();
+    test_empty_struct_declaration();
+    test_struct_missing_name();
+    test_struct_missing_colon();
+    test_struct_unterminated();
     test_variables();
     test_var_declaration();
     test_var_uninit_declaration();

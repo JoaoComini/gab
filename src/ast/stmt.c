@@ -36,6 +36,15 @@ ASTStmt *ast_func_decl_stmt_create(Span span, StringRef name, TypeSpec *return_t
     return stmt;
 }
 
+ASTStmt *ast_struct_decl_stmt_create(Span span, StringRef name, ASTFieldList fields) {
+    ASTStmt *stmt = ast_stmt_create(span);
+    stmt->kind = STMT_STRUCT_DECL;
+    stmt->struct_decl.name = name;
+    stmt->struct_decl.fields = fields;
+    stmt->struct_decl.type = NULL;
+    return stmt;
+}
+
 ASTStmt *ast_assign_stmt_create(Span span, ASTExpr *target, ASTExpr *value) {
     ASTStmt *stmt = ast_stmt_create(span);
     stmt->kind = STMT_ASSIGN;
@@ -87,6 +96,9 @@ void ast_stmt_destroy(ASTStmt *stmt) {
         }
         ast_field_list_free(&stmt->func_decl.params);
         ast_stmt_destroy(stmt->func_decl.body);
+        break;
+    case STMT_STRUCT_DECL:
+        ast_field_list_free(&stmt->struct_decl.fields);
         break;
     case STMT_ASSIGN:
         ast_expr_free(stmt->assign.target);

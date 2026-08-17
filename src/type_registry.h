@@ -6,6 +6,8 @@
 #include "type.h"
 #include "util/hash_map.h"
 
+#include <stdbool.h>
+
 #define TYPE_REGISTRY_INITIAL_CAPACITY 8
 
 #define type_map_hash(key) (size_t)key
@@ -35,6 +37,7 @@ void type_registry_destroy(TypeRegistry *registry);
 
 Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind type);
 Type *type_registry_get(TypeRegistry *registry, String *name);
+bool type_registry_register(TypeRegistry *registry, Type *type);
 Type *type_registry_error_type(TypeRegistry *registry);
 
 #endif

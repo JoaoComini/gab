@@ -35,6 +35,7 @@ typedef enum {
                      // BEGIN KEYWORDS
     TOKEN_LET,       // 'let'
     TOKEN_FUNC,      // 'func'
+    TOKEN_STRUCT,    // 'struct'
     TOKEN_RETURN,    // 'return'
     TOKEN_IF,        // 'if'
     TOKEN_ELSE,      // 'else'
