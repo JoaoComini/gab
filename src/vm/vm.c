@@ -262,17 +262,14 @@ static void vm_store_field_ptr(VM *vm, Instruction instruction, size_t width) {
     memcpy(dest, vm_reg(vm, r1), width);
 }
 
-void vm_execute(VM *vm, const char *source) {
+bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *diagnostics) {
     // Reclaimed at the start of a compile rather than the end of one, so
     // everything a compile produced — diagnostics included — stays readable
     // until the next compile begins.
     arena_reset(vm->compile_arena);
 
-    Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, vm->compile_arena, "<script>");
-
-    Lexer lexer = lexer_create(source, &diagnostics);
-    Parser parser = parser_create(&lexer, &diagnostics);
+    Lexer lexer = lexer_create(source, diagnostics);
+    Parser parser = parser_create(&lexer, diagnostics);
     ASTScript *script = ast_script_create();
 
     // Each stage is a precondition for the next: a failure must stop the
@@ -281,34 +278,45 @@ void vm_execute(VM *vm, const char *source) {
     unsigned int max_registers = 0;
 
     if (parser_parse(&parser, script) &&
-        ast_script_resolve(vm->compile_arena, script, &vm->global_scope, &diagnostics)) {
-        chunk = codegen_generate(script, &vm->global_data, &vm->global_funcs, &diagnostics, &max_registers);
+        ast_script_resolve(vm->compile_arena, script, &vm->global_scope, diagnostics)) {
+        chunk = codegen_generate(script, &vm->global_data, &vm->global_funcs, diagnostics, &max_registers);
     }
 
-    if (!chunk) {
-        diagnostics_print(&diagnostics, stderr);
+    // Nothing reads the AST once codegen has run, so the compile owns it end to
+    // end and only the chunk outlives this call.
+    ast_script_destroy(script);
 
-        diagnostics_free(&diagnostics);
-        ast_script_destroy(script);
+    if (!chunk) {
+        return false;
+    }
+
+    out->chunk = chunk;
+    out->max_registers = max_registers;
+
+    return true;
+}
+
+void vm_compiled_script_free(CompiledScript *script) {
+    if (!script->chunk) {
         return;
     }
 
-    diagnostics_free(&diagnostics);
+    chunk_free(script->chunk);
+    script->chunk = NULL;
+}
 
+void vm_run(VM *vm, const CompiledScript *script) {
     // The top level runs as frame zero, so the interpreter has a single path
     // and OP_RETURN means the same thing everywhere.
     FuncPrototype top_level = {
-        .chunk = chunk,
+        .chunk = script->chunk,
         .arity = 0,
-        .max_registers = (int)max_registers,
+        .max_registers = (int)script->max_registers,
     };
 
     vm->frame_count = 0;
     if (!vm_push_frame(vm, &top_level, 0, 0, 0)) {
         fprintf(stderr, "<script>: out of stack space\n");
-
-        chunk_free(chunk);
-        ast_script_destroy(script);
         return;
     }
 
@@ -605,7 +613,22 @@ void vm_execute(VM *vm, const char *source) {
     while (vm->frame_count > 0) {
         vm_pop_frame(vm);
     }
+}
 
-    chunk_free(chunk);
-    ast_script_destroy(script);
+void vm_execute(VM *vm, const char *source) {
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, vm->compile_arena, "<script>");
+
+    CompiledScript script;
+
+    if (!vm_compile(vm, source, &script, &diagnostics)) {
+        diagnostics_print(&diagnostics, stderr);
+        diagnostics_free(&diagnostics);
+        return;
+    }
+
+    diagnostics_free(&diagnostics);
+
+    vm_run(vm, &script);
+    vm_compiled_script_free(&script);
 }

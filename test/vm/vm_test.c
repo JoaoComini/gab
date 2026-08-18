@@ -152,6 +152,52 @@ static void test_function_signatures_survive_a_later_compile() {
     vm_free(vm);
 }
 
+// The whole point of separating compilation from execution: an engine compiles
+// a script at load time and runs it every frame, without re-parsing.
+static void test_compile_once_run_many() {
+    VM *vm = vm_create();
+
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+
+    CompiledScript script;
+    bool ok = vm_compile(vm, "func seven(): int { return 7; }\nlet r: int = seven();\n", &script, &diagnostics);
+    assert(ok);
+
+    diagnostics_free(&diagnostics);
+
+    // Running repeatedly must be safe and must give the same answer each time:
+    // a run leaves no frame behind and does not consume the chunk.
+    for (int i = 0; i < 3; i++) {
+        vm_run(vm, &script);
+
+        assert(vm->frame_count == 0);
+        assert(vm_slot(vm, 0)->as_int == 7);
+    }
+
+    vm_compiled_script_free(&script);
+
+    vm_free(vm);
+}
+
+// A failed compile reports through the diagnostics it was given rather than
+// printing, and hands back nothing to run.
+static void test_compile_failure_is_reportable() {
+    VM *vm = vm_create();
+
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+
+    CompiledScript script;
+    bool ok = vm_compile(vm, "func broken(: int { return", &script, &diagnostics);
+
+    assert(!ok);
+    assert(diagnostics_has_errors(&diagnostics));
+
+    diagnostics_free(&diagnostics);
+    vm_free(vm);
+}
+
 int main() {
     test_vm_execute();
     test_top_level_runs_as_frame_zero();
@@ -160,6 +206,8 @@ int main() {
     test_struct_typed_local();
     test_types_survive_a_later_compile();
     test_function_signatures_survive_a_later_compile();
+    test_compile_once_run_many();
+    test_compile_failure_is_reportable();
 
     return 0;
 }

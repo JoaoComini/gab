@@ -2,6 +2,7 @@
 #define GAB_VM_H
 
 #include "arena.h"
+#include "diagnostics.h"
 #include "scope.h"
 #include "string/string_pool.h"
 #include "util/list.h"
@@ -85,6 +86,14 @@ typedef struct {
     unsigned int dest;
 } CallFrame;
 
+// What a compile produces: the top-level chunk plus the frame size it needs.
+// The two travel together because running the chunk means building a prototype
+// from it, and only codegen knows how many registers that takes.
+typedef struct {
+    Chunk *chunk;
+    unsigned int max_registers;
+} CompiledScript;
+
 void func_proto_free(FuncPrototype proto);
 
 #define func_proto_list_item_free(item) func_proto_free(item)
@@ -143,7 +152,24 @@ static inline Value *vm_slot(const VM *vm, size_t i) {
 }
 
 VM *vm_create();
-void vm_execute(VM *vm, const char *source);
 void vm_free(VM *vm);
+
+// Compiles without running, so a script can be compiled once and run many
+// times. Returns false and leaves 'out' untouched if any stage failed; the
+// diagnostics say why. On success the caller owns out->chunk and must pass it
+// to vm_compiled_script_free.
+//
+// Diagnostics are allocated from the VM's compile arena, which the next compile
+// reclaims — so they stay readable until then, but not past it.
+bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *diagnostics);
+
+// Runs a compiled script as frame zero, leaving its result in slot 0.
+void vm_run(VM *vm, const CompiledScript *script);
+
+void vm_compiled_script_free(CompiledScript *script);
+
+// Compile, run, and discard, reporting any diagnostics to stderr. The
+// convenience path for a caller with nothing to say about failure.
+void vm_execute(VM *vm, const char *source);
 
 #endif
