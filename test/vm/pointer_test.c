@@ -241,6 +241,42 @@ static void test_a_pointer_survives_a_stack_growth() {
                         "let r: int = f();") == 88);
 }
 
+// 'p.health' where p is a '*Player' reaches through the pointer, the way Go
+// and C's '->' do, so a '*T' receiver will read naturally in step 5.
+static void test_field_access_auto_derefs() {
+    assert(run_int("struct Player { health: int, mana: int }\n"
+                        "func f(): int { let p: Player; p.health = 1; p.mana = 2;\n"
+                        "let q: *Player = &p; q.health = 10;\n"
+                        "return p.health * 100 + p.mana; }\n"
+                        "let r: int = f();") == 1002);
+
+    assert(run_int("struct Player { health: int, mana: int }\n"
+                        "func f(): int { let p: Player; p.health = 10;\n"
+                        "let q: *Player = &p; return q.health; }\n"
+                        "let r: int = f();") == 10);
+}
+
+// Auto-deref composes with the inline layout of a nested struct: one address
+// plus a summed offset still reaches the innermost field.
+static void test_auto_deref_reaches_a_nested_field() {
+    assert(run_int("struct Inner { v: int }\n"
+                        "struct Outer { a: int, inner: Inner }\n"
+                        "func f(): int { let o: Outer; let q: *Outer = &o;\n"
+                        "q.inner.v = 7; return o.inner.v; }\n"
+                        "let r: int = f();") == 7);
+}
+
+// Taking the address of a field reached through a pointer adds the offset to
+// the address rather than to a slot index.
+static void test_address_of_a_field_through_a_pointer() {
+    assert(run_int("struct Player { health: int, mana: int }\n"
+                        "func f(): int { let p: Player; p.mana = 2;\n"
+                        "let q: *Player = &p;\n"
+                        "let h: *int = &q.health; *h = 9;\n"
+                        "return p.health * 100 + p.mana; }\n"
+                        "let r: int = f();") == 902);
+}
+
 // An 8-byte pointer needs an even slot index to sit at its natural alignment.
 static void test_a_pointer_local_is_slot_aligned() {
     TestContext ctx;
@@ -287,6 +323,9 @@ int main() {
     test_dereferencing_a_whole_struct();
     test_pointer_to_a_pointer();
     test_a_pointer_survives_a_stack_growth();
+    test_field_access_auto_derefs();
+    test_auto_deref_reaches_a_nested_field();
+    test_address_of_a_field_through_a_pointer();
     test_a_pointer_local_is_slot_aligned();
 
     printf("pointer_test: all tests passed\n");

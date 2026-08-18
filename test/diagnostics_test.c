@@ -439,6 +439,71 @@ static void test_spans_track_lines_and_columns() {
     test_context_free(&ctx);
 }
 
+static void test_reports_address_of_a_temporary() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "func test() { let p: *int = &1; }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_TYPE);
+    assert(strcmp(diagnostic->message, "cannot take the address of a temporary") == 0);
+
+    test_context_free(&ctx);
+}
+
+// A call returns a value with no home in memory, so there is no address of it
+// to take either.
+static void test_reports_address_of_a_call_result() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "func g(): int { return 1; }\nfunc test() { let p: *int = &g(); }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+    assert(strcmp(diagnostics_get(diagnostics, 0)->message, "cannot take the address of a temporary") == 0);
+
+    test_context_free(&ctx);
+}
+
+static void test_reports_dereferencing_a_non_pointer() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "func test() { let x: int = 1; let y: int = *x; }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_TYPE);
+    assert(strcmp(diagnostic->message, "cannot dereference int") == 0);
+
+    test_context_free(&ctx);
+}
+
+// Field access reaches through one pointer, so a pointer to a non-struct still
+// has no fields — and the message names what was written, not the pointee.
+static void test_reports_field_access_through_a_non_struct_pointer() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "func test() { let x: int = 1; let p: *int = &x; let y: int = p.field; }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_TYPE);
+    assert(strcmp(diagnostic->message, "*int is not a struct, so it has no fields") == 0);
+
+    test_context_free(&ctx);
+}
+
 int main(void) {
 
     test_empty_sink_has_no_errors();
@@ -464,6 +529,11 @@ int main(void) {
     test_reports_wrong_argument_count();
     test_reports_wrong_argument_type();
     test_reports_calling_a_non_function();
+
+    test_reports_address_of_a_temporary();
+    test_reports_address_of_a_call_result();
+    test_reports_dereferencing_a_non_pointer();
+    test_reports_field_access_through_a_non_struct_pointer();
 
     test_parser_recovers_across_statements();
     test_syntax_errors_name_the_found_token();

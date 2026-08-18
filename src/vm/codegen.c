@@ -476,9 +476,15 @@ struct FieldTarget {
 // accumulating the byte offsets on the way. Nested structs are inline, so
 // 'outer.inner.x' is one base plus a single summed offset; a deref stops the
 // walk, because from there on the base is an address computed at runtime.
-static FieldTarget codegen_field_base(CodegenState *state, ASTExpr *node) {
+//
+// 'auto_deref' says whether a pointer at the bottom of the chain is reached
+// through or addressed. Field access reaches through it — that is 'p.health'
+// where p is a '*Player' — but '&p' wants the address of p itself.
+static FieldTarget codegen_field_base(CodegenState *state, ASTExpr *node, bool auto_deref) {
     if (node->kind == EXPR_FIELD) {
-        FieldTarget target = codegen_field_base(state, node->field.target);
+        // Everything below a field access is a struct being reached into, so a
+        // pointer there is always reached through.
+        FieldTarget target = codegen_field_base(state, node->field.target, true);
         target.offset += node->field.field->offset;
         return target;
     }
@@ -494,7 +500,7 @@ static FieldTarget codegen_field_base(CodegenState *state, ASTExpr *node) {
     return (FieldTarget){
         .base = codegen_expr(state, node),
         .offset = 0,
-        .indirect = false,
+        .indirect = auto_deref && type_is_pointer(node->type),
     };
 }
 
@@ -553,7 +559,7 @@ static unsigned int codegen_load_indirect_struct(CodegenState *state, ASTExpr *n
 }
 
 static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node) {
-    FieldTarget target = codegen_field_base(state, node);
+    FieldTarget target = codegen_field_base(state, node, true);
 
     // A struct-typed field is addressed, not loaded: its slots are already laid
     // out inline, so the caller reads them where they sit. Through a pointer
@@ -581,7 +587,7 @@ static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node) {
 }
 
 static void codegen_store_field(CodegenState *state, ASTExpr *node, unsigned int src) {
-    FieldTarget target = codegen_field_base(state, node);
+    FieldTarget target = codegen_field_base(state, node, true);
 
     if (type_is_struct(node->type)) {
         if (target.indirect) {
@@ -637,7 +643,9 @@ static unsigned int codegen_addr_of_expr(CodegenState *state, ASTExpr *node) {
         return codegen_expr(state, inner->unary.target);
     }
 
-    FieldTarget target = codegen_field_base(state, inner);
+    // '&p' where p is a pointer names p itself, so the chain must stop at it
+    // rather than reach through.
+    FieldTarget target = codegen_field_base(state, inner, false);
 
     unsigned int rd = codegen_alloc_slots(state, VM_POINTER_SLOTS, VM_POINTER_SLOTS, node->span);
 

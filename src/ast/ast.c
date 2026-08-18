@@ -271,9 +271,15 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
             break;
         }
 
+        // 'p.health' where p is a '*Player' reaches through the pointer, as in
+        // Go and C's '->'. One level only: a '**Player' has to be written out.
+        if (type_is_pointer(target_type)) {
+            target_type = target_type->pointee;
+        }
+
         if (target_type->kind != TYPE_STRUCT) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                       "%s is not a struct, so it has no fields", type_name(target_type));
+                       "%s is not a struct, so it has no fields", type_name(expr->field.target->type));
             expr->type = resolver_error_type(state);
             break;
         }
