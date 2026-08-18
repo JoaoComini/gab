@@ -155,15 +155,15 @@ void vm_arithmeticf(VM *vm, Instruction instruction, float (*func)(VM *, size_t,
     vm->registers[rd].as_float = func(vm, r1, r2);
 }
 
-int vm_addi(VM *vm, size_t r1, size_t r2) { return vm->registers[r1].as_int + vm->registers[r2].as_int; }
+int32_t vm_addi(VM *vm, size_t r1, size_t r2) { return vm->registers[r1].as_int + vm->registers[r2].as_int; }
 
-int vm_subi(VM *vm, size_t r1, size_t r2) { return vm->registers[r1].as_int - vm->registers[r2].as_int; }
+int32_t vm_subi(VM *vm, size_t r1, size_t r2) { return vm->registers[r1].as_int - vm->registers[r2].as_int; }
 
-int vm_muli(VM *vm, size_t r1, size_t r2) { return vm->registers[r1].as_int * vm->registers[r2].as_int; }
+int32_t vm_muli(VM *vm, size_t r1, size_t r2) { return vm->registers[r1].as_int * vm->registers[r2].as_int; }
 
-int vm_divi(VM *vm, size_t r1, size_t r2) { return vm->registers[r1].as_int / vm->registers[r2].as_int; }
+int32_t vm_divi(VM *vm, size_t r1, size_t r2) { return vm->registers[r1].as_int / vm->registers[r2].as_int; }
 
-void vm_arithmetici(VM *vm, Instruction instruction, int (*func)(VM *, size_t, size_t)) {
+void vm_arithmetici(VM *vm, Instruction instruction, int32_t (*func)(VM *, size_t, size_t)) {
     size_t rd = VM_DECODE_R_RD(instruction);
     size_t r1 = VM_DECODE_R_R1(instruction);
     size_t r2 = VM_DECODE_R_R2(instruction);
@@ -222,7 +222,6 @@ void vm_conditional(VM *vm, Instruction instruction, bool (*func)(VM *, size_t, 
     size_t r1 = VM_DECODE_R_R1(instruction);
     size_t r2 = VM_DECODE_R_R2(instruction);
 
-    vm->registers[rd].type = TYPE_BOOL;
     vm->registers[rd].as_int = func(vm, r1, r2);
 }
 

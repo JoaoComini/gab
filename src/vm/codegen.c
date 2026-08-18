@@ -271,11 +271,11 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
 static Value value_from_literal(Literal lit) {
     switch (lit.kind) {
     case TYPE_INT:
-        return (Value){.type = TYPE_INT, .as_int = lit.as_int};
+        return (Value){.as_int = lit.as_int};
     case TYPE_FLOAT:
-        return (Value){.type = TYPE_FLOAT, .as_float = lit.as_float};
+        return (Value){.as_float = lit.as_float};
     case TYPE_BOOL:
-        return (Value){.type = TYPE_BOOL, .as_int = lit.as_int};
+        return (Value){.as_int = lit.as_int};
     default:
         break;
     }

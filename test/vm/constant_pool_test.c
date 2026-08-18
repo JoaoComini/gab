@@ -14,8 +14,8 @@ static void test_create_and_free() {
 
 static void test_basic_add_and_get() {
     ConstantPool *pool = constpool_create(10);
-    Value v1 = {.type = TYPE_FLOAT, .as_float = 3.14f};
-    Value v2 = {.type = TYPE_INT, .as_int = 2};
+    Value v1 = {.as_float = 3.14f};
+    Value v2 = {.as_int = 2};
 
     int index1 = constpool_add(pool, v1);
     assert(index1 == 0);
@@ -26,11 +26,9 @@ static void test_basic_add_and_get() {
     assert(pool->count == 2);
 
     Value retrieved = constpool_get(pool, 0);
-    assert(retrieved.type == TYPE_FLOAT);
     assert(retrieved.as_float == 3.14f);
 
     retrieved = constpool_get(pool, 1);
-    assert(retrieved.type == TYPE_INT);
     assert(retrieved.as_int == 2);
 
     constpool_free(pool);
@@ -40,7 +38,7 @@ static void test_auto_resize() {
     ConstantPool *pool = constpool_create(100);
 
     // Fill initial capacity
-    Value v = {.type = TYPE_FLOAT, .as_float = 1.0f};
+    Value v = {.as_float = 1.0f};
     for (size_t i = 0; i < 4; i++) {
         constpool_add(pool, v);
     }
