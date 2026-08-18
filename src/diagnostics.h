@@ -12,6 +12,7 @@ typedef enum {
     GAB_ERR_TYPE,
     GAB_ERR_NAME,
     GAB_ERR_CODEGEN,
+    GAB_ERR_LIFETIME,
 } DiagKind;
 
 typedef struct {

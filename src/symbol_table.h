@@ -22,9 +22,18 @@ typedef struct Symbol {
     unsigned int offset;
     int scope_depth;
 
+    // Set when '&x' is taken. A pinned variable's slot must survive its whole
+    // block, so codegen may not reclaim it at the end of a statement.
+    bool pinned;
+
     union {
         struct {
             Type *type;
+
+            // For a pointer variable, the block depth of what it points at, or
+            // 0 when that is not known. A pointer may only be moved to a depth
+            // at least this deep: anything shallower outlives its pointee.
+            int pointee_depth;
         } var;
 
         struct {

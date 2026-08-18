@@ -504,6 +504,64 @@ static void test_reports_field_access_through_a_non_struct_pointer() {
     test_context_free(&ctx);
 }
 
+// A returned pointer outlives the whole frame, so nothing declared inside the
+// function may be pointed at.
+static void test_reports_returning_a_pointer_to_a_local() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "func test(): *int { let x: int = 1; return &x; }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_LIFETIME);
+    assert(strcmp(diagnostic->message,
+                  "this pointer outlives what it points at, so it cannot be returned") == 0);
+
+    test_context_free(&ctx);
+}
+
+// Register reuse reclaims slots at the closing brace, so a pointer into an
+// inner block dangles into a reused slot the moment that block ends. The rule
+// is block-scoped for exactly this reason.
+static void test_reports_a_pointer_escaping_its_block() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "func test() { let p: *int; { let x: int = 1; p = &x; } }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_LIFETIME);
+    assert(strcmp(diagnostic->message,
+                  "this pointer outlives what it points at, so it cannot be assigned here") == 0);
+
+    test_context_free(&ctx);
+}
+
+// The restriction is only on outliving the pointee. A pointer that stays at or
+// below its pointee's depth is fine, including one passed to a callee.
+static void test_accepts_pointers_that_do_not_outlive_their_pointee() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    compile(&ctx, "func take(p: *int): int { return *p; }\n"
+                  "func test(): int {\n"
+                  "let x: int = 1;\n"
+                  "let p: *int = &x;\n"
+                  "{ let inner: *int = &x; }\n"
+                  "return take(&x) + *p;\n"
+                  "}");
+
+    assert(diagnostics_count(&ctx.diagnostics) == 0);
+
+    test_context_free(&ctx);
+}
+
 int main(void) {
 
     test_empty_sink_has_no_errors();
@@ -534,6 +592,9 @@ int main(void) {
     test_reports_address_of_a_call_result();
     test_reports_dereferencing_a_non_pointer();
     test_reports_field_access_through_a_non_struct_pointer();
+    test_reports_returning_a_pointer_to_a_local();
+    test_reports_a_pointer_escaping_its_block();
+    test_accepts_pointers_that_do_not_outlive_their_pointee();
 
     test_parser_recovers_across_statements();
     test_syntax_errors_name_the_found_token();

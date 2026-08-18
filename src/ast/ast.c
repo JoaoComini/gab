@@ -100,6 +100,43 @@ static const char *bin_op_name(BinOp op) {
     return "?";
 }
 
+// The block depth of what a pointer-valued expression points at, or 0 when it
+// points at nothing known. Comparing depths is what catches a pointer being
+// moved somewhere that outlives its pointee: a smaller depth is a longer life.
+static int pointee_depth(const ASTExpr *expr) {
+    if (!expr) {
+        return 0;
+    }
+
+    switch (expr->kind) {
+    case EXPR_ADDR_OF: {
+        const Symbol *symbol = expr->unary.target->symbol;
+
+        return symbol ? symbol->scope_depth : 0;
+    }
+    case EXPR_VARIABLE:
+        return expr->symbol ? expr->symbol->var.pointee_depth : 0;
+    default:
+        break;
+    }
+
+    return 0;
+}
+
+// The variable an address is ultimately taken from, so that '&v.x' pins v.
+static Symbol *addressed_symbol(ASTExpr *expr) {
+    switch (expr->kind) {
+    case EXPR_VARIABLE:
+        return expr->symbol;
+    case EXPR_FIELD:
+        return addressed_symbol(expr->field.target);
+    default:
+        break;
+    }
+
+    return NULL;
+}
+
 // Something with a home in memory whose address can be named: a variable, a
 // field of one, or whatever a pointer already points at. A literal or a call
 // result is a temporary and has no address to take.
@@ -319,6 +356,13 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
             break;
         }
 
+        // The slot must survive the whole block now that its address is loose,
+        // so codegen may not reclaim it at the end of the statement.
+        Symbol *addressed = addressed_symbol(expr->unary.target);
+        if (addressed) {
+            addressed->pinned = true;
+        }
+
         expr->type = type_registry_pointer_to(state->current_scope->type_registry, target_type);
         break;
     }
@@ -353,6 +397,30 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
     default:
         break;
     }
+}
+
+// Rejects a pointer being stored somewhere that outlives what it points at.
+// 'target_depth' is the block depth of the destination; a pointee declared
+// deeper than that is gone by the time the destination can still be read.
+//
+// The rule is block-scoped rather than function-scoped because register reuse
+// reclaims slots at the closing brace, so a pointer into an inner block dangles
+// into a reused slot as soon as that block ends.
+static void check_pointer_lifetime(ResolverState *state, ASTExpr *value, int target_depth, Span span,
+                                   const char *what) {
+    if (!value || !type_is_pointer(value->type)) {
+        return;
+    }
+
+    int depth = pointee_depth(value);
+
+    // 0 means the pointee is unknown, which is not evidence of a problem.
+    if (depth == 0 || depth <= target_depth) {
+        return;
+    }
+
+    diag_error(state->diagnostics, GAB_ERR_LIFETIME, span,
+               "this pointer outlives what it points at, so it cannot be %s", what);
 }
 
 // Returns NULL when there is no spec to resolve (an omitted type), and the
@@ -424,6 +492,11 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
             free(name);
             break;
         }
+
+        // A declaration is always at the current depth, so it can never outlive
+        // its initializer; what it records is the depth, for later assignments
+        // and returns to check against.
+        var->var.pointee_depth = pointee_depth(stmt->var_decl.initializer);
 
         stmt->var_decl.symbol = var;
         break;
@@ -554,6 +627,17 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                        "cannot assign a value of type %s to a target of type %s", type_name(value_type),
                        type_name(target_type));
+            break;
+        }
+
+        Symbol *target = stmt->assign.target->symbol;
+
+        if (target && target->kind == SYMBOL_VAR) {
+            check_pointer_lifetime(state, stmt->assign.value, target->scope_depth, stmt->span,
+                                   "assigned here");
+
+            // The variable now points at whatever was just stored in it.
+            target->var.pointee_depth = pointee_depth(stmt->assign.value);
         }
         break;
     }
@@ -586,7 +670,12 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         if (!poisoned && actual != expected) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span, "returns %s, but %s was declared",
                        type_name(actual), type_name(expected));
+            break;
         }
+
+        // A returned pointer outlives the whole frame, so nothing declared
+        // inside the function may be pointed at. Depth 0 is the global scope.
+        check_pointer_lifetime(state, stmt->ret.result, 0, stmt->span, "returned");
         break;
     }
     }

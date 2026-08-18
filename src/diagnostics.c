@@ -66,6 +66,8 @@ const char *diag_kind_name(DiagKind kind) {
         return "name error";
     case GAB_ERR_CODEGEN:
         return "codegen error";
+    case GAB_ERR_LIFETIME:
+        return "lifetime error";
     }
 
     return "error";

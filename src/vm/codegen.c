@@ -882,8 +882,11 @@ static unsigned int codegen_alloc_slots(CodegenState *state, unsigned int count,
     return reg;
 }
 
-// The single reclamation point, so a rule that pins a slot whose address was
-// taken has one place to go when '&local' arrives.
+// The single reclamation point. A variable whose address was taken is pinned
+// for its enclosing block, and that already holds: a declaration's slot is
+// skipped by its own statement's release and reclaimed only at the closing
+// brace, which is exactly the pinned lifetime. Any future release that is
+// finer-grained than a block has to consult Symbol.pinned here.
 static void codegen_release_registers(CodegenState *state, unsigned int saved) { state->next_reg = saved; }
 
 CodegenLabel codegen_create_label(CodegenState *state) {
