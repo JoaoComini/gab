@@ -19,6 +19,15 @@
 */
 #define VM_ENCODE_R(op, rd, r1, r2) (((op) << 26) | ((rd) << 19) | ((r1) << 12) | ((r2) << 5))
 
+/*
+    As VM_ENCODE_R, plus the 5 flag bits. Every field is masked: an
+    out-of-range value would otherwise smear into its neighbours — including
+    the opcode — and produce an instruction that matches no case.
+*/
+#define VM_ENCODE_R_FLAGS(op, rd, r1, r2, flags)                                                             \
+    ((((op) & 0x3F) << 26) | (((rd) & 0x7F) << 19) | (((r1) & 0x7F) << 12) | (((r2) & 0x7F) << 5) |          \
+     ((flags) & 0x1F))
+
 #define VM_DECODE_R_RD(instr) (((instr) >> 19) & 0x7F) // Destination register
 #define VM_DECODE_R_R1(instr) (((instr) >> 12) & 0x7F) // First source register
 #define VM_DECODE_R_R2(instr) (((instr) >> 5) & 0x7F)  // Second source register

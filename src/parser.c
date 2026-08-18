@@ -23,6 +23,7 @@ static bool stmt_needs_terminator(ASTStmt *stmt);
 
 static ASTExpr *parse_expression(Parser *parser);
 static ASTExpr *parse_primary(Parser *parser);
+static ASTExpr *parse_field_expr(Parser *parser, ASTExpr *target);
 static void parser_synchronize(Parser *parser);
 static ASTExpr *parse_precedence(Parser *parser, int min_precedence);
 static int get_precedence(TokenType type);
@@ -482,7 +483,7 @@ static ASTStmt *parse_expr_stmt(Parser *parser) {
         return ast_expr_stmt_create(span, expr);
     }
 
-    if (expr->kind != EXPR_VARIABLE) {
+    if (expr->kind != EXPR_VARIABLE && expr->kind != EXPR_FIELD) {
         parser_error(parser, "expression is not assignable");
         ast_expr_free(expr);
         return NULL;
@@ -522,6 +523,23 @@ static void ast_expr_list_destroy(ASTExprList *list) {
 }
 
 // Parses the argument list of a call, with the '(' already current.
+static ASTExpr *parse_field_expr(Parser *parser, ASTExpr *target) {
+    Span span = parser_span(parser);
+
+    parser_next_token(parser); // eat '.'
+
+    if (!parser_expect(parser, TOKEN_IDENT, "expected a field name after '.'")) {
+        ast_expr_free(target);
+        return NULL;
+    }
+
+    Token name = parser->current;
+
+    parser_next_token(parser); // eat identifier
+
+    return ast_field_expr_create(span, target, name.lexeme);
+}
+
 static ASTExpr *parse_call_expr(Parser *parser, ASTExpr *target) {
     Span span = parser_span(parser);
 
@@ -573,8 +591,15 @@ static ASTExpr *parse_precedence(Parser *parser, int min_precedence) {
     if (!lhs)
         return NULL;
 
-    while (parser->current.type == TOKEN_LPAREN) {
-        lhs = parse_call_expr(parser, lhs);
+    // Postfixes bind tighter than any binary operator and chain, so 'a.b.c' and
+    // 'f().x' both fall out of looping here.
+    while (parser->current.type == TOKEN_LPAREN || parser->current.type == TOKEN_DOT) {
+        if (parser->current.type == TOKEN_LPAREN) {
+            lhs = parse_call_expr(parser, lhs);
+        } else {
+            lhs = parse_field_expr(parser, lhs);
+        }
+
         if (!lhs) {
             return NULL;
         }

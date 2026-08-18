@@ -32,6 +32,7 @@ typedef enum {
     TOKEN_SEMICOLON, // ';'
     TOKEN_COLON,     // ':'
     TOKEN_COMMA,     // ','
+    TOKEN_DOT,       // '.'
                      // BEGIN KEYWORDS
     TOKEN_LET,       // 'let'
     TOKEN_FUNC,      // 'func'

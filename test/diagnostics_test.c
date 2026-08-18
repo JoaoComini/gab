@@ -189,6 +189,56 @@ static void test_reports_unknown_field_type() {
     test_context_free(&ctx);
 }
 
+static void test_reports_unknown_field_name() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "struct Vec3 { x: float, y: float, z: float }\n"
+                  "func f(): float { let v: Vec3; return v.w; }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_NAME);
+    assert(strcmp(diagnostic->message, "'Vec3' has no field 'w'") == 0);
+
+    test_context_free(&ctx);
+}
+
+static void test_reports_field_access_on_a_non_struct() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "func f(): int { let n: int = 1; return n.x; }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_TYPE);
+    assert(strcmp(diagnostic->message, "int is not a struct, so it has no fields") == 0);
+
+    test_context_free(&ctx);
+}
+
+static void test_reports_mismatched_field_assignment() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "struct Vec3 { x: float, y: float, z: float }\n"
+                  "func f(): float { let v: Vec3; v.x = true; return v.x; }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_TYPE);
+    assert(strcmp(diagnostic->message, "cannot assign a value of type bool to a target of type float") == 0);
+
+    test_context_free(&ctx);
+}
+
 static void test_reports_duplicate_field() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -402,6 +452,9 @@ int main(void) {
     test_reports_duplicate_declaration();
 
     test_reports_unknown_field_type();
+    test_reports_unknown_field_name();
+    test_reports_field_access_on_a_non_struct();
+    test_reports_mismatched_field_assignment();
     test_reports_duplicate_field();
     test_reports_duplicate_struct_name();
     test_rejects_shadowing_a_builtin();

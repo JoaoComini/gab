@@ -38,6 +38,21 @@ static void test_numbers() {
     assert_token(&lexer, TOKEN_EOF);
 }
 
+// A '.' starts a float only when a digit follows it, so field access and the
+// leading-dot literal can coexist.
+static void test_dot_is_field_access_unless_a_digit_follows() {
+    Lexer lexer = test_lexer("v.x .5 v.5");
+    assert_identifier(&lexer, "v");
+    assert_token(&lexer, TOKEN_DOT);
+    assert_identifier(&lexer, "x");
+
+    assert_token(&lexer, TOKEN_FLOAT);
+
+    assert_identifier(&lexer, "v");
+    assert_token(&lexer, TOKEN_FLOAT);
+    assert_token(&lexer, TOKEN_EOF);
+}
+
 static void test_operators() {
     Lexer lexer = test_lexer("+ - * / = ! < > == != <= >= && ||");
     assert_token(&lexer, TOKEN_PLUS);
@@ -133,6 +148,7 @@ int main(void) {
     diagnostics_init(&diagnostics, arena, "<test>");
 
     test_numbers();
+    test_dot_is_field_access_unless_a_digit_follows();
     test_operators();
     test_parentheses();
     test_braces();

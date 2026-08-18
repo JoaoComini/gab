@@ -245,6 +245,41 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         expr->type = callee->func.return_type;
         break;
     }
+    case EXPR_FIELD: {
+        ast_script_expr_visit(state, expr->field.target);
+
+        Type *target_type = expr->field.target->type;
+
+        if (is_error_type(target_type)) {
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        if (target_type->kind != TYPE_STRUCT) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                       "%s is not a struct, so it has no fields", type_name(target_type));
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        String *field_name = resolver_intern(state, expr->field.name);
+        const TypeField *field = type_find_field(target_type, field_name);
+
+        if (!field) {
+            diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "'%s' has no field '%s'",
+                       type_name(target_type), field_name->data);
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        expr->field.field = field;
+        expr->type = field->type;
+
+        // Field access addresses the target's slots, so it inherits the
+        // target's symbol and stays assignable through the chain.
+        expr->symbol = expr->field.target->symbol;
+        break;
+    }
     case EXPR_LITERAL: {
         expr->type = type_registry_get_builtin(state->current_scope->type_registry, expr->lit.kind);
         break;

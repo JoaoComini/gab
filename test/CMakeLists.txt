@@ -10,6 +10,7 @@ set(
     vm/constant_pool_test.c
     vm/call_test.c
     vm/register_reuse_test.c
+    vm/struct_value_test.c
     vm/codegen_test.c
     vm/chunk_test.c
     vm/vm_test.c

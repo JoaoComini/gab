@@ -46,7 +46,41 @@ static OpCode bin_op_to_float_op(BinOp bin_op);
 static OpCode bin_op_to_int_op(BinOp bin_op);
 
 static unsigned int codegen_alloc_register(CodegenState *state, Span span);
+static unsigned int codegen_alloc_slots(CodegenState *state, unsigned int count, Span span);
 static void codegen_release_registers(CodegenState *state, unsigned int saved);
+static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node);
+static void codegen_store_field(CodegenState *state, ASTExpr *node, unsigned int src);
+static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned int src, unsigned int count);
+
+// A value occupies ceil(size / 4) consecutive slots, which is 1 for every
+// scalar.
+static unsigned int type_slot_count(const Type *type) {
+    if (!type) {
+        return 1;
+    }
+
+    return (unsigned int)((type->size + sizeof(Value) - 1) / sizeof(Value));
+}
+
+static bool type_is_struct(const Type *type) { return type && type->kind == TYPE_STRUCT; }
+
+static FieldWidth field_width_for(size_t size, bool *ok) {
+    *ok = true;
+
+    switch (size) {
+    case 1:
+        return FIELD_WIDTH_1;
+    case 2:
+        return FIELD_WIDTH_2;
+    case 4:
+        return FIELD_WIDTH_4;
+    default:
+        break;
+    }
+
+    *ok = false;
+    return FIELD_WIDTH_4;
+}
 
 typedef struct {
     size_t position;
@@ -137,8 +171,9 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
         value_list_add(state->global_data, value);
         ast->symbol->offset = state->global_data->size - 1;
     } else {
-        ast->symbol->offset =
-            codegen_alloc_register(state, ast->initializer ? ast->initializer->span : (Span){0});
+        Span span = ast->initializer ? ast->initializer->span : (Span){0};
+
+        ast->symbol->offset = codegen_alloc_slots(state, type_slot_count(ast->symbol->var.type), span);
     }
 
     if (!ast->initializer) {
@@ -151,32 +186,33 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
 
     unsigned int r1 = codegen_expr(state, ast->initializer);
 
-    Instruction instruction;
     if (ast->symbol->scope_depth == 0) {
-        instruction = VM_ENCODE_I(OP_STORE_GLOBAL, r1, ast->symbol->offset);
-
+        chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_STORE_GLOBAL, r1, ast->symbol->offset));
     } else {
-        instruction = VM_ENCODE_R(OP_MOVE, ast->symbol->offset, r1, 0);
+        codegen_copy_slots(state, ast->symbol->offset, r1, type_slot_count(ast->symbol->var.type));
     }
-
-    chunk_add_instruction(state->chunk, instruction);
 
     codegen_release_registers(state, saved);
 }
 
 static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
-    Instruction instruction;
     if (ast->target->kind == EXPR_VARIABLE && ast->target->symbol->scope_depth == 0) {
         unsigned int r1 = codegen_expr(state, ast->value);
-        instruction = VM_ENCODE_I(OP_STORE_GLOBAL, r1, ast->target->symbol->offset);
-    } else {
-        unsigned int rd = codegen_expr(state, ast->target);
-        unsigned int r1 = codegen_expr(state, ast->value);
-
-        instruction = VM_ENCODE_R(OP_MOVE, rd, r1, 0);
+        chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_STORE_GLOBAL, r1, ast->target->symbol->offset));
+        return;
     }
 
-    chunk_add_instruction(state->chunk, instruction);
+    // A field target is written in place through its base slot, so the target
+    // is never materialised as a value first.
+    if (ast->target->kind == EXPR_FIELD) {
+        codegen_store_field(state, ast->target, codegen_expr(state, ast->value));
+        return;
+    }
+
+    unsigned int rd = codegen_expr(state, ast->target);
+    unsigned int r1 = codegen_expr(state, ast->value);
+
+    codegen_copy_slots(state, rd, r1, type_slot_count(ast->target->type));
 }
 
 static void codegen_block_stmt(CodegenState *state, ASTBlockStmt *ast) {
@@ -262,6 +298,8 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
         return codegen_bin_op_expr(state, ast);
     case EXPR_CALL:
         return codegen_call_expr(state, ast);
+    case EXPR_FIELD:
+        return codegen_field_expr(state, ast);
     }
 
     assert(0 && "unknown expression kind");
@@ -327,6 +365,88 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
     codegen_release_registers(state, saved);
 
     return dest;
+}
+
+// Walks a field chain down to the slot the outermost struct lives in,
+// accumulating the byte offsets on the way. Nested structs are inline, so
+// 'outer.inner.x' is one base slot plus a single summed offset.
+static unsigned int codegen_field_base(CodegenState *state, ASTExpr *node, size_t *offset) {
+    if (node->kind == EXPR_FIELD) {
+        unsigned int base = codegen_field_base(state, node->field.target, offset);
+        *offset += node->field.field->offset;
+        return base;
+    }
+
+    return codegen_expr(state, node);
+}
+
+static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node) {
+    size_t offset = 0;
+    unsigned int base = codegen_field_base(state, node, &offset);
+
+    // A struct-typed field is addressed, not loaded: its slots are already
+    // laid out inline, so the caller reads them where they sit.
+    if (type_is_struct(node->type)) {
+        assert(offset % sizeof(Value) == 0 && "a struct field is always slot-aligned");
+        return base + (unsigned int)(offset / sizeof(Value));
+    }
+
+    bool ok;
+    FieldWidth width = field_width_for(node->field.field->type->size, &ok);
+
+    if (!ok || offset > VM_MAX_REGISTERS) {
+        if (!state->failed) {
+            diag_error(state->diagnostics, GAB_ERR_CODEGEN, node->span, "struct is too large for a frame");
+        }
+
+        state->failed = true;
+        return 0;
+    }
+
+    unsigned int rd = codegen_alloc_register(state, node->span);
+
+    chunk_add_instruction(state->chunk,
+                          VM_ENCODE_R_FLAGS(OP_LOAD_FIELD, rd, base, (unsigned int)offset, width));
+
+    return rd;
+}
+
+static void codegen_store_field(CodegenState *state, ASTExpr *node, unsigned int src) {
+    size_t offset = 0;
+    unsigned int base = codegen_field_base(state, node, &offset);
+
+    if (type_is_struct(node->type)) {
+        assert(offset % sizeof(Value) == 0 && "a struct field is always slot-aligned");
+
+        codegen_copy_slots(state, base + (unsigned int)(offset / sizeof(Value)), src,
+                           type_slot_count(node->type));
+        return;
+    }
+
+    bool ok;
+    FieldWidth width = field_width_for(node->field.field->type->size, &ok);
+
+    if (!ok || offset > VM_MAX_REGISTERS) {
+        if (!state->failed) {
+            diag_error(state->diagnostics, GAB_ERR_CODEGEN, node->span, "struct is too large for a frame");
+        }
+
+        state->failed = true;
+        return;
+    }
+
+    chunk_add_instruction(state->chunk,
+                          VM_ENCODE_R_FLAGS(OP_STORE_FIELD, base, src, (unsigned int)offset, width));
+}
+
+static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned int src, unsigned int count) {
+    if (dest == src) {
+        return;
+    }
+
+    for (unsigned int i = 0; i < count; i++) {
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_MOVE, dest + i, src + i, 0));
+    }
 }
 
 static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node) {
@@ -442,16 +562,28 @@ static OpCode bin_op_to_int_op(BinOp bin_op) {
 // an internal invariant, so it is reported instead of asserted. Register 0 is
 // returned as a placeholder; the failure flag stops the chunk being used.
 static unsigned int codegen_alloc_register(CodegenState *state, Span span) {
-    if (state->next_reg >= VM_MAX_REGISTERS) {
+    return codegen_alloc_slots(state, 1, span);
+}
+
+// Returns the first of count consecutive slots.
+static unsigned int codegen_alloc_slots(CodegenState *state, unsigned int count, Span span) {
+    if (count > VM_MAX_REGISTERS || state->next_reg > VM_MAX_REGISTERS - count) {
         if (!state->failed) {
-            diag_error(state->diagnostics, GAB_ERR_CODEGEN, span, "expression too complex");
+            // A single value that cannot fit a frame has a different cause and
+            // a different fix than a function that simply grew too big.
+            if (count > 1) {
+                diag_error(state->diagnostics, GAB_ERR_CODEGEN, span, "struct is too large for a frame");
+            } else {
+                diag_error(state->diagnostics, GAB_ERR_CODEGEN, span, "expression too complex");
+            }
         }
 
         state->failed = true;
         return 0;
     }
 
-    unsigned int reg = state->next_reg++;
+    unsigned int reg = state->next_reg;
+    state->next_reg += count;
 
     if (state->next_reg > state->max_reg) {
         state->max_reg = state->next_reg;

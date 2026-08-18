@@ -225,6 +225,20 @@ void vm_conditional(VM *vm, Instruction instruction, bool (*func)(VM *, size_t, 
     vm->registers[rd].as_int = func(vm, r1, r2);
 }
 
+static size_t vm_field_width(unsigned int flags) {
+    switch (flags) {
+    case FIELD_WIDTH_1:
+        return 1;
+    case FIELD_WIDTH_2:
+        return 2;
+    case FIELD_WIDTH_4:
+        return 4;
+    }
+
+    assert(0 && "unknown field width");
+    abort();
+}
+
 void vm_execute(VM *vm, const char *source) {
     Diagnostics diagnostics;
     diagnostics_init(&diagnostics, vm->transient_arena, "<script>");
@@ -421,6 +435,31 @@ void vm_execute(VM *vm, const char *source) {
 
             vm->registers[dest] = result;
             continue;
+        }
+        case OP_LOAD_FIELD: {
+            size_t rd = VM_DECODE_R_RD(instruction);
+            size_t base = VM_DECODE_R_R1(instruction);
+            size_t offset = VM_DECODE_R_R2(instruction);
+
+            const char *source = (const char *)&vm->registers[base] + offset;
+
+            // The destination is a whole slot, so a narrow field is widened
+            // rather than left beside stale bytes.
+            vm->registers[rd].as_int = 0;
+            memcpy(&vm->registers[rd], source, vm_field_width(VM_DECODE_R_FLAGS(instruction)));
+            break;
+        }
+        case OP_STORE_FIELD: {
+            size_t base = VM_DECODE_R_RD(instruction);
+            size_t r1 = VM_DECODE_R_R1(instruction);
+            size_t offset = VM_DECODE_R_R2(instruction);
+
+            char *dest = (char *)&vm->registers[base] + offset;
+
+            // Only the field's own bytes are written; anything sharing the
+            // slot keeps its value.
+            memcpy(dest, &vm->registers[r1], vm_field_width(VM_DECODE_R_FLAGS(instruction)));
+            break;
         }
         case OP_JMP: {
             vm->instruction_pointer += VM_DECODE_I_IMM(instruction);

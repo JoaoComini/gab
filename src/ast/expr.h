@@ -21,6 +21,7 @@ typedef enum {
     EXPR_BIN_OP,
     EXPR_VARIABLE,
     EXPR_CALL,
+    EXPR_FIELD,
 } ExprKind;
 
 typedef enum {
@@ -63,6 +64,15 @@ typedef struct ASTExpr {
             ASTExpr *target;
             ASTExprList args;
         } call;
+
+        struct {
+            ASTExpr *target;
+            StringRef name;
+
+            // Resolved during type resolution so codegen need not look it up
+            // again.
+            const TypeField *field;
+        } field;
     };
 
     Span span; // Source position, for diagnostics
@@ -75,6 +85,7 @@ ASTExpr *ast_literal_expr_create(Span span, Literal value);
 ASTExpr *ast_bin_op_expr_create(Span span, ASTExpr *left, BinOp op, ASTExpr *right);
 ASTExpr *ast_variable_expr_create(Span span, StringRef name);
 ASTExpr *ast_call_expr_create(Span span, ASTExpr *target, ASTExprList args);
+ASTExpr *ast_field_expr_create(Span span, ASTExpr *target, StringRef name);
 void ast_expr_free(ASTExpr *node);
 
 #endif

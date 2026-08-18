@@ -86,6 +86,8 @@ const char *token_description(TokenType type) {
         return "':'";
     case TOKEN_COMMA:
         return "','";
+    case TOKEN_DOT:
+        return "'.'";
     case TOKEN_LET:
         return "'let'";
     case TOKEN_FUNC:
@@ -238,7 +240,10 @@ Token lexer_next(Lexer *lexer) {
     lexer->start_line = lexer->line;
     lexer->start_column = lexer->column;
 
-    if (isdigit(lexer_peek(lexer)) || lexer_peek(lexer) == '.') {
+    // A leading '.' still starts a float, but only when a digit follows it;
+    // otherwise it is field access.
+    if (isdigit(lexer_peek(lexer)) ||
+        (lexer_peek(lexer) == '.' && isdigit((unsigned char)lexer->source[lexer->pos + 1]))) {
         return lexer_number(lexer);
     }
 
@@ -290,6 +295,8 @@ Token lexer_next(Lexer *lexer) {
         return token_create(lexer, TOKEN_COLON);
     case ',':
         return token_create(lexer, TOKEN_COMMA);
+    case '.':
+        return token_create(lexer, TOKEN_DOT);
     default:
         return lexer_invalid(lexer, ch);
     }
