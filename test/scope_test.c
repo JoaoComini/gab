@@ -52,6 +52,12 @@ static void test_shadowing() {
 
     // Lookup in child should find child's version
     assert(scope_symbol_lookup(child, name) == child_sym);
+
+    // Shadowing hides the parent's symbol without replacing it: the parent
+    // still resolves the name to its own, which is what makes the shadow end
+    // at the closing brace.
+    assert(child_sym != parent_sym);
+    assert(scope_symbol_lookup(parent, name) == parent_sym);
 }
 
 int main(void) {

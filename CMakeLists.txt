@@ -8,6 +8,16 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_C_COMPILER clang)
 
+# Warnings are errors. An API change that silently passed the wrong pointer
+# type used to compile with only a warning, which is exactly the mistake a C
+# compiler is able to catch for free.
+#
+# GAB_HASH_MAP and GAB_LIST expand to a full static API in every translation
+# unit that includes them, so any unit using part of one warns about the rest.
+# That is inherent to the macros rather than a defect, so it is the one warning
+# turned off.
+add_compile_options(-Wall -Wextra -Werror -Wno-unused-function)
+
 add_library(gab
     src/arena.c
     src/diagnostics.c

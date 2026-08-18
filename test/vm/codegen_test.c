@@ -102,10 +102,15 @@ static void test_bin_op(OpCode expected_op, BinOp op) {
     Instruction inst = chunk->instructions.data[2];
     assert(VM_DECODE_OPCODE(inst) == expected_op);
 
-    // R0 = 10, R1 = 5, R2 = result -> reusing R0 or R1 depends on the reg allocator
-    unsigned int rd = VM_DECODE_R_RD(inst);
+    // Which registers the allocator picked is its business, but the compare
+    // must read the two the loads wrote, and its operands must be distinct —
+    // reading one register twice would compare a value with itself.
     unsigned int r1 = VM_DECODE_R_R1(inst);
     unsigned int r2 = VM_DECODE_R_R2(inst);
+
+    assert(r1 != r2);
+    assert(r1 == VM_DECODE_R_RD(chunk->instructions.data[0]));
+    assert(r2 == VM_DECODE_R_RD(chunk->instructions.data[1]));
 
     // Check operand values from constant pool
     assert(chunk->const_pool->constants[0].as_float == 10.0);

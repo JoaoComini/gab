@@ -159,7 +159,7 @@ Chunk *codegen_generate(ASTScript *script, FuncProtoList *global_funcs, Diagnost
         .failed = false,
     };
 
-    for (int i = 0; i < script->statements.size; i++) {
+    for (size_t i = 0; i < script->statements.size; i++) {
         codegen_stmt(&state, script->statements.data[i]);
     }
 
@@ -290,7 +290,7 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
 static void codegen_block_stmt(CodegenState *state, ASTBlockStmt *ast) {
     unsigned int saved = state->next_reg;
 
-    for (int i = 0; i < ast->list.size; i++) {
+    for (size_t i = 0; i < ast->list.size; i++) {
         codegen_stmt(state, ast->list.data[i]);
     }
 
@@ -343,7 +343,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
 
     // A multi-slot parameter owns consecutive slots starting at its base, so
     // the callee addresses it by that slot exactly like a local.
-    for (int i = 0; i < ast->params.size; i++) {
+    for (size_t i = 0; i < ast->params.size; i++) {
         Symbol *param = ast->params.data[i]->symbol;
 
         codegen_set_slot(&func_state, param, func_next_reg);

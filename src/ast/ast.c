@@ -723,7 +723,7 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
     case STMT_BLOCK: {
         resolver_enter_scope(state);
 
-        for (int i = 0; i < stmt->block.list.size; i++) {
+        for (size_t i = 0; i < stmt->block.list.size; i++) {
             ast_script_stmt_visit(state, stmt->block.list.data[i]);
         }
 
@@ -771,7 +771,7 @@ bool ast_script_resolve(Arena *compile_arena, ASTScript *script, Scope *global_s
 
     size_t errors_before = diagnostics_count(diagnostics);
 
-    for (int i = 0; i < script->statements.size; i++) {
+    for (size_t i = 0; i < script->statements.size; i++) {
         ast_script_stmt_visit(&state, script->statements.data[i]);
     }
 
