@@ -43,14 +43,14 @@ VM *vm_create() {
     vm->global_data = value_list_create();
     vm->global_funcs = func_proto_list_create();
 
-    vm->persistent_arena = arena_create(ARENA_BLOCK_SIZE);
-    vm->transient_arena = arena_create(ARENA_BLOCK_SIZE);
+    vm->arena = arena_create(ARENA_BLOCK_SIZE);
+    vm->compile_arena = arena_create(ARENA_BLOCK_SIZE);
 
     // The pool must be live before the global scope: scope_init builds the
     // TypeRegistry, which interns the builtin type names.
-    string_pool_init(&vm->strings, vm->persistent_arena);
+    string_pool_init(&vm->strings, vm->arena);
 
-    scope_init(&vm->global_scope, vm->persistent_arena, &vm->strings, NULL);
+    scope_init(&vm->global_scope, vm->arena, &vm->strings, NULL);
 
     vm->stack_capacity = VM_STACK_SIZE;
     vm->stack = calloc(vm->stack_capacity, sizeof(Value));
@@ -119,8 +119,8 @@ void vm_free(VM *vm) {
 
     free(vm->stack);
 
-    arena_destroy(vm->persistent_arena);
-    arena_destroy(vm->transient_arena);
+    arena_destroy(vm->arena);
+    arena_destroy(vm->compile_arena);
 
     free(vm);
 }
@@ -263,8 +263,13 @@ static void vm_store_field_ptr(VM *vm, Instruction instruction, size_t width) {
 }
 
 void vm_execute(VM *vm, const char *source) {
+    // Reclaimed at the start of a compile rather than the end of one, so
+    // everything a compile produced — diagnostics included — stays readable
+    // until the next compile begins.
+    arena_reset(vm->compile_arena);
+
     Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, vm->transient_arena, "<script>");
+    diagnostics_init(&diagnostics, vm->compile_arena, "<script>");
 
     Lexer lexer = lexer_create(source, &diagnostics);
     Parser parser = parser_create(&lexer, &diagnostics);
@@ -276,7 +281,7 @@ void vm_execute(VM *vm, const char *source) {
     unsigned int max_registers = 0;
 
     if (parser_parse(&parser, script) &&
-        ast_script_resolve(vm->transient_arena, script, &vm->global_scope, &diagnostics)) {
+        ast_script_resolve(vm->compile_arena, script, &vm->global_scope, &diagnostics)) {
         chunk = codegen_generate(script, &vm->global_data, &vm->global_funcs, &diagnostics, &max_registers);
     }
 
@@ -601,7 +606,6 @@ void vm_execute(VM *vm, const char *source) {
         vm_pop_frame(vm);
     }
 
-    arena_reset(vm->transient_arena);
     chunk_free(chunk);
     ast_script_destroy(script);
 }

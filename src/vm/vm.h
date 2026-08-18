@@ -90,9 +90,25 @@ void func_proto_free(FuncPrototype proto);
 #define func_proto_list_item_free(item) func_proto_free(item)
 GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype)
 
+// Arenas are named for what owns them, and the rule that follows from that is
+// the whole lifetime model: allocate from the arena of the thing that will own
+// the result. A Type published into the registry is owned by the VM; an AST
+// node is owned by the compile that built it.
+//
+// A third, module-scoped lifetime belongs between these two — long enough to
+// outlive a compile, short enough to be freed by gab_module_free. It does not
+// exist yet because every compile shares one global scope and type registry,
+// so a module's types are reachable from the next module and freeing them
+// would dangle. It becomes real alongside per-module scopes.
 typedef struct {
-    Arena *persistent_arena;
-    Arena *transient_arena;
+    // Lives until vm_free: interned strings, global symbols, and every Type.
+    Arena *arena;
+
+    // Reset at the start of every compile: the AST, diagnostics, and the scopes
+    // of blocks, none of which anything holds once codegen is done. Kept on the
+    // VM rather than created per compile so its blocks are recycled instead of
+    // returned to malloc between compiles.
+    Arena *compile_arena;
 
     StringPool strings; // must outlive global_scope
     Scope global_scope;

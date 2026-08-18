@@ -33,9 +33,9 @@ typedef struct {
 } FuncContext;
 
 typedef struct {
-    // Dies with the compile: the AST, diagnostics, and the scopes of blocks
-    // that no handle can outlive.
-    Arena *arena;
+    // Dies with the compile: the scopes of blocks, which only codegen reads and
+    // only while the compile is still running.
+    Arena *compile_arena;
 
     Scope *global_scope;
     Scope *current_scope;
@@ -46,10 +46,11 @@ typedef struct {
 } ResolverState;
 
 // Where anything reachable after the compile has to live. A struct Type goes
-// into the TypeRegistry and a Symbol into the global scope's table, both of
-// which outlive the transient arena — allocating them from it leaves the
-// registry full of pointers into memory the next compile reuses.
-static Arena *resolver_persistent_arena(ResolverState *state) { return state->global_scope->arena; }
+// into the TypeRegistry and a Symbol into the global scope's table, and both
+// outlive every compile — so both are owned by whatever owns the global scope,
+// which is the rule this derivation encodes: allocate from the arena of the
+// thing that will own the result, never from whichever arena was passed in.
+static Arena *resolver_owner_arena(ResolverState *state) { return state->global_scope->arena; }
 
 static Type *resolver_error_type(ResolverState *state) {
     return type_registry_error_type(state->current_scope->type_registry);
@@ -72,7 +73,8 @@ static const char *type_name(Type *type) {
 }
 
 void resolver_enter_scope(ResolverState *state) {
-    state->current_scope = scope_create(state->arena, state->current_scope->strings, state->current_scope);
+    state->current_scope =
+        scope_create(state->compile_arena, state->current_scope->strings, state->current_scope);
 }
 
 void resolver_exit_scope(ResolverState *state) { state->current_scope = state->current_scope->parent; }
@@ -530,7 +532,7 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         size_t param_count = stmt->func_decl.params.size;
 
         if (func && param_count > 0) {
-            func->func.params = arena_alloc(resolver_persistent_arena(state), param_count * sizeof(Type *));
+            func->func.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(Type *));
             func->func.param_count = param_count;
         }
 
@@ -580,7 +582,7 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         }
 
         Type *type =
-            type_struct_create(resolver_persistent_arena(state), struct_name, stmt->struct_decl.fields.size);
+            type_struct_create(resolver_owner_arena(state), struct_name, stmt->struct_decl.fields.size);
         bool poisoned = false;
 
         for (size_t i = 0; i < stmt->struct_decl.fields.size; i++) {
@@ -690,9 +692,10 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
     }
 }
 
-bool ast_script_resolve(Arena *arena, ASTScript *script, Scope *global_scope, Diagnostics *diagnostics) {
+bool ast_script_resolve(Arena *compile_arena, ASTScript *script, Scope *global_scope,
+                        Diagnostics *diagnostics) {
     ResolverState state = {
-        .arena = arena,
+        .compile_arena = compile_arena,
         .global_scope = global_scope,
         .current_scope = global_scope,
         .func_context =
