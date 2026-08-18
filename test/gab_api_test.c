@@ -558,8 +558,14 @@ static void test_builtins_are_shared_across_modules(void) {
     assert(gab_find_type_in(vm, NULL, "int") == player_int);
 
     // Each module still resolved '*Config' against its own Config.
-    assert(gab_lookup(vm, player, "player_size", &err));
-    assert(gab_lookup(vm, enemy, "enemy_size", &err));
+    GabFunc *player_size = gab_lookup(vm, player, "player_size", &err);
+    GabFunc *enemy_size = gab_lookup(vm, enemy, "enemy_size", &err);
+
+    assert(player_size);
+    assert(enemy_size);
+
+    gab_func_free(enemy_size);
+    gab_func_free(player_size);
 
     gab_module_free(vm, enemy);
     gab_module_free(vm, player);
@@ -775,6 +781,99 @@ static void test_duplicate_declarations_in_one_unit_are_rejected(void) {
     gab_vm_free(vm);
 }
 
+// A reload that changes the signature invalidates what a handle cached. The
+// handle rebinds itself to the new signature rather than dying, so the host
+// need not look the function up again — but the arguments it had staged
+// described the old signature, so they are cleared and the call is refused
+// until they are set afresh.
+static void test_signature_change_rebinds_the_handle(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    GabModule *v1 = gab_compile(vm, "s.gab", "module S;\nfunc step(n: int): int { return n + 1; }\n", &err);
+    assert(v1);
+
+    GabFunc *fn = gab_lookup(vm, v1, "step", &err);
+    assert(fn);
+    assert(gab_func_arity(fn) == 1);
+
+    gab_arg_int(vm, fn, 0, 10);
+
+    int result = 0;
+    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(result == 11);
+
+    GabModule *v2 =
+        gab_compile(vm, "s.gab", "module S;\nfunc step(a: int, b: int): int { return a + b; }\n", &err);
+    assert(v2);
+
+    // Calling without re-staging is refused: the old arguments are gone rather
+    // than being fed to a body that no longer expects them.
+    result = -1;
+    assert(gab_call(vm, fn, &result, &err) == GAB_ERR_STALE);
+    assert(err.message[0] != '\0');
+
+    // The handle now describes the new signature.
+    assert(gab_func_arity(fn) == 2);
+
+    gab_arg_int(vm, fn, 0, 3);
+    gab_arg_int(vm, fn, 1, 4);
+
+    result = 0;
+    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(result == 7);
+
+    gab_func_free(fn);
+    gab_module_free(vm, v2);
+    gab_module_free(vm, v1);
+    gab_vm_free(vm);
+}
+
+// Staging arguments after the reload rebinds in the setter, so a host that
+// re-supplies its arguments every frame never sees the error at all.
+static void test_staging_after_a_signature_change_just_works(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    GabModule *v1 = gab_compile(vm, "s.gab", "module S;\nfunc step(n: int): int { return n + 1; }\n", &err);
+    assert(v1);
+
+    GabFunc *fn = gab_lookup(vm, v1, "step", &err);
+    assert(fn);
+
+    gab_arg_int(vm, fn, 0, 10);
+
+    GabModule *v2 =
+        gab_compile(vm, "s.gab", "module S;\nfunc step(a: int, b: int): int { return a + b; }\n", &err);
+    assert(v2);
+
+    gab_arg_int(vm, fn, 0, 3);
+    gab_arg_int(vm, fn, 1, 4);
+
+    int result = 0;
+    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(result == 7);
+
+    // A signature change that leaves some arguments unset is still caught: the
+    // rebind clears them all, so a partial re-stage is an unset argument.
+    GabModule *v3 = gab_compile(
+        vm, "s.gab", "module S;\nfunc step(a: int, b: int, c: int): int { return a + b + c; }\n", &err);
+    assert(v3);
+
+    gab_arg_int(vm, fn, 0, 1);
+
+    result = -1;
+    assert(gab_call(vm, fn, &result, &err) != GAB_OK);
+
+    gab_func_free(fn);
+    gab_module_free(vm, v3);
+    gab_module_free(vm, v2);
+    gab_module_free(vm, v1);
+    gab_vm_free(vm);
+}
+
 int main(void) {
     test_two_modules_can_share_a_function_name();
     test_module_name_is_read_from_the_script();
@@ -786,6 +885,8 @@ int main(void) {
     test_handle_survives_later_compiles();
     test_recompiling_a_module_reloads_it();
     test_duplicate_declarations_in_one_unit_are_rejected();
+    test_signature_change_rebinds_the_handle();
+    test_staging_after_a_signature_change_just_works();
     test_compile_error_is_reported_not_printed();
     test_runtime_error_is_reported();
     test_runtime_error_from_module_run();

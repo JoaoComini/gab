@@ -19,6 +19,13 @@ typedef enum {
     GAB_ERR_COMPILE,
     GAB_ERR_RUNTIME,
     GAB_ERR_ARG,
+
+    // The function this handle was looked up for has been recompiled, and its
+    // signature is no longer the one the handle was built against. Look it up
+    // again to get a handle for the new signature. A reload that leaves the
+    // signature alone does not invalidate anything: the handle goes on calling
+    // the new body, which is the point of reloading.
+    GAB_ERR_STALE,
 } GabStatus;
 
 // The message is copied rather than pointed at, so a GabError outlives the
