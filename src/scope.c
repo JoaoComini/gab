@@ -12,13 +12,22 @@ Scope *scope_create(Arena *arena, StringPool *strings, Scope *parent) {
 }
 
 void scope_init(Scope *scope, Arena *arena, StringPool *strings, Scope *parent) {
+    scope_init_at_depth(scope, arena, strings, parent, parent ? parent->depth + 1 : 0);
+}
+
+// A module scope is the one case where nesting and depth come apart: it is
+// parented to the root so that builtins resolve through it, but it holds a
+// unit's top-level declarations and so must stay at depth 0. Depth drives the
+// pointer-lifetime rule, where 0 means 'outlives everything' — a module scope
+// at depth 1 would make '&top_level_var' look like a pointer into a block.
+void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope *parent, int depth) {
     scope->arena = arena;
     scope->strings = strings;
     scope->symbol_table = symbol_table_create_alloc(arena_allocator(arena), SYMBOL_TABLE_INITIAL_CAPACITY);
     scope->type_registry =
         parent && parent->type_registry ? parent->type_registry : type_registry_create(arena, strings);
     scope->parent = parent;
-    scope->depth = parent ? parent->depth + 1 : 0;
+    scope->depth = depth;
 }
 
 Symbol *scope_symbol_lookup(Scope *scope, String *name) {

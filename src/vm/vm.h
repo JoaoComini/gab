@@ -96,6 +96,15 @@ void func_proto_free(FuncPrototype proto);
 #define func_proto_list_item_free(item) func_proto_free(item)
 GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype)
 
+// Module name to the scope holding its declarations. Keyed on the interned
+// name, so identity comparison is enough.
+#define module_scope_map_hash(key) (size_t)key
+#define module_scope_map_key_equals(key, other) key == other
+#define module_scope_map_key_dup(key) key
+#define module_scope_map_entry_free(key, value)
+
+GAB_HASH_MAP(ModuleScopeMap, module_scope_map, String *, Scope *)
+
 // Why a run stopped. A run that completed normally leaves VM_RUN_OK; anything
 // else means the interpreter unwound early, and the frames are already gone.
 typedef enum {
@@ -133,7 +142,16 @@ typedef struct {
     Arena *compile_arena;
 
     StringPool strings; // must outlive global_scope
+
+    // The root namespace: builtins, plus the declarations of any unit that
+    // named no module. Every module scope parents to it, so builtins resolve
+    // from anywhere and the type registry is shared.
     Scope global_scope;
+
+    // One scope per declared module name, created on first use and living as
+    // long as the VM. A module accumulates across compiles: a second unit
+    // naming the same module compiles against the scope the first one filled.
+    ModuleScopeMap *module_scopes;
 
     // Function prototypes are VM-wide because a prototype index is baked into
     // OP_CALL operands. Top-level variables are not here: they are frame-zero
@@ -180,6 +198,10 @@ void vm_free(VM *vm);
 // Diagnostics are allocated from the VM's compile arena, which the next compile
 // reclaims — so they stay readable until then, but not past it.
 bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *diagnostics);
+
+// The scope holding a module's declarations, created on first mention and
+// living as long as the VM. NULL names the root namespace.
+Scope *vm_module_scope(VM *vm, String *name);
 
 // Runs a compiled script as frame zero, leaving its result in slot 0. Returns
 // why the run stopped; vm->error carries the same status plus a message.

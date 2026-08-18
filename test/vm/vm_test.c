@@ -198,7 +198,105 @@ static void test_compile_failure_is_reportable() {
     vm_free(vm);
 }
 
+// Compiles a unit, asserting it succeeded, and discards the chunk. Most module
+// tests care only about whether resolution accepted the source.
+static bool compile_ok(VM *vm, const char *source) {
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+
+    CompiledScript script;
+    bool ok = vm_compile(vm, source, &script, &diagnostics);
+
+    diagnostics_free(&diagnostics);
+
+    if (ok) {
+        vm_compiled_script_free(&script);
+    }
+
+    return ok;
+}
+
+// The reason modules exist: one script per entity type, each with its own
+// on_update. Before per-module scopes this was a hard compile error.
+static void test_modules_isolate_declarations() {
+    VM *vm = vm_create();
+
+    assert(compile_ok(vm, "module Player;\nfunc on_update(): int { return 1; }\n"));
+    assert(compile_ok(vm, "module Enemy;\nfunc on_update(): int { return 2; }\n"));
+
+    vm_free(vm);
+}
+
+// A module spans compiles: a later unit naming the same module resolves against
+// what earlier ones declared. The reverse does not hold, which is what makes
+// compile order the host's lever rather than a hidden dependency.
+static void test_modules_accumulate_across_units() {
+    VM *vm = vm_create();
+
+    assert(compile_ok(vm, "module Player;\nfunc helper(): int { return 7; }\n"));
+    assert(compile_ok(vm, "module Player;\nfunc uses(): int { return helper(); }\n"));
+
+    // A different module cannot see either of them.
+    assert(!compile_ok(vm, "module Enemy;\nfunc bad(): int { return helper(); }\n"));
+
+    vm_free(vm);
+}
+
+// A unit that names no module declares into the root namespace, which is what
+// keeps every script written before modules existed compiling unchanged.
+static void test_root_namespace_and_modules() {
+    VM *vm = vm_create();
+
+    assert(compile_ok(vm, "func shared(): int { return 7; }\n"));
+
+    // A module parents to the root, so builtins and root declarations resolve
+    // through it.
+    assert(compile_ok(vm, "module M;\nfunc g(a: int, b: float): int { return shared() + a; }\n"));
+
+    // The root does not see into a module: visibility goes one way only.
+    assert(!compile_ok(vm, "func h(): int { return g(); }\n"));
+
+    vm_free(vm);
+}
+
+// A module scope parents to the root for lookup but stays at depth 0, because
+// depth drives the pointer-lifetime rule. At depth 1 a top-level variable would
+// look like a block local, and taking its address would start being rejected.
+static void test_module_scope_does_not_change_pointer_lifetimes() {
+    VM *vm = vm_create();
+
+    const char *takes_address = "func f(): int {\n"
+                                "  let x: int = 1;\n"
+                                "  let p: *int = &x;\n"
+                                "  return *p;\n"
+                                "}\n";
+
+    const char *escapes = "func g(): int {\n"
+                          "  let outer: *int;\n"
+                          "  { let inner: int = 1; outer = &inner; }\n"
+                          "  return 0;\n"
+                          "}\n";
+
+    char buffer[512];
+
+    assert(compile_ok(vm, takes_address));
+    snprintf(buffer, sizeof(buffer), "module A;\n%s", takes_address);
+    assert(compile_ok(vm, buffer));
+
+    // And the rule still bites inside a module.
+    assert(!compile_ok(vm, escapes));
+    snprintf(buffer, sizeof(buffer), "module B;\n%s", escapes);
+    assert(!compile_ok(vm, buffer));
+
+    vm_free(vm);
+}
+
 int main() {
+    test_modules_isolate_declarations();
+    test_modules_accumulate_across_units();
+    test_root_namespace_and_modules();
+    test_module_scope_does_not_change_pointer_lifetimes();
+
     test_vm_execute();
     test_top_level_runs_as_frame_zero();
     test_two_vms_are_independent();

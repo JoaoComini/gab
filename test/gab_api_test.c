@@ -390,7 +390,35 @@ static void test_rejected_setter_does_not_supply_an_argument(void) {
     gab_vm_free(vm);
 }
 
+// Two entity scripts, each with its own on_update — the case an engine hits
+// first. gab_lookup still takes a module handle and still ignores it, so this
+// asserts only that both units compile; reaching the right one by name is the
+// next commit's job.
+static void test_two_modules_can_share_a_function_name(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    GabModule *player = gab_compile(vm, "player.gab",
+                                    "module Player;\n"
+                                    "func on_update(dt: float): int { return 1; }\n",
+                                    &err);
+    assert(player);
+
+    GabModule *enemy = gab_compile(vm, "enemy.gab",
+                                   "module Enemy;\n"
+                                   "func on_update(dt: float): int { return 2; }\n",
+                                   &err);
+    assert(enemy);
+    assert(err.message[0] == '\0');
+
+    gab_module_free(vm, enemy);
+    gab_module_free(vm, player);
+    gab_vm_free(vm);
+}
+
 int main(void) {
+    test_two_modules_can_share_a_function_name();
     test_compile_error_is_reported_not_printed();
     test_runtime_error_is_reported();
     test_runtime_error_from_module_run();

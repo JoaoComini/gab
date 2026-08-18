@@ -50,6 +50,7 @@ VM *vm_create() {
     string_pool_init(&vm->strings, vm->arena);
 
     scope_init(&vm->global_scope, vm->arena, &vm->strings, NULL);
+    vm->module_scopes = module_scope_map_create_alloc(arena_allocator(vm->arena), 8);
 
     vm->stack_capacity = VM_STACK_SIZE;
     vm->stack = calloc(vm->stack_capacity, sizeof(Value));
@@ -111,6 +112,9 @@ void func_proto_free(FuncPrototype proto) {
 
 void vm_free(VM *vm) {
     func_proto_list_free(&vm->global_funcs);
+
+    // Frees the bucket arrays; the Scopes themselves are arena-owned.
+    module_scope_map_destroy(vm->module_scopes);
 
     // Frees the bucket array, which walks entries — must happen before the
     // arena holding the string payloads is destroyed.
@@ -261,6 +265,30 @@ static void vm_store_field_ptr(VM *vm, Instruction instruction, size_t width) {
     memcpy(dest, vm_reg(vm, r1), width);
 }
 
+// The scope a module's declarations live in, created on first mention. A
+// module accumulates across compiles, so a second unit naming the same module
+// gets the scope the first one filled rather than a fresh one.
+//
+// The scope is parented to the root for builtin lookup but stays at depth 0:
+// its declarations are a unit's top level, not a nested block.
+Scope *vm_module_scope(VM *vm, String *name) {
+    if (!name) {
+        return &vm->global_scope;
+    }
+
+    Scope **existing = module_scope_map_lookup(vm->module_scopes, name);
+    if (existing) {
+        return *existing;
+    }
+
+    Scope *scope = arena_alloc(vm->arena, sizeof(Scope));
+    scope_init_at_depth(scope, vm->arena, &vm->strings, &vm->global_scope, 0);
+
+    module_scope_map_insert(vm->module_scopes, name, scope);
+
+    return scope;
+}
+
 bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *diagnostics) {
     // Reclaimed at the start of a compile rather than the end of one, so
     // everything a compile produced — diagnostics included — stays readable
@@ -276,9 +304,16 @@ bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *di
     Chunk *chunk = NULL;
     unsigned int max_registers = 0;
 
-    if (parser_parse(&parser, script) &&
-        ast_script_resolve(vm->compile_arena, script, &vm->global_scope, diagnostics)) {
-        chunk = codegen_generate(script, &vm->global_funcs, diagnostics, &max_registers);
+    if (parser_parse(&parser, script)) {
+        // A unit that named no module declares into the root namespace, which
+        // is what keeps a single-script host from needing a directive at all.
+        Scope *scope = script->module_name.data
+                           ? vm_module_scope(vm, string_from_ref(&vm->strings, script->module_name))
+                           : &vm->global_scope;
+
+        if (ast_script_resolve(vm->compile_arena, script, scope, diagnostics)) {
+            chunk = codegen_generate(script, &vm->global_funcs, diagnostics, &max_registers);
+        }
     }
 
     // Nothing reads the AST once codegen has run, so the compile owns it end to
