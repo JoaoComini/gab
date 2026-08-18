@@ -75,6 +75,8 @@ typedef struct {
     const FuncPrototype *proto;
 
     size_t return_ip;
+
+    // Byte offset into the stack, not a slot index.
     size_t base;
     unsigned int dest;
 } CallFrame;
@@ -94,17 +96,31 @@ typedef struct {
     ValueList global_data;
     FuncProtoList global_funcs;
 
-    Value *stack;
+    // The stack is byte-addressed and 8-byte aligned at the base, so a value
+    // wider than a slot can sit at its natural alignment. Capacity is still
+    // counted in slots; a slot is sizeof(Value).
+    uint8_t *stack;
     size_t stack_capacity;
 
-    // Points at stack[frame->base], so a register access stays registers[r].
-    Value *registers;
+    // Points at stack + frame->base, in bytes.
+    uint8_t *registers;
 
     CallFrame frames[VM_MAX_CALL_DEPTH];
     size_t frame_count;
 
     size_t instruction_pointer;
 } VM;
+
+// Register r of the current frame. A union member read gives well-defined type
+// punning, which a cast from the raw byte pointer would not.
+static inline Value *vm_reg(const VM *vm, size_t r) {
+    return (Value *)(void *)(vm->registers + r * sizeof(Value));
+}
+
+// Slot i counted from the base of the stack, independent of any frame.
+static inline Value *vm_slot(const VM *vm, size_t i) {
+    return (Value *)(void *)(vm->stack + i * sizeof(Value));
+}
 
 VM *vm_create();
 void vm_execute(VM *vm, const char *source);

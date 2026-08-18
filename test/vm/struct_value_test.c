@@ -14,7 +14,7 @@ static Value run(const char *source) {
 
     assert(vm->frame_count == 0);
 
-    Value result = vm->stack[0];
+    Value result = (*vm_slot(vm, 0));
 
     vm_free(vm);
 
@@ -228,7 +228,7 @@ static bool slots_match(VM *vm, const void *expected, size_t size) {
     size_t slots = (size + sizeof(Value) - 1) / sizeof(Value);
 
     for (size_t base = 0; base + slots <= vm->stack_capacity; base++) {
-        if (memcmp(&vm->stack[base], expected, size) == 0) {
+        if (memcmp(vm_slot(vm, base), expected, size) == 0) {
             return true;
         }
     }

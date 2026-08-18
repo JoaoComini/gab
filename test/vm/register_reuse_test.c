@@ -31,7 +31,7 @@ static int run_int(const char *source) {
 
     assert(vm->frame_count == 0);
 
-    int result = vm->stack[0].as_int;
+    int result = (*vm_slot(vm, 0)).as_int;
 
     vm_free(vm);
 
@@ -170,7 +170,7 @@ static int compile_sequential_lets(unsigned int count) {
     VM *vm = vm_create();
     vm_execute(vm, source);
 
-    int result = vm->stack[0].as_int == 7 ? vm->global_funcs.data[0].max_registers : -1;
+    int result = (*vm_slot(vm, 0)).as_int == 7 ? vm->global_funcs.data[0].max_registers : -1;
 
     vm_free(vm);
     free(source);

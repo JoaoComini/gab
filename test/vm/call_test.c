@@ -12,7 +12,7 @@ static int run_int(const char *source) {
 
     assert(vm->frame_count == 0);
 
-    int result = vm->stack[0].as_int;
+    int result = (*vm_slot(vm, 0)).as_int;
 
     vm_free(vm);
 

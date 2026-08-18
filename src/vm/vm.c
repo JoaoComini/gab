@@ -21,6 +21,22 @@
 #define ARENA_BLOCK_SIZE 2048
 #define VM_INITIAL_STACK_SIZE 256
 
+// The base must hold an 8-byte value at its natural alignment, so the stack is
+// over-aligned rather than merely Value-aligned.
+#define VM_STACK_ALIGNMENT 8
+
+static uint8_t *vm_stack_alloc(size_t slots) {
+    void *stack = NULL;
+
+    if (posix_memalign(&stack, VM_STACK_ALIGNMENT, slots * sizeof(Value)) != 0) {
+        return NULL;
+    }
+
+    memset(stack, 0, slots * sizeof(Value));
+
+    return stack;
+}
+
 VM *vm_create() {
     VM *vm = malloc(sizeof(VM));
     vm->instruction_pointer = 0;
@@ -38,15 +54,16 @@ VM *vm_create() {
     scope_init(&vm->global_scope, vm->persistent_arena, &vm->strings, NULL);
 
     vm->stack_capacity = VM_INITIAL_STACK_SIZE;
-    vm->stack = calloc(vm->stack_capacity, sizeof(Value));
+    vm->stack = vm_stack_alloc(vm->stack_capacity);
     vm->registers = vm->stack;
     vm->frame_count = 0;
 
     return vm;
 }
 
-// Registers are stack[base + r], so the stack must hold every register the
-// frame can address before it starts executing.
+// Registers sit at base + r * sizeof(Value), so the stack must hold every
+// register the frame can address before it starts executing. 'needed' counts
+// slots.
 static bool vm_reserve_stack(VM *vm, size_t needed) {
     if (needed <= vm->stack_capacity) {
         return true;
@@ -57,14 +74,17 @@ static bool vm_reserve_stack(VM *vm, size_t needed) {
         capacity *= 2;
     }
 
-    Value *stack = realloc(vm->stack, capacity * sizeof(Value));
+    // realloc does not preserve over-alignment, so growth allocates fresh and
+    // copies rather than resizing in place.
+    uint8_t *stack = vm_stack_alloc(capacity);
     if (!stack) {
         return false;
     }
 
-    memset(stack + vm->stack_capacity, 0, (capacity - vm->stack_capacity) * sizeof(Value));
+    memcpy(stack, vm->stack, vm->stack_capacity * sizeof(Value));
+    free(vm->stack);
 
-    // realloc may move the buffer, so anything pointing into it is rebased.
+    // The buffer moved, so anything pointing into it is rebased.
     size_t offset = vm->frame_count > 0 ? vm->frames[vm->frame_count - 1].base : 0;
 
     vm->stack = stack;
@@ -80,7 +100,8 @@ static bool vm_push_frame(VM *vm, const FuncPrototype *proto, size_t base, size_
         return false;
     }
 
-    if (!vm_reserve_stack(vm, base + proto->max_registers)) {
+    // base is a byte offset; the reservation is in slots.
+    if (!vm_reserve_stack(vm, base / sizeof(Value) + proto->max_registers)) {
         return false;
     }
 
@@ -131,90 +152,74 @@ void vm_free(VM *vm) {
     free(vm);
 }
 
-float vm_addf(VM *vm, size_t r1, size_t r2) {
-    return vm->registers[r1].as_float + vm->registers[r2].as_float;
-}
+float vm_addf(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_float + vm_reg(vm, r2)->as_float; }
 
-float vm_subf(VM *vm, size_t r1, size_t r2) {
-    return vm->registers[r1].as_float - vm->registers[r2].as_float;
-}
+float vm_subf(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_float - vm_reg(vm, r2)->as_float; }
 
-float vm_mulf(VM *vm, size_t r1, size_t r2) {
-    return vm->registers[r1].as_float * vm->registers[r2].as_float;
-}
+float vm_mulf(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_float * vm_reg(vm, r2)->as_float; }
 
-float vm_divf(VM *vm, size_t r1, size_t r2) {
-    return vm->registers[r1].as_float / vm->registers[r2].as_float;
-}
+float vm_divf(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_float / vm_reg(vm, r2)->as_float; }
 
 void vm_arithmeticf(VM *vm, Instruction instruction, float (*func)(VM *, size_t, size_t)) {
     size_t rd = VM_DECODE_R_RD(instruction);
     size_t r1 = VM_DECODE_R_R1(instruction);
     size_t r2 = VM_DECODE_R_R2(instruction);
 
-    vm->registers[rd].as_float = func(vm, r1, r2);
+    vm_reg(vm, rd)->as_float = func(vm, r1, r2);
 }
 
-int32_t vm_addi(VM *vm, size_t r1, size_t r2) { return vm->registers[r1].as_int + vm->registers[r2].as_int; }
+int32_t vm_addi(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_int + vm_reg(vm, r2)->as_int; }
 
-int32_t vm_subi(VM *vm, size_t r1, size_t r2) { return vm->registers[r1].as_int - vm->registers[r2].as_int; }
+int32_t vm_subi(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_int - vm_reg(vm, r2)->as_int; }
 
-int32_t vm_muli(VM *vm, size_t r1, size_t r2) { return vm->registers[r1].as_int * vm->registers[r2].as_int; }
+int32_t vm_muli(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_int * vm_reg(vm, r2)->as_int; }
 
-int32_t vm_divi(VM *vm, size_t r1, size_t r2) { return vm->registers[r1].as_int / vm->registers[r2].as_int; }
+int32_t vm_divi(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_int / vm_reg(vm, r2)->as_int; }
 
 void vm_arithmetici(VM *vm, Instruction instruction, int32_t (*func)(VM *, size_t, size_t)) {
     size_t rd = VM_DECODE_R_RD(instruction);
     size_t r1 = VM_DECODE_R_R1(instruction);
     size_t r2 = VM_DECODE_R_R2(instruction);
 
-    vm->registers[rd].as_int = func(vm, r1, r2);
+    vm_reg(vm, rd)->as_int = func(vm, r1, r2);
 }
 
 bool vm_less_thanf(VM *vm, size_t r1, size_t r2) {
-    return vm->registers[r1].as_float < vm->registers[r2].as_float;
+    return vm_reg(vm, r1)->as_float < vm_reg(vm, r2)->as_float;
 }
 
 bool vm_greater_thanf(VM *vm, size_t r1, size_t r2) {
-    return vm->registers[r1].as_float > vm->registers[r2].as_float;
+    return vm_reg(vm, r1)->as_float > vm_reg(vm, r2)->as_float;
 }
 
-bool vm_equalf(VM *vm, size_t r1, size_t r2) {
-    return vm->registers[r1].as_float == vm->registers[r2].as_float;
-}
+bool vm_equalf(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_float == vm_reg(vm, r2)->as_float; }
 
 bool vm_not_equalf(VM *vm, size_t r1, size_t r2) {
-    return vm->registers[r1].as_float != vm->registers[r2].as_float;
+    return vm_reg(vm, r1)->as_float != vm_reg(vm, r2)->as_float;
 }
 
 bool vm_less_equalf(VM *vm, size_t r1, size_t r2) {
-    return vm->registers[r1].as_float <= vm->registers[r2].as_float;
+    return vm_reg(vm, r1)->as_float <= vm_reg(vm, r2)->as_float;
 }
 
 bool vm_greater_equalf(VM *vm, size_t r1, size_t r2) {
-    return vm->registers[r1].as_float >= vm->registers[r2].as_float;
+    return vm_reg(vm, r1)->as_float >= vm_reg(vm, r2)->as_float;
 }
 
-bool vm_less_thani(VM *vm, size_t r1, size_t r2) {
-    return vm->registers[r1].as_int < vm->registers[r2].as_int;
-}
+bool vm_less_thani(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_int < vm_reg(vm, r2)->as_int; }
 
 bool vm_greater_thani(VM *vm, size_t r1, size_t r2) {
-    return vm->registers[r1].as_int > vm->registers[r2].as_int;
+    return vm_reg(vm, r1)->as_int > vm_reg(vm, r2)->as_int;
 }
 
-bool vm_equali(VM *vm, size_t r1, size_t r2) { return vm->registers[r1].as_int == vm->registers[r2].as_int; }
+bool vm_equali(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_int == vm_reg(vm, r2)->as_int; }
 
-bool vm_not_equali(VM *vm, size_t r1, size_t r2) {
-    return vm->registers[r1].as_int != vm->registers[r2].as_int;
-}
+bool vm_not_equali(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_int != vm_reg(vm, r2)->as_int; }
 
-bool vm_less_equali(VM *vm, size_t r1, size_t r2) {
-    return vm->registers[r1].as_int <= vm->registers[r2].as_int;
-}
+bool vm_less_equali(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_int <= vm_reg(vm, r2)->as_int; }
 
 bool vm_greater_equali(VM *vm, size_t r1, size_t r2) {
-    return vm->registers[r1].as_int >= vm->registers[r2].as_int;
+    return vm_reg(vm, r1)->as_int >= vm_reg(vm, r2)->as_int;
 }
 
 void vm_conditional(VM *vm, Instruction instruction, bool (*func)(VM *, size_t, size_t)) {
@@ -222,7 +227,7 @@ void vm_conditional(VM *vm, Instruction instruction, bool (*func)(VM *, size_t, 
     size_t r1 = VM_DECODE_R_R1(instruction);
     size_t r2 = VM_DECODE_R_R2(instruction);
 
-    vm->registers[rd].as_int = func(vm, r1, r2);
+    vm_reg(vm, rd)->as_int = func(vm, r1, r2);
 }
 
 static void vm_load_field(VM *vm, Instruction instruction, size_t width) {
@@ -230,12 +235,12 @@ static void vm_load_field(VM *vm, Instruction instruction, size_t width) {
     size_t base = VM_DECODE_R_R1(instruction);
     size_t offset = VM_DECODE_R_R2(instruction);
 
-    const char *source = (const char *)&vm->registers[base] + offset;
+    const uint8_t *source = vm->registers + base * sizeof(Value) + offset;
 
     // The destination is a whole slot, so a narrow field is widened rather
     // than left beside stale bytes.
-    vm->registers[rd].as_int = 0;
-    memcpy(&vm->registers[rd], source, width);
+    vm_reg(vm, rd)->as_int = 0;
+    memcpy(vm_reg(vm, rd), source, width);
 }
 
 static void vm_store_field(VM *vm, Instruction instruction, size_t width) {
@@ -243,11 +248,11 @@ static void vm_store_field(VM *vm, Instruction instruction, size_t width) {
     size_t r1 = VM_DECODE_R_R1(instruction);
     size_t offset = VM_DECODE_R_R2(instruction);
 
-    char *dest = (char *)&vm->registers[base] + offset;
+    uint8_t *dest = vm->registers + base * sizeof(Value) + offset;
 
     // Only the field's own bytes are written; anything sharing the slot keeps
     // its value.
-    memcpy(dest, &vm->registers[r1], width);
+    memcpy(dest, vm_reg(vm, r1), width);
 }
 
 void vm_execute(VM *vm, const char *source) {
@@ -307,24 +312,24 @@ void vm_execute(VM *vm, const char *source) {
         case OP_LOAD_CONST: {
             size_t reg = VM_DECODE_I_RD(instruction);
             size_t const_index = VM_DECODE_I_KX(instruction);
-            vm->registers[reg] = constpool_get(chunk->const_pool, const_index);
+            (*vm_reg(vm, reg)) = constpool_get(chunk->const_pool, const_index);
             break;
         }
         case OP_LOAD_TRUE: {
             size_t reg = VM_DECODE_I_RD(instruction);
-            vm->registers[reg].as_int = 1;
+            vm_reg(vm, reg)->as_int = 1;
             break;
         }
         case OP_LOAD_FALSE: {
             size_t reg = VM_DECODE_I_RD(instruction);
-            vm->registers[reg].as_int = 0;
+            vm_reg(vm, reg)->as_int = 0;
             break;
         }
         case OP_MOVE: {
             int rd = VM_DECODE_R_RD(instruction);
             int r1 = VM_DECODE_R_R1(instruction);
 
-            vm->registers[rd] = vm->registers[r1];
+            (*vm_reg(vm, rd)) = (*vm_reg(vm, r1));
             break;
         }
         case OP_ADDF: {
@@ -416,7 +421,7 @@ void vm_execute(VM *vm, const char *source) {
             // The callee's r0 is its return slot and its parameters are
             // r1..arity, so basing it at dest lines its parameters up with the
             // arguments the caller already placed above dest.
-            size_t base = frame->base + dest;
+            size_t base = frame->base + dest * sizeof(Value);
 
             if (!vm_push_frame(vm, proto, base, vm->instruction_pointer + 1, dest)) {
                 fprintf(stderr, "<script>: call depth exceeded\n");
@@ -439,7 +444,7 @@ void vm_execute(VM *vm, const char *source) {
             // Source and destination never overlap: the callee builds its
             // result in temporaries above its parameters.
             Value result[VM_MAX_RETURN_SLOTS];
-            memcpy(result, &vm->registers[r1], slots * sizeof(Value));
+            memcpy(result, vm_reg(vm, r1), slots * sizeof(Value));
 
             unsigned int dest = frame->dest;
             vm_pop_frame(vm);
@@ -451,7 +456,7 @@ void vm_execute(VM *vm, const char *source) {
                 continue;
             }
 
-            memcpy(&vm->registers[dest], result, slots * sizeof(Value));
+            memcpy(vm_reg(vm, dest), result, slots * sizeof(Value));
             continue;
         }
         case OP_LOAD_FIELD_1: {
@@ -485,7 +490,7 @@ void vm_execute(VM *vm, const char *source) {
         case OP_JMP_IF_FALSE: {
             size_t reg = VM_DECODE_I_RD(instruction);
 
-            bool cond = vm->registers[reg].as_int;
+            bool cond = vm_reg(vm, reg)->as_int;
             if (!cond) {
                 size_t offset = VM_DECODE_I_IMM(instruction);
                 vm->instruction_pointer += offset;
@@ -496,7 +501,7 @@ void vm_execute(VM *vm, const char *source) {
         case OP_JMP_IF_TRUE: {
             size_t reg = VM_DECODE_I_RD(instruction);
 
-            bool cond = vm->registers[reg].as_int;
+            bool cond = vm_reg(vm, reg)->as_int;
             if (cond) {
                 size_t offset = VM_DECODE_I_IMM(instruction);
                 vm->instruction_pointer += offset;
@@ -508,14 +513,14 @@ void vm_execute(VM *vm, const char *source) {
             size_t rd = VM_DECODE_I_RD(instruction);
             size_t index = VM_DECODE_I_IMM(instruction);
 
-            vm->registers[rd] = value_list_get(&vm->global_data, index);
+            (*vm_reg(vm, rd)) = value_list_get(&vm->global_data, index);
             break;
         }
         case OP_STORE_GLOBAL: {
             size_t rd = VM_DECODE_I_RD(instruction);
             size_t index = VM_DECODE_I_IMM(instruction);
 
-            value_list_emplace(&vm->global_data, index, vm->registers[rd]);
+            value_list_emplace(&vm->global_data, index, (*vm_reg(vm, rd)));
             break;
         }
         }

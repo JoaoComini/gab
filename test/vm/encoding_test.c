@@ -97,7 +97,7 @@ static void test_emit_site_rejects_an_over_large_frame() {
     vm_execute(vm, source);
 
     // The program never ran, so the result slot keeps its zeroed value.
-    assert(vm->stack[0].as_int == 0);
+    assert((*vm_slot(vm, 0)).as_int == 0);
 
     vm_free(vm);
 }

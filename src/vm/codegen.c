@@ -46,7 +46,8 @@ static OpCode bin_op_to_float_op(BinOp bin_op);
 static OpCode bin_op_to_int_op(BinOp bin_op);
 
 static unsigned int codegen_alloc_register(CodegenState *state, Span span);
-static unsigned int codegen_alloc_slots(CodegenState *state, unsigned int count, Span span);
+static unsigned int codegen_alloc_slots(CodegenState *state, unsigned int count, unsigned int align_slots,
+                                        Span span);
 static void codegen_release_registers(CodegenState *state, unsigned int saved);
 static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node);
 static void codegen_store_field(CodegenState *state, ASTExpr *node, unsigned int src);
@@ -60,6 +61,16 @@ static unsigned int type_slot_count(const Type *type) {
     }
 
     return (unsigned int)((type->size + sizeof(Value) - 1) / sizeof(Value));
+}
+
+// Slot alignment a value of this type needs. Nothing wants more than one slot
+// today; step 6's 8-byte pointer is the first case that will.
+static unsigned int type_align_slots(const Type *type) {
+    if (!type || type->alignment <= sizeof(Value)) {
+        return 1;
+    }
+
+    return (unsigned int)(type->alignment / sizeof(Value));
 }
 
 static bool type_is_struct(const Type *type) { return type && type->kind == TYPE_STRUCT; }
@@ -194,7 +205,8 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
     } else {
         Span span = ast->initializer ? ast->initializer->span : (Span){0};
 
-        ast->symbol->offset = codegen_alloc_slots(state, type_slot_count(ast->symbol->var.type), span);
+        ast->symbol->offset = codegen_alloc_slots(state, type_slot_count(ast->symbol->var.type),
+                                                  type_align_slots(ast->symbol->var.type), span);
     }
 
     if (!ast->initializer) {
@@ -387,7 +399,7 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
 
     // dest and the argument slots must be contiguous, so the whole block is
     // reserved before evaluating anything.
-    unsigned int dest = codegen_alloc_slots(state, reserved, node->span);
+    unsigned int dest = codegen_alloc_slots(state, reserved, 1, node->span);
 
     // Only the result slots outlive the call; everything above them is the
     // argument block and is released once the call is emitted.
@@ -618,11 +630,18 @@ static OpCode bin_op_to_int_op(BinOp bin_op) {
 // an internal invariant, so it is reported instead of asserted. Register 0 is
 // returned as a placeholder; the failure flag stops the chunk being used.
 static unsigned int codegen_alloc_register(CodegenState *state, Span span) {
-    return codegen_alloc_slots(state, 1, span);
+    return codegen_alloc_slots(state, 1, 1, span);
 }
 
-// Returns the first of count consecutive slots.
-static unsigned int codegen_alloc_slots(CodegenState *state, unsigned int count, Span span) {
+// Returns the first of count consecutive slots, aligned to align_slots. An
+// 8-byte value needs an even slot index to land on an 8-byte boundary, which
+// costs at most one wasted slot.
+static unsigned int codegen_alloc_slots(CodegenState *state, unsigned int count, unsigned int align_slots,
+                                        Span span) {
+    if (align_slots > 1 && state->next_reg % align_slots != 0) {
+        state->next_reg += align_slots - state->next_reg % align_slots;
+    }
+
     if (count > VM_MAX_REGISTERS || state->next_reg > VM_MAX_REGISTERS - count) {
         if (!state->failed) {
             // A single value that cannot fit a frame has a different cause and
