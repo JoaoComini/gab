@@ -195,8 +195,10 @@ static void test_variable_access() {
     // Expected instructions:
     // 1. LOAD_CONST R0, [3.0]
     // 2. STORE_GLOBAL IDX0, R0
-    // 3. LOAD_CONST R1, [2.0]
-    // 4. STORE_GLOBAL IDX0, R1
+    // 3. LOAD_CONST R0, [2.0]
+    // 4. STORE_GLOBAL IDX0, R0
+    //
+    // Both temporaries land in R0: each statement reclaims what it allocated.
 
     Instruction load1 = chunk->instructions.data[0];
     assert(VM_DECODE_OPCODE(load1) == OP_LOAD_CONST);
@@ -209,11 +211,11 @@ static void test_variable_access() {
 
     Instruction load2 = chunk->instructions.data[2];
     assert(VM_DECODE_OPCODE(load2) == OP_LOAD_CONST);
-    assert(VM_DECODE_I_RD(load2) == 1);
+    assert(VM_DECODE_I_RD(load2) == 0);
 
     Instruction move2 = chunk->instructions.data[3];
     assert(VM_DECODE_OPCODE(move2) == OP_STORE_GLOBAL);
-    assert(VM_DECODE_I_RD(move2) == 1);
+    assert(VM_DECODE_I_RD(move2) == 0);
     assert(VM_DECODE_I_IMM(move2) == 0);
 
     chunk_free(chunk);

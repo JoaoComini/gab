@@ -16,6 +16,10 @@ typedef struct {
     Chunk *chunk;
     unsigned int next_reg;
 
+    // next_reg falls back at scope exits, so the frame is sized from the
+    // highest slot ever reached rather than the final value.
+    unsigned int max_reg;
+
     ValueList *global_data;
     FuncProtoList *global_funcs;
 
@@ -42,6 +46,7 @@ static OpCode bin_op_to_float_op(BinOp bin_op);
 static OpCode bin_op_to_int_op(BinOp bin_op);
 
 static unsigned int codegen_alloc_register(CodegenState *state, Span span);
+static void codegen_release_registers(CodegenState *state, unsigned int saved);
 
 typedef struct {
     size_t position;
@@ -56,6 +61,7 @@ Chunk *codegen_generate(ASTScript *script, ValueList *global_data, FuncProtoList
     CodegenState state = {
         .chunk = chunk_create(),
         .next_reg = 0,
+        .max_reg = 0,
         .global_data = global_data,
         .global_funcs = global_funcs,
         .diagnostics = diagnostics,
@@ -72,13 +78,15 @@ Chunk *codegen_generate(ASTScript *script, ValueList *global_data, FuncProtoList
     }
 
     if (max_registers) {
-        *max_registers = state.next_reg;
+        *max_registers = state.max_reg;
     }
 
     return state.chunk;
 }
 
 static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
+    unsigned int saved = state->next_reg;
+
     switch (ast->kind) {
     case STMT_EXPR:
         codegen_expr(state, ast->expr.value);
@@ -110,6 +118,12 @@ static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
         // Types are resolved at compile time and emit no code.
         break;
     }
+
+    // A declaration's slot outlives the statement: it belongs to the enclosing
+    // block, which reclaims it at the closing brace.
+    if (ast->kind != STMT_VAR_DECL) {
+        codegen_release_registers(state, saved);
+    }
 }
 
 static void codegen_return_stmt(CodegenState *state, ASTReturnStmt *ast) {
@@ -131,6 +145,10 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
         return;
     }
 
+    // The variable's own slot is already reserved; everything the initializer
+    // allocates above it is a temporary and is reclaimed here.
+    unsigned int saved = state->next_reg;
+
     unsigned int r1 = codegen_expr(state, ast->initializer);
 
     Instruction instruction;
@@ -142,6 +160,8 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
     }
 
     chunk_add_instruction(state->chunk, instruction);
+
+    codegen_release_registers(state, saved);
 }
 
 static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
@@ -160,9 +180,13 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
 }
 
 static void codegen_block_stmt(CodegenState *state, ASTBlockStmt *ast) {
+    unsigned int saved = state->next_reg;
+
     for (int i = 0; i < ast->list.size; i++) {
         codegen_stmt(state, ast->list.data[i]);
     }
+
+    codegen_release_registers(state, saved);
 }
 
 static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast) {
@@ -204,6 +228,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
     CodegenState func_state = (CodegenState){
         .chunk = func_chunk,
         .next_reg = func_next_reg,
+        .max_reg = func_next_reg,
         .global_data = state->global_data,
         .global_funcs = state->global_funcs,
         .diagnostics = state->diagnostics,
@@ -223,7 +248,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
                             (FuncPrototype){
                                 .chunk = func_chunk,
                                 .arity = ast->params.size,
-                                .max_registers = func_state.next_reg,
+                                .max_registers = func_state.max_reg,
                             });
 }
 
@@ -280,6 +305,10 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
     // otherwise allocate its own registers in the middle of them.
     unsigned int dest = codegen_alloc_register(state, node->span);
 
+    // dest holds the call's result and so outlives the argument block, which is
+    // released once the call is emitted.
+    unsigned int saved = state->next_reg;
+
     for (size_t i = 0; i < arg_count; i++) {
         codegen_alloc_register(state, node->call.args.data[i]->span);
     }
@@ -294,6 +323,8 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
 
     Instruction call = VM_ENCODE_R(OP_CALL, dest, node->symbol->offset, arg_count);
     chunk_add_instruction(state->chunk, call);
+
+    codegen_release_registers(state, saved);
 
     return dest;
 }
@@ -420,8 +451,18 @@ static unsigned int codegen_alloc_register(CodegenState *state, Span span) {
         return 0;
     }
 
-    return state->next_reg++;
+    unsigned int reg = state->next_reg++;
+
+    if (state->next_reg > state->max_reg) {
+        state->max_reg = state->next_reg;
+    }
+
+    return reg;
 }
+
+// The single reclamation point, so a rule that pins a slot whose address was
+// taken has one place to go when '&local' arrives.
+static void codegen_release_registers(CodegenState *state, unsigned int saved) { state->next_reg = saved; }
 
 CodegenLabel codegen_create_label(CodegenState *state) {
     return (CodegenLabel){.position = chunk_add_instruction(state->chunk, 0)};
