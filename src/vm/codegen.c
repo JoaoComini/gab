@@ -20,7 +20,6 @@ typedef struct {
     // highest slot ever reached rather than the final value.
     unsigned int max_reg;
 
-    ValueList *global_data;
     FuncProtoList *global_funcs;
 
     Diagnostics *diagnostics;
@@ -39,7 +38,7 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast);
 static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_bin_op_logical_expr(CodegenState *state, ASTExpr *node);
-static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node);
+static unsigned int codegen_variable_expr(ASTExpr *node);
 static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node);
 
 static OpCode bin_op_to_float_op(BinOp bin_op);
@@ -115,13 +114,12 @@ typedef struct {
 CodegenLabel codegen_create_label(CodegenState *state);
 void codegen_patch_jump(CodegenState *state, CodegenLabel label, OpCode op, unsigned int reg);
 
-Chunk *codegen_generate(ASTScript *script, ValueList *global_data, FuncProtoList *global_funcs,
-                        Diagnostics *diagnostics, unsigned int *max_registers) {
+Chunk *codegen_generate(ASTScript *script, FuncProtoList *global_funcs, Diagnostics *diagnostics,
+                        unsigned int *max_registers) {
     CodegenState state = {
         .chunk = chunk_create(),
         .next_reg = 0,
         .max_reg = 0,
-        .global_data = global_data,
         .global_funcs = global_funcs,
         .diagnostics = diagnostics,
         .failed = false,
@@ -210,16 +208,10 @@ static void codegen_return_stmt(CodegenState *state, ASTReturnStmt *ast) {
 }
 
 static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
-    if (ast->symbol->scope_depth == 0) {
-        Value value;
-        value_list_add(state->global_data, value);
-        ast->symbol->offset = state->global_data->size - 1;
-    } else {
-        Span span = ast->initializer ? ast->initializer->span : (Span){0};
+    Span span = ast->initializer ? ast->initializer->span : (Span){0};
 
-        ast->symbol->offset = codegen_alloc_slots(state, type_slot_count(ast->symbol->var.type),
-                                                  type_align_slots(ast->symbol->var.type), span);
-    }
+    ast->symbol->offset = codegen_alloc_slots(state, type_slot_count(ast->symbol->var.type),
+                                              type_align_slots(ast->symbol->var.type), span);
 
     if (!ast->initializer) {
         return;
@@ -231,22 +223,12 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
 
     unsigned int r1 = codegen_expr(state, ast->initializer);
 
-    if (ast->symbol->scope_depth == 0) {
-        chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_STORE_GLOBAL, r1, ast->symbol->offset));
-    } else {
-        codegen_copy_slots(state, ast->symbol->offset, r1, type_slot_count(ast->symbol->var.type));
-    }
+    codegen_copy_slots(state, ast->symbol->offset, r1, type_slot_count(ast->symbol->var.type));
 
     codegen_release_registers(state, saved);
 }
 
 static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
-    if (ast->target->kind == EXPR_VARIABLE && ast->target->symbol->scope_depth == 0) {
-        unsigned int r1 = codegen_expr(state, ast->value);
-        chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_STORE_GLOBAL, r1, ast->target->symbol->offset));
-        return;
-    }
-
     // A field target is written in place through its base slot, so the target
     // is never materialised as a value first.
     if (ast->target->kind == EXPR_FIELD) {
@@ -321,7 +303,6 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
         .chunk = func_chunk,
         .next_reg = func_next_reg,
         .max_reg = func_next_reg,
-        .global_data = state->global_data,
         .global_funcs = state->global_funcs,
         .diagnostics = state->diagnostics,
         .failed = false,
@@ -352,7 +333,7 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
     case EXPR_LITERAL:
         return codegen_literal_expr(state, ast);
     case EXPR_VARIABLE:
-        return codegen_variable_expr(state, ast);
+        return codegen_variable_expr(ast);
     case EXPR_BIN_OP:
         return codegen_bin_op_expr(state, ast);
     case EXPR_CALL:
@@ -732,18 +713,9 @@ static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned 
     }
 }
 
-static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node) {
-    if (node->symbol->scope_depth > 0) {
-        return node->symbol->offset;
-    }
-
-    unsigned int rd = codegen_alloc_register(state, node->span);
-    Instruction load_global = VM_ENCODE_I(OP_LOAD_GLOBAL, rd, node->symbol->offset);
-
-    chunk_add_instruction(state->chunk, load_global);
-
-    return rd;
-}
+// Every variable is a frame local now, including a top-level one: it lives in
+// frame zero. The symbol already names its slot, so a read is free.
+static unsigned int codegen_variable_expr(ASTExpr *node) { return node->symbol->offset; }
 
 static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node) {
     switch (node->bin_op.op) {

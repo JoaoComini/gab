@@ -65,9 +65,6 @@
 // Sentinel value for registers
 #define VM_INVALID_REGISTER VM_MAX_REGISTERS + 1
 
-#define value_list_item_free
-GAB_LIST(ValueList, value_list, Value);
-
 typedef struct {
     Chunk *chunk;
     int arity;
@@ -122,7 +119,9 @@ typedef struct {
     StringPool strings; // must outlive global_scope
     Scope global_scope;
 
-    ValueList global_data;
+    // Function prototypes are VM-wide because a prototype index is baked into
+    // OP_CALL operands. Top-level variables are not here: they are frame-zero
+    // locals on the stack, so top-level state lives and dies with a run.
     FuncProtoList global_funcs;
 
     // The stack is byte-addressed and 8-byte aligned at the base, so a value

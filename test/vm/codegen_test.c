@@ -36,8 +36,8 @@ static void assert_resolve(ASTScript *script, Scope *scope) {
     assert(ok);
 }
 
-static Chunk *assert_codegen(ASTScript *script, ValueList *global_data, FuncProtoList *global_funcs) {
-    Chunk *chunk = codegen_generate(script, global_data, global_funcs, &ctx.diagnostics, NULL);
+static Chunk *assert_codegen(ASTScript *script, FuncProtoList *global_funcs) {
+    Chunk *chunk = codegen_generate(script, global_funcs, &ctx.diagnostics, NULL);
 
     if (!chunk) {
         diagnostics_print(&ctx.diagnostics, stderr);
@@ -59,9 +59,8 @@ static void test_number() {
     ast_script_add_statement(script, stmt);
     assert_resolve(script, scope);
 
-    ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
-    Chunk *chunk = assert_codegen(script, &global_data, &global_funcs);
+    Chunk *chunk = assert_codegen(script, &global_funcs);
 
     // Verify chunk contains:
     // 1. LOAD_CONST R0, [const_index]
@@ -95,9 +94,8 @@ static void test_bin_op(OpCode expected_op, BinOp op) {
     ast_script_add_statement(script, stmt);
     assert_resolve(script, scope);
 
-    ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
-    Chunk *chunk = assert_codegen(script, &global_data, &global_funcs);
+    Chunk *chunk = assert_codegen(script, &global_funcs);
 
     assert(chunk->instructions.size == 3); // LOAD_CONST, LOAD_CONST, CMP
 
@@ -141,31 +139,31 @@ static void test_var_decl() {
     ast_script_add_statement(script, stmt);
     assert_resolve(script, scope);
 
-    ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
 
-    Chunk *chunk = assert_codegen(script, &global_data, &global_funcs);
+    Chunk *chunk = assert_codegen(script, &global_funcs);
 
     assert(chunk->instructions.size == 2);
 
     // let x = 3.0;
+    // x is a frame-zero local, so it owns R0 and the initializer is a
+    // temporary above it.
     // Expected instructions:
-    // 1. LOAD_CONST R0, [3.0]
-    // 2. STORE_GLOBAL IDX0, R0
+    // 1. LOAD_CONST R1, [3.0]
+    // 2. MOVE R0, R1
 
     Instruction load = chunk->instructions.data[0];
     assert(VM_DECODE_OPCODE(load) == OP_LOAD_CONST);
-    assert(VM_DECODE_I_RD(load) == 0);
+    assert(VM_DECODE_I_RD(load) == 1);
 
     Instruction move = chunk->instructions.data[1];
-    assert(VM_DECODE_OPCODE(move) == OP_STORE_GLOBAL);
-    assert(VM_DECODE_I_RD(move) == 0);
-    assert(VM_DECODE_I_IMM(move) == 0);
+    assert(VM_DECODE_OPCODE(move) == OP_MOVE);
+    assert(VM_DECODE_R_RD(move) == 0);
+    assert(VM_DECODE_R_R1(move) == 1);
 
     chunk_free(chunk);
     ast_script_destroy(script);
     func_proto_list_free(&global_funcs);
-    value_list_free(&global_data);
 }
 
 static void test_variable_access() {
@@ -180,7 +178,6 @@ static void test_variable_access() {
     ASTExpr *value_expr = ast_literal_expr_create(TEST_SPAN, two);
     ASTStmt *assign_stmt = ast_assign_stmt_create(TEST_SPAN, target_expr, value_expr); // x = 2;
 
-    ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
     Scope *scope = scope_create(arena, &ctx.strings, NULL);
     ASTScript *script = ast_script_create();
@@ -188,40 +185,41 @@ static void test_variable_access() {
     ast_script_add_statement(script, assign_stmt);
     assert_resolve(script, scope);
 
-    Chunk *chunk = assert_codegen(script, &global_data, &global_funcs);
+    Chunk *chunk = assert_codegen(script, &global_funcs);
 
     assert(chunk->instructions.size == 4);
 
     // Expected instructions:
-    // 1. LOAD_CONST R0, [3.0]
-    // 2. STORE_GLOBAL IDX0, R0
-    // 3. LOAD_CONST R0, [2.0]
-    // 4. STORE_GLOBAL IDX0, R0
+    // 1. LOAD_CONST R1, [3.0]
+    // 2. MOVE R0, R1
+    // 3. LOAD_CONST R1, [2.0]
+    // 4. MOVE R0, R1
     //
-    // Both temporaries land in R0: each statement reclaims what it allocated.
+    // x is a frame-zero local holding R0 for the whole script; both
+    // temporaries land in R1, because each statement reclaims what it
+    // allocated above x.
 
     Instruction load1 = chunk->instructions.data[0];
     assert(VM_DECODE_OPCODE(load1) == OP_LOAD_CONST);
-    assert(VM_DECODE_I_RD(load1) == 0);
+    assert(VM_DECODE_I_RD(load1) == 1);
 
     Instruction move1 = chunk->instructions.data[1];
-    assert(VM_DECODE_OPCODE(move1) == OP_STORE_GLOBAL);
-    assert(VM_DECODE_I_RD(move1) == 0);
-    assert(VM_DECODE_I_IMM(move1) == 0);
+    assert(VM_DECODE_OPCODE(move1) == OP_MOVE);
+    assert(VM_DECODE_R_RD(move1) == 0);
+    assert(VM_DECODE_R_R1(move1) == 1);
 
     Instruction load2 = chunk->instructions.data[2];
     assert(VM_DECODE_OPCODE(load2) == OP_LOAD_CONST);
-    assert(VM_DECODE_I_RD(load2) == 0);
+    assert(VM_DECODE_I_RD(load2) == 1);
 
     Instruction move2 = chunk->instructions.data[3];
-    assert(VM_DECODE_OPCODE(move2) == OP_STORE_GLOBAL);
-    assert(VM_DECODE_I_RD(move2) == 0);
-    assert(VM_DECODE_I_IMM(move2) == 0);
+    assert(VM_DECODE_OPCODE(move2) == OP_MOVE);
+    assert(VM_DECODE_R_RD(move2) == 0);
+    assert(VM_DECODE_R_R1(move2) == 1);
 
     chunk_free(chunk);
     ast_script_destroy(script);
     func_proto_list_free(&global_funcs);
-    value_list_free(&global_data);
 }
 
 static void test_if_statement() {
@@ -244,14 +242,13 @@ static void test_if_statement() {
     // Create if statement
     ASTStmt *if_stmt = ast_if_stmt_create(TEST_SPAN, cond, then_block, NULL);
 
-    ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
     Scope *scope = scope_create(arena, &ctx.strings, NULL);
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, if_stmt);
     assert_resolve(script, scope);
 
-    Chunk *chunk = assert_codegen(script, &global_data, &global_funcs);
+    Chunk *chunk = assert_codegen(script, &global_funcs);
 
     // Expected instructions:
     // 1. LOAD_CONST R0, 10
@@ -319,14 +316,13 @@ static void test_if_else_statement() {
     // Create if-else statement
     ASTStmt *if_stmt = ast_if_stmt_create(TEST_SPAN, cond, then_block, else_block);
 
-    ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
     Scope *scope = scope_create(arena, &ctx.strings, NULL);
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, if_stmt);
     assert_resolve(script, scope);
 
-    Chunk *chunk = assert_codegen(script, &global_data, &global_funcs);
+    Chunk *chunk = assert_codegen(script, &global_funcs);
 
     // Expected instructions:
     // 1. LOAD_CONST R0, 5
@@ -391,10 +387,9 @@ static void test_func_decl() {
     assert_resolve(script, &global_scope);
 
     // 5. Set up codegen environment
-    ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
 
-    Chunk *chunk = assert_codegen(script, &global_data, &global_funcs);
+    Chunk *chunk = assert_codegen(script, &global_funcs);
 
     assert(chunk->instructions.size == 0);
 
@@ -426,7 +421,6 @@ static void test_func_decl() {
     chunk_free(chunk);
     ast_script_destroy(script);
     func_proto_list_free(&global_funcs);
-    value_list_free(&global_data);
 }
 
 int main(void) {

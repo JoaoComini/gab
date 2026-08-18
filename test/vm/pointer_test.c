@@ -296,9 +296,8 @@ static void test_a_pointer_local_is_slot_aligned() {
                         "}\n");
     assert(ok);
 
-    ValueList global_data = value_list_create();
     FuncProtoList global_funcs = func_proto_list_create();
-    Chunk *chunk = codegen_generate(script, &global_data, &global_funcs, &ctx.diagnostics, NULL);
+    Chunk *chunk = codegen_generate(script, &global_funcs, &ctx.diagnostics, NULL);
     assert(chunk);
 
     Symbol *p = pointer_symbol(script->statements.data[0]);
@@ -306,7 +305,6 @@ static void test_a_pointer_local_is_slot_aligned() {
     assert(p->offset % VM_POINTER_SLOTS == 0);
 
     chunk_free(chunk);
-    value_list_free(&global_data);
     func_proto_list_free(&global_funcs);
     ast_script_destroy(script);
     test_context_free(&ctx);

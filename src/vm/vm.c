@@ -40,7 +40,6 @@ VM *vm_create() {
     VM *vm = malloc(sizeof(VM));
     vm->instruction_pointer = 0;
 
-    vm->global_data = value_list_create();
     vm->global_funcs = func_proto_list_create();
 
     vm->arena = arena_create(ARENA_BLOCK_SIZE);
@@ -110,7 +109,6 @@ void func_proto_free(FuncPrototype proto) {
 }
 
 void vm_free(VM *vm) {
-    value_list_free(&vm->global_data);
     func_proto_list_free(&vm->global_funcs);
 
     // Frees the bucket array, which walks entries — must happen before the
@@ -279,7 +277,7 @@ bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *di
 
     if (parser_parse(&parser, script) &&
         ast_script_resolve(vm->compile_arena, script, &vm->global_scope, diagnostics)) {
-        chunk = codegen_generate(script, &vm->global_data, &vm->global_funcs, diagnostics, &max_registers);
+        chunk = codegen_generate(script, &vm->global_funcs, diagnostics, &max_registers);
     }
 
     // Nothing reads the AST once codegen has run, so the compile owns it end to
@@ -587,20 +585,6 @@ void vm_run(VM *vm, const CompiledScript *script) {
                 vm->instruction_pointer += offset;
             }
 
-            break;
-        }
-        case OP_LOAD_GLOBAL: {
-            size_t rd = VM_DECODE_I_RD(instruction);
-            size_t index = VM_DECODE_I_IMM(instruction);
-
-            (*vm_reg(vm, rd)) = value_list_get(&vm->global_data, index);
-            break;
-        }
-        case OP_STORE_GLOBAL: {
-            size_t rd = VM_DECODE_I_RD(instruction);
-            size_t index = VM_DECODE_I_IMM(instruction);
-
-            value_list_emplace(&vm->global_data, index, (*vm_reg(vm, rd)));
             break;
         }
         }

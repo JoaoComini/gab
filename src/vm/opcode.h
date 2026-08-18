@@ -3,8 +3,6 @@
 
 typedef enum {
     OP_LOAD_CONST,
-    OP_LOAD_GLOBAL,
-    OP_STORE_GLOBAL,
     OP_LOAD_TRUE,
     OP_LOAD_FALSE,
     OP_MOVE,
