@@ -193,15 +193,21 @@ void gab_module_free(GabVM *handle, GabModule *mod) {
 
 // --- Types -----------------------------------------------------------------
 
-// Joins a module and a symbol into the qualified name both registries key on.
-// Returns false if the result would not fit, which the callers report as a
-// miss rather than truncating into some other symbol's name.
-static bool gab_qualify(char *out, size_t size, const char *module, const char *name) {
+// The scope a module's names live in. NULL or "" is the root namespace; an
+// unknown module name is a miss, reported as NULL rather than falling back to
+// the root, so a typo'd module does not silently resolve to a root symbol.
+//
+// Types and functions both come through here: the namespace is the scope, and
+// the only difference downstream is which of the scope's two tables is read.
+static Scope *gab_namespace(VM *vm, const char *module) {
     if (!module || module[0] == '\0') {
-        return (size_t)snprintf(out, size, "%s", name) < size;
+        return &vm->global_scope;
     }
 
-    return (size_t)snprintf(out, size, "%s::%s", module, name) < size;
+    String *interned = string_from_cstr(&vm->strings, module);
+    Scope **found = interned ? module_scope_map_lookup(vm->module_scopes, interned) : NULL;
+
+    return found ? *found : NULL;
 }
 
 const GabType *gab_find_type(GabVM *handle, GabModule *mod, const char *name) {
@@ -215,19 +221,22 @@ const GabType *gab_find_type_in(GabVM *handle, const char *module, const char *n
 
     VM *vm = (VM *)handle;
 
-    char qualified[256];
-    if (!gab_qualify(qualified, sizeof(qualified), module, name)) {
+    Scope *scope = gab_namespace(vm, module);
+    if (!scope) {
         return NULL;
     }
 
     // Interning is a lookup, not an insert-if-missing, only because the name
     // of a type that exists is already in the pool.
-    String *interned = string_from_cstr(&vm->strings, qualified);
+    String *interned = string_from_cstr(&vm->strings, name);
     if (!interned) {
         return NULL;
     }
 
-    return (const GabType *)type_registry_get(vm->global_scope.type_registry, interned);
+    // Walks outward on a miss, so a module sees root-namespace types and
+    // builtins — the same visibility a script inside that module has, and the
+    // same walk gab_lookup_in does for symbols.
+    return (const GabType *)scope_type_lookup(scope, interned);
 }
 
 size_t gab_type_size(const GabType *type) { return type ? ((const Type *)type)->size : 0; }
@@ -290,21 +299,14 @@ GabFunc *gab_lookup_in(GabVM *handle, const char *module, const char *name, GabE
     // A module scope parents to the root, so a bare lookup in a module also
     // finds root declarations — the same visibility a script inside that
     // module has.
-    Scope *scope = &vm->global_scope;
+    Scope *scope = gab_namespace(vm, module);
 
-    if (module && module[0] != '\0') {
-        String *module_interned = string_from_cstr(&vm->strings, module);
-        Scope **found = module_interned ? module_scope_map_lookup(vm->module_scopes, module_interned) : NULL;
+    if (!scope) {
+        char message[256];
+        snprintf(message, sizeof(message), "no module named '%s'", module);
+        gab_error_set(err, 0, 0, message);
 
-        if (!found) {
-            char message[256];
-            snprintf(message, sizeof(message), "no module named '%s'", module);
-            gab_error_set(err, 0, 0, message);
-
-            return NULL;
-        }
-
-        scope = *found;
+        return NULL;
     }
 
     String *interned = string_from_cstr(&vm->strings, name);

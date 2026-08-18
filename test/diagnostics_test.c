@@ -25,7 +25,7 @@ static void compile(TestContext *ctx, const char *source) {
     scope_init(&global_scope, arena, &ctx->strings, NULL);
 
     if (parser_parse(&parser, script)) {
-        ast_script_resolve(arena, script, &global_scope, diagnostics);
+        ast_script_resolve(arena, script, &global_scope, NULL, NULL, diagnostics);
     }
 
     ast_script_destroy(script);

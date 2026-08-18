@@ -23,18 +23,13 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     registry->builtins.float_type = register_builtin(registry, TYPE_FLOAT, "float", 4, 4);
     registry->builtins.bool_type = register_builtin(registry, TYPE_BOOL, "bool", 1, 1);
 
-    // Poison type. Deliberately not inserted into the name map: no script can
+    // Poison type. Deliberately never given a name in any scope: no script can
     // name it, it only arises from a failed resolution.
     registry->builtins.error_type = register_builtin(registry, TYPE_ERROR, "<error>", 0, 1);
-
-    type_map_insert(registry->map, registry->builtins.int_type->name, registry->builtins.int_type);
-    type_map_insert(registry->map, registry->builtins.float_type->name, registry->builtins.float_type);
-    type_map_insert(registry->map, registry->builtins.bool_type->name, registry->builtins.bool_type);
 }
 
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
-    registry->map = type_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->pointers = pointer_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
     registry->strings = strings;
@@ -43,10 +38,7 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     return registry;
 }
 
-void type_registry_destroy(TypeRegistry *registry) {
-    type_map_destroy(registry->map);
-    pointer_map_destroy(registry->pointers);
-}
+void type_registry_destroy(TypeRegistry *registry) { pointer_map_destroy(registry->pointers); }
 
 Type *type_registry_pointer_to(TypeRegistry *registry, Type *pointee) {
     Type **existing = pointer_map_lookup(registry->pointers, pointee);
@@ -71,21 +63,6 @@ Type *type_registry_pointer_to(TypeRegistry *registry, Type *pointee) {
     pointer_map_insert(registry->pointers, pointee, type);
 
     return type;
-}
-
-Type *type_registry_get(TypeRegistry *registry, String *name) {
-    Type **type = type_map_lookup(registry->map, name);
-
-    return type ? *type : NULL;
-}
-
-bool type_registry_register(TypeRegistry *registry, Type *type) {
-    if (type_registry_get(registry, type->name)) {
-        return false;
-    }
-
-    type_map_insert(registry->map, type->name, type);
-    return true;
 }
 
 Type *type_registry_error_type(TypeRegistry *registry) { return registry->builtins.error_type; }

@@ -44,7 +44,7 @@ static Type *resolve_struct(TestContext *ctx, const char *source, const char *na
     scope_init(&global_scope, ctx->arena, &ctx->strings, NULL);
 
     if (parser_parse(&parser, script)) {
-        ast_script_resolve(ctx->arena, script, &global_scope, &ctx->diagnostics);
+        ast_script_resolve(ctx->arena, script, &global_scope, NULL, NULL, &ctx->diagnostics);
     }
 
     if (diagnostics_has_errors(&ctx->diagnostics)) {
@@ -55,7 +55,7 @@ static Type *resolve_struct(TestContext *ctx, const char *source, const char *na
 
     ast_script_destroy(script);
 
-    return type_registry_get(global_scope.type_registry, string_from_cstr(&ctx->strings, name));
+    return scope_type_lookup(&global_scope, string_from_cstr(&ctx->strings, name));
 }
 
 static size_t offset_of(TestContext *ctx, Type *type, const char *field) {
@@ -192,12 +192,12 @@ static void test_unknown_field_type_is_not_registered() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
 
     parser_parse(&parser, script);
-    ast_script_resolve(ctx.arena, script, &global_scope, &ctx.diagnostics);
+    ast_script_resolve(ctx.arena, script, &global_scope, NULL, NULL, &ctx.diagnostics);
 
     assert(diagnostics_count(&ctx.diagnostics) == 1);
 
     // A struct that failed to resolve must not become usable as a type.
-    assert(type_registry_get(global_scope.type_registry, string_from_cstr(&ctx.strings, "Broken")) == NULL);
+    assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "Broken")) == NULL);
 
     ast_script_destroy(script);
     test_context_free(&ctx);

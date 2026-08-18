@@ -26,8 +26,14 @@ void ast_script_add_statement(ASTScript *script, ASTStmt *stmt);
 // 'compile_arena' owns only what dies with the compile. Anything the resolver
 // publishes into the global scope or the type registry is allocated from that
 // scope's own arena instead, so it outlives the compile that produced it.
+// How the resolver reaches another module's scope, for a 'Module::Type' name.
+// Returns NULL when no such module exists, which the resolver reports as an
+// unknown type. Kept a callback so the resolver needs no dependency on the VM
+// that owns the module table.
+typedef Scope *(*ModuleScopeFn)(void *ctx, String *name);
+
 bool ast_script_resolve(Arena *compile_arena, ASTScript *script, Scope *global_scope,
-                        Diagnostics *diagnostics);
+                        ModuleScopeFn module_scope, void *module_scope_ctx, Diagnostics *diagnostics);
 void ast_script_destroy(ASTScript *script);
 
 #endif

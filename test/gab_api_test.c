@@ -527,11 +527,122 @@ static void test_two_modules_can_share_a_type_name(void) {
     gab_vm_free(vm);
 }
 
+// Namespacing types per registry must not give each module its own 'int' or
+// its own '*Player': the type system compares by pointer identity, so builtins
+// and interned pointers stay the root's however many modules exist.
+static void test_builtins_are_shared_across_modules(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    GabModule *player = gab_compile(vm, "player.gab",
+                                    "module Player;\n"
+                                    "struct Config { health: int }\n"
+                                    "func player_size(): int { let p: *Config; return 1; }\n",
+                                    &err);
+    assert(player);
+
+    GabModule *enemy = gab_compile(vm, "enemy.gab",
+                                   "module Enemy;\n"
+                                   "struct Config { hp: int }\n"
+                                   "func enemy_size(): int { let p: *Config; return 1; }\n",
+                                   &err);
+    assert(enemy);
+
+    // 'int' names one type from either module, with no import.
+    const GabType *player_int = gab_find_type(vm, player, "int");
+    const GabType *enemy_int = gab_find_type(vm, enemy, "int");
+
+    assert(player_int);
+    assert(player_int == enemy_int);
+    assert(gab_find_type_in(vm, NULL, "int") == player_int);
+
+    // Each module still resolved '*Config' against its own Config.
+    assert(gab_lookup(vm, player, "player_size", &err));
+    assert(gab_lookup(vm, enemy, "enemy_size", &err));
+
+    gab_module_free(vm, enemy);
+    gab_module_free(vm, player);
+    gab_vm_free(vm);
+}
+
+// A module's own type shadows a root-namespace one of the same name, the way
+// its scope shadows root declarations.
+static void test_module_type_shadows_the_root(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    GabModule *root = gab_compile(vm, "root.gab", "struct Config { a: int, b: int }\n", &err);
+    assert(root);
+
+    GabModule *player =
+        gab_compile(vm, "player.gab", "module Player;\nstruct Config { only: int }\n", &err);
+    assert(player);
+
+    const GabType *root_config = gab_find_type(vm, root, "Config");
+    const GabType *player_config = gab_find_type(vm, player, "Config");
+
+    assert(root_config && player_config);
+    assert(root_config != player_config);
+    assert(gab_type_size(root_config) == 2 * sizeof(int));
+    assert(gab_type_size(player_config) == sizeof(int));
+
+    // A module with no Config of its own falls through to the root's.
+    GabModule *enemy = gab_compile(vm, "enemy.gab", "module Enemy;\nfunc noop(): int { return 0; }\n", &err);
+    assert(enemy);
+    assert(gab_find_type(vm, enemy, "Config") == root_config);
+
+    // An unknown module is a miss, not a quiet fallback to the root.
+    assert(gab_find_type_in(vm, "Nope", "Config") == NULL);
+
+    gab_module_free(vm, enemy);
+    gab_module_free(vm, player);
+    gab_module_free(vm, root);
+    gab_vm_free(vm);
+}
+
+// 'Module::Type' names a type in another module, and names the same type the
+// declaring module knows — pointer identity, not a second copy of the layout.
+static void test_qualified_type_reference_crosses_modules(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    GabModule *player =
+        gab_compile(vm, "player.gab", "module Player;\nstruct Config { health: int }\n", &err);
+    assert(player);
+
+    GabModule *enemy = gab_compile(vm, "enemy.gab",
+                                   "module Enemy;\n"
+                                   "struct Config { hp: int }\n"
+                                   "func f(): int { let c: Player::Config; return c.health; }\n",
+                                   &err);
+    assert(enemy);
+
+    // Its own Config is untouched by the qualified mention of Player's.
+    assert(gab_type_size(gab_find_type(vm, enemy, "Config")) == sizeof(int));
+
+    // A module that does not exist, and a type that module does not have, are
+    // both errors rather than a silent fallback to a same-named local type.
+    assert(gab_compile(vm, "bad.gab", "module A;\nfunc f(): int { let c: Nope::Config; return 0; }\n",
+                       &err) == NULL);
+    assert(gab_compile(vm, "bad2.gab", "module B;\nfunc f(): int { let c: Player::Missing; return 0; }\n",
+                       &err) == NULL);
+
+    gab_module_free(vm, enemy);
+    gab_module_free(vm, player);
+    gab_vm_free(vm);
+}
+
 int main(void) {
     test_two_modules_can_share_a_function_name();
     test_module_name_is_read_from_the_script();
     test_lookup_by_module_name();
     test_two_modules_can_share_a_type_name();
+    test_builtins_are_shared_across_modules();
+    test_module_type_shadows_the_root();
+    test_qualified_type_reference_crosses_modules();
     test_compile_error_is_reported_not_printed();
     test_runtime_error_is_reported();
     test_runtime_error_from_module_run();

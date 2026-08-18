@@ -111,7 +111,7 @@ static void test_types_survive_a_later_compile() {
 
     vm_execute(vm, "struct Player { health: int, mana: int }\n");
 
-    Type *player = type_registry_get(vm->global_scope.type_registry, string_from_cstr(&vm->strings, "Player"));
+    Type *player = scope_type_lookup(&vm->global_scope, string_from_cstr(&vm->strings, "Player"));
     assert(player);
 
     size_t size = player->size;

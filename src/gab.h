@@ -67,10 +67,10 @@ const char *gab_module_name(const GabModule *mod);
 // found in the module that unit declared, or in the root namespace when it
 // declared none.
 //
-// Unlike symbols, types live in one VM-wide registry under a qualified name —
-// splitting the registry per module would give each one its own 'int' and
-// break the pointer identity the type system compares by. The handle is
-// therefore a convenience over that name, not a separate lookup path.
+// Types resolve exactly as symbols do: the module's own are found first, and
+// the root namespace after, so a module's 'Config' shadows a root-level one
+// and 'int' needs no import. An unknown module is a miss rather than a silent
+// fallback to the root.
 const GabType *gab_find_type(GabVM *vm, GabModule *mod, const char *name);
 
 // As gab_find_type, naming the module directly. NULL means the root namespace.

@@ -44,7 +44,7 @@ static bool resolve(TestContext *ctx, Scope *scope, ASTScript *script, const cha
         return false;
     }
 
-    return ast_script_resolve(ctx->arena, script, scope, &ctx->diagnostics);
+    return ast_script_resolve(ctx->arena, script, scope, NULL, NULL, &ctx->diagnostics);
 }
 
 static Symbol *lookup(TestContext *ctx, Scope *scope, const char *name) {
@@ -92,7 +92,7 @@ static void test_pointer_types_are_interned() {
     assert(p->var.type == q->var.type);
     assert(type_is_pointer(p->var.type));
 
-    Type *player = type_registry_get(scope->type_registry, string_from_cstr(&ctx.strings, "Player"));
+    Type *player = scope_type_lookup(scope, string_from_cstr(&ctx.strings, "Player"));
     assert(p->var.type->pointee == player);
 
     ast_script_destroy(script);
@@ -115,7 +115,7 @@ static void test_pointer_depth_nests() {
 
     assert(q->var.type->pointee == p->var.type);
     assert(p->var.type->pointee ==
-           type_registry_get(scope->type_registry, string_from_cstr(&ctx.strings, "int")));
+           scope_type_lookup(scope, string_from_cstr(&ctx.strings, "int")));
 
     ast_script_destroy(script);
     test_context_free(&ctx);

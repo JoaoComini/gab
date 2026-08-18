@@ -271,6 +271,21 @@ static void vm_store_field_ptr(VM *vm, Instruction instruction, size_t width) {
 //
 // The scope is parented to the root for builtin lookup but stays at depth 0:
 // its declarations are a unit's top level, not a nested block.
+// Naming another module's type must not bring that module into being, so this
+// only ever looks: an unknown name is a miss the resolver reports as an
+// unknown type. The ModuleScopeFn the resolver calls, hence the void * VM.
+Scope *vm_module_scope_lookup(void *ctx, String *name) {
+    VM *vm = (VM *)ctx;
+
+    if (!name) {
+        return &vm->global_scope;
+    }
+
+    Scope **existing = module_scope_map_lookup(vm->module_scopes, name);
+
+    return existing ? *existing : NULL;
+}
+
 Scope *vm_module_scope(VM *vm, String *name) {
     if (!name) {
         return &vm->global_scope;
@@ -282,7 +297,7 @@ Scope *vm_module_scope(VM *vm, String *name) {
     }
 
     Scope *scope = arena_alloc(vm->arena, sizeof(Scope));
-    scope_init_at_depth(scope, vm->arena, &vm->strings, &vm->global_scope, 0);
+    scope_init_module(scope, vm->arena, &vm->strings, &vm->global_scope);
 
     module_scope_map_insert(vm->module_scopes, name, scope);
 
@@ -314,7 +329,7 @@ bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *di
 
         Scope *scope = module_name ? vm_module_scope(vm, module_name) : &vm->global_scope;
 
-        if (ast_script_resolve(vm->compile_arena, script, scope, diagnostics)) {
+        if (ast_script_resolve(vm->compile_arena, script, scope, vm_module_scope_lookup, vm, diagnostics)) {
             chunk = codegen_generate(script, &vm->global_funcs, diagnostics, &max_registers);
         }
     }

@@ -10,6 +10,8 @@
 
 #define TYPE_REGISTRY_INITIAL_CAPACITY 8
 
+// The named types of one scope. Scope owns these and chains them, the same way
+// it chains symbol tables.
 #define type_map_hash(key) (size_t)key
 #define type_map_key_equals(key, other) key == other
 #define type_map_key_dup(key) key
@@ -32,22 +34,26 @@ typedef struct {
     Type *error_type;
 } TypeBuiltins;
 
-typedef struct {
+// Interning, not naming. One registry per VM holds the builtins and every
+// pointer type, because the type system compares types by pointer identity: a
+// second 'int' or a second '*Player' would silently break every comparison.
+//
+// Which type names are visible where is a scoping question, so the name map
+// belongs to Scope, which already owns the parent chain that answers it.
+typedef struct TypeRegistry {
     Arena *arena;
 
     StringPool *strings;
 
-    TypeMap *map;
     PointerMap *pointers;
     TypeBuiltins builtins;
 } TypeRegistry;
 
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings);
+
 void type_registry_destroy(TypeRegistry *registry);
 
 Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind type);
-Type *type_registry_get(TypeRegistry *registry, String *name);
-bool type_registry_register(TypeRegistry *registry, Type *type);
 Type *type_registry_error_type(TypeRegistry *registry);
 
 // The interned *pointee. Repeated calls with the same pointee return the same

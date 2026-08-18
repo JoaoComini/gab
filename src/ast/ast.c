@@ -42,10 +42,8 @@ typedef struct {
     Scope *global_scope;
     Scope *current_scope;
 
-    // The unit's module, interned, or NULL for the root namespace. Types are
-    // registered and looked up under 'Module::Name', so this is what turns a
-    // bare name in the source into the name the registry holds.
-    String *module_name;
+    ModuleScopeFn module_scope;
+    void *module_scope_ctx;
 
     FuncContext func_context;
 
@@ -67,34 +65,50 @@ static String *resolver_intern(ResolverState *state, StringRef ref) {
     return string_from_ref(state->current_scope->strings, ref);
 }
 
-static bool string_ref_contains_colons(StringRef ref) {
+// Splits 'Module::Type' into its two halves. Returns false for a bare name,
+// which needs no splitting.
+static bool string_ref_split_colons(StringRef ref, StringRef *module, StringRef *member) {
     for (size_t i = 0; i + 1 < ref.length; i++) {
-        if (ref.data[i] == ':' && ref.data[i + 1] == ':') {
-            return true;
+        if (ref.data[i] != ':' || ref.data[i + 1] != ':') {
+            continue;
         }
+
+        *module = (StringRef){.data = ref.data, .length = i};
+        *member = (StringRef){.data = ref.data + i + 2, .length = ref.length - i - 2};
+
+        return true;
     }
 
     return false;
 }
 
-// The name a type is registered under: 'Module::Name' inside a module, and the
-// bare name in the root namespace. One registry holds every type — splitting it
-// per module would give each one its own 'int' and break the pointer identity
-// the whole type system compares by — so the namespace lives in the name.
-static String *resolver_qualify_type(ResolverState *state, StringRef name) {
-    if (!state->module_name || string_ref_contains_colons(name)) {
-        return resolver_intern(state, name);
+// The scope a type spec names: another module's for 'Module::Type', and the
+// current one otherwise. NULL when the spec names a module that does not
+// exist, which the caller reports as an unknown type.
+static Scope *resolver_spec_scope(ResolverState *state, StringRef name) {
+    StringRef module, member;
+
+    if (!string_ref_split_colons(name, &module, &member)) {
+        return state->current_scope;
     }
 
-    char buffer[256];
-    int length = snprintf(buffer, sizeof(buffer), "%s::%.*s", state->module_name->data, (int)name.length,
-                          name.data);
-
-    if (length < 0 || (size_t)length >= sizeof(buffer)) {
-        return resolver_intern(state, name);
+    if (!state->module_scope) {
+        return NULL;
     }
 
-    return string_from_cstr(state->current_scope->strings, buffer);
+    return state->module_scope(state->module_scope_ctx,
+                               string_from_ref(state->current_scope->strings, module));
+}
+
+// The half of a spec name a scope holds: 'Type' out of 'Module::Type'.
+static String *resolver_spec_member(ResolverState *state, StringRef name) {
+    StringRef module, member;
+
+    if (string_ref_split_colons(name, &module, &member)) {
+        return string_from_ref(state->current_scope->strings, member);
+    }
+
+    return resolver_intern(state, name);
 }
 
 // A type that is already poisoned had its error reported at the origin, so any
@@ -477,17 +491,13 @@ Type *ast_script_resolve_type(ResolverState *state, TypeSpec *spec, Span span) {
         return NULL;
     }
 
-    TypeRegistry *registry = state->current_scope->type_registry;
+    Scope *scope = resolver_spec_scope(state, spec->name);
 
-    // The unit's own types shadow the root namespace, so a module can name a
-    // struct 'Config' without colliding with anyone else's. Builtins and
-    // root-namespace types resolve through the fallback, which is why 'int'
-    // needs no import.
-    Type *type = type_registry_get(registry, resolver_qualify_type(state, spec->name));
-
-    if (!type) {
-        type = type_registry_get(registry, resolver_intern(state, spec->name));
-    }
+    // Walks outward from that scope, so a module's own 'Config' shadows a
+    // root-namespace one and 'int' resolves with no import. A 'Module::Type'
+    // spec resolved to that module's scope above, and its bare member name is
+    // what that scope holds.
+    Type *type = scope ? scope_type_lookup(scope, resolver_spec_member(state, spec->name)) : NULL;
 
     if (!type) {
         char *name = string_ref_to_cstr(spec->name);
@@ -497,8 +507,10 @@ Type *ast_script_resolve_type(ResolverState *state, TypeSpec *spec, Span span) {
         return resolver_error_type(state);
     }
 
+    // Interned in the one shared registry whichever scope named the pointee,
+    // so '*Config' is one type however many modules mention it.
     for (unsigned int i = 0; i < spec->pointer_depth; i++) {
-        type = type_registry_pointer_to(registry, type);
+        type = type_registry_pointer_to(state->current_scope->type_registry, type);
     }
 
     return type;
@@ -618,14 +630,14 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         break;
     }
     case STMT_STRUCT_DECL: {
-        // Registered under its qualified name, so two modules may each declare
-        // a 'Config'. Diagnostics use the qualified name too, which is what
-        // makes a cross-module type error readable rather than reporting the
-        // same bare name twice.
-        String *struct_name = resolver_qualify_type(state, stmt->struct_decl.name);
-        TypeRegistry *registry = state->current_scope->type_registry;
+        // Declared under its bare name into the scope it appears in, so two
+        // modules may each declare a 'Config' without either name carrying the
+        // module in it.
+        String *struct_name = resolver_intern(state, stmt->struct_decl.name);
 
-        if (type_registry_get(registry, struct_name)) {
+        // Local: shadowing an outer type is allowed, declaring the same name
+        // twice in one scope is not.
+        if (scope_type_lookup_local(state->current_scope, struct_name)) {
             diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "type '%s' is already declared",
                        struct_name->data);
             break;
@@ -649,8 +661,6 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
             // The struct is registered only after its fields resolve, so a
             // self-reference would otherwise surface as "unknown type". A
             // pointer to self is not containment, so only depth 0 is rejected.
-            // Compared against the name as written, since struct_name is
-            // qualified and the field's spec is not.
             if (field->type_spec->pointer_depth == 0 &&
                 string_ref_equals_ref(field->type_spec->name, stmt->struct_decl.name)) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, field->span, "struct '%s' cannot contain itself",
@@ -674,7 +684,7 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         }
 
         type_layout_compute(type);
-        type_registry_register(registry, type);
+        scope_decl_type(state->current_scope, struct_name, type);
 
         stmt->struct_decl.type = type;
         break;
@@ -745,24 +755,19 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
 }
 
 bool ast_script_resolve(Arena *compile_arena, ASTScript *script, Scope *global_scope,
-                        Diagnostics *diagnostics) {
+                        ModuleScopeFn module_scope, void *module_scope_ctx, Diagnostics *diagnostics) {
     ResolverState state = {
         .compile_arena = compile_arena,
         .global_scope = global_scope,
         .current_scope = global_scope,
-        .module_name = NULL,
+        .module_scope = module_scope,
+        .module_scope_ctx = module_scope_ctx,
         .func_context =
             {
                 .return_type = NULL,
             },
         .diagnostics = diagnostics,
     };
-
-    // Interned once here rather than per type, since every qualification in
-    // the unit uses the same prefix.
-    if (script->module_name.data) {
-        state.module_name = string_from_ref(global_scope->strings, script->module_name);
-    }
 
     size_t errors_before = diagnostics_count(diagnostics);
 

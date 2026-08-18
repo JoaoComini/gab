@@ -208,6 +208,9 @@ bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *di
 // living as long as the VM. NULL names the root namespace.
 Scope *vm_module_scope(VM *vm, String *name);
 
+// Lookup-only, for the resolver: NULL when no such module exists.
+Scope *vm_module_scope_lookup(void *ctx, String *name);
+
 // Runs a compiled script as frame zero, leaving its result in slot 0. Returns
 // why the run stopped; vm->error carries the same status plus a message.
 // Nothing is printed — reporting belongs to the caller.

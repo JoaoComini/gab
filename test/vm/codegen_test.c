@@ -27,7 +27,7 @@ static Arena *arena = NULL;
 // nothing should ever land in it.
 
 static void assert_resolve(ASTScript *script, Scope *scope) {
-    bool ok = ast_script_resolve(arena, script, scope, &ctx.diagnostics);
+    bool ok = ast_script_resolve(arena, script, scope, NULL, NULL, &ctx.diagnostics);
 
     if (!ok) {
         diagnostics_print(&ctx.diagnostics, stderr);
