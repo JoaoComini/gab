@@ -13,6 +13,7 @@ typedef struct GabVM GabVM;
 typedef struct GabScript GabScript;
 typedef struct GabFunc GabFunc;
 typedef struct GabType GabType;
+typedef struct GabCall GabCall;
 
 typedef enum {
     GAB_OK,
@@ -20,11 +21,12 @@ typedef enum {
     GAB_ERR_RUNTIME,
     GAB_ERR_ARG,
 
-    // The function this handle was looked up for has been recompiled, and its
-    // signature is no longer the one the handle was built against. Look it up
-    // again to get a handle for the new signature. A reload that leaves the
-    // signature alone does not invalidate anything: the handle goes on calling
-    // the new body, which is the point of reloading.
+    // The function this call was prepared for has been recompiled, and its
+    // signature is no longer the one the call was built against. Its staged
+    // arguments described the old signature, so they are gone: initialise the
+    // call again to stage them afresh. A reload that leaves the signature alone
+    // does not invalidate anything, and the call goes on reaching the new body,
+    // which is the point of reloading.
     GAB_ERR_STALE,
 } GabStatus;
 
@@ -92,23 +94,45 @@ bool gab_field_offset(const GabType *type, const char *field, size_t *out_offset
 // 'module' is the namespace, exactly as for gab_find_type; NULL is the root.
 // A module is a name rather than a handle because several units may declare
 // the same one: the namespace is the module, not the unit that compiled it.
+//
+// There is nothing to free. The VM owns every handle it hands out and releases
+// them with itself, so a host looks a function up and then forgets about its
+// lifetime — the handles a program accumulates are bounded by the functions it
+// calls, which is one lookup each.
+//
+// The one rule, and it is not checked: a handle must not be used after its VM
+// is freed. It reads symbols the VM owns, so it dies with the VM.
 GabFunc *gab_lookup(GabVM *vm, const char *module, const char *name, GabError *err);
 
 int gab_func_arity(const GabFunc *fn);
 
-// Optional. The VM owns every handle it hands out and releases whatever is
-// left when it is freed, so forgetting this leaks nothing — it only reclaims a
-// handle sooner, which is worth doing for one a host is discarding rather than
-// keeping for the life of the VM.
-//
-// A handle must not be used after its VM is freed. It reads symbols the VM
-// owns, so it dies with the VM; this is the one lifetime rule a host has to
-// keep, and it is not checked.
-void gab_func_free(GabFunc *fn);
+// --- Staging arguments -----------------------------------------------------
 
-// Arguments are written into the handle's own buffer, not the live stack:
-// there is no frame yet when these run, and a call the host abandons halfway
-// through leaves nothing behind.
+// A GabCall is one caller's staged arguments for one function. A handle is
+// shared and immutable; the arguments being built up for a call are not, so
+// they live here — which is what lets two parts of a host call the same
+// function without one overwriting what the other staged.
+//
+// Sized for the function's signature, so this allocates. It is the one thing
+// in this API a host frees: gab_call_free when the caller is done with it.
+// Returns NULL if the function is NULL or memory ran out.
+GabCall *gab_call_init(GabFunc *fn, GabError *err);
+
+// After GAB_ERR_STALE: resizes the call for the signature the function now has
+// and clears what it staged, so the host stages afresh and calls again. The
+// GabCall keeps its address, so whatever the host stored it in goes on pointing
+// at a live call.
+//
+// Returns false only if memory ran out, leaving the call as it was — still
+// stale, still refusing, still the host's to free.
+bool gab_call_restage(GabCall *call, GabError *err);
+
+void gab_call_free(GabCall *call);
+
+// Arguments are written into the call's own buffer, not the live stack: there
+// is no frame yet when these run, and a call the host abandons halfway through
+// leaves nothing behind. They persist across calls on purpose, so a host
+// holding one argument constant sets it once and re-sets only what changes.
 //
 // Each returns false if it could not do what it was asked — the index is out
 // of range, the parameter is not declared that type, or a struct's size does
@@ -119,17 +143,17 @@ void gab_func_free(GabFunc *fn);
 //
 // There are no varargs by design. C would promote a float to a double, and the
 // VM would read eight bytes where the script declared four.
-bool gab_arg_int(GabVM *vm, GabFunc *fn, int index, int32_t value);
-bool gab_arg_float(GabVM *vm, GabFunc *fn, int index, float value);
-bool gab_arg_bool(GabVM *vm, GabFunc *fn, int index, bool value);
+bool gab_arg_int(GabCall *call, int index, int32_t value);
+bool gab_arg_float(GabCall *call, int index, float value);
+bool gab_arg_bool(GabCall *call, int index, bool value);
 
 // 'size' is checked against the parameter's declared type. Struct layout is
 // the one place a host can get the ABI wrong, so it is checked, not trusted.
-bool gab_arg_struct(GabVM *vm, GabFunc *fn, int index, const void *data, size_t size);
+bool gab_arg_struct(GabCall *call, int index, const void *data, size_t size);
 
-// Calls the function with whatever the setters left in its argument buffer.
+// Calls the function with whatever the setters left in the call's buffer.
 // 'ret' may be NULL for a function that returns nothing; otherwise it receives
 // the return type's size in bytes, so a struct return works the same way.
-GabStatus gab_call(GabVM *vm, GabFunc *fn, void *ret, GabError *err);
+GabStatus gab_call(GabVM *vm, GabCall *call, void *ret, GabError *err);
 
 #endif

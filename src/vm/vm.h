@@ -101,10 +101,10 @@ void func_proto_free(FuncPrototype proto);
 #define func_proto_list_item_free(item) func_proto_free(item)
 GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype)
 
-// Every GabFunc handed out and not yet released. A handle points into the VM's
-// arena, so it cannot outlive the VM in any case; owning them here makes that
-// the actual rule rather than something a host must remember, and a forgotten
-// gab_func_free then leaks nothing.
+// Every GabFunc this VM has handed out. A handle points into the VM's arena, so
+// it cannot outlive the VM in any case; owning them here makes that the actual
+// rule rather than a lifetime the host has to manage, and is why there is no
+// way to release one early.
 //
 // Held as void * because GabFunc is the embedding API's type and opaque here.
 // gab.c does the freeing, which is why the item_free hook is empty.

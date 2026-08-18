@@ -30,25 +30,18 @@ struct GabScript {
     char name[128];
 };
 
-// Slack in a handle's arrays, so a reload that adds a parameter or widens a
-// struct rebinds in place instead of making the host look the function up
-// again. Small: the point is to absorb an edit, not to preallocate for 255.
-#define GAB_FUNC_SPARE_PARAMS 4
-#define GAB_FUNC_SPARE_SLOTS 8
-
-// A handle is sized for the signature it was built against rather than for the
-// largest one the VM could express. VM_MAX_REGISTERS is 255 because that is
-// what an 8-bit operand addresses — a bound on a frame's slots, not on a
-// function's parameters — so sizing these arrays by it made every handle 4632
-// bytes to hold a signature that is almost always three or four entries.
+// A handle is the signature and call layout of one function, shared by every
+// caller and never written to outside a reload. What a caller stages for a
+// call is per-caller and lives in a GabCall instead.
 //
-// The per-parameter arrays and the argument staging buffer therefore trail the
-// struct in one allocation, laid out by gab_func_alloc.
+// Sized for the signature it was built against rather than for the largest one
+// the VM could express: VM_MAX_REGISTERS is 255 because that is what an 8-bit
+// operand addresses — a bound on a frame's slots, not on a function's
+// parameters — so sizing these arrays by it made every handle 4632 bytes to
+// hold a signature that is almost always three or four entries. The
+// per-parameter arrays therefore trail the struct in one allocation, laid out
+// by gab_func_alloc.
 struct GabFunc {
-    // The VM that handed this handle out and owns it. A handle dereferences
-    // symbols living in that VM's arena, so it is only as valid as the VM.
-    VM *vm;
-
     const Symbol *symbol;
 
     // The signature this handle was built against, captured at lookup. Every
@@ -70,6 +63,39 @@ struct GabFunc {
     // Where each parameter starts within the call block.
     unsigned int *param_slot;
 
+    // The one allocation sig_params and param_slot point into, kept so a reload
+    // that widens the signature can replace it without moving the handle.
+    void *params_block;
+
+    // The return type's size, resolved at bind time: fixed by the signature, so
+    // the call path does not chase symbol->func->return_type to find it. The
+    // prototype cannot be cached the same way — the VM's list of them grows on
+    // every compile, so a pointer into it would dangle after a reload.
+    size_t return_size;
+
+    // Bumped every time this handle rebinds to a new signature. A GabCall
+    // captures it and compares, which is how a caller finds out its staged
+    // arguments describe a signature that no longer exists — one integer,
+    // rather than walking the parameter types on every setter.
+    uint32_t generation;
+};
+
+// One caller's arguments for one function. Separate from the handle because the
+// handle is shared: two systems calling the same function through one handle
+// would otherwise overwrite each other's half-staged arguments, and the call
+// path cannot notice — once every parameter has been set it does no checking at
+// all.
+//
+// The staging buffer and the set flags trail the struct in one allocation, as
+// they did in the handle, sized for the signature at init.
+struct GabCall {
+    GabFunc *fn;
+
+    // The signature's generation when this was initialised. A reload that
+    // changes the signature bumps the handle's, and the mismatch is what makes
+    // the staged arguments an error rather than bytes for the wrong frame.
+    uint32_t generation;
+
     // Arguments are staged here rather than on the live stack: gab_arg_* runs
     // before there is a frame to write into, and an abandoned call then leaves
     // nothing behind. Indexed by slot, and slot 0 is the return slot, so this
@@ -85,22 +111,17 @@ struct GabFunc {
     bool *arg_set;
     size_t args_pending;
 
-    // What the trailing arrays were sized for. A reload may widen the
-    // signature past them, which is when the handle has to be reallocated
-    // rather than rebound in place.
-    size_t param_capacity;
-    unsigned int slot_capacity;
-
-    // Where the VM's list of live handles holds this one, so releasing it is a
-    // swap-remove rather than a search. The VM owning handles is what makes a
-    // forgotten gab_func_free harmless.
-    size_t registry_index;
-
+    // The one allocation args and arg_set point into, and its size. Held
+    // separately from the struct so a reload that widens the signature can
+    // grow it without moving the call the host is holding.
+    void *block;
+    size_t capacity;
 };
 
 // A handle is only as valid as the VM that produced it, which is why the VM
-// owns every one it hands out. They are malloc'd rather than arena allocated
-// so that gab_func_free can genuinely reclaim one before the VM goes.
+// owns every one it hands out and frees them all with itself. They are malloc'd
+// rather than arena allocated so that a reload widening a signature can grow one
+// in place.
 
 // Builds the handle's cached call layout from its symbol's current signature.
 static void gab_func_bind(GabFunc *fn);
@@ -109,42 +130,46 @@ static void gab_func_bind(GabFunc *fn);
 // slots, plus slot 0 for the return value.
 static unsigned int gab_signature_slots(const Symbol *symbol);
 
-// One allocation holding the handle and its four variable-length arrays. They
-// are laid out widest-aligned first — pointers, then 4-byte, then bytes — so
-// each lands on its natural alignment without padding arithmetic.
-static GabFunc *gab_func_alloc(size_t param_count, unsigned int slot_count) {
-    size_t bytes = sizeof(GabFunc);
-
-    size_t sig_params_at = bytes;
-    bytes += param_count * sizeof(const Type *);
-
-    size_t args_at = bytes;
-    bytes += (size_t)slot_count * sizeof(Value);
+// The handle's per-parameter arrays, in one allocation separate from the
+// struct. Separate because the host holds the handle's address: a reload that
+// widens a signature has to grow these, and the struct itself must not move
+// under the pointer gab_lookup handed out.
+//
+// Laid out widest-aligned first — pointers, then 4-byte — so each lands on its
+// natural alignment without padding arithmetic. Sized exactly for the
+// signature, since growing is possible rather than something slack must
+// pre-empt.
+static bool gab_func_alloc_params(GabFunc *fn, size_t param_count) {
+    size_t sig_params_at = 0;
+    size_t bytes = param_count * sizeof(const Type *);
 
     size_t param_slot_at = bytes;
     bytes += param_count * sizeof(unsigned int);
 
-    size_t arg_set_at = bytes;
-    bytes += param_count * sizeof(bool);
+    // A zero-arity function has nothing to index, and calloc(1, 0) may return
+    // NULL without that being a failure.
+    if (bytes == 0) {
+        free(fn->params_block);
 
-    GabFunc *fn = calloc(1, bytes);
-    if (!fn) {
-        return NULL;
+        fn->params_block = NULL;
+        fn->sig_params = NULL;
+        fn->param_slot = NULL;
+
+        return true;
     }
 
-    char *base = (char *)fn;
+    void *block = calloc(1, bytes);
+    if (!block) {
+        return false;
+    }
 
-    // Zero-length arrays are legal here only because nothing indexes them when
-    // param_count is 0; the pointers are never dereferenced.
-    fn->sig_params = (const Type **)(base + sig_params_at);
-    fn->args = (Value *)(base + args_at);
-    fn->param_slot = (unsigned int *)(base + param_slot_at);
-    fn->arg_set = (bool *)(base + arg_set_at);
+    free(fn->params_block);
 
-    fn->param_capacity = param_count;
-    fn->slot_capacity = slot_count;
+    fn->params_block = block;
+    fn->sig_params = (const Type **)((char *)block + sig_params_at);
+    fn->param_slot = (unsigned int *)((char *)block + param_slot_at);
 
-    return fn;
+    return true;
 }
 
 static void gab_error_clear(GabError *err) {
@@ -193,11 +218,14 @@ void gab_vm_free(GabVM *handle) {
 
     VM *vm = (VM *)handle;
 
-    // Whatever the host did not release. Freed here rather than in vm_free
+    // Every handle this VM handed out. Freed here rather than in vm_free
     // because a GabFunc is this file's type: the VM tracked the pointers
     // without ever knowing what they were.
     for (size_t i = 0; i < vm->func_handles.size; i++) {
-        free(vm->func_handles.data[i]);
+        GabFunc *fn = vm->func_handles.data[i];
+
+        free(fn->params_block);
+        free(fn);
     }
 
     vm->func_handles.size = 0;
@@ -410,71 +438,43 @@ GabFunc *gab_lookup(GabVM *handle, const char *module, const char *name, GabErro
         return NULL;
     }
 
-    // Sized for this signature with a little room, so the common reload — a
-    // parameter added or a struct widened — is absorbed in place rather than
-    // forcing the host to look the function up again.
-    size_t param_capacity = symbol->func.param_count + GAB_FUNC_SPARE_PARAMS;
-    unsigned int slot_capacity = gab_signature_slots(symbol) + GAB_FUNC_SPARE_SLOTS;
-
-    if (param_capacity > VM_MAX_REGISTERS) {
-        param_capacity = VM_MAX_REGISTERS;
-    }
-
-    if (slot_capacity > VM_MAX_REGISTERS) {
-        slot_capacity = VM_MAX_REGISTERS;
-    }
-
-    GabFunc *fn = gab_func_alloc(param_capacity, slot_capacity);
+    GabFunc *fn = calloc(1, sizeof(GabFunc));
     if (!fn) {
         gab_error_set(err, 0, 0, "out of memory");
         return NULL;
     }
 
-    fn->vm = vm;
+    if (!gab_func_alloc_params(fn, symbol->func.param_count)) {
+        free(fn);
+        gab_error_set(err, 0, 0, "out of memory");
+
+        return NULL;
+    }
+
     fn->symbol = symbol;
 
     gab_func_bind(fn);
 
-    // The VM owns it from here. A host that never calls gab_func_free leaks
-    // nothing: gab_vm_free releases whatever is still registered.
-    fn->registry_index = vm->func_handles.size;
+    // The VM owns it from here, for good: a handle cannot be released early.
+    // A host looks a function up once and calls it for the life of the VM, so
+    // the handles a program accumulates are bounded by the functions it calls.
     func_handle_list_add(&vm->func_handles, fn);
 
     return fn;
 }
 
-// Releasing early, which a host need not do. The VM would free this handle
-// anyway, so this only reclaims it sooner — worth doing for a handle discarded
-// after a reload widened its signature past what it could hold.
-void gab_func_free(GabFunc *fn) {
-    if (!fn) {
-        return;
-    }
-
-    FuncHandleList *handles = &fn->vm->func_handles;
-    size_t moved_from = 0;
-
-    func_handle_list_swap_remove(handles, fn->registry_index, &moved_from);
-
-    // The last handle moved into the hole, so its own index is now stale.
-    if (moved_from != fn->registry_index) {
-        ((GabFunc *)handles->data[fn->registry_index])->registry_index = fn->registry_index;
-    }
-
-    free(fn);
-}
-
-// The signature this handle was built for, not the symbol's current one: a
-// handle describes the call it can make, and after a signature-changing reload
-// that is the captured one until the host looks the function up again.
+// The signature this handle currently describes. A reload rebinds the handle,
+// so this follows the new signature; a call staged against the old one is what
+// reports GAB_ERR_STALE.
 int gab_func_arity(const GabFunc *fn) { return fn ? (int)fn->sig_param_count : 0; }
 
-// Validates an argument index and that the parameter has the expected kind,
-// returning where to write it or NULL if it may not be written.
 // Whether the function has been recompiled with a different signature since
-// this handle was built. Everything the handle caches — the slot layout, the
-// staged arguments, the pending count — describes the old signature, so a call
-// made through it would build a frame the new body does not expect.
+// this handle was bound. The handle's slot layout describes the old signature,
+// so a call made through it would build a frame the new body does not expect.
+//
+// The arity and parameter types are compared rather than the symbol's
+// generation: a reload that leaves the signature alone must keep working, since
+// calling the new body through the old handle is the whole point.
 static bool gab_func_is_stale(const GabFunc *fn) {
     if (fn->symbol->func.param_count != fn->sig_param_count) {
         return true;
@@ -487,18 +487,6 @@ static bool gab_func_is_stale(const GabFunc *fn) {
     }
 
     return false;
-}
-
-// Whether the symbol's current signature still fits the arrays this handle was
-// allocated with. A reload that only changes parameter types, or narrows the
-// signature, fits; one that adds parameters or widens a struct may not.
-//
-// The handle cannot grow: the host owns the pointer, so reallocating would
-// leave it holding a dangling one. A signature that outgrew the handle is
-// therefore the one case a host must re-look-up to follow.
-static bool gab_func_fits(const GabFunc *fn, const Symbol *symbol) {
-    return symbol->func.param_count <= fn->param_capacity &&
-           gab_signature_slots(symbol) <= fn->slot_capacity;
 }
 
 static unsigned int gab_signature_slots(const Symbol *symbol) {
@@ -514,9 +502,7 @@ static unsigned int gab_signature_slots(const Symbol *symbol) {
 // Builds the cached call layout from the symbol's current signature. Shared by
 // lookup and by rebinding after a reload, so the two cannot drift.
 //
-// The caller guarantees the trailing arrays are wide enough: at lookup they are
-// sized for this signature, and on a reload gab_func_rebind reallocates first if
-// the new signature outgrew them.
+// The caller guarantees the trailing arrays hold the new parameter count.
 static void gab_func_bind(GabFunc *fn) {
     const Symbol *symbol = fn->symbol;
 
@@ -533,37 +519,136 @@ static void gab_func_bind(GabFunc *fn) {
     }
 
     fn->arg_slots = offset - 1;
-
-    // The staged arguments described the old signature and mean nothing under
-    // the new one: a parameter may have changed type, or been added and never
-    // set at all. They are cleared rather than carried over, so the host is
-    // made to supply them again instead of a stale value reaching the new body.
-    //
-    // Cleared to capacity, not to the new count: a signature that shrank leaves
-    // entries above it that a later widening would otherwise resurrect.
-    memset(fn->arg_set, 0, fn->param_capacity * sizeof(bool));
-    memset(fn->args, 0, (size_t)fn->slot_capacity * sizeof(Value));
-    fn->args_pending = symbol->func.param_count;
+    fn->return_size = symbol->func.return_type ? symbol->func.return_type->size : 0;
 }
 
-static Value *gab_arg_slot(GabFunc *fn, int index, TypeKind expected) {
+// Rebinds a stale handle to its symbol's current signature, growing its arrays
+// first if the new signature has more parameters than the old.
+//
+// The handle itself never moves, because the host holds its address. Only the
+// trailing arrays are reallocated, so every GabFunc a host looked up stays
+// valid across any reload — a caller's GabCall notices through the generation
+// and restages, which is what the old design could not do without making the
+// host look the function up again.
+static bool gab_func_rebind(GabFunc *fn) {
+    if (fn->symbol->func.param_count > fn->sig_param_count) {
+        if (!gab_func_alloc_params(fn, fn->symbol->func.param_count)) {
+            return false;
+        }
+    }
+
+    gab_func_bind(fn);
+    fn->generation++;
+
+    return true;
+}
+
+// Sizes a call's staging buffer for its function's current signature and clears
+// whatever was in it. Shared by init and by restaging after a reload, so the two
+// cannot drift.
+static bool gab_call_stage(GabCall *call, GabError *err) {
+    const GabFunc *fn = call->fn;
+
+    // Slot 0 is the return slot, so the buffer holds one more than the
+    // arguments do.
+    size_t slots = (size_t)fn->arg_slots + 1;
+    size_t bytes = slots * sizeof(Value) + fn->sig_param_count * sizeof(bool);
+
+    if (bytes > call->capacity) {
+        void *block = calloc(1, bytes);
+        if (!block) {
+            gab_error_set(err, 0, 0, "out of memory");
+            return false;
+        }
+
+        free(call->block);
+
+        call->block = block;
+        call->capacity = bytes;
+    }
+
+    // Laid out afresh either way: a signature that changed shape moves the set
+    // flags even when the total still fits what was already allocated.
+    memset(call->block, 0, call->capacity);
+
+    call->args = (Value *)call->block;
+    call->arg_set = (bool *)((char *)call->block + slots * sizeof(Value));
+
+    call->generation = fn->generation;
+    call->args_pending = fn->sig_param_count;
+
+    return true;
+}
+
+GabCall *gab_call_init(GabFunc *fn, GabError *err) {
+    gab_error_clear(err);
+
     if (!fn) {
+        gab_error_set(err, 0, 0, "gab_call_init requires a function");
         return NULL;
     }
 
-    // Rebound before the slot is read, so a host that reloads and then stages
-    // its arguments writes them into the new layout and never sees an error.
-    // Whatever it had staged before the reload is cleared by the rebind.
-    //
-    // A signature too wide for this handle's arrays cannot be rebound; the
-    // setter fails and gab_call reports it, which is the host's cue to look the
-    // function up again.
-    if (gab_func_is_stale(fn)) {
-        if (!gab_func_fits(fn, fn->symbol)) {
-            return NULL;
-        }
+    GabCall *call = calloc(1, sizeof(GabCall));
+    if (!call) {
+        gab_error_set(err, 0, 0, "out of memory");
+        return NULL;
+    }
 
-        gab_func_bind(fn);
+    call->fn = fn;
+
+    if (!gab_call_stage(call, err)) {
+        free(call);
+        return NULL;
+    }
+
+    return call;
+}
+
+// What a host does after GAB_ERR_STALE: the handle has already rebound itself,
+// so the function is the same and only this caller's buffer is behind. Restaging
+// through the same GabCall keeps whatever the host stored it in — a member of an
+// entity system, a slot in an array — pointing at a live call, which is why this
+// exists rather than making the host free and initialise a new one.
+//
+// Every argument is cleared, because they described the old signature: a
+// parameter may have changed type, or been added and never set at all.
+//
+// Returns false only if memory ran out, and leaves the call as it was: still
+// stale, still refusing, still the host's to free.
+bool gab_call_restage(GabCall *call, GabError *err) {
+    gab_error_clear(err);
+
+    if (!call) {
+        gab_error_set(err, 0, 0, "gab_call_restage requires a call");
+        return false;
+    }
+
+    return gab_call_stage(call, err);
+}
+
+void gab_call_free(GabCall *call) {
+    if (!call) {
+        return;
+    }
+
+    free(call->block);
+    free(call);
+}
+
+// Validates an argument index and that the parameter has the expected kind,
+// returning where to write it or NULL if it may not be written.
+static Value *gab_arg_slot(GabCall *call, int index, TypeKind expected) {
+    if (!call) {
+        return NULL;
+    }
+
+    const GabFunc *fn = call->fn;
+
+    // Staged against a signature that no longer exists. The buffer is sized for
+    // the old one, so writing into it would overflow as readily as it would
+    // mislead; the host initialises the call again to stage afresh.
+    if (call->generation != fn->generation) {
+        return NULL;
     }
 
     if (index < 0 || (size_t)index >= fn->sig_param_count) {
@@ -578,18 +663,16 @@ static Value *gab_arg_slot(GabFunc *fn, int index, TypeKind expected) {
 
     // Only a setter that got this far counts: a rejected one leaves the
     // parameter as unset as it was.
-    if (!fn->arg_set[index]) {
-        fn->arg_set[index] = true;
-        fn->args_pending--;
+    if (!call->arg_set[index]) {
+        call->arg_set[index] = true;
+        call->args_pending--;
     }
 
-    return &fn->args[fn->param_slot[index]];
+    return &call->args[fn->param_slot[index]];
 }
 
-bool gab_arg_int(GabVM *vm, GabFunc *fn, int index, int32_t value) {
-    (void)vm;
-
-    Value *slot = gab_arg_slot(fn, index, TYPE_INT);
+bool gab_arg_int(GabCall *call, int index, int32_t value) {
+    Value *slot = gab_arg_slot(call, index, TYPE_INT);
     if (!slot) {
         return false;
     }
@@ -599,10 +682,8 @@ bool gab_arg_int(GabVM *vm, GabFunc *fn, int index, int32_t value) {
     return true;
 }
 
-bool gab_arg_float(GabVM *vm, GabFunc *fn, int index, float value) {
-    (void)vm;
-
-    Value *slot = gab_arg_slot(fn, index, TYPE_FLOAT);
+bool gab_arg_float(GabCall *call, int index, float value) {
+    Value *slot = gab_arg_slot(call, index, TYPE_FLOAT);
     if (!slot) {
         return false;
     }
@@ -612,10 +693,8 @@ bool gab_arg_float(GabVM *vm, GabFunc *fn, int index, float value) {
     return true;
 }
 
-bool gab_arg_bool(GabVM *vm, GabFunc *fn, int index, bool value) {
-    (void)vm;
-
-    Value *slot = gab_arg_slot(fn, index, TYPE_BOOL);
+bool gab_arg_bool(GabCall *call, int index, bool value) {
+    Value *slot = gab_arg_slot(call, index, TYPE_BOOL);
     if (!slot) {
         return false;
     }
@@ -625,22 +704,20 @@ bool gab_arg_bool(GabVM *vm, GabFunc *fn, int index, bool value) {
     return true;
 }
 
-bool gab_arg_struct(GabVM *vm, GabFunc *fn, int index, const void *data, size_t size) {
-    (void)vm;
-
+bool gab_arg_struct(GabCall *call, int index, const void *data, size_t size) {
     // The size is the one thing a host can get wrong that the type system
     // cannot catch, so it is checked rather than trusted — and before the slot
     // is claimed, so a rejected struct leaves the parameter unset rather than
     // counting as supplied.
-    if (fn && index >= 0 && (size_t)index < fn->sig_param_count) {
-        const Type *param = fn->sig_params[index];
+    if (call && index >= 0 && (size_t)index < call->fn->sig_param_count) {
+        const Type *param = call->fn->sig_params[index];
 
         if (param && param->kind == TYPE_STRUCT && (!data || size != param->size)) {
             return false;
         }
     }
 
-    Value *slot = gab_arg_slot(fn, index, TYPE_STRUCT);
+    Value *slot = gab_arg_slot(call, index, TYPE_STRUCT);
     if (!slot) {
         return false;
     }
@@ -650,35 +727,40 @@ bool gab_arg_struct(GabVM *vm, GabFunc *fn, int index, const void *data, size_t 
     return true;
 }
 
-GabStatus gab_call(GabVM *handle, GabFunc *fn, void *ret, GabError *err) {
+GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
     gab_error_clear(err);
 
-    if (!handle || !fn) {
-        gab_error_set(err, 0, 0, "gab_call requires a VM and a function");
+    if (!handle || !call) {
+        gab_error_set(err, 0, 0, "gab_call requires a VM and a call");
         return GAB_ERR_ARG;
     }
 
-    // Before anything reads the cached layout. The handle rebinds itself to the
-    // new signature, so the host does not have to look the function up again —
-    // but the arguments it had staged described the old one and are gone, so
-    // this call does not happen and the next one needs them set afresh.
-    if (gab_func_is_stale(fn)) {
-        // Too wide to rebind in place: the host owns this pointer, so the
-        // arrays cannot grow under it and a fresh lookup is the only way
-        // forward.
-        if (!gab_func_fits(fn, fn->symbol)) {
-            gab_error_set(err, 0, 0,
-                          "this function was recompiled with a wider signature than this handle can hold; "
-                          "look it up again");
+    VM *vm = (VM *)handle;
+    GabFunc *fn = call->fn;
 
-            return GAB_ERR_STALE;
+    // Before anything reads the cached layout. The handle rebinds to the new
+    // signature — every other caller's next call reaches the new body without
+    // looking anything up — but this call's staged arguments described the old
+    // one, so it does not happen and the host initialises the call again.
+    if (gab_func_is_stale(fn)) {
+        if (!gab_func_rebind(fn)) {
+            gab_error_set(err, 0, 0, "out of memory");
+            return GAB_ERR_RUNTIME;
         }
 
-        gab_func_bind(fn);
-
         gab_error_set(err, 0, 0,
-                      "this function was recompiled with a different signature; its arguments were cleared "
-                      "and must be set again");
+                      "this function was recompiled with a different signature; initialise the call again "
+                      "to stage its arguments afresh");
+
+        return GAB_ERR_STALE;
+    }
+
+    // Staged before some other caller rebound the handle. Same cause, but the
+    // rebind already happened, so there is nothing to do but report it.
+    if (call->generation != fn->generation) {
+        gab_error_set(err, 0, 0,
+                      "this function was recompiled with a different signature; initialise the call again "
+                      "to stage its arguments afresh");
 
         return GAB_ERR_STALE;
     }
@@ -687,9 +769,9 @@ GabStatus gab_call(GabVM *handle, GabFunc *fn, void *ret, GabError *err) {
     // zero on the first call, the previous frame's value on every one after.
     // Once every parameter has been supplied this is skipped for good, so the
     // per-frame path stays free.
-    if (fn->args_pending > 0) {
+    if (call->args_pending > 0) {
         for (size_t i = 0; i < fn->sig_param_count; i++) {
-            if (fn->arg_set[i]) {
+            if (call->arg_set[i]) {
                 continue;
             }
 
@@ -700,8 +782,6 @@ GabStatus gab_call(GabVM *handle, GabFunc *fn, void *ret, GabError *err) {
             return GAB_ERR_ARG;
         }
     }
-
-    VM *vm = (VM *)handle;
 
     size_t proto_index = fn->symbol->func.proto_index;
 
@@ -729,7 +809,7 @@ GabStatus gab_call(GabVM *handle, GabFunc *fn, void *ret, GabError *err) {
 
     // Arguments start at slot 1 of the block, matching where the callee's
     // frame — based here — expects its parameters.
-    memcpy(vm->stack + base + sizeof(Value), &fn->args[1], fn->arg_slots * sizeof(Value));
+    memcpy(vm->stack + base + sizeof(Value), &call->args[1], fn->arg_slots * sizeof(Value));
 
     if (vm_run_frame(vm, proto, base, 0) != VM_RUN_OK) {
         gab_error_set(err, 0, 0, vm->error.message);
@@ -739,7 +819,7 @@ GabStatus gab_call(GabVM *handle, GabFunc *fn, void *ret, GabError *err) {
     if (ret) {
         // The return value lands in the frame's slot 0, which is the base of
         // the block, and is as wide as the declared return type.
-        memcpy(ret, vm->stack + base, gab_type_size((const GabType *)fn->symbol->func.return_type));
+        memcpy(ret, vm->stack + base, fn->return_size);
     }
 
     return GAB_OK;

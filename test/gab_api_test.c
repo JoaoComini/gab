@@ -120,9 +120,13 @@ static void test_lookup_failures(void) {
 
     GabFunc *fn = gab_lookup(vm, NULL, "real", &err);
     assert(fn);
+
+    GabCall *fn_call = gab_call_init(fn, &err);
+    assert(fn_call);
     assert(gab_func_arity(fn) == 0);
 
-    gab_func_free(fn);
+    gab_call_free(fn_call);
+
     gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
@@ -141,23 +145,27 @@ static void test_call_with_scalar_args(void) {
 
     GabFunc *fn = gab_lookup(vm, NULL, "mix", &err);
     assert(fn);
+
+    GabCall *fn_call = gab_call_init(fn, &err);
+    assert(fn_call);
     assert(gab_func_arity(fn) == 3);
 
-    gab_arg_int(vm, fn, 0, 21);
-    gab_arg_float(vm, fn, 1, 1.5f);
-    gab_arg_bool(vm, fn, 2, true);
+    gab_arg_int(fn_call, 0, 21);
+    gab_arg_float(fn_call, 1, 1.5f);
+    gab_arg_bool(fn_call, 2, true);
 
     int result = 0;
-    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
     assert(result == 42);
 
     // The same handle, called again with different arguments: the per-frame
     // case, and no lookup happens on the way.
-    gab_arg_bool(vm, fn, 2, false);
-    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    gab_arg_bool(fn_call, 2, false);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
     assert(result == 21);
 
-    gab_func_free(fn);
+    gab_call_free(fn_call);
+
     gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
@@ -173,11 +181,14 @@ static void test_call_in_a_loop(void) {
     GabFunc *fn = gab_lookup(vm, NULL, "step", &err);
     assert(fn);
 
+    GabCall *fn_call = gab_call_init(fn, &err);
+    assert(fn_call);
+
     for (int i = 0; i < 64; i++) {
-        gab_arg_int(vm, fn, 0, i);
+        gab_arg_int(fn_call, 0, i);
 
         int result = 0;
-        assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+        assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
         assert(result == i + 1);
     }
 
@@ -185,7 +196,8 @@ static void test_call_in_a_loop(void) {
     // and the arguments are staged in the handle. Verified out of tree by
     // interposing malloc over this loop, which counted zero.
 
-    gab_func_free(fn);
+    gab_call_free(fn_call);
+
     gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
@@ -209,18 +221,22 @@ static void test_struct_argument_and_return(void) {
     GabFunc *fn = gab_lookup(vm, NULL, "hurt", &err);
     assert(fn);
 
+    GabCall *fn_call = gab_call_init(fn, &err);
+    assert(fn_call);
+
     Player in = {.health = 100, .mana = 30};
 
-    gab_arg_struct(vm, fn, 0, &in, sizeof(in));
-    gab_arg_int(vm, fn, 1, 25);
+    gab_arg_struct(fn_call, 0, &in, sizeof(in));
+    gab_arg_int(fn_call, 1, 25);
 
     Player out = {0};
-    assert(gab_call(vm, fn, &out, &err) == GAB_OK);
+    assert(gab_call(vm, fn_call, &out, &err) == GAB_OK);
 
     assert(out.health == 75);
     assert(out.mana == 30);
 
-    gab_func_free(fn);
+    gab_call_free(fn_call);
+
     gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
@@ -239,32 +255,36 @@ static void test_bad_arguments_are_rejected(void) {
     GabFunc *fn = gab_lookup(vm, NULL, "take", &err);
     assert(fn);
 
+    GabCall *fn_call = gab_call_init(fn, &err);
+    assert(fn_call);
+
     // Out of range: refused by the setter, and the call still cannot happen
     // because nothing was supplied.
-    assert(!gab_arg_int(vm, fn, 7, 1));
-    assert(gab_call(vm, fn, NULL, &err) == GAB_ERR_ARG);
+    assert(!gab_arg_int(fn_call, 7, 1));
+    assert(gab_call(vm, fn_call, NULL, &err) == GAB_ERR_ARG);
     assert(err.message[0] != '\0');
 
     // Wrong type: parameter 1 is an int, not a float.
-    assert(!gab_arg_float(vm, fn, 1, 1.0f));
-    assert(gab_call(vm, fn, NULL, &err) == GAB_ERR_ARG);
+    assert(!gab_arg_float(fn_call, 1, 1.0f));
+    assert(gab_call(vm, fn_call, NULL, &err) == GAB_ERR_ARG);
 
     // Wrong struct size.
     int not_a_player = 0;
-    assert(!gab_arg_struct(vm, fn, 0, &not_a_player, sizeof(not_a_player)));
-    assert(gab_call(vm, fn, NULL, &err) == GAB_ERR_ARG);
+    assert(!gab_arg_struct(fn_call, 0, &not_a_player, sizeof(not_a_player)));
+    assert(gab_call(vm, fn_call, NULL, &err) == GAB_ERR_ARG);
 
     // After the failures, a correctly built call still works: a rejected
     // argument left nothing behind.
     Player p = {.health = 1, .mana = 2};
-    assert(gab_arg_struct(vm, fn, 0, &p, sizeof(p)));
-    assert(gab_arg_int(vm, fn, 1, 99));
+    assert(gab_arg_struct(fn_call, 0, &p, sizeof(p)));
+    assert(gab_arg_int(fn_call, 1, 99));
 
     int result = 0;
-    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
     assert(result == 99);
 
-    gab_func_free(fn);
+    gab_call_free(fn_call);
+
     gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
@@ -282,13 +302,17 @@ static void test_runtime_error_is_reported(void) {
     GabFunc *fn = gab_lookup(vm, NULL, "boom", &err);
     assert(fn);
 
-    gab_arg_int(vm, fn, 0, 1);
+    GabCall *fn_call = gab_call_init(fn, &err);
+    assert(fn_call);
+
+    gab_arg_int(fn_call, 0, 1);
 
     int result = 0;
-    assert(gab_call(vm, fn, &result, &err) == GAB_ERR_RUNTIME);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_ERR_RUNTIME);
     assert(err.message[0] != '\0');
 
-    gab_func_free(fn);
+    gab_call_free(fn_call);
+
     gab_script_free(vm, mod);
 
     // A second module in the same VM still runs: the failure was reported, not
@@ -297,13 +321,19 @@ static void test_runtime_error_is_reported(void) {
     assert(ok);
 
     GabFunc *good = gab_lookup(vm, NULL, "fine", &err);
-    gab_arg_int(vm, good, 0, 41);
+    assert(good);
 
-    assert(gab_call(vm, good, &result, &err) == GAB_OK);
+    GabCall *good_call = gab_call_init(good, &err);
+    assert(good_call);
+
+    gab_arg_int(good_call, 0, 41);
+
+    assert(gab_call(vm, good_call, &result, &err) == GAB_OK);
     assert(result == 42);
     assert(err.message[0] == '\0');
 
-    gab_func_free(good);
+    gab_call_free(good_call);
+
     gab_script_free(vm, ok);
     gab_vm_free(vm);
 }
@@ -340,25 +370,29 @@ static void test_unset_arguments_are_rejected(void) {
     GabFunc *fn = gab_lookup(vm, NULL, "two", &err);
     assert(fn);
 
+    GabCall *fn_call = gab_call_init(fn, &err);
+    assert(fn_call);
+
     // Only argument 0 supplied.
-    gab_arg_int(vm, fn, 0, 1);
+    gab_arg_int(fn_call, 0, 1);
 
     int result = -1;
-    assert(gab_call(vm, fn, &result, &err) == GAB_ERR_ARG);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_ERR_ARG);
     assert(err.message[0] != '\0');
 
     // Supplying the rest makes the same handle callable.
-    gab_arg_int(vm, fn, 1, 1000);
-    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    gab_arg_int(fn_call, 1, 1000);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
     assert(result == 1001);
 
     // Reuse is not staleness: holding argument 1 constant while changing 0 is
     // the per-frame case and must keep working.
-    gab_arg_int(vm, fn, 0, 2);
-    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    gab_arg_int(fn_call, 0, 2);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
     assert(result == 1002);
 
-    gab_func_free(fn);
+    gab_call_free(fn_call);
+
     gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
@@ -375,31 +409,35 @@ static void test_rejected_setter_does_not_supply_an_argument(void) {
     GabFunc *fn = gab_lookup(vm, NULL, "two", &err);
     assert(fn);
 
-    assert(gab_arg_int(vm, fn, 0, 5));
+    GabCall *fn_call = gab_call_init(fn, &err);
+    assert(fn_call);
+
+    assert(gab_arg_int(fn_call, 0, 5));
 
     // Wrong type for an int parameter: reported immediately by the setter,
     // rather than remembered and reported by the next call.
-    assert(!gab_arg_float(vm, fn, 1, 1.0f));
+    assert(!gab_arg_float(fn_call, 1, 1.0f));
 
     // A host that ignored the setter's answer is still safe: the parameter was
     // never given a value, so the call is refused rather than made with
     // whatever the buffer held.
     int result = 0;
-    assert(gab_call(vm, fn, &result, &err) == GAB_ERR_ARG);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_ERR_ARG);
     assert(err.message[0] != '\0');
 
     // And it stays refused until the argument is actually supplied.
-    assert(gab_call(vm, fn, &result, &err) == GAB_ERR_ARG);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_ERR_ARG);
 
-    assert(gab_arg_int(vm, fn, 1, 7));
-    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(gab_arg_int(fn_call, 1, 7));
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
     assert(result == 12);
 
     // Out of range is refused the same way.
-    assert(!gab_arg_int(vm, fn, 9, 1));
-    assert(!gab_arg_int(vm, fn, -1, 1));
+    assert(!gab_arg_int(fn_call, 9, 1));
+    assert(!gab_arg_int(fn_call, -1, 1));
 
-    gab_func_free(fn);
+    gab_call_free(fn_call);
+
     gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
@@ -430,15 +468,20 @@ static void test_two_modules_can_share_a_function_name(void) {
     GabFunc *enemy_update = gab_lookup(vm, "Enemy", "on_update", &err);
     assert(player_update && enemy_update);
 
+    GabCall *player_update_call = gab_call_init(player_update, &err);
+    GabCall *enemy_update_call = gab_call_init(enemy_update, &err);
+    assert(player_update_call && enemy_update_call);
+
     int result = 0;
-    assert(gab_call(vm, player_update, &result, &err) == GAB_OK);
+    assert(gab_call(vm, player_update_call, &result, &err) == GAB_OK);
     assert(result == 1);
 
-    assert(gab_call(vm, enemy_update, &result, &err) == GAB_OK);
+    assert(gab_call(vm, enemy_update_call, &result, &err) == GAB_OK);
     assert(result == 2);
 
-    gab_func_free(enemy_update);
-    gab_func_free(player_update);
+    gab_call_free(player_update_call);
+    gab_call_free(enemy_update_call);
+
     gab_script_free(vm, enemy);
     gab_script_free(vm, player);
     gab_vm_free(vm);
@@ -458,7 +501,9 @@ static void test_the_script_names_its_module_not_the_filename(void) {
     // Found under the declared module, not under the file it came from.
     GabFunc *f = gab_lookup(vm, "Player", "f", &err);
     assert(f);
-    gab_func_free(f);
+
+    GabCall *f_call = gab_call_init(f, &err);
+    assert(f_call);
 
     assert(gab_lookup(vm, "some_file", "f", &err) == NULL);
     assert(gab_lookup(vm, NULL, "f", &err) == NULL);
@@ -470,7 +515,12 @@ static void test_the_script_names_its_module_not_the_filename(void) {
 
     GabFunc *g = gab_lookup(vm, NULL, "g", &err);
     assert(g);
-    gab_func_free(g);
+
+    GabCall *g_call = gab_call_init(g, &err);
+    assert(g_call);
+
+    gab_call_free(f_call);
+    gab_call_free(g_call);
 
     gab_script_free(vm, anonymous);
     gab_script_free(vm, named);
@@ -488,8 +538,11 @@ static void test_lookup_by_module_name(void) {
     GabFunc *fn = gab_lookup(vm, "Enemy", "hp", &err);
     assert(fn);
 
+    GabCall *fn_call = gab_call_init(fn, &err);
+    assert(fn_call);
+
     int result = 0;
-    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
     assert(result == 42);
 
     // A module nobody declared is a miss with a message, not another module's
@@ -500,7 +553,8 @@ static void test_lookup_by_module_name(void) {
     // And a name that module does not declare.
     assert(gab_lookup(vm, "Enemy", "missing", &err) == NULL);
 
-    gab_func_free(fn);
+    gab_call_free(fn_call);
+
     gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
@@ -584,8 +638,6 @@ static void test_builtins_are_shared_across_modules(void) {
     assert(player_size);
     assert(enemy_size);
 
-    gab_func_free(enemy_size);
-    gab_func_free(player_size);
 
     gab_script_free(vm, enemy);
     gab_script_free(vm, player);
@@ -675,12 +727,15 @@ static void test_handle_survives_later_compiles(void) {
 
     GabFunc *fn = gab_lookup(vm, NULL, "step", &err);
     assert(fn);
+
+    GabCall *fn_call = gab_call_init(fn, &err);
+    assert(fn_call);
     assert(gab_func_arity(fn) == 1);
 
-    gab_arg_int(vm, fn, 0, 10);
+    gab_arg_int(fn_call, 0, 10);
 
     int result = 0;
-    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
     assert(result == 11);
 
     // Later units compile more functions, appending prototypes and running
@@ -697,13 +752,14 @@ static void test_handle_survives_later_compiles(void) {
     assert(third);
 
     // The handle from before still calls the body it was looked up for.
-    gab_arg_int(vm, fn, 0, 10);
+    gab_arg_int(fn_call, 0, 10);
     result = 0;
-    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
     assert(result == 11);
     assert(gab_func_arity(fn) == 1);
 
-    gab_func_free(fn);
+    gab_call_free(fn_call);
+
     gab_script_free(vm, third);
     gab_script_free(vm, second);
     gab_script_free(vm, first);
@@ -728,10 +784,13 @@ static void test_recompiling_a_module_reloads_it(void) {
     GabFunc *fn = gab_lookup(vm, "Game", "tick", &err);
     assert(fn);
 
-    gab_arg_int(vm, fn, 0, 5);
+    GabCall *fn_call = gab_call_init(fn, &err);
+    assert(fn_call);
+
+    gab_arg_int(fn_call, 0, 5);
 
     int result = 0;
-    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
     assert(result == 6);
     assert(gab_type_size(gab_find_type(vm, "Game", "S")) == sizeof(int));
 
@@ -744,9 +803,9 @@ static void test_recompiling_a_module_reloads_it(void) {
     assert(v2);
 
     // The handle from before the reload runs the new body.
-    gab_arg_int(vm, fn, 0, 5);
+    gab_arg_int(fn_call, 0, 5);
     result = 0;
-    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
     assert(result == 15);
 
     // And the type is the redeclared one, not the original.
@@ -760,15 +819,17 @@ static void test_recompiling_a_module_reloads_it(void) {
                                        "func tick(n: int): int { return n * 3; }\n",
                                        &err);
         assert(again);
+
         gab_script_free(vm, again);
     }
 
-    gab_arg_int(vm, fn, 0, 5);
+    gab_arg_int(fn_call, 0, 5);
     result = 0;
-    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
     assert(result == 15);
 
-    gab_func_free(fn);
+    gab_call_free(fn_call);
+
     gab_script_free(vm, v2);
     gab_script_free(vm, v1);
     gab_vm_free(vm);
@@ -816,12 +877,15 @@ static void test_signature_change_rebinds_the_handle(void) {
 
     GabFunc *fn = gab_lookup(vm, "S", "step", &err);
     assert(fn);
+
+    GabCall *fn_call = gab_call_init(fn, &err);
+    assert(fn_call);
     assert(gab_func_arity(fn) == 1);
 
-    gab_arg_int(vm, fn, 0, 10);
+    gab_arg_int(fn_call, 0, 10);
 
     int result = 0;
-    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
     assert(result == 11);
 
     GabScript *v2 =
@@ -831,27 +895,33 @@ static void test_signature_change_rebinds_the_handle(void) {
     // Calling without re-staging is refused: the old arguments are gone rather
     // than being fed to a body that no longer expects them.
     result = -1;
-    assert(gab_call(vm, fn, &result, &err) == GAB_ERR_STALE);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_ERR_STALE);
     assert(err.message[0] != '\0');
 
     // The handle now describes the new signature.
     assert(gab_func_arity(fn) == 2);
 
-    gab_arg_int(vm, fn, 0, 3);
-    gab_arg_int(vm, fn, 1, 4);
+    // Restaging resizes this caller's buffer for it, through the same GabCall.
+    assert(gab_call_restage(fn_call, &err));
+
+    gab_arg_int(fn_call, 0, 3);
+    gab_arg_int(fn_call, 1, 4);
 
     result = 0;
-    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
     assert(result == 7);
 
-    gab_func_free(fn);
+    gab_call_free(fn_call);
+
     gab_script_free(vm, v2);
     gab_script_free(vm, v1);
     gab_vm_free(vm);
 }
 
-// Staging arguments after the reload rebinds in the setter, so a host that
-// re-supplies its arguments every frame never sees the error at all.
+// A reload is reported to each caller once. The handle rebinds on the first
+// call that notices, and every caller restages its own arguments — the setters
+// cannot rebind on a caller's behalf, because the handle is shared and doing so
+// would clear what some other caller had staged.
 static void test_staging_after_a_signature_change_just_works(void) {
     GabVM *vm = gab_vm_new();
 
@@ -863,41 +933,51 @@ static void test_staging_after_a_signature_change_just_works(void) {
     GabFunc *fn = gab_lookup(vm, "S", "step", &err);
     assert(fn);
 
-    gab_arg_int(vm, fn, 0, 10);
+    GabCall *fn_call = gab_call_init(fn, &err);
+    assert(fn_call);
+
+    gab_arg_int(fn_call, 0, 10);
 
     GabScript *v2 =
         gab_compile(vm, "s.gab", "module S;\nfunc step(a: int, b: int): int { return a + b; }\n", &err);
     assert(v2);
 
-    gab_arg_int(vm, fn, 0, 3);
-    gab_arg_int(vm, fn, 1, 4);
+    // The staged argument describes the old signature, so the call is refused
+    // and the handle rebinds.
+    int result = -1;
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_ERR_STALE);
 
-    int result = 0;
-    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(gab_call_restage(fn_call, &err));
+
+    gab_arg_int(fn_call, 0, 3);
+    gab_arg_int(fn_call, 1, 4);
+
+    result = 0;
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
     assert(result == 7);
 
-    // A signature change that leaves some arguments unset is still caught: the
-    // rebind clears them all, so a partial re-stage is an unset argument.
+    // A restage clears every argument, so supplying only some of them is an
+    // unset argument rather than a stale value reaching the new body.
     GabScript *v3 = gab_compile(
         vm, "s.gab", "module S;\nfunc step(a: int, b: int, c: int): int { return a + b + c; }\n", &err);
     assert(v3);
 
-    gab_arg_int(vm, fn, 0, 1);
+    gab_arg_int(fn_call, 0, 1);
 
     result = -1;
-    assert(gab_call(vm, fn, &result, &err) != GAB_OK);
+    assert(gab_call(vm, fn_call, &result, &err) != GAB_OK);
 
-    gab_func_free(fn);
+    gab_call_free(fn_call);
+
     gab_script_free(vm, v3);
     gab_script_free(vm, v2);
     gab_script_free(vm, v1);
     gab_vm_free(vm);
 }
 
-// A handle carries a little spare capacity, but a reload can outgrow it. The
-// handle cannot grow — the host owns the pointer — so this is the one reload a
-// host must follow with a fresh lookup, and it is told so rather than left with
-// a handle describing the wrong call.
+// A reload of any width is recoverable through the handle the host already has:
+// the handle grows its own arrays without moving, so no reload forces a fresh
+// lookup.
 static void test_a_reload_too_wide_for_the_handle_is_reported(void) {
     GabVM *vm = gab_vm_new();
 
@@ -909,13 +989,16 @@ static void test_a_reload_too_wide_for_the_handle_is_reported(void) {
     GabFunc *fn = gab_lookup(vm, "S", "f", &err);
     assert(fn);
 
-    gab_arg_int(vm, fn, 0, 1);
+    GabCall *fn_call = gab_call_init(fn, &err);
+    assert(fn_call);
+
+    gab_arg_int(fn_call, 0, 1);
 
     int result = 0;
-    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
     assert(result == 1);
 
-    // Far more parameters than the handle was sized for.
+    // Far more parameters than the handle was originally sized for.
     GabScript *v2 = gab_compile(vm, "s.gab",
                                 "module S;\n"
                                 "func f(a: int, b: int, c: int, d: int, e: int, g: int, h: int, i: int,\n"
@@ -924,33 +1007,32 @@ static void test_a_reload_too_wide_for_the_handle_is_reported(void) {
     assert(v2);
 
     result = -1;
-    assert(gab_call(vm, fn, &result, &err) == GAB_ERR_STALE);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_ERR_STALE);
     assert(err.message[0] != '\0');
 
-    // A fresh handle is sized for the new signature and works.
-    GabFunc *reloaded = gab_lookup(vm, "S", "f", &err);
-    assert(reloaded);
-    assert(gab_func_arity(reloaded) == 12);
+    // The same handle now describes the new signature, and the same call
+    // restages onto it.
+    assert(gab_func_arity(fn) == 12);
+    assert(gab_call_restage(fn_call, &err));
 
     for (int i = 0; i < 12; i++) {
-        gab_arg_int(vm, reloaded, i, i);
+        gab_arg_int(fn_call, i, i);
     }
 
     result = -1;
-    assert(gab_call(vm, reloaded, &result, &err) == GAB_OK);
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
     assert(result == 0);
 
-    gab_func_free(reloaded);
-    gab_func_free(fn);
+    gab_call_free(fn_call);
+
     gab_script_free(vm, v2);
     gab_script_free(vm, v1);
     gab_vm_free(vm);
 }
 
-// The VM owns every handle it hands out, so a host that never calls
-// gab_func_free leaks nothing — and one that does, out of order, must leave the
-// rest working. Releasing is a swap-remove, so a survivor's index moves
-// underneath it.
+// The VM owns every handle it hands out and there is no way to release one
+// early, so a host that looks the same functions up repeatedly accumulates
+// handles the VM must account for and free with itself.
 static void test_the_vm_owns_its_handles(void) {
     GabVM *vm = gab_vm_new();
 
@@ -965,36 +1047,93 @@ static void test_the_vm_owns_its_handles(void) {
 
     const char *names[] = {"a", "b", "c"};
     GabFunc *handles[9];
+    GabCall *calls[9];
 
     for (int i = 0; i < 9; i++) {
         handles[i] = gab_lookup(vm, NULL, names[i % 3], &err);
         assert(handles[i]);
+
+        calls[i] = gab_call_init(handles[i], &err);
+        assert(calls[i]);
     }
 
-    // First, last, and two from the middle: every position swap-remove has to
-    // deal with.
-    gab_func_free(handles[0]);
-    gab_func_free(handles[8]);
-    gab_func_free(handles[4]);
-    gab_func_free(handles[3]);
+    // Every handle is independent: repeat lookups of one name each get their
+    // own argument staging, so setting one does not disturb another.
 
     for (int i = 0; i < 9; i++) {
-        if (i == 0 || i == 3 || i == 4 || i == 8) {
-            continue;
-        }
-
-        assert(gab_arg_int(vm, handles[i], 0, 10));
+        assert(gab_arg_int(calls[i], 0, 10));
 
         int result = -1;
-        assert(gab_call(vm, handles[i], &result, &err) == GAB_OK);
+        assert(gab_call(vm, calls[i], &result, &err) == GAB_OK);
         assert(result == 10 + (i % 3) + 1);
     }
 
-    gab_func_free(handles[1]);
 
-    // The four still registered are the VM's to release. Under a leak checker
-    // this is the assertion: forgetting them costs nothing.
+    // All nine are the VM's to release. Under a leak checker this is the
+    // assertion: the host frees nothing and nothing leaks.
+    for (int i = 0; i < 9; i++) {
+        gab_call_free(calls[i]);
+    }
+
     gab_script_free(vm, script);
+    gab_vm_free(vm);
+}
+
+// Two callers of one function stage independently, which is the whole reason a
+// call is separate from a handle. Interleaved on purpose: the bug this rules out
+// is one caller finishing a call with an argument the other left staged, and the
+// fast path cannot notice it — once every parameter has been set it does no
+// checking at all.
+static void test_two_callers_stage_independently(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    GabScript *mod = gab_compile(vm, "<m>", "func damage(target: int, amount: int): int { return target - amount; }\n", &err);
+    assert(mod);
+
+    GabFunc *fn = gab_lookup(vm, NULL, "damage", &err);
+    assert(fn);
+
+    // One handle, two callers — an engine holding the function in a shared
+    // registry rather than looking it up per system.
+    GabCall *ai = gab_call_init(fn, &err);
+    GabCall *projectile = gab_call_init(fn, &err);
+    assert(ai && projectile);
+
+    // The AI system stages a target and is interrupted before it calls.
+    assert(gab_arg_int(ai, 0, 100));
+
+    // The projectile system runs a whole call in between.
+    assert(gab_arg_int(projectile, 0, 40));
+    assert(gab_arg_int(projectile, 1, 10));
+
+    int result = -1;
+    assert(gab_call(vm, projectile, &result, &err) == GAB_OK);
+    assert(result == 30);
+
+    // The AI system finishes, and its target is the one it staged.
+    assert(gab_arg_int(ai, 1, 5));
+
+    result = -1;
+    assert(gab_call(vm, ai, &result, &err) == GAB_OK);
+    assert(result == 95);
+
+    // Sticky arguments are per caller too: each keeps its own target.
+    assert(gab_arg_int(projectile, 1, 1));
+
+    result = -1;
+    assert(gab_call(vm, projectile, &result, &err) == GAB_OK);
+    assert(result == 39);
+
+    result = -1;
+    assert(gab_call(vm, ai, &result, &err) == GAB_OK);
+    assert(result == 95);
+
+    gab_call_free(projectile);
+    gab_call_free(ai);
+
+    gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
 
@@ -1025,6 +1164,7 @@ int main(void) {
     test_call_with_scalar_args();
     test_call_in_a_loop();
     test_struct_argument_and_return();
+    test_two_callers_stage_independently();
     test_bad_arguments_are_rejected();
 
     printf("gab_api_test: all tests passed\n");
