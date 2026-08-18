@@ -17,6 +17,7 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->alignment = 1;
     type->fields = NULL;
     type->field_count = 0;
+    type->pointee = NULL;
 
     return type;
 }
@@ -84,9 +85,12 @@ bool type_field_offset(const Type *type, const String *name, size_t *out_offset)
     return true;
 }
 
-TypeSpec *type_spec_create(StringRef name) {
+bool type_is_pointer(const Type *type) { return type && type->kind == TYPE_POINTER; }
+
+TypeSpec *type_spec_create(StringRef name, unsigned int pointer_depth) {
     TypeSpec *spec = malloc(sizeof(TypeSpec));
     spec->name = name;
+    spec->pointer_depth = pointer_depth;
 
     return spec;
 }

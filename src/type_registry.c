@@ -5,7 +5,9 @@
 #include "type.h"
 
 #include <assert.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static Type *register_builtin(TypeRegistry *registry, TypeKind kind, const char *name, size_t size,
                               size_t alignment) {
@@ -33,6 +35,7 @@ void type_registry_register_builtins(TypeRegistry *registry) {
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
     registry->map = type_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->pointers = pointer_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
     registry->strings = strings;
     type_registry_register_builtins(registry);
@@ -40,7 +43,35 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     return registry;
 }
 
-void type_registry_destroy(TypeRegistry *registry) { type_map_destroy(registry->map); }
+void type_registry_destroy(TypeRegistry *registry) {
+    type_map_destroy(registry->map);
+    pointer_map_destroy(registry->pointers);
+}
+
+Type *type_registry_pointer_to(TypeRegistry *registry, Type *pointee) {
+    Type **existing = pointer_map_lookup(registry->pointers, pointee);
+    if (existing) {
+        return *existing;
+    }
+
+    // The name is only ever read by diagnostics, but it is interned like any
+    // other so that a Type always has a printable name.
+    size_t length = strlen(pointee->name->data) + 2;
+    char *name = arena_alloc(registry->arena, length);
+    snprintf(name, length, "*%s", pointee->name->data);
+
+    Type *type = type_create(registry->arena, TYPE_POINTER, string_from_cstr(registry->strings, name));
+
+    // Always a raw address to the payload, so a stack pointer and a heap one
+    // are byte-identical; only the resolver knows which is which.
+    type->size = sizeof(void *);
+    type->alignment = _Alignof(void *);
+    type->pointee = pointee;
+
+    pointer_map_insert(registry->pointers, pointee, type);
+
+    return type;
+}
 
 Type *type_registry_get(TypeRegistry *registry, String *name) {
     Type **type = type_map_lookup(registry->map, name);

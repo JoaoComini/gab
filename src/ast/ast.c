@@ -296,7 +296,8 @@ Type *ast_script_resolve_type(ResolverState *state, TypeSpec *spec, Span span) {
         return NULL;
     }
 
-    Type *type = type_registry_get(state->current_scope->type_registry, resolver_intern(state, spec->name));
+    TypeRegistry *registry = state->current_scope->type_registry;
+    Type *type = type_registry_get(registry, resolver_intern(state, spec->name));
 
     if (!type) {
         char *name = string_ref_to_cstr(spec->name);
@@ -304,6 +305,10 @@ Type *ast_script_resolve_type(ResolverState *state, TypeSpec *spec, Span span) {
         free(name);
 
         return resolver_error_type(state);
+    }
+
+    for (unsigned int i = 0; i < spec->pointer_depth; i++) {
+        type = type_registry_pointer_to(registry, type);
     }
 
     return type;
@@ -442,8 +447,10 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
             }
 
             // The struct is registered only after its fields resolve, so a
-            // self-reference would otherwise surface as "unknown type".
-            if (string_ref_equals_cstr(field->type_spec->name, struct_name->data)) {
+            // self-reference would otherwise surface as "unknown type". A
+            // pointer to self is not containment, so only depth 0 is rejected.
+            if (field->type_spec->pointer_depth == 0 &&
+                string_ref_equals_cstr(field->type_spec->name, struct_name->data)) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, field->span, "struct '%s' cannot contain itself",
                            struct_name->data);
                 poisoned = true;

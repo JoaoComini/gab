@@ -15,6 +15,7 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser);
 static ASTStmt *parse_func_decl_stmt(Parser *parser);
 static ASTStmt *parse_struct_decl_stmt(Parser *parser);
 static ASTField *parse_field(Parser *parser, const char *name_message);
+static TypeSpec *parse_type_spec(Parser *parser);
 static ASTStmt *parse_if_stmt(Parser *parser);
 static ASTStmt *parse_block_stmt(Parser *parser);
 static ASTStmt *parse_return_stmt(Parser *parser);
@@ -217,13 +218,10 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser) {
     if (parser->current.type == TOKEN_COLON) {
         parser_next_token(parser); // eat ':'
 
-        if (!parser_expect(parser, TOKEN_IDENT, "expected a type after ':'")) {
+        spec = parse_type_spec(parser);
+        if (!spec) {
             return NULL;
         }
-
-        spec = type_spec_create(parser->current.lexeme);
-
-        parser_next_token(parser);
     }
 
     if (parser->current.type == TOKEN_SEMICOLON) {
@@ -334,14 +332,32 @@ static ASTField *parse_field(Parser *parser, const char *name_message) {
 
     parser_next_token(parser); // eat ':'
 
-    if (!parser_expect(parser, TOKEN_IDENT, "expected type after ':'")) {
+    TypeSpec *type = parse_type_spec(parser);
+    if (!type) {
         return NULL;
     }
 
-    TypeSpec *type = type_spec_create(parser->current.lexeme);
-    parser_next_token(parser); // eat type
-
     return ast_field_create(span, name, type);
+}
+
+// A type position, which is a name preceded by any number of '*'. Prefix
+// '*' is the same token as multiplication; position is what tells them apart.
+static TypeSpec *parse_type_spec(Parser *parser) {
+    unsigned int pointer_depth = 0;
+
+    while (parser->current.type == TOKEN_MUL) {
+        pointer_depth++;
+        parser_next_token(parser); // eat '*'
+    }
+
+    if (!parser_expect(parser, TOKEN_IDENT, "expected a type")) {
+        return NULL;
+    }
+
+    TypeSpec *spec = type_spec_create(parser->current.lexeme, pointer_depth);
+    parser_next_token(parser); // eat the type name
+
+    return spec;
 }
 
 static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
@@ -439,14 +455,11 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
     if (parser->current.type == TOKEN_COLON) {
         parser_next_token(parser); // eat ':'
 
-        if (!parser_expect(parser, TOKEN_IDENT, "expected type after ':'")) {
+        func_type = parse_type_spec(parser);
+        if (!func_type) {
             ast_field_list_free(&func_params);
             return NULL;
         }
-
-        func_type = type_spec_create(parser->current.lexeme);
-
-        parser_next_token(parser); // eat return type
     }
 
     ASTStmt *func_body = parse_block_stmt(parser);
