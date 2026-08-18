@@ -14,6 +14,8 @@
 ASTScript *ast_script_create() {
     ASTScript *script = malloc(sizeof(ASTScript));
     script->statements = ast_stmt_list_create();
+    script->module_name = (StringRef){.data = NULL, .length = 0};
+    script->module_span = (Span){0};
 
     return script;
 }

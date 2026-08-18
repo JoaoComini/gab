@@ -94,6 +94,36 @@ static void test_colons() {
     assert_token(&lexer, TOKEN_EOF);
 }
 
+// A doubled colon is one token, so qualifying a name by its module is distinct
+// from annotating a type with one. The two must not be confusable: '::' is
+// never two ':', and ': :' is never '::'.
+static void test_colon_colon() {
+    Lexer lexer = test_lexer("Player::Config");
+    assert_identifier(&lexer, "Player");
+    assert_token(&lexer, TOKEN_COLON_COLON);
+    assert_identifier(&lexer, "Config");
+    assert_token(&lexer, TOKEN_EOF);
+
+    // A lone colon still annotates a type.
+    lexer = test_lexer("x: int");
+    assert_identifier(&lexer, "x");
+    assert_token(&lexer, TOKEN_COLON);
+    assert_identifier(&lexer, "int");
+    assert_token(&lexer, TOKEN_EOF);
+
+    // Separated colons stay separate.
+    lexer = test_lexer(": :");
+    assert_token(&lexer, TOKEN_COLON);
+    assert_token(&lexer, TOKEN_COLON);
+    assert_token(&lexer, TOKEN_EOF);
+
+    // Three in a row is '::' then ':', not an error.
+    lexer = test_lexer(":::");
+    assert_token(&lexer, TOKEN_COLON_COLON);
+    assert_token(&lexer, TOKEN_COLON);
+    assert_token(&lexer, TOKEN_EOF);
+}
+
 static void test_whitespace() {
     Lexer lexer = test_lexer("  \t\n42 \n + ");
     assert_token(&lexer, TOKEN_INT);
@@ -109,7 +139,7 @@ static void test_identifiers() {
 }
 
 static void test_keywords() {
-    Lexer lexer = test_lexer("let return if else func true false");
+    Lexer lexer = test_lexer("let return if else func true false struct module");
     assert_token(&lexer, TOKEN_LET);
     assert_token(&lexer, TOKEN_RETURN);
     assert_token(&lexer, TOKEN_IF);
@@ -117,6 +147,8 @@ static void test_keywords() {
     assert_token(&lexer, TOKEN_FUNC);
     assert_token(&lexer, TOKEN_TRUE);
     assert_token(&lexer, TOKEN_FALSE);
+    assert_token(&lexer, TOKEN_STRUCT);
+    assert_token(&lexer, TOKEN_MODULE);
 }
 
 static void test_errors() {
@@ -153,6 +185,7 @@ int main(void) {
     test_parentheses();
     test_braces();
     test_colons();
+    test_colon_colon();
     test_whitespace();
     test_identifiers();
     test_keywords();

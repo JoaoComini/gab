@@ -4,12 +4,19 @@
 #include "ast/stmt.h"
 #include "diagnostics.h"
 #include "scope.h"
+#include "string/string_ref.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 
 typedef struct ASTScript {
     ASTStmtList statements;
+
+    // The unit's 'module' directive. 'module_name.data' is NULL when the unit
+    // declared none, in which case its declarations belong to the root
+    // namespace. The span is kept for diagnostics about the directive itself.
+    StringRef module_name;
+    Span module_span;
 } ASTScript;
 
 ASTScript *ast_script_create();

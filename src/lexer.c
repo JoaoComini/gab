@@ -86,6 +86,8 @@ const char *token_description(TokenType type) {
         return "';'";
     case TOKEN_COLON:
         return "':'";
+    case TOKEN_COLON_COLON:
+        return "'::'";
     case TOKEN_COMMA:
         return "','";
     case TOKEN_DOT:
@@ -96,6 +98,8 @@ const char *token_description(TokenType type) {
         return "'func'";
     case TOKEN_STRUCT:
         return "'struct'";
+    case TOKEN_MODULE:
+        return "'module'";
     case TOKEN_RETURN:
         return "'return'";
     case TOKEN_IF:
@@ -169,6 +173,10 @@ static Token lexer_identifier(Lexer *lexer) {
 
     if (string_ref_equals_cstr(ref, "struct")) {
         return token_create_ref(lexer, TOKEN_STRUCT, ref);
+    }
+
+    if (string_ref_equals_cstr(ref, "module")) {
+        return token_create_ref(lexer, TOKEN_MODULE, ref);
     }
 
     if (string_ref_equals_cstr(ref, "return")) {
@@ -301,7 +309,8 @@ Token lexer_next(Lexer *lexer) {
     case ';':
         return token_create(lexer, TOKEN_SEMICOLON);
     case ':':
-        return token_create(lexer, TOKEN_COLON);
+        // '::' qualifies a name by its module; a lone ':' annotates a type.
+        return lexer_handle_op_eq(lexer, TOKEN_COLON, TOKEN_INVALID, ':', TOKEN_COLON_COLON);
     case ',':
         return token_create(lexer, TOKEN_COMMA);
     case '.':

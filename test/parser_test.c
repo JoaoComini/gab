@@ -440,7 +440,77 @@ static void test_expression_not_assignable() {
     assert_parse_error(func_wrap("2 = 1"), "expression is not assignable");
 }
 
+// The directive names the unit's namespace. It is optional, and its absence is
+// what keeps every script written before modules existed parsing unchanged.
+static void test_module_directive() {
+    ASTScript *script = assert_parse("module Player;\nfunc f(): int { return 1; }\n");
+
+    assert(script->module_name.data);
+    assert(script->module_name.length == 6);
+    assert(strncmp(script->module_name.data, "Player", 6) == 0);
+    assert(script->module_span.line == 1);
+
+    // The directive is not a statement; it names the unit.
+    assert(script->statements.size == 1);
+
+    ast_script_destroy(script);
+}
+
+static void test_module_directive_is_optional() {
+    ASTScript *script = assert_parse("func f(): int { return 1; }\n");
+
+    assert(script->module_name.data == NULL);
+    assert(script->module_name.length == 0);
+
+    ast_script_destroy(script);
+}
+
+static void test_module_directive_alone() {
+    ASTScript *script = assert_parse("module Player;\n");
+
+    assert(script->module_name.data);
+    assert(script->statements.size == 0);
+
+    ast_script_destroy(script);
+}
+
+// Nested names are rejected rather than given a meaning: a '::' would have to
+// imply either a hierarchy or a longer flat name, and both readings cost more
+// than an error until something needs one.
+static void test_module_name_cannot_be_nested() {
+    assert_parse_error("module Player::Movement;\nfunc f(): int { return 1; }\n",
+                       "module names cannot be nested; 'Player::Movement' must be a single identifier");
+}
+
+static void test_module_must_come_first() {
+    assert_parse_error("func f(): int { return 1; }\nmodule Player;\n",
+                       "'module' must appear once, before any declaration");
+}
+
+static void test_module_cannot_be_declared_twice() {
+    assert_parse_error("module A;\nmodule B;\nfunc f(): int { return 1; }\n",
+                       "'module' must appear once, before any declaration");
+}
+
+static void test_module_needs_a_name() {
+    assert_parse_error("module ;\n", "expected a module name after 'module', found ';'");
+}
+
+static void test_module_needs_a_semicolon() {
+    assert_parse_error("module Player\nfunc f(): int { return 1; }\n",
+                       "expected ';' after the module name, found 'func'");
+}
+
 int main() {
+
+    test_module_directive();
+    test_module_directive_is_optional();
+    test_module_directive_alone();
+    test_module_name_cannot_be_nested();
+    test_module_must_come_first();
+    test_module_cannot_be_declared_twice();
+    test_module_needs_a_name();
+    test_module_needs_a_semicolon();
 
     test_single_number();
     test_booleans();

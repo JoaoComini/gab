@@ -47,14 +47,82 @@ void parser_next_token(Parser *parser) { parser->current = lexer_next(parser->le
 
 static Span parser_span(Parser *parser) { return token_span(parser->current); }
 
+// 'module Name;' — the unit's namespace. Optional, but if present it must come
+// before any declaration, so this runs once before the declaration loop rather
+// than as one more case inside it.
+static void parse_module_directive(Parser *parser, ASTScript *script) {
+    Span span = parser_span(parser);
+
+    parser_next_token(parser);
+
+    if (!parser_expect(parser, TOKEN_IDENT, "expected a module name after 'module'")) {
+        return;
+    }
+
+    StringRef name = parser->current.lexeme;
+
+    parser_next_token(parser);
+
+    // A nested name has to mean either a hierarchy or a longer flat name, and
+    // both readings are worse than an error until something needs one. Rejecting
+    // it keeps a qualified name unambiguous: one '::', module then symbol.
+    if (parser->current.type == TOKEN_COLON_COLON) {
+        // The whole attempted name, so the message shows what was written
+        // rather than just the first segment.
+        const char *begin = name.data;
+        size_t length = name.length;
+
+        while (parser->current.type == TOKEN_COLON_COLON) {
+            parser_next_token(parser);
+
+            if (parser->current.type != TOKEN_IDENT) {
+                break;
+            }
+
+            length = (size_t)(parser->current.lexeme.data - begin) + parser->current.lexeme.length;
+            parser_next_token(parser);
+        }
+
+        diag_error(parser->diagnostics, GAB_ERR_SYNTAX, span,
+                   "module names cannot be nested; '%.*s' must be a single identifier", (int)length, begin);
+
+        return;
+    }
+
+    script->module_name = name;
+    script->module_span = span;
+
+    if (parser_expect(parser, TOKEN_SEMICOLON, "expected ';' after the module name")) {
+        parser_next_token(parser);
+    }
+}
+
 bool parser_parse(Parser *parser, ASTScript *script) {
     size_t errors_before = diagnostics_count(parser->diagnostics);
 
     parser_next_token(parser);
 
+    if (parser->current.type == TOKEN_MODULE) {
+        parse_module_directive(parser, script);
+    }
+
     while (parser->current.type != TOKEN_EOF) {
         if (parser->current.type == TOKEN_SEMICOLON) {
             parser_next_token(parser);
+            continue;
+        }
+
+        // Reachable only after a declaration, since the first token was handled
+        // above: a directive here is either a second one or a late one, and
+        // both are the same mistake — it is not where the module is named.
+        // Parsed into a throwaway so a misplaced directive cannot change the
+        // namespace, but still consumed so it does not cascade.
+        if (parser->current.type == TOKEN_MODULE) {
+            diag_error(parser->diagnostics, GAB_ERR_SYNTAX, parser_span(parser),
+                       "'module' must appear once, before any declaration");
+
+            ASTScript discarded = *script;
+            parse_module_directive(parser, &discarded);
             continue;
         }
 
@@ -101,6 +169,7 @@ static void parser_synchronize(Parser *parser) {
         case TOKEN_LET:
         case TOKEN_FUNC:
         case TOKEN_STRUCT:
+        case TOKEN_MODULE:
         case TOKEN_IF:
         case TOKEN_RETURN:
             return;
