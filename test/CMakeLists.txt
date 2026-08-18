@@ -22,6 +22,10 @@ set(
 function(add_gab_test TEST_NAME TEST_SOURCE)
     add_executable(${TEST_NAME} ${TEST_SOURCE})
 
+    # Every check in this suite is an assert, so a Release build defining NDEBUG
+    # would compile the checks away and report a vacuous pass.
+    target_compile_options(${TEST_NAME} PRIVATE -UNDEBUG)
+
     target_link_libraries(${TEST_NAME} PRIVATE gab)
     target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 

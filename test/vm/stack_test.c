@@ -18,10 +18,11 @@ static void test_stack_base_is_aligned_at_creation() {
     vm_free(vm);
 }
 
-// realloc does not preserve over-alignment, which is why growth allocates
-// fresh. This runs a recursion deep enough to force the stack past its initial
-// capacity and checks the base survived.
-static void test_stack_base_stays_aligned_across_growth() {
+// The stack is reserved once and never reallocated, because an address into it
+// must stay valid for as long as what it points at. A recursion deep enough to
+// have forced growth under the old scheme must leave the buffer exactly where
+// it was.
+static void test_stack_does_not_move_under_deep_recursion() {
     VM *vm = vm_create();
 
     const uint8_t *before = vm->stack;
@@ -34,19 +35,17 @@ static void test_stack_base_stays_aligned_across_growth() {
                    "}\n"
                    "let r: int = down(200);\n");
 
-    // The recursion must actually have moved the buffer, or this proves
-    // nothing about growth.
-    assert(vm->stack_capacity > capacity_before);
-    assert(vm->stack != before);
+    assert(vm->stack == before);
+    assert(vm->stack_capacity == capacity_before);
 
     assert(is_8_byte_aligned(vm->stack));
 
     vm_free(vm);
 }
 
-// Growth copies the live frames rather than resizing in place, so a value
-// written before a growth must still be readable after one.
-static void test_growth_preserves_live_frames() {
+// Deep recursion must not disturb the frames already on the stack: a value
+// written before the recursion has to still be readable after it.
+static void test_deep_recursion_preserves_live_frames() {
     VM *vm = vm_create();
 
     vm_execute(vm, "func down(n: int): int {\n"
@@ -57,9 +56,7 @@ static void test_growth_preserves_live_frames() {
                    "}\n"
                    "let r: int = down(200);\n");
 
-    assert(vm->stack_capacity > 256);
-
-    // 200 + 199 + ... + 1: every frame's 'keep' survived the reallocation.
+    // 200 + 199 + ... + 1: every frame's 'keep' is still there.
     assert(vm_slot(vm, 0)->as_int == 20100);
 
     vm_free(vm);
@@ -78,8 +75,8 @@ static void test_registers_are_slot_granular() {
 
 int main() {
     test_stack_base_is_aligned_at_creation();
-    test_stack_base_stays_aligned_across_growth();
-    test_growth_preserves_live_frames();
+    test_stack_does_not_move_under_deep_recursion();
+    test_deep_recursion_preserves_live_frames();
     test_registers_are_slot_granular();
 
     printf("stack_test: all tests passed\n");

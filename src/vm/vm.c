@@ -20,7 +20,13 @@
 #include <string.h>
 
 #define ARENA_BLOCK_SIZE 2048
-#define VM_INITIAL_STACK_SIZE 256
+
+// The stack never moves, so it is sized for the worst case up front: every
+// frame to the call-depth limit addressing every register it can name. That is
+// a few hundred kilobytes, and it is what makes '&local' sound — an address
+// into a buffer realloc could move would dangle, and untagged slots give the
+// VM no way to find live pointers and rebase them.
+#define VM_STACK_SIZE (VM_MAX_CALL_DEPTH * VM_MAX_REGISTERS)
 
 // The base must hold an 8-byte value at its natural alignment. malloc already
 // guarantees at least alignof(max_align_t), which covers this on every platform
@@ -46,7 +52,7 @@ VM *vm_create() {
 
     scope_init(&vm->global_scope, vm->persistent_arena, &vm->strings, NULL);
 
-    vm->stack_capacity = VM_INITIAL_STACK_SIZE;
+    vm->stack_capacity = VM_STACK_SIZE;
     vm->stack = calloc(vm->stack_capacity, sizeof(Value));
     vm->registers = vm->stack;
     vm->frame_count = 0;
@@ -56,33 +62,10 @@ VM *vm_create() {
 
 // Registers sit at base + r * sizeof(Value), so the stack must hold every
 // register the frame can address before it starts executing. 'needed' counts
-// slots.
-static bool vm_reserve_stack(VM *vm, size_t needed) {
-    if (needed <= vm->stack_capacity) {
-        return true;
-    }
-
-    size_t capacity = vm->stack_capacity;
-    while (capacity < needed) {
-        capacity *= 2;
-    }
-
-    uint8_t *stack = realloc(vm->stack, capacity * sizeof(Value));
-    if (!stack) {
-        return false;
-    }
-
-    memset(stack + vm->stack_capacity * sizeof(Value), 0, (capacity - vm->stack_capacity) * sizeof(Value));
-
-    // realloc may move the buffer, so anything pointing into it is rebased.
-    size_t offset = vm->frame_count > 0 ? vm->frames[vm->frame_count - 1].base : 0;
-
-    vm->stack = stack;
-    vm->stack_capacity = capacity;
-    vm->registers = stack + offset;
-
-    return true;
-}
+// slots. The buffer is never resized, so this only reports whether the frame
+// fits: a pointer into the stack must stay valid for as long as its pointee
+// does, which a moving buffer cannot promise.
+static bool vm_reserve_stack(const VM *vm, size_t needed) { return needed <= vm->stack_capacity; }
 
 static bool vm_push_frame(VM *vm, const FuncPrototype *proto, size_t base, size_t return_ip,
                           unsigned int dest) {
@@ -242,6 +225,40 @@ static void vm_store_field(VM *vm, Instruction instruction, size_t width) {
 
     // Only the field's own bytes are written; anything sharing the slot keeps
     // its value.
+    memcpy(dest, vm_reg(vm, r1), width);
+}
+
+// The address a 2-slot pointer register holds. The slot pair is placed at an
+// even index and the stack base is 8-byte aligned, so this is a natural read.
+static uint8_t *vm_read_pointer(const VM *vm, size_t reg) {
+    uint8_t *address;
+    memcpy(&address, vm->registers + reg * sizeof(Value), sizeof(address));
+
+    return address;
+}
+
+static void vm_write_pointer(VM *vm, size_t reg, uint8_t *address) {
+    memcpy(vm->registers + reg * sizeof(Value), &address, sizeof(address));
+}
+
+static void vm_load_field_ptr(VM *vm, Instruction instruction, size_t width) {
+    size_t rd = VM_DECODE_R_RD(instruction);
+    size_t base = VM_DECODE_R_R1(instruction);
+    size_t offset = VM_DECODE_R_R2(instruction);
+
+    const uint8_t *source = vm_read_pointer(vm, base) + offset;
+
+    vm_reg(vm, rd)->as_int = 0;
+    memcpy(vm_reg(vm, rd), source, width);
+}
+
+static void vm_store_field_ptr(VM *vm, Instruction instruction, size_t width) {
+    size_t base = VM_DECODE_R_RD(instruction);
+    size_t r1 = VM_DECODE_R_R1(instruction);
+    size_t offset = VM_DECODE_R_R2(instruction);
+
+    uint8_t *dest = vm_read_pointer(vm, base) + offset;
+
     memcpy(dest, vm_reg(vm, r1), width);
 }
 
@@ -471,6 +488,66 @@ void vm_execute(VM *vm, const char *source) {
         }
         case OP_STORE_FIELD_4: {
             vm_store_field(vm, instruction, 4);
+            break;
+        }
+        case OP_ADDR_OF: {
+            size_t rd = VM_DECODE_R_RD(instruction);
+            size_t base = VM_DECODE_R_R1(instruction);
+            size_t offset = VM_DECODE_R_R2(instruction);
+
+            // Addresses are absolute, not frame-relative: the pointee may
+            // outlive the frame the address was taken in, and a caller reading
+            // through the pointer has a different base. The byte offset reaches
+            // a field within the slots, so '&v.y' names the field, not v.
+            vm_write_pointer(vm, rd, vm->registers + base * sizeof(Value) + offset);
+            break;
+        }
+        case OP_LOAD_FIELD_PTR_1: {
+            vm_load_field_ptr(vm, instruction, 1);
+            break;
+        }
+        case OP_LOAD_FIELD_PTR_2: {
+            vm_load_field_ptr(vm, instruction, 2);
+            break;
+        }
+        case OP_LOAD_FIELD_PTR_4: {
+            vm_load_field_ptr(vm, instruction, 4);
+            break;
+        }
+        case OP_STORE_FIELD_PTR_1: {
+            vm_store_field_ptr(vm, instruction, 1);
+            break;
+        }
+        case OP_STORE_FIELD_PTR_2: {
+            vm_store_field_ptr(vm, instruction, 2);
+            break;
+        }
+        case OP_STORE_FIELD_PTR_4: {
+            vm_store_field_ptr(vm, instruction, 4);
+            break;
+        }
+        case OP_ADD_PTR: {
+            size_t rd = VM_DECODE_R_RD(instruction);
+            size_t base = VM_DECODE_R_R1(instruction);
+            size_t offset = VM_DECODE_R_R2(instruction);
+
+            vm_write_pointer(vm, rd, vm_read_pointer(vm, base) + offset);
+            break;
+        }
+        case OP_LOAD_PTR_N: {
+            size_t rd = VM_DECODE_R_RD(instruction);
+            size_t base = VM_DECODE_R_R1(instruction);
+            size_t slots = VM_DECODE_R_R2(instruction);
+
+            memcpy(vm_reg(vm, rd), vm_read_pointer(vm, base), slots * sizeof(Value));
+            break;
+        }
+        case OP_STORE_PTR_N: {
+            size_t base = VM_DECODE_R_RD(instruction);
+            size_t r1 = VM_DECODE_R_R1(instruction);
+            size_t slots = VM_DECODE_R_R2(instruction);
+
+            memcpy(vm_read_pointer(vm, base), vm_reg(vm, r1), slots * sizeof(Value));
             break;
         }
         case OP_JMP: {
