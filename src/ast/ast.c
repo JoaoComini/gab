@@ -33,6 +33,8 @@ typedef struct {
 } FuncContext;
 
 typedef struct {
+    // Dies with the compile: the AST, diagnostics, and the scopes of blocks
+    // that no handle can outlive.
     Arena *arena;
 
     Scope *global_scope;
@@ -42,6 +44,12 @@ typedef struct {
 
     Diagnostics *diagnostics;
 } ResolverState;
+
+// Where anything reachable after the compile has to live. A struct Type goes
+// into the TypeRegistry and a Symbol into the global scope's table, both of
+// which outlive the transient arena — allocating them from it leaves the
+// registry full of pointers into memory the next compile reuses.
+static Arena *resolver_persistent_arena(ResolverState *state) { return state->global_scope->arena; }
 
 static Type *resolver_error_type(ResolverState *state) {
     return type_registry_error_type(state->current_scope->type_registry);
@@ -522,7 +530,7 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         size_t param_count = stmt->func_decl.params.size;
 
         if (func && param_count > 0) {
-            func->func.params = arena_alloc(state->arena, param_count * sizeof(Type *));
+            func->func.params = arena_alloc(resolver_persistent_arena(state), param_count * sizeof(Type *));
             func->func.param_count = param_count;
         }
 
@@ -571,7 +579,8 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
             break;
         }
 
-        Type *type = type_struct_create(state->arena, struct_name, stmt->struct_decl.fields.size);
+        Type *type =
+            type_struct_create(resolver_persistent_arena(state), struct_name, stmt->struct_decl.fields.size);
         bool poisoned = false;
 
         for (size_t i = 0; i < stmt->struct_decl.fields.size; i++) {

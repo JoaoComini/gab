@@ -1,5 +1,7 @@
 #include "vm/vm.h"
 
+#include "string/string.h"
+#include "symbol_table.h"
 #include "type_registry.h"
 #include "vm/opcode.h"
 
@@ -99,12 +101,65 @@ static void test_top_level_runs_as_frame_zero() {
     vm_free(vm);
 }
 
+// A struct type registered by one compile is reachable from the TypeRegistry,
+// which outlives every compile — so it must not be allocated from the arena a
+// compile resets. arena_reset only rewinds each block, leaving the memory
+// mapped, so a stale type reads fine until a later compile reuses those bytes.
+// That makes this the shape of the failure rather than an immediate crash.
+static void test_types_survive_a_later_compile() {
+    VM *vm = vm_create();
+
+    vm_execute(vm, "struct Player { health: int, mana: int }\n");
+
+    Type *player = type_registry_get(vm->global_scope.type_registry, string_from_cstr(&vm->strings, "Player"));
+    assert(player);
+
+    size_t size = player->size;
+    size_t field_count = player->field_count;
+
+    // Enough of a second script to reuse the memory the first one released.
+    vm_execute(vm, "func a(x: int, y: int): int { let q: int = x + y; let w: int = q * q; return w; }\n"
+                   "func b(x: int, y: int): int { let q: int = x - y; let w: int = q * q; return w; }\n");
+
+    assert(strcmp(player->name->data, "Player") == 0);
+    assert(player->size == size);
+    assert(player->field_count == field_count);
+
+    vm_free(vm);
+}
+
+// Same rule for a function's signature: the Symbol lives in the global scope, so
+// its parameter array has to live at least as long. This is what a host reads
+// when it resolves a function once and calls it every frame.
+static void test_function_signatures_survive_a_later_compile() {
+    VM *vm = vm_create();
+
+    vm_execute(vm, "struct Player { health: int, mana: int }\n"
+                   "func on_update(p: Player, dt: float): int { return p.health; }\n");
+
+    Symbol *on_update = scope_symbol_lookup(&vm->global_scope, string_from_cstr(&vm->strings, "on_update"));
+    assert(on_update && on_update->kind == SYMBOL_FUNC);
+    assert(on_update->func.param_count == 2);
+
+    vm_execute(vm, "func a(x: int, y: int): int { let q: int = x + y; let w: int = q * q; return w; }\n"
+                   "func b(x: int, y: int): int { let q: int = x - y; let w: int = q * q; return w; }\n");
+
+    assert(on_update->func.param_count == 2);
+    assert(strcmp(on_update->func.params[0]->name->data, "Player") == 0);
+    assert(strcmp(on_update->func.params[1]->name->data, "float") == 0);
+    assert(strcmp(on_update->func.return_type->name->data, "int") == 0);
+
+    vm_free(vm);
+}
+
 int main() {
     test_vm_execute();
     test_top_level_runs_as_frame_zero();
     test_two_vms_are_independent();
     test_empty_function_body();
     test_struct_typed_local();
+    test_types_survive_a_later_compile();
+    test_function_signatures_survive_a_later_compile();
 
     return 0;
 }
