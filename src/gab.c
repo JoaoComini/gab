@@ -17,17 +17,17 @@
 // tag is only here to give the header something opaque to point at.
 struct GabVM;
 
-// One gab_compile: a chunk to run and a lifetime. Not a namespace — that is
-// the 'module' directive's job, and it may span several of these.
-struct GabModule {
+// One gab_compile: a top-level chunk to run, and nothing else. Deliberately not a
+// namespace — that is the 'module' directive's job, and a host names a module
+// directly when it looks something up. Several units may declare one module,
+// so a unit could not stand in for one anyway.
+
+struct GabScript {
     CompiledScript script;
 
     // Diagnostics live on the VM's compile arena, which the next compile
     // reclaims, so anything a unit must outlive a compile with is copied.
     char name[128];
-
-    // The declared module, empty when the unit named none.
-    char module[128];
 };
 
 // Slack in a handle's arrays, so a reload that adds a parameter or widens a
@@ -93,9 +93,9 @@ struct GabFunc {
     char arg_message[256];
 };
 
-// A module's functions are looked up through the VM's global scope, so a
-// handle is only as valid as the VM. Handles are malloc'd rather than arena
-// allocated because gab_module_free must actually release them.
+// A function is looked up through the VM.s scopes, so a handle is only as valid
+// as the VM. Handles are malloc.d rather than arena allocated so that
+// gab_func_free can actually release one.
 
 // Builds the handle's cached call layout from its symbol's current signature.
 static void gab_func_bind(GabFunc *fn);
@@ -189,7 +189,7 @@ void gab_vm_free(GabVM *vm) {
     vm_free((VM *)vm);
 }
 
-GabModule *gab_compile(GabVM *handle, const char *name, const char *src, GabError *err) {
+GabScript *gab_compile(GabVM *handle, const char *name, const char *src, GabError *err) {
     gab_error_clear(err);
 
     if (!handle || !src) {
@@ -199,18 +199,18 @@ GabModule *gab_compile(GabVM *handle, const char *name, const char *src, GabErro
 
     VM *vm = (VM *)handle;
 
-    GabModule *mod = calloc(1, sizeof(GabModule));
-    if (!mod) {
+    GabScript *script = calloc(1, sizeof(GabScript));
+    if (!script) {
         gab_error_set(err, 0, 0, "out of memory");
         return NULL;
     }
 
-    snprintf(mod->name, sizeof(mod->name), "%s", name ? name : "<module>");
+    snprintf(script->name, sizeof(script->name), "%s", name ? name : "<script>");
 
     Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, vm->compile_arena, mod->name);
+    diagnostics_init(&diagnostics, vm->compile_arena, script->name);
 
-    bool ok = vm_compile(vm, src, &mod->script, &diagnostics);
+    bool ok = vm_compile(vm, src, &script->script, &diagnostics);
 
     if (!ok) {
         // Nothing is printed: a host reports through its own console, and the
@@ -218,39 +218,27 @@ GabModule *gab_compile(GabVM *handle, const char *name, const char *src, GabErro
         gab_error_from_diagnostics(err, &diagnostics);
 
         diagnostics_free(&diagnostics);
-        free(mod);
+        free(script);
 
         return NULL;
     }
 
     diagnostics_free(&diagnostics);
 
-    if (mod->script.module_name) {
-        snprintf(mod->module, sizeof(mod->module), "%s", mod->script.module_name->data);
-    }
-
-    return mod;
+    return script;
 }
 
-const char *gab_module_name(const GabModule *mod) {
-    if (!mod || mod->module[0] == '\0') {
-        return NULL;
-    }
-
-    return mod->module;
-}
-
-GabStatus gab_module_run(GabVM *handle, GabModule *mod, GabError *err) {
+GabStatus gab_run(GabVM *handle, GabScript *script, GabError *err) {
     gab_error_clear(err);
 
-    if (!handle || !mod) {
-        gab_error_set(err, 0, 0, "gab_module_run requires a VM and a module");
+    if (!handle || !script) {
+        gab_error_set(err, 0, 0, "gab_run requires a VM and a script");
         return GAB_ERR_RUNTIME;
     }
 
     VM *vm = (VM *)handle;
 
-    if (vm_run(vm, &mod->script) != VM_RUN_OK) {
+    if (vm_run(vm, &script->script) != VM_RUN_OK) {
         gab_error_set(err, 0, 0, vm->error.message);
         return GAB_ERR_RUNTIME;
     }
@@ -258,15 +246,15 @@ GabStatus gab_module_run(GabVM *handle, GabModule *mod, GabError *err) {
     return GAB_OK;
 }
 
-void gab_module_free(GabVM *handle, GabModule *mod) {
+void gab_script_free(GabVM *handle, GabScript *script) {
     (void)handle;
 
-    if (!mod) {
+    if (!script) {
         return;
     }
 
-    vm_compiled_script_free(&mod->script);
-    free(mod);
+    vm_compiled_script_free(&script->script);
+    free(script);
 }
 
 // --- Types -----------------------------------------------------------------
@@ -288,11 +276,7 @@ static Scope *gab_namespace(VM *vm, const char *module) {
     return found ? *found : NULL;
 }
 
-const GabType *gab_find_type(GabVM *handle, GabModule *mod, const char *name) {
-    return gab_find_type_in(handle, mod ? gab_module_name(mod) : NULL, name);
-}
-
-const GabType *gab_find_type_in(GabVM *handle, const char *module, const char *name) {
+const GabType *gab_find_type(GabVM *handle, const char *module, const char *name) {
     if (!handle || !name) {
         return NULL;
     }
@@ -313,7 +297,7 @@ const GabType *gab_find_type_in(GabVM *handle, const char *module, const char *n
 
     // Walks outward on a miss, so a module sees root-namespace types and
     // builtins — the same visibility a script inside that module has, and the
-    // same walk gab_lookup_in does for symbols.
+    // same walk gab_lookup does for symbols.
     return (const GabType *)scope_type_lookup(scope, interned);
 }
 
@@ -357,14 +341,7 @@ static unsigned int gab_type_slots(const Type *type) {
     return (unsigned int)((type->size + sizeof(Value) - 1) / sizeof(Value));
 }
 
-GabFunc *gab_lookup(GabVM *handle, GabModule *mod, const char *name, GabError *err) {
-    // The unit says which module to look in. A unit is not itself a namespace —
-    // several may share one — so this resolves to the module the unit belongs
-    // to, which is what a host asking "the on_update of this script" means.
-    return gab_lookup_in(handle, mod ? gab_module_name(mod) : NULL, name, err);
-}
-
-GabFunc *gab_lookup_in(GabVM *handle, const char *module, const char *name, GabError *err) {
+GabFunc *gab_lookup(GabVM *handle, const char *module, const char *name, GabError *err) {
     gab_error_clear(err);
 
     if (!handle || !name) {

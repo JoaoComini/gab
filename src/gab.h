@@ -10,7 +10,7 @@
 #include <stdint.h>
 
 typedef struct GabVM GabVM;
-typedef struct GabModule GabModule;
+typedef struct GabScript GabScript;
 typedef struct GabFunc GabFunc;
 typedef struct GabType GabType;
 
@@ -44,25 +44,24 @@ void gab_vm_free(GabVM *vm);
 
 // --- Compiling and running -------------------------------------------------
 
-// Compiles without running, so a module compiles once and runs every frame.
-// Returns NULL on failure and fills 'err' if it is non-NULL. Nothing is
-// printed: reporting is the host's business.
-GabModule *gab_compile(GabVM *vm, const char *name, const char *src, GabError *err);
+// Compiles without running, so a script compiles once and its functions are
+// called every frame. Returns NULL on failure and fills 'err' if it is
+// non-NULL. Nothing is printed: reporting is the host's business.
+//
+// 'name' names the source for diagnostics only. The namespace a unit declares
+// comes from its own 'module' directive, and is a name the host passes to
+// gab_lookup and gab_find_type — not something this handle carries.
+GabScript *gab_compile(GabVM *vm, const char *name, const char *src, GabError *err);
 
-// Runs the module's top level. Safe to call repeatedly.
-GabStatus gab_module_run(GabVM *vm, GabModule *mod, GabError *err);
+// Runs the script's top level. Safe to call repeatedly.
+GabStatus gab_run(GabVM *vm, GabScript *script, GabError *err);
 
-// Frees the compilation unit and its top-level chunk. The function prototypes
-// it added stay for the VM's life: a prototype index is baked into OP_CALL
-// operands, so they cannot be reclaimed per unit. Unloading is therefore not
-// yet supported.
-void gab_module_free(GabVM *vm, GabModule *mod);
-
-// The module the unit declared, or NULL if it declared none and so belongs to
-// the root namespace. A host reads the namespace back rather than assuming it
-// matches the 'name' it passed to gab_compile — the script is what names the
-// module, and the two need not agree.
-const char *gab_module_name(const GabModule *mod);
+// Frees the script and its top-level chunk. Everything the compile declared —
+// symbols, types, and function prototypes — belongs to the VM and outlives
+// this: a prototype index is baked into OP_CALL operands, so it cannot be
+// reclaimed per script. Unloading is therefore not supported, and a GabFunc
+// looked up from this script keeps working after it is freed.
+void gab_script_free(GabVM *vm, GabScript *script);
 
 // --- Types and layout ------------------------------------------------------
 
@@ -70,18 +69,12 @@ const char *gab_module_name(const GabModule *mod);
 // marshalling story: these let a host check that against its own sizeof and
 // offsetof rather than trusting it.
 //
-// 'mod' selects the namespace exactly as it does for gab_lookup: the type is
-// found in the module that unit declared, or in the root namespace when it
-// declared none.
-//
-// Types resolve exactly as symbols do: the module's own are found first, and
-// the root namespace after, so a module's 'Config' shadows a root-level one
-// and 'int' needs no import. An unknown module is a miss rather than a silent
-// fallback to the root.
-const GabType *gab_find_type(GabVM *vm, GabModule *mod, const char *name);
-
-// As gab_find_type, naming the module directly. NULL means the root namespace.
-const GabType *gab_find_type_in(GabVM *vm, const char *module, const char *name);
+// 'module' is the namespace to look in, as written in a unit's 'module'
+// directive; NULL is the root namespace. Types resolve exactly as symbols do:
+// the module's own are found first and the root namespace after, so a module's
+// 'Config' shadows a root-level one and 'int' needs no import. An unknown
+// module is a miss rather than a silent fallback to the root.
+const GabType *gab_find_type(GabVM *vm, const char *module, const char *name);
 
 size_t gab_type_size(const GabType *type);
 size_t gab_type_align(const GabType *type);
@@ -96,23 +89,14 @@ bool gab_field_offset(const GabType *type, const char *field, size_t *out_offset
 // costs no lookup. Returns NULL if the name is missing or names something that
 // is not a function.
 //
-// 'mod' selects the namespace: the name is looked up in the module that unit
-// declared, or in the root namespace when the unit declared none or 'mod' is
-// NULL. It is honoured, which it previously was not — asking one unit for
-// another's symbol used to return that other symbol rather than a miss.
-//
-// A unit is not itself a namespace, since several may declare the same module.
-// Passing any unit of a module therefore reaches all of it.
-GabFunc *gab_lookup(GabVM *vm, GabModule *mod, const char *name, GabError *err);
-
-// As gab_lookup, naming the module directly, for a host that has the name but
-// not the unit handle. NULL means the root namespace.
-GabFunc *gab_lookup_in(GabVM *vm, const char *module, const char *name, GabError *err);
+// 'module' is the namespace, exactly as for gab_find_type; NULL is the root.
+// A module is a name rather than a handle because several units may declare
+// the same one: the namespace is the module, not the unit that compiled it.
+GabFunc *gab_lookup(GabVM *vm, const char *module, const char *name, GabError *err);
 
 int gab_func_arity(const GabFunc *fn);
 
 void gab_func_free(GabFunc *fn);
-
 // Arguments are written into the handle's own buffer, not the live stack:
 // there is no frame yet when these run, and a call the host abandons halfway
 // through leaves nothing behind. Each setter checks the index and the callee's
