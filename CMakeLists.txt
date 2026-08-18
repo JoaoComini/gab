@@ -25,6 +25,7 @@ add_library(gab
     src/vm/chunk.c
     src/vm/vm.c
     src/vm/codegen.c
+    src/gab.c
 )
 
 find_library(MATH_LIBRARY m)

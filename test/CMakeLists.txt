@@ -18,6 +18,7 @@ set(
     vm/pointer_test.c
     vm/stack_test.c
     vm/vm_test.c
+    gab_api_test.c
 )
 
 function(add_gab_test TEST_NAME TEST_SOURCE)

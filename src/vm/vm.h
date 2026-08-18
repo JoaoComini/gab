@@ -165,6 +165,13 @@ bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *di
 // Runs a compiled script as frame zero, leaving its result in slot 0.
 void vm_run(VM *vm, const CompiledScript *script);
 
+// Pushes one frame and runs the interpreter until it unwinds. The result is
+// left at the frame's own r0, which is the slot at base. The embedding API
+// calls in through this; base is a byte offset into the stack, and the caller
+// must already have placed the arguments in the parameter slots above it.
+// Returns false if the frame does not fit.
+bool vm_run_frame(VM *vm, const FuncPrototype *proto, size_t base, unsigned int dest);
+
 void vm_compiled_script_free(CompiledScript *script);
 
 // Compile, run, and discard, reporting any diagnostics to stderr. The

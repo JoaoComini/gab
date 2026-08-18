@@ -303,21 +303,10 @@ void vm_compiled_script_free(CompiledScript *script) {
     script->chunk = NULL;
 }
 
-void vm_run(VM *vm, const CompiledScript *script) {
-    // The top level runs as frame zero, so the interpreter has a single path
-    // and OP_RETURN means the same thing everywhere.
-    FuncPrototype top_level = {
-        .chunk = script->chunk,
-        .arity = 0,
-        .max_registers = (int)script->max_registers,
-    };
-
-    vm->frame_count = 0;
-    if (!vm_push_frame(vm, &top_level, 0, 0, 0)) {
-        fprintf(stderr, "<script>: out of stack space\n");
-        return;
-    }
-
+// Runs until every frame the caller pushed has unwound. Both entry points
+// share it: vm_run pushes frame zero, and a host call pushes one frame for the
+// function it is invoking, so there is exactly one interpreter either way.
+static void vm_run_loop(VM *vm) {
     while (vm->frame_count > 0 &&
            vm->instruction_pointer < vm->frames[vm->frame_count - 1].proto->chunk->instructions.size) {
         CallFrame *frame = &vm->frames[vm->frame_count - 1];
@@ -465,12 +454,16 @@ void vm_run(VM *vm, const CompiledScript *script) {
             memcpy(result, vm_reg(vm, r1), slots * sizeof(Value));
 
             unsigned int dest = frame->dest;
+            size_t frame_base = frame->base;
             vm_pop_frame(vm);
 
             if (vm->frame_count == 0) {
-                // Frame zero returning ends execution; r0.. keeps the result so
-                // callers can still read it.
-                memcpy(vm->stack, result, slots * sizeof(Value));
+                // The last frame returning ends this run, and its result stays
+                // at its own r0 so the caller can read it. That is stack slot 0
+                // for frame zero, and the call block's base for a host call —
+                // which is why it is written relative to the frame, not the
+                // stack.
+                memcpy(vm->stack + frame_base, result, slots * sizeof(Value));
                 continue;
             }
 
@@ -596,6 +589,32 @@ void vm_run(VM *vm, const CompiledScript *script) {
     // running off the end of the chunk rather than through OP_RETURN.
     while (vm->frame_count > 0) {
         vm_pop_frame(vm);
+    }
+}
+
+bool vm_run_frame(VM *vm, const FuncPrototype *proto, size_t base, unsigned int dest) {
+    if (!vm_push_frame(vm, proto, base, 0, dest)) {
+        return false;
+    }
+
+    vm_run_loop(vm);
+
+    return true;
+}
+
+void vm_run(VM *vm, const CompiledScript *script) {
+    // The top level runs as frame zero, so the interpreter has a single path
+    // and OP_RETURN means the same thing everywhere.
+    FuncPrototype top_level = {
+        .chunk = script->chunk,
+        .arity = 0,
+        .max_registers = (int)script->max_registers,
+    };
+
+    vm->frame_count = 0;
+
+    if (!vm_run_frame(vm, &top_level, 0, 0)) {
+        fprintf(stderr, "<script>: out of stack space\n");
     }
 }
 
