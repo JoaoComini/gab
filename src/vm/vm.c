@@ -14,6 +14,7 @@
 
 #include <assert.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,21 +22,13 @@
 #define ARENA_BLOCK_SIZE 2048
 #define VM_INITIAL_STACK_SIZE 256
 
-// The base must hold an 8-byte value at its natural alignment, so the stack is
-// over-aligned rather than merely Value-aligned.
+// The base must hold an 8-byte value at its natural alignment. malloc already
+// guarantees at least alignof(max_align_t), which covers this on every platform
+// with an 8-byte scalar type; the assertion fails the build anywhere it would not.
 #define VM_STACK_ALIGNMENT 8
 
-static uint8_t *vm_stack_alloc(size_t slots) {
-    void *stack = NULL;
-
-    if (posix_memalign(&stack, VM_STACK_ALIGNMENT, slots * sizeof(Value)) != 0) {
-        return NULL;
-    }
-
-    memset(stack, 0, slots * sizeof(Value));
-
-    return stack;
-}
+_Static_assert(_Alignof(max_align_t) >= VM_STACK_ALIGNMENT,
+               "malloc alignment is insufficient for the stack; use aligned allocation");
 
 VM *vm_create() {
     VM *vm = malloc(sizeof(VM));
@@ -54,7 +47,7 @@ VM *vm_create() {
     scope_init(&vm->global_scope, vm->persistent_arena, &vm->strings, NULL);
 
     vm->stack_capacity = VM_INITIAL_STACK_SIZE;
-    vm->stack = vm_stack_alloc(vm->stack_capacity);
+    vm->stack = calloc(vm->stack_capacity, sizeof(Value));
     vm->registers = vm->stack;
     vm->frame_count = 0;
 
@@ -74,17 +67,14 @@ static bool vm_reserve_stack(VM *vm, size_t needed) {
         capacity *= 2;
     }
 
-    // realloc does not preserve over-alignment, so growth allocates fresh and
-    // copies rather than resizing in place.
-    uint8_t *stack = vm_stack_alloc(capacity);
+    uint8_t *stack = realloc(vm->stack, capacity * sizeof(Value));
     if (!stack) {
         return false;
     }
 
-    memcpy(stack, vm->stack, vm->stack_capacity * sizeof(Value));
-    free(vm->stack);
+    memset(stack + vm->stack_capacity * sizeof(Value), 0, (capacity - vm->stack_capacity) * sizeof(Value));
 
-    // The buffer moved, so anything pointing into it is rebased.
+    // realloc may move the buffer, so anything pointing into it is rebased.
     size_t offset = vm->frame_count > 0 ? vm->frames[vm->frame_count - 1].base : 0;
 
     vm->stack = stack;
