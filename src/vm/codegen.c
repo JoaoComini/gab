@@ -71,6 +71,7 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast);
 static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_bin_op_logical_expr(CodegenState *state, ASTExpr *node);
+static unsigned int codegen_bin_op_into(CodegenState *state, ASTExpr *node, unsigned int dest);
 static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node);
 
@@ -282,6 +283,16 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
     }
 
     unsigned int rd = codegen_expr(state, ast->target);
+
+    // A binary op computes straight into the target instead of into a temporary
+    // this would then have to copy down. The logical ops are excluded because
+    // they short-circuit through a jump and own their result register.
+    if (ast->value->kind == EXPR_BIN_OP && ast->value->bin_op.op != BIN_OP_AND &&
+        ast->value->bin_op.op != BIN_OP_OR) {
+        codegen_bin_op_into(state, ast->value, rd);
+        return;
+    }
+
     unsigned int r1 = codegen_expr(state, ast->value);
 
     codegen_copy_slots(state, rd, r1, type_slot_count(ast->target->type));
@@ -766,6 +777,83 @@ static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node) {
     return codegen_slot_of(state, node->symbol);
 }
 
+// Whether a right-hand operand can ride in the instruction's r2 field instead
+// of being loaded into a register first.
+//
+// Only non-negative integer literals in range: r2 is eight unsigned bits, and
+// widening it to hold a sign or a float would cost the field it shares with the
+// register form. Everything else takes the register path unchanged, so this is
+// an optimisation on the common shape rather than a restriction on the language.
+static bool codegen_immediate_operand(const ASTExpr *node, unsigned int *out) {
+    if (!node || node->kind != EXPR_LITERAL || node->lit.kind != TYPE_INT) {
+        return false;
+    }
+
+    if (node->lit.as_int < 0 || node->lit.as_int > VM_MAX_IMMEDIATE) {
+        return false;
+    }
+
+    *out = (unsigned int)node->lit.as_int;
+
+    return true;
+}
+
+// The right operand of a binary op: either a register holding it, or the value
+// itself when it fits the instruction. Reports which through 'immediate', so the
+// caller knows whether to set the k bit.
+//
+// Generating it is what may allocate a register, so this runs before the result
+// register is allocated — the order the original codegen used, and the one the
+// register numbering in the tests reflects.
+static unsigned int codegen_bin_op_rhs(CodegenState *state, ASTExpr *node, bool *immediate) {
+    unsigned int value = 0;
+
+    // Floats have no immediate form: vm_operand2i reads the field as an
+    // integer, and a float literal has no eight-bit encoding.
+    if (node->bin_op.left->type->kind != TYPE_FLOAT && codegen_immediate_operand(node->bin_op.right, &value)) {
+        *immediate = true;
+        return value;
+    }
+
+    *immediate = false;
+
+    return codegen_expr(state, node->bin_op.right);
+}
+
+// Emits one arithmetic or comparison instruction. Shared by both binary-op
+// paths so the two cannot disagree about when the k bit is set.
+static void codegen_emit_bin_op(CodegenState *state, ASTExpr *node, unsigned int dest, unsigned int lhs,
+                                unsigned int rhs, bool immediate) {
+    OpCode op_code = node->bin_op.left->type->kind == TYPE_FLOAT ? bin_op_to_float_op(node->bin_op.op)
+                                                                 : bin_op_to_int_op(node->bin_op.op);
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_RK(op_code, dest, lhs, rhs, immediate ? 1 : 0));
+}
+
+// Emits a binary op into a caller-chosen register rather than a fresh one.
+//
+// 'x = x + 1' otherwise computes into a temporary and then moves it, because
+// the expression allocates its own result and the assignment copies. Writing
+// straight into the target drops that move — a third of the instructions in
+// the commonest statement there is.
+//
+// Only for the arithmetic and comparison ops: the logical ones short-circuit
+// through a jump and own their result register, so they keep their own path.
+//
+// The destination is written last, after both operands have been read, so
+// naming an operand as the destination is safe: 'x = x + 1' reads x, reads the
+// constant, then writes x.
+static unsigned int codegen_bin_op_into(CodegenState *state, ASTExpr *node, unsigned int dest) {
+    unsigned int lhs = codegen_expr(state, node->bin_op.left);
+
+    bool immediate = false;
+    unsigned int rhs = codegen_bin_op_rhs(state, node, &immediate);
+
+    codegen_emit_bin_op(state, node, dest, lhs, rhs, immediate);
+
+    return dest;
+}
+
 static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node) {
     switch (node->bin_op.op) {
     case BIN_OP_AND:
@@ -776,17 +864,17 @@ static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node) {
     }
 
     unsigned int lhs = codegen_expr(state, node->bin_op.left);
-    unsigned int rhs = codegen_expr(state, node->bin_op.right);
+
+    bool immediate = false;
+    unsigned int rhs = codegen_bin_op_rhs(state, node, &immediate);
+
     unsigned int result = codegen_alloc_register(state, node->span);
 
-    OpCode op_code = node->bin_op.left->type->kind == TYPE_FLOAT ? bin_op_to_float_op(node->bin_op.op)
-                                                                 : bin_op_to_int_op(node->bin_op.op);
-
-    Instruction instruction = VM_ENCODE_R(op_code, result, lhs, rhs);
-    chunk_add_instruction(state->chunk, instruction);
+    codegen_emit_bin_op(state, node, result, lhs, rhs, immediate);
 
     return result;
 }
+
 
 static unsigned int codegen_bin_op_logical_expr(CodegenState *state, ASTExpr *node) {
     unsigned int lhs = codegen_expr(state, node->bin_op.left);

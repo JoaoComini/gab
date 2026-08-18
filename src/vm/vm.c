@@ -145,6 +145,18 @@ float vm_mulf(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_float * 
 
 float vm_divf(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_float / vm_reg(vm, r2)->as_float; }
 
+// The second operand, which the k bit makes either a register to read or a
+// small immediate encoded in the instruction itself.
+//
+// Immediates are integers: a float literal has no compact encoding in eight
+// bits, so codegen never marks one, and the float path reads a register as it
+// always did.
+static inline int32_t vm_operand2i(const VM *vm, Instruction instruction) {
+    size_t r2 = VM_DECODE_R_R2(instruction);
+
+    return VM_DECODE_R_K(instruction) ? (int32_t)r2 : vm_reg(vm, r2)->as_int;
+}
+
 void vm_arithmeticf(VM *vm, Instruction instruction, float (*func)(VM *, size_t, size_t)) {
     size_t rd = VM_DECODE_R_RD(instruction);
     size_t r1 = VM_DECODE_R_R1(instruction);
@@ -153,20 +165,21 @@ void vm_arithmeticf(VM *vm, Instruction instruction, float (*func)(VM *, size_t,
     vm_reg(vm, rd)->as_float = func(vm, r1, r2);
 }
 
-int32_t vm_addi(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_int + vm_reg(vm, r2)->as_int; }
+// The integer operations take values rather than register indices, so the same
+// body serves a register operand and an immediate one.
+int32_t vm_addi(int32_t a, int32_t b) { return a + b; }
 
-int32_t vm_subi(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_int - vm_reg(vm, r2)->as_int; }
+int32_t vm_subi(int32_t a, int32_t b) { return a - b; }
 
-int32_t vm_muli(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_int * vm_reg(vm, r2)->as_int; }
+int32_t vm_muli(int32_t a, int32_t b) { return a * b; }
 
-int32_t vm_divi(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_int / vm_reg(vm, r2)->as_int; }
+int32_t vm_divi(int32_t a, int32_t b) { return a / b; }
 
-void vm_arithmetici(VM *vm, Instruction instruction, int32_t (*func)(VM *, size_t, size_t)) {
+void vm_arithmetici(VM *vm, Instruction instruction, int32_t (*func)(int32_t, int32_t)) {
     size_t rd = VM_DECODE_R_RD(instruction);
     size_t r1 = VM_DECODE_R_R1(instruction);
-    size_t r2 = VM_DECODE_R_R2(instruction);
 
-    vm_reg(vm, rd)->as_int = func(vm, r1, r2);
+    vm_reg(vm, rd)->as_int = func(vm_reg(vm, r1)->as_int, vm_operand2i(vm, instruction));
 }
 
 bool vm_less_thanf(VM *vm, size_t r1, size_t r2) {
@@ -191,20 +204,25 @@ bool vm_greater_equalf(VM *vm, size_t r1, size_t r2) {
     return vm_reg(vm, r1)->as_float >= vm_reg(vm, r2)->as_float;
 }
 
-bool vm_less_thani(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_int < vm_reg(vm, r2)->as_int; }
+// As the integer arithmetic, these take values so an immediate second operand
+// costs nothing extra.
+bool vm_less_thani(int32_t a, int32_t b) { return a < b; }
 
-bool vm_greater_thani(VM *vm, size_t r1, size_t r2) {
-    return vm_reg(vm, r1)->as_int > vm_reg(vm, r2)->as_int;
-}
+bool vm_greater_thani(int32_t a, int32_t b) { return a > b; }
 
-bool vm_equali(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_int == vm_reg(vm, r2)->as_int; }
+bool vm_equali(int32_t a, int32_t b) { return a == b; }
 
-bool vm_not_equali(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_int != vm_reg(vm, r2)->as_int; }
+bool vm_not_equali(int32_t a, int32_t b) { return a != b; }
 
-bool vm_less_equali(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_int <= vm_reg(vm, r2)->as_int; }
+bool vm_less_equali(int32_t a, int32_t b) { return a <= b; }
 
-bool vm_greater_equali(VM *vm, size_t r1, size_t r2) {
-    return vm_reg(vm, r1)->as_int >= vm_reg(vm, r2)->as_int;
+bool vm_greater_equali(int32_t a, int32_t b) { return a >= b; }
+
+void vm_conditionali(VM *vm, Instruction instruction, bool (*func)(int32_t, int32_t)) {
+    size_t rd = VM_DECODE_R_RD(instruction);
+    size_t r1 = VM_DECODE_R_R1(instruction);
+
+    vm_reg(vm, rd)->as_int = func(vm_reg(vm, r1)->as_int, vm_operand2i(vm, instruction));
 }
 
 void vm_conditional(VM *vm, Instruction instruction, bool (*func)(VM *, size_t, size_t)) {
@@ -479,27 +497,27 @@ static void vm_run_loop(VM *vm) {
             break;
         }
         case OP_CMP_LTI: {
-            vm_conditional(vm, instruction, vm_less_thani);
+            vm_conditionali(vm, instruction, vm_less_thani);
             break;
         }
         case OP_CMP_GTI: {
-            vm_conditional(vm, instruction, vm_greater_thani);
+            vm_conditionali(vm, instruction, vm_greater_thani);
             break;
         }
         case OP_CMP_EQI: {
-            vm_conditional(vm, instruction, vm_equali);
+            vm_conditionali(vm, instruction, vm_equali);
             break;
         }
         case OP_CMP_NEI: {
-            vm_conditional(vm, instruction, vm_not_equali);
+            vm_conditionali(vm, instruction, vm_not_equali);
             break;
         }
         case OP_CMP_LEI: {
-            vm_conditional(vm, instruction, vm_less_equali);
+            vm_conditionali(vm, instruction, vm_less_equali);
             break;
         }
         case OP_CMP_GEI: {
-            vm_conditional(vm, instruction, vm_less_equali);
+            vm_conditionali(vm, instruction, vm_less_equali);
             break;
         }
         case OP_CALL: {

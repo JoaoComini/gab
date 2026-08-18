@@ -17,7 +17,13 @@
     rd: Destination register (8-bit)
     r1: Register 1 (8-bit)
     r2: Register 2 (8-bit)
-    k:  spare bit, reserved for Lua's register-or-constant operand trick
+    k:  when set, r2 is a small unsigned immediate rather than a register
+
+    The k bit is Lua's register-or-constant operand trick: 'x + 1' would
+    otherwise need a LOAD_CONST into a register the arithmetic then reads once
+    and never again, and small literals are most of what arithmetic operates on.
+    Only the second operand can be immediate, which is enough because the
+    commutative ops are emitted with the constant on the right.
 */
 #define VM_ENCODE_R(op, rd, r1, r2) VM_ENCODE_RK(op, rd, r1, r2, 0)
 
@@ -33,7 +39,12 @@
 #define VM_DECODE_R_RD(instr) (((instr) >> 17) & 0xFF) // Destination register
 #define VM_DECODE_R_R1(instr) (((instr) >> 9) & 0xFF)  // First source register
 #define VM_DECODE_R_R2(instr) (((instr) >> 1) & 0xFF)  // Second source register
-#define VM_DECODE_R_K(instr) ((instr) & 0x1)           // Spare bit, always zero today
+#define VM_DECODE_R_K(instr) ((instr) & 0x1)           // r2 is an immediate, not a register
+
+// The widest immediate the r2 field holds. A literal above this is loaded into
+// a register as before, so the range is a codegen decision and never a limit on
+// what a program can say.
+#define VM_MAX_IMMEDIATE 0xFF
 
 /*
     Encodes I-type instructions in a 32-bit integer

@@ -62,9 +62,11 @@ static void test_frame_size_is_flat_in_statement_count() {
                                      0);
 
     // r0 return, r1 parameter, one slot per live local, plus the widest
-    // statement's temporaries. Without reuse these were 9 and 27.
-    assert(few == 6);
-    assert(many == 12);
+    // statement's temporaries. Without reuse these were 9 and 27; one lower
+    // than that again since 'n + 1' takes its literal as an immediate operand
+    // rather than loading it into a register.
+    assert(few == 5);
+    assert(many == 11);
 
     // Six more locals cost six more slots, not three per statement.
     assert(many - few == 6);
@@ -103,7 +105,9 @@ static void test_block_locals_are_reclaimed() {
     assert(compile_max_registers(two_inner, 0) == compile_max_registers(four_inner, 0));
 
     // And d reuses a slot the dead arm held rather than stacking on top of it.
-    assert(compile_max_registers(two_inner, 0) == 9);
+    // Two lower than the register-only encoding: the arithmetic and the 'n > 0'
+    // condition both take their literal as an immediate operand.
+    assert(compile_max_registers(two_inner, 0) == 7);
 }
 
 // A long function used to exhaust the 127-slot frame at roughly three slots per
@@ -181,16 +185,19 @@ static int compile_sequential_lets(unsigned int count) {
 // A function's frame is capped by the width of the register field. Each local
 // costs one slot on top of r0 (the return slot), r1 (the parameter), and one
 // temporary, so the ceiling shows up directly in the count of locals that fit.
+//
+// 'n + 1' takes its literal as an immediate operand, so it needs no register
+// to hold the constant — which is why one more local fits than before.
 static void test_frame_capacity() {
-    // 251 locals fill the 255-slot frame exactly; 252 do not fit.
-    assert(compile_sequential_lets(251) == 255);
-    assert(compile_sequential_lets(252) == -1);
+    // 252 locals fill the 255-slot frame exactly; 253 do not fit.
+    assert(compile_sequential_lets(252) == 255);
+    assert(compile_sequential_lets(253) == -1);
 
-    // Under the previous 7-bit fields the ceiling was 127 slots: 123 locals
-    // fit and 124 did not. Both now compile.
-    assert(compile_sequential_lets(123) == 127);
-    assert(compile_sequential_lets(124) == 128);
-    assert(compile_sequential_lets(200) == 204);
+    // Under the previous 7-bit fields the ceiling was 127 slots. Both now
+    // compile.
+    assert(compile_sequential_lets(123) == 126);
+    assert(compile_sequential_lets(124) == 127);
+    assert(compile_sequential_lets(200) == 203);
 }
 
 int main() {
