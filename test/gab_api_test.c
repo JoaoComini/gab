@@ -325,10 +325,77 @@ static void test_runtime_error_from_module_run(void) {
     gab_vm_free(vm);
 }
 
+// An argument never set must not silently pass whatever the buffer held —
+// zero on the first call, the previous frame's value on every one after.
+// Deliberate reuse stays legal, because that is what makes a per-frame call
+// allocation-free.
+static void test_unset_arguments_are_rejected(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    GabModule *mod = gab_compile(vm, "<m>", "func two(a: int, b: int): int { return a + b; }\n", &err);
+    assert(mod);
+
+    GabFunc *fn = gab_lookup(vm, mod, "two", &err);
+    assert(fn);
+
+    // Only argument 0 supplied.
+    gab_arg_int(vm, fn, 0, 1);
+
+    int result = -1;
+    assert(gab_call(vm, fn, &result, &err) == GAB_ERR_ARG);
+    assert(err.message[0] != '\0');
+
+    // Supplying the rest makes the same handle callable.
+    gab_arg_int(vm, fn, 1, 1000);
+    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(result == 1001);
+
+    // Reuse is not staleness: holding argument 1 constant while changing 0 is
+    // the per-frame case and must keep working.
+    gab_arg_int(vm, fn, 0, 2);
+    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(result == 1002);
+
+    gab_func_free(fn);
+    gab_module_free(vm, mod);
+    gab_vm_free(vm);
+}
+
+// A setter that was rejected has not supplied its argument, so the parameter
+// stays unset rather than counting as given.
+static void test_rejected_setter_does_not_supply_an_argument(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    GabModule *mod = gab_compile(vm, "<m>", "func two(a: int, b: int): int { return a + b; }\n", &err);
+    assert(mod);
+
+    GabFunc *fn = gab_lookup(vm, mod, "two", &err);
+    assert(fn);
+
+    gab_arg_int(vm, fn, 0, 5);
+    gab_arg_float(vm, fn, 1, 1.0f); // wrong type for an int parameter
+
+    int result = 0;
+    assert(gab_call(vm, fn, &result, &err) == GAB_ERR_ARG);
+
+    // The rejection was reported and cleared, but argument 1 was never
+    // actually given a value, so the next call must still say so.
+    assert(gab_call(vm, fn, &result, &err) == GAB_ERR_ARG);
+    assert(err.message[0] != '\0');
+
+    gab_func_free(fn);
+    gab_module_free(vm, mod);
+    gab_vm_free(vm);
+}
+
 int main(void) {
     test_compile_error_is_reported_not_printed();
     test_runtime_error_is_reported();
     test_runtime_error_from_module_run();
+    test_unset_arguments_are_rejected();
+    test_rejected_setter_does_not_supply_an_argument();
     test_compile_once_run_many();
     test_type_survives_a_later_compile();
     test_layout_matches_c();

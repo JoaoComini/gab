@@ -40,6 +40,15 @@ struct GabFunc {
     // nothing behind.
     Value args[VM_MAX_REGISTERS];
 
+    // Which parameters have ever been given a value. Staged arguments persist
+    // across calls on purpose — that is what makes a per-frame call
+    // allocation-free, and a host holding one argument constant should not have
+    // to re-set it. So this is not "set since the last call": it is "set at
+    // all", checked until every parameter has been, after which the call path
+    // does no checking whatsoever.
+    bool arg_set[VM_MAX_REGISTERS];
+    size_t args_pending;
+
     // Set by a setter that could not do what it was asked. Reported by the
     // next gab_call, so a host can build a call without checking every step.
     bool arg_error;
@@ -273,6 +282,7 @@ GabFunc *gab_lookup(GabVM *handle, GabModule *mod, const char *name, GabError *e
     }
 
     fn->arg_slots = offset - 1;
+    fn->args_pending = symbol->func.param_count;
 
     return fn;
 }
@@ -309,6 +319,13 @@ static Value *gab_arg_slot(GabFunc *fn, int index, TypeKind expected, const char
     if (!param || param->kind != expected) {
         gab_arg_fail(fn, "argument %d is not declared %s", index, expected_name);
         return NULL;
+    }
+
+    // Only a setter that got this far counts: a rejected one leaves the
+    // parameter as unset as it was.
+    if (!fn->arg_set[index]) {
+        fn->arg_set[index] = true;
+        fn->args_pending--;
     }
 
     return &fn->args[fn->param_slot[index]];
@@ -350,19 +367,25 @@ void gab_arg_bool(GabVM *vm, GabFunc *fn, int index, bool value) {
 void gab_arg_struct(GabVM *vm, GabFunc *fn, int index, const void *data, size_t size) {
     (void)vm;
 
+    // The size is the one thing a host can get wrong that the type system
+    // cannot catch, so it is checked rather than trusted — and before the slot
+    // is claimed, so a rejected struct leaves the parameter unset rather than
+    // counting as supplied.
+    if (fn && index >= 0 && (size_t)index < fn->symbol->func.param_count) {
+        const Type *param = fn->symbol->func.params[index];
+
+        if (param && param->kind == TYPE_STRUCT && (!data || size != param->size)) {
+            gab_arg_fail(fn, "argument %d was given %s bytes", index, "the wrong number of");
+            return;
+        }
+    }
+
     Value *slot = gab_arg_slot(fn, index, TYPE_STRUCT, "a struct");
     if (!slot) {
         return;
     }
 
-    // The size is the one thing a host can get wrong that the type system
-    // cannot catch, so it is checked rather than trusted.
     const Type *param = fn->symbol->func.params[index];
-
-    if (!data || size != param->size) {
-        gab_arg_fail(fn, "argument %d was given %s bytes", index, "the wrong number of");
-        return;
-    }
 
     memcpy(slot, data, size);
 }
@@ -383,6 +406,24 @@ GabStatus gab_call(GabVM *handle, GabFunc *fn, void *ret, GabError *err) {
         fn->arg_message[0] = '\0';
 
         return GAB_ERR_ARG;
+    }
+
+    // An argument never set would otherwise pass whatever the buffer held —
+    // zero on the first call, the previous frame's value on every one after.
+    // Once every parameter has been supplied this is skipped for good, so the
+    // per-frame path stays free.
+    if (fn->args_pending > 0) {
+        for (size_t i = 0; i < fn->symbol->func.param_count; i++) {
+            if (fn->arg_set[i]) {
+                continue;
+            }
+
+            char message[256];
+            snprintf(message, sizeof(message), "argument %zu was never set", i);
+            gab_error_set(err, 0, 0, message);
+
+            return GAB_ERR_ARG;
+        }
     }
 
     VM *vm = (VM *)handle;
