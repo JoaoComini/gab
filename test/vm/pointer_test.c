@@ -8,6 +8,7 @@
 #include "type_registry.h"
 #include "vm/chunk.h"
 #include "vm/codegen.h"
+#include "vm/opcode.h"
 #include "vm/vm.h"
 
 #include <assert.h>
@@ -49,25 +50,6 @@ static bool resolve(TestContext *ctx, Scope *scope, ASTScript *script, const cha
 
 static Symbol *lookup(TestContext *ctx, Scope *scope, const char *name) {
     return scope_symbol_lookup(scope, string_from_cstr(&ctx->strings, name));
-}
-
-// The symbol of the first pointer-typed local declared in a function body. A
-// function scope is gone by the time resolution finishes, so the symbol is read
-// back off the declaration rather than looked up by name.
-static Symbol *pointer_symbol(const ASTStmt *func) {
-    assert(func->kind == STMT_FUNC_DECL);
-
-    const ASTStmtList *body = &func->func_decl.body->block.list;
-
-    for (int i = 0; i < body->size; i++) {
-        ASTStmt *stmt = body->data[i];
-
-        if (stmt->kind == STMT_VAR_DECL && type_is_pointer(stmt->var_decl.symbol->var.type)) {
-            return stmt->var_decl.symbol;
-        }
-    }
-
-    return NULL;
 }
 
 // The whole type system compares types by pointer identity, so two mentions of
@@ -300,9 +282,28 @@ static void test_a_pointer_local_is_slot_aligned() {
     Chunk *chunk = codegen_generate(script, &global_funcs, &ctx.diagnostics, NULL);
     assert(chunk);
 
-    Symbol *p = pointer_symbol(script->statements.data[0]);
-    assert(p);
-    assert(p->offset % VM_POINTER_SLOTS == 0);
+    // Read off the emitted code rather than the symbol: a frame slot belongs to
+    // the compile that assigned it, so codegen keeps it in its own table and
+    // what it produced is the only place the choice is still visible.
+    //
+    // 'let p: *int = &x' emits the OP_ADDR_OF into a temporary and then copies
+    // it into p's slot, so the copy's destination is the slot under test.
+    const Chunk *body = global_funcs.data[0].chunk;
+    bool checked = false;
+
+    for (size_t i = 0; i + 1 < body->instructions.size; i++) {
+        if (VM_DECODE_OPCODE(body->instructions.data[i]) != OP_ADDR_OF) {
+            continue;
+        }
+
+        Instruction copy = body->instructions.data[i + 1];
+
+        assert(VM_DECODE_OPCODE(copy) == OP_MOVE);
+        assert(VM_DECODE_R_RD(copy) % VM_POINTER_SLOTS == 0);
+        checked = true;
+    }
+
+    assert(checked);
 
     chunk_free(chunk);
     func_proto_list_free(&global_funcs);

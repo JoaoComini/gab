@@ -635,6 +635,55 @@ static void test_qualified_type_reference_crosses_modules(void) {
     gab_vm_free(vm);
 }
 
+// A handle keeps working across later compiles. Frame slots are assigned per
+// compile and kept in codegen's own table, so a second compile cannot rewrite
+// the layout a live handle was built from — the handle resolves through the
+// symbol's prototype index, which is durable.
+static void test_handle_survives_later_compiles(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    GabModule *first = gab_compile(vm, "first.gab", "func step(n: int): int { return n + 1; }\n", &err);
+    assert(first);
+
+    GabFunc *fn = gab_lookup(vm, first, "step", &err);
+    assert(fn);
+    assert(gab_func_arity(fn) == 1);
+
+    gab_arg_int(vm, fn, 0, 10);
+
+    int result = 0;
+    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(result == 11);
+
+    // Later units compile more functions, appending prototypes and running
+    // codegen again over fresh symbols.
+    GabModule *second = gab_compile(vm, "second.gab",
+                                    "module Later;\n"
+                                    "struct Wide { a: int, b: int, c: int }\n"
+                                    "func takes_wide(w: Wide, k: int): int { return k; }\n",
+                                    &err);
+    assert(second);
+
+    GabModule *third =
+        gab_compile(vm, "third.gab", "module Other;\nfunc unrelated(a: int, b: int): int { return a; }\n", &err);
+    assert(third);
+
+    // The handle from before still calls the body it was looked up for.
+    gab_arg_int(vm, fn, 0, 10);
+    result = 0;
+    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(result == 11);
+    assert(gab_func_arity(fn) == 1);
+
+    gab_func_free(fn);
+    gab_module_free(vm, third);
+    gab_module_free(vm, second);
+    gab_module_free(vm, first);
+    gab_vm_free(vm);
+}
+
 int main(void) {
     test_two_modules_can_share_a_function_name();
     test_module_name_is_read_from_the_script();
@@ -643,6 +692,7 @@ int main(void) {
     test_builtins_are_shared_across_modules();
     test_module_type_shadows_the_root();
     test_qualified_type_reference_crosses_modules();
+    test_handle_survives_later_compiles();
     test_compile_error_is_reported_not_printed();
     test_runtime_error_is_reported();
     test_runtime_error_from_module_run();

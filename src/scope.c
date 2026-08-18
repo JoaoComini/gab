@@ -121,6 +121,7 @@ Symbol *scope_decl_func(Scope *scope, String *name, Type *return_type) {
     sym->func.return_type = return_type;
     sym->func.params = NULL;
     sym->func.param_count = 0;
+    sym->func.proto_index = SYMBOL_FUNC_NO_PROTO;
 
     Symbol **decl = symbol_table_insert(scope->symbol_table, name, sym);
     if (!decl) {

@@ -11,15 +11,20 @@
 
 #define SYMBOL_TABLE_INITIAL_CAPACITY 8
 
+// A function symbol that has been declared but has no compiled body yet.
+#define SYMBOL_FUNC_NO_PROTO ((size_t)-1)
+
 typedef enum {
     SYMBOL_VAR,
     SYMBOL_FUNC,
 } SymbolKind;
 
+// What a name means. Written by the resolver and read for as long as the VM
+// lives, so nothing here may be true of only one compile: frame slots, which
+// are, live in codegen's own side table instead.
 typedef struct Symbol {
     SymbolKind kind;
 
-    unsigned int offset;
     int scope_depth;
 
     // Set when '&x' is taken. A pinned variable's slot must survive its whole
@@ -41,6 +46,12 @@ typedef struct Symbol {
 
             Type **params;
             size_t param_count;
+
+            // Index into the VM's prototype list. Unlike a frame slot this is
+            // durable output: it is what OP_CALL encodes and what gab_call
+            // resolves a handle through, long after the compile that made it.
+            // SYMBOL_FUNC_NO_PROTO until codegen emits a body.
+            size_t proto_index;
         } func;
     };
 } Symbol;

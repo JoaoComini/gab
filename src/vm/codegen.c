@@ -12,6 +12,21 @@
 #include <assert.h>
 #include <stdlib.h>
 
+// Where a variable or parameter lives in the frame being generated. Keyed by
+// Symbol * because a Symbol is what a name resolved to, but held here rather
+// than on the Symbol itself: a slot is true only of one compile, while a
+// top-level Symbol outlives every compile and is what a GabFunc handle points
+// at. Writing the slot onto the Symbol would let a recompile silently change
+// the frame layout under a handle a host is still holding.
+#define slot_map_hash(key) (size_t)key
+#define slot_map_key_equals(key, other) key == other
+#define slot_map_key_dup(key) key
+#define slot_map_entry_free(key, value)
+
+GAB_HASH_MAP(SlotMap, slot_map, Symbol *, unsigned int)
+
+#define SLOT_MAP_INITIAL_CAPACITY 16
+
 typedef struct {
     Chunk *chunk;
     unsigned int next_reg;
@@ -22,9 +37,27 @@ typedef struct {
 
     FuncProtoList *global_funcs;
 
+    // Frame-local, so it is per function body: a nested function generates
+    // against its own, and the outer one's slots are not visible in it.
+    SlotMap *slots;
+
     Diagnostics *diagnostics;
     bool failed;
 } CodegenState;
+
+// The frame slot a symbol was given. Every read is of a slot this same
+// function body assigned, so a miss is a codegen bug rather than a user error.
+static unsigned int codegen_slot_of(CodegenState *state, Symbol *symbol) {
+    unsigned int *slot = slot_map_lookup(state->slots, symbol);
+
+    assert(slot && "symbol was never assigned a frame slot");
+
+    return *slot;
+}
+
+static void codegen_set_slot(CodegenState *state, Symbol *symbol, unsigned int slot) {
+    slot_map_insert(state->slots, symbol, slot);
+}
 
 static void codegen_stmt(CodegenState *state, ASTStmt *ast);
 static void codegen_return_stmt(CodegenState *state, ASTReturnStmt *ast);
@@ -38,7 +71,7 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast);
 static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_bin_op_logical_expr(CodegenState *state, ASTExpr *node);
-static unsigned int codegen_variable_expr(ASTExpr *node);
+static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node);
 
 static OpCode bin_op_to_float_op(BinOp bin_op);
@@ -121,6 +154,7 @@ Chunk *codegen_generate(ASTScript *script, FuncProtoList *global_funcs, Diagnost
         .next_reg = 0,
         .max_reg = 0,
         .global_funcs = global_funcs,
+        .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .diagnostics = diagnostics,
         .failed = false,
     };
@@ -128,6 +162,9 @@ Chunk *codegen_generate(ASTScript *script, FuncProtoList *global_funcs, Diagnost
     for (int i = 0; i < script->statements.size; i++) {
         codegen_stmt(&state, script->statements.data[i]);
     }
+
+    // The slots were only ever true of this compile, so they go with it.
+    slot_map_destroy(state.slots);
 
     if (state.failed) {
         chunk_free(state.chunk);
@@ -210,8 +247,9 @@ static void codegen_return_stmt(CodegenState *state, ASTReturnStmt *ast) {
 static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
     Span span = ast->initializer ? ast->initializer->span : (Span){0};
 
-    ast->symbol->offset = codegen_alloc_slots(state, type_slot_count(ast->symbol->var.type),
-                                              type_align_slots(ast->symbol->var.type), span);
+    codegen_set_slot(state, ast->symbol,
+                     codegen_alloc_slots(state, type_slot_count(ast->symbol->var.type),
+                                         type_align_slots(ast->symbol->var.type), span));
 
     if (!ast->initializer) {
         return;
@@ -223,7 +261,8 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
 
     unsigned int r1 = codegen_expr(state, ast->initializer);
 
-    codegen_copy_slots(state, ast->symbol->offset, r1, type_slot_count(ast->symbol->var.type));
+    codegen_copy_slots(state, codegen_slot_of(state, ast->symbol), r1,
+                       type_slot_count(ast->symbol->var.type));
 
     codegen_release_registers(state, saved);
 }
@@ -286,27 +325,33 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
     // once codegen knows the chunk and register count.
     func_proto_list_add(state->global_funcs, (FuncPrototype){0});
     size_t proto_index = state->global_funcs->size - 1;
-    ast->symbol->offset = proto_index;
+
+    // Durable, unlike a frame slot: this is what OP_CALL encodes and what a
+    // host's handle resolves through after the compile is long gone.
+    ast->symbol->func.proto_index = proto_index;
 
     unsigned int func_next_reg = 1;
 
-    // A multi-slot parameter owns consecutive slots starting at its offset, so
-    // the callee addresses it by its base slot exactly like a local.
-    for (int i = 0; i < ast->params.size; i++) {
-        Symbol *param = ast->params.data[i]->symbol;
-
-        param->offset = func_next_reg;
-        func_next_reg += type_slot_count(param->var.type);
-    }
-
+    // The body generates against its own frame, so its slots are its own.
     CodegenState func_state = (CodegenState){
         .chunk = func_chunk,
-        .next_reg = func_next_reg,
-        .max_reg = func_next_reg,
         .global_funcs = state->global_funcs,
+        .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .diagnostics = state->diagnostics,
         .failed = false,
     };
+
+    // A multi-slot parameter owns consecutive slots starting at its base, so
+    // the callee addresses it by that slot exactly like a local.
+    for (int i = 0; i < ast->params.size; i++) {
+        Symbol *param = ast->params.data[i]->symbol;
+
+        codegen_set_slot(&func_state, param, func_next_reg);
+        func_next_reg += type_slot_count(param->var.type);
+    }
+
+    func_state.next_reg = func_next_reg;
+    func_state.max_reg = func_next_reg;
 
     codegen_stmt(&func_state, ast->body);
 
@@ -326,6 +371,8 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
                                 .arity = ast->params.size,
                                 .max_registers = func_state.max_reg,
                             });
+
+    slot_map_destroy(func_state.slots);
 }
 
 static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
@@ -333,7 +380,7 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
     case EXPR_LITERAL:
         return codegen_literal_expr(state, ast);
     case EXPR_VARIABLE:
-        return codegen_variable_expr(ast);
+        return codegen_variable_expr(state, ast);
     case EXPR_BIN_OP:
         return codegen_bin_op_expr(state, ast);
     case EXPR_CALL:
@@ -421,7 +468,7 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
 
     // The prototype index rides in an 8-bit field. Masking alone would encode
     // a call to the wrong function, so it is rejected rather than truncated.
-    if (node->symbol->offset > VM_MAX_REGISTERS) {
+    if (node->symbol->func.proto_index > VM_MAX_REGISTERS) {
         if (!state->failed) {
             diag_error(state->diagnostics, GAB_ERR_CODEGEN, node->span, "too many functions in one script");
         }
@@ -432,7 +479,7 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
 
     // argc counts slots, not arguments: that is what sizing the callee's frame
     // needs. The resolver has already checked the argument count.
-    Instruction call = VM_ENCODE_R(OP_CALL, dest, node->symbol->offset, arg_slots);
+    Instruction call = VM_ENCODE_R(OP_CALL, dest, (unsigned int)node->symbol->func.proto_index, arg_slots);
     chunk_add_instruction(state->chunk, call);
 
     codegen_release_registers(state, saved);
@@ -715,7 +762,9 @@ static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned 
 
 // Every variable is a frame local now, including a top-level one: it lives in
 // frame zero. The symbol already names its slot, so a read is free.
-static unsigned int codegen_variable_expr(ASTExpr *node) { return node->symbol->offset; }
+static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node) {
+    return codegen_slot_of(state, node->symbol);
+}
 
 static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node) {
     switch (node->bin_op.op) {

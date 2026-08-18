@@ -490,7 +490,7 @@ GabStatus gab_call(GabVM *handle, GabFunc *fn, void *ret, GabError *err) {
 
     VM *vm = (VM *)handle;
 
-    size_t proto_index = fn->symbol->offset;
+    size_t proto_index = fn->symbol->func.proto_index;
 
     if (proto_index >= vm->global_funcs.size) {
         gab_error_set(err, 0, 0, "this function has no compiled body");
