@@ -162,7 +162,21 @@ static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
 
 static void codegen_return_stmt(CodegenState *state, ASTReturnStmt *ast) {
     unsigned int reg = codegen_expr(state, ast->result);
-    chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RETURN, 0, reg, 0));
+    unsigned int slots = ast->result ? type_slot_count(ast->result->type) : 1;
+
+    // The slot count travels in 5 flag bits, so a wider return value cannot be
+    // encoded at all.
+    if (slots > VM_MAX_RETURN_SLOTS) {
+        if (!state->failed) {
+            diag_error(state->diagnostics, GAB_ERR_CODEGEN, ast->result->span,
+                       "struct is too large to return by value");
+        }
+
+        state->failed = true;
+        return;
+    }
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_R_FLAGS(OP_RETURN, 0, reg, 0, slots));
 }
 
 static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
@@ -257,8 +271,13 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
 
     unsigned int func_next_reg = 1;
 
+    // A multi-slot parameter owns consecutive slots starting at its offset, so
+    // the callee addresses it by its base slot exactly like a local.
     for (int i = 0; i < ast->params.size; i++) {
-        ast->params.data[i]->symbol->offset = func_next_reg++;
+        Symbol *param = ast->params.data[i]->symbol;
+
+        param->offset = func_next_reg;
+        func_next_reg += type_slot_count(param->var.type);
     }
 
     CodegenState func_state = (CodegenState){
@@ -277,7 +296,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
 
     if (func_chunk->instructions.size == 0 ||
         VM_DECODE_OPCODE(instruction_list_back(&func_chunk->instructions)) != OP_RETURN) {
-        chunk_add_instruction(func_chunk, VM_ENCODE_R(OP_RETURN, 0, 0, 0));
+        chunk_add_instruction(func_chunk, VM_ENCODE_R_FLAGS(OP_RETURN, 0, 0, 0, 1));
     }
 
     func_proto_list_emplace(state->global_funcs, proto_index,
@@ -341,25 +360,43 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
     // dest and the argument slots must be contiguous, so they are reserved
     // before evaluating anything: an argument that is itself a call would
     // otherwise allocate its own registers in the middle of them.
-    unsigned int dest = codegen_alloc_register(state, node->span);
-
-    // dest holds the call's result and so outlives the argument block, which is
-    // released once the call is emitted.
-    unsigned int saved = state->next_reg;
-
+    unsigned int arg_slots = 0;
     for (size_t i = 0; i < arg_count; i++) {
-        codegen_alloc_register(state, node->call.args.data[i]->span);
+        arg_slots += type_slot_count(node->call.args.data[i]->type);
     }
 
+    unsigned int return_slots = type_slot_count(node->type);
+
+    // The callee's frame is based at dest, so its parameters overlap the
+    // argument block. A struct return larger than that block still needs room
+    // at dest, hence the max rather than just the arguments.
+    unsigned int reserved = 1 + arg_slots;
+    if (return_slots > reserved) {
+        reserved = return_slots;
+    }
+
+    // dest and the argument slots must be contiguous, so the whole block is
+    // reserved before evaluating anything.
+    unsigned int dest = codegen_alloc_slots(state, reserved, node->span);
+
+    // Only the result slots outlive the call; everything above them is the
+    // argument block and is released once the call is emitted.
+    unsigned int saved = dest + return_slots;
+
+    unsigned int offset = 1;
     for (size_t i = 0; i < arg_count; i++) {
         ASTExpr *arg = node->call.args.data[i];
+        unsigned int slots = type_slot_count(arg->type);
 
         unsigned int arg_reg = codegen_expr(state, arg);
 
-        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_MOVE, dest + 1 + i, arg_reg, 0));
+        codegen_copy_slots(state, dest + offset, arg_reg, slots);
+        offset += slots;
     }
 
-    Instruction call = VM_ENCODE_R(OP_CALL, dest, node->symbol->offset, arg_count);
+    // argc counts slots, not arguments: that is what sizing the callee's frame
+    // needs. The resolver has already checked the argument count.
+    Instruction call = VM_ENCODE_R(OP_CALL, dest, node->symbol->offset, arg_slots);
     chunk_add_instruction(state->chunk, call);
 
     codegen_release_registers(state, saved);

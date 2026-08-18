@@ -421,19 +421,25 @@ void vm_execute(VM *vm, const char *source) {
         }
         case OP_RETURN: {
             size_t r1 = VM_DECODE_R_R1(instruction);
-            Value result = vm->registers[r1];
+            size_t slots = VM_DECODE_R_FLAGS(instruction);
+
+            // The result is copied down to the frame's r0 before unwinding.
+            // Source and destination never overlap: the callee builds its
+            // result in temporaries above its parameters.
+            Value result[VM_MAX_RETURN_SLOTS];
+            memcpy(result, &vm->registers[r1], slots * sizeof(Value));
 
             unsigned int dest = frame->dest;
             vm_pop_frame(vm);
 
             if (vm->frame_count == 0) {
-                // Frame zero returning ends execution; r0 keeps the result so
+                // Frame zero returning ends execution; r0.. keeps the result so
                 // callers can still read it.
-                vm->stack[0] = result;
+                memcpy(vm->stack, result, slots * sizeof(Value));
                 continue;
             }
 
-            vm->registers[dest] = result;
+            memcpy(&vm->registers[dest], result, slots * sizeof(Value));
             continue;
         }
         case OP_LOAD_FIELD: {

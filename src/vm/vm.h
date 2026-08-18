@@ -31,7 +31,7 @@
 #define VM_DECODE_R_RD(instr) (((instr) >> 19) & 0x7F) // Destination register
 #define VM_DECODE_R_R1(instr) (((instr) >> 12) & 0x7F) // First source register
 #define VM_DECODE_R_R2(instr) (((instr) >> 5) & 0x7F)  // Second source register
-#define VM_DECODE_R_FLAGS(instr) ((instr) & 0x1F)      // Flags (unused)
+#define VM_DECODE_R_FLAGS(instr) ((instr) & 0x1F)      // Flags: field width, or return slot count
 
 /*
     Encodes I-type instructions in a 32-bit integer
@@ -52,6 +52,9 @@
 
 // Maximum registers supported with 7-bit
 #define VM_MAX_REGISTERS ((1 << 7) - 1)
+
+// OP_RETURN carries its slot count in the 5 flag bits.
+#define VM_MAX_RETURN_SLOTS ((1 << 5) - 1)
 
 // Sentinel value for registers
 #define VM_INVALID_REGISTER VM_MAX_REGISTERS + 1

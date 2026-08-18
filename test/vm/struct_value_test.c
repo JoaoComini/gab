@@ -142,6 +142,84 @@ static void test_struct_local_is_per_frame() {
                    "let r: int = main();") == 10);
 }
 
+static void test_struct_parameter() {
+    assert(run_int("struct V { x: int, y: int }\n"
+                   "func sum(v: V): int { return v.x + v.y; }\n"
+                   "func main(): int { let a: V; a.x = 3; a.y = 4; return sum(a); }\n"
+                   "let r: int = main();") == 7);
+}
+
+// The by-value guarantee on the way in: the callee gets its own copy, so
+// mutating the parameter must not reach the caller's struct.
+static void test_struct_parameter_is_by_value() {
+    assert(run_int("struct V { x: int, y: int }\n"
+                   "func bump(v: V): int { v.x = 999; return v.x; }\n"
+                   "func main(): int { let a: V; a.x = 3; a.y = 4;\n"
+                   "let ignored: int = bump(a);\n"
+                   "return a.x; }\n"
+                   "let r: int = main();") == 3);
+}
+
+static void test_struct_return() {
+    assert(run_int("struct V { x: int, y: int }\n"
+                   "func make(): V { let v: V; v.x = 11; v.y = 22; return v; }\n"
+                   "func main(): int { let g: V = make(); return g.x + g.y; }\n"
+                   "let r: int = main();") == 33);
+}
+
+// The overlap case: the callee's parameters and its return slots share the
+// space above dest. Safe only because the parameters are dead by the time
+// OP_RETURN copies the result down to r0.
+static void test_function_takes_and_returns_structs() {
+    assert(run_int("struct V { x: int, y: int }\n"
+                   "func twice(v: V): V { let o: V; o.x = v.x + v.x; o.y = v.y + v.y; return o; }\n"
+                   "func main(): int { let a: V; a.x = 3; a.y = 4;\n"
+                   "let b: V = twice(a);\n"
+                   "return b.x + b.y; }\n"
+                   "let r: int = main();") == 14);
+}
+
+// A return wider than the argument block must still fit what the caller
+// reserved at dest, which is why the reservation takes the max of the two.
+static void test_struct_return_larger_than_arguments() {
+    assert(run_int("struct Big { a: int, b: int, c: int, d: int }\n"
+                   "func make(n: int): Big { let v: Big;\n"
+                   "v.a = n; v.b = n + 1; v.c = n + 2; v.d = n + 3;\n"
+                   "return v; }\n"
+                   "func main(): int { let g: Big = make(10); return g.a + g.b + g.c + g.d; }\n"
+                   "let r: int = main();") == 46);
+}
+
+// Several arguments of different widths: each must land at its own running
+// offset rather than at a fixed one-slot-per-argument stride.
+static void test_mixed_scalar_and_struct_arguments() {
+    assert(run_int("struct V { x: int, y: int }\n"
+                   "func f(n: int, v: V, m: int): int { return n + v.x + v.y + m; }\n"
+                   "func main(): int { let a: V; a.x = 5; a.y = 6; return f(1, a, 100); }\n"
+                   "let r: int = main();") == 112);
+
+    assert(run_int("struct V { x: int, y: int }\n"
+                   "func add(a: V, b: V): int { return a.x + a.y + b.x + b.y; }\n"
+                   "func main(): int { let p: V; p.x = 1; p.y = 2;\n"
+                   "let q: V; q.x = 10; q.y = 20;\n"
+                   "return add(p, q); }\n"
+                   "let r: int = main();") == 33);
+}
+
+// A struct handed down and back up a recursion: every frame needs its own copy
+// on both legs.
+static void test_struct_round_trip_through_recursion() {
+    assert(run_int("struct V { x: int, y: int }\n"
+                   "func go(n: int, v: V): V {\n"
+                   "if n <= 0 { return v; }\n"
+                   "let w: V; w.x = v.x + 1; w.y = v.y + 2;\n"
+                   "return go(n - 1, w); }\n"
+                   "func main(): int { let a: V; a.x = 0; a.y = 0;\n"
+                   "let b: V = go(3, a);\n"
+                   "return b.x * 100 + b.y; }\n"
+                   "let r: int = main();") == 306);
+}
+
 // Finds the struct's slots in the stack and compares them, byte for byte, with
 // the equivalent C value. The function's frame is based at stack[0] with r0 as
 // the return slot, so a single struct local starts at slot 1; searching rather
@@ -218,6 +296,13 @@ int main() {
     test_nested_field_access();
     test_whole_struct_assignment();
     test_struct_local_is_per_frame();
+    test_struct_parameter();
+    test_struct_parameter_is_by_value();
+    test_struct_return();
+    test_function_takes_and_returns_structs();
+    test_struct_return_larger_than_arguments();
+    test_mixed_scalar_and_struct_arguments();
+    test_struct_round_trip_through_recursion();
     test_layout_agrees_with_c();
     test_mixed_width_layout_agrees_with_c();
 
