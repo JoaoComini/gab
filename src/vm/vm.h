@@ -89,6 +89,11 @@ typedef struct {
 typedef struct {
     Chunk *chunk;
     unsigned int max_registers;
+
+    // The module the unit declared, interned in the VM's pool, or NULL for the
+    // root namespace. Carried out because the AST that held it is destroyed
+    // inside vm_compile.
+    String *module_name;
 } CompiledScript;
 
 void func_proto_free(FuncPrototype proto);

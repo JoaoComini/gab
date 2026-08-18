@@ -12,5 +12,6 @@ typedef struct {
 StringRef string_ref_create(const char *data);
 char *string_ref_to_cstr(StringRef ref);
 bool string_ref_equals_cstr(StringRef ref, const char *cstr);
+bool string_ref_equals_ref(StringRef ref, StringRef other);
 
 #endif

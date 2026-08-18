@@ -391,9 +391,9 @@ static void test_rejected_setter_does_not_supply_an_argument(void) {
 }
 
 // Two entity scripts, each with its own on_update — the case an engine hits
-// first. gab_lookup still takes a module handle and still ignores it, so this
-// asserts only that both units compile; reaching the right one by name is the
-// next commit's job.
+// first, and a hard compile error before modules existed. Asking one unit for
+// the name must give that unit's function: the module handle used to be
+// accepted and ignored, so this returned whichever was compiled first.
 static void test_two_modules_can_share_a_function_name(void) {
     GabVM *vm = gab_vm_new();
 
@@ -401,16 +401,126 @@ static void test_two_modules_can_share_a_function_name(void) {
 
     GabModule *player = gab_compile(vm, "player.gab",
                                     "module Player;\n"
-                                    "func on_update(dt: float): int { return 1; }\n",
+                                    "func on_update(): int { return 1; }\n",
                                     &err);
     assert(player);
 
     GabModule *enemy = gab_compile(vm, "enemy.gab",
                                    "module Enemy;\n"
-                                   "func on_update(dt: float): int { return 2; }\n",
+                                   "func on_update(): int { return 2; }\n",
                                    &err);
     assert(enemy);
     assert(err.message[0] == '\0');
+
+    GabFunc *player_update = gab_lookup(vm, player, "on_update", &err);
+    GabFunc *enemy_update = gab_lookup(vm, enemy, "on_update", &err);
+    assert(player_update && enemy_update);
+
+    int result = 0;
+    assert(gab_call(vm, player_update, &result, &err) == GAB_OK);
+    assert(result == 1);
+
+    assert(gab_call(vm, enemy_update, &result, &err) == GAB_OK);
+    assert(result == 2);
+
+    gab_func_free(enemy_update);
+    gab_func_free(player_update);
+    gab_module_free(vm, enemy);
+    gab_module_free(vm, player);
+    gab_vm_free(vm);
+}
+
+// The script names the module, so a host reads it back rather than assuming it
+// matches the label it passed to gab_compile. The two need not agree.
+static void test_module_name_is_read_from_the_script(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    GabModule *named = gab_compile(vm, "some_file.gab", "module Player;\nfunc f(): int { return 1; }\n", &err);
+    assert(named);
+    assert(gab_module_name(named));
+    assert(strcmp(gab_module_name(named), "Player") == 0);
+
+    // A unit with no directive belongs to the root namespace.
+    GabModule *anonymous = gab_compile(vm, "other.gab", "func g(): int { return 2; }\n", &err);
+    assert(anonymous);
+    assert(gab_module_name(anonymous) == NULL);
+
+    // Which is reachable by passing no module at all.
+    GabFunc *g = gab_lookup(vm, anonymous, "g", &err);
+    assert(g);
+    gab_func_free(g);
+
+    gab_module_free(vm, anonymous);
+    gab_module_free(vm, named);
+    gab_vm_free(vm);
+}
+
+// Naming the module directly, for a host that has the name but not the handle.
+static void test_lookup_by_module_name(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    GabModule *mod = gab_compile(vm, "m.gab", "module Enemy;\nfunc hp(): int { return 42; }\n", &err);
+    assert(mod);
+
+    GabFunc *fn = gab_lookup_in(vm, "Enemy", "hp", &err);
+    assert(fn);
+
+    int result = 0;
+    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(result == 42);
+
+    // A module nobody declared is a miss with a message, not another module's
+    // symbol.
+    assert(gab_lookup_in(vm, "Nope", "hp", &err) == NULL);
+    assert(err.message[0] != '\0');
+
+    // And a name that module does not declare.
+    assert(gab_lookup_in(vm, "Enemy", "missing", &err) == NULL);
+
+    gab_func_free(fn);
+    gab_module_free(vm, mod);
+    gab_vm_free(vm);
+}
+
+// A struct named the same in two modules is two types, each with its own
+// layout — the collision that per-module scopes alone did not fix.
+static void test_two_modules_can_share_a_type_name(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    GabModule *player =
+        gab_compile(vm, "player.gab", "module Player;\nstruct Config { health: int, mana: int }\n", &err);
+    assert(player);
+
+    GabModule *enemy = gab_compile(vm, "enemy.gab", "module Enemy;\nstruct Config { hp: int }\n", &err);
+    assert(enemy);
+
+    const GabType *player_config = gab_find_type(vm, player, "Config");
+    const GabType *enemy_config = gab_find_type(vm, enemy, "Config");
+
+    assert(player_config && enemy_config);
+    assert(player_config != enemy_config);
+
+    // Distinct layouts, so these really are different types rather than one
+    // found twice.
+    assert(gab_type_size(player_config) == 2 * sizeof(int));
+    assert(gab_type_size(enemy_config) == sizeof(int));
+
+    size_t offset = SIZE_MAX;
+    assert(gab_field_offset(player_config, "mana", &offset));
+    assert(offset == sizeof(int));
+
+    // Each module's fields belong to its own type.
+    assert(!gab_field_offset(enemy_config, "mana", &offset));
+    assert(gab_field_offset(enemy_config, "hp", &offset));
+
+    // And by name, without a handle.
+    assert(gab_find_type_in(vm, "Player", "Config") == player_config);
+    assert(gab_find_type_in(vm, "Enemy", "Config") == enemy_config);
 
     gab_module_free(vm, enemy);
     gab_module_free(vm, player);
@@ -419,6 +529,9 @@ static void test_two_modules_can_share_a_function_name(void) {
 
 int main(void) {
     test_two_modules_can_share_a_function_name();
+    test_module_name_is_read_from_the_script();
+    test_lookup_by_module_name();
+    test_two_modules_can_share_a_type_name();
     test_compile_error_is_reported_not_printed();
     test_runtime_error_is_reported();
     test_runtime_error_from_module_run();

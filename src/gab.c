@@ -17,12 +17,17 @@
 // tag is only here to give the header something opaque to point at.
 struct GabVM;
 
+// One gab_compile: a chunk to run and a lifetime. Not a namespace — that is
+// the 'module' directive's job, and it may span several of these.
 struct GabModule {
     CompiledScript script;
 
     // Diagnostics live on the VM's compile arena, which the next compile
-    // reclaims, so anything a module must outlive a compile with is copied.
+    // reclaims, so anything a unit must outlive a compile with is copied.
     char name[128];
+
+    // The declared module, empty when the unit named none.
+    char module[128];
 };
 
 struct GabFunc {
@@ -142,7 +147,19 @@ GabModule *gab_compile(GabVM *handle, const char *name, const char *src, GabErro
 
     diagnostics_free(&diagnostics);
 
+    if (mod->script.module_name) {
+        snprintf(mod->module, sizeof(mod->module), "%s", mod->script.module_name->data);
+    }
+
     return mod;
+}
+
+const char *gab_module_name(const GabModule *mod) {
+    if (!mod || mod->module[0] == '\0') {
+        return NULL;
+    }
+
+    return mod->module;
 }
 
 GabStatus gab_module_run(GabVM *handle, GabModule *mod, GabError *err) {
@@ -176,18 +193,36 @@ void gab_module_free(GabVM *handle, GabModule *mod) {
 
 // --- Types -----------------------------------------------------------------
 
-const GabType *gab_find_type(GabVM *handle, GabModule *mod, const char *name) {
-    (void)mod;
+// Joins a module and a symbol into the qualified name both registries key on.
+// Returns false if the result would not fit, which the callers report as a
+// miss rather than truncating into some other symbol's name.
+static bool gab_qualify(char *out, size_t size, const char *module, const char *name) {
+    if (!module || module[0] == '\0') {
+        return (size_t)snprintf(out, size, "%s", name) < size;
+    }
 
+    return (size_t)snprintf(out, size, "%s::%s", module, name) < size;
+}
+
+const GabType *gab_find_type(GabVM *handle, GabModule *mod, const char *name) {
+    return gab_find_type_in(handle, mod ? gab_module_name(mod) : NULL, name);
+}
+
+const GabType *gab_find_type_in(GabVM *handle, const char *module, const char *name) {
     if (!handle || !name) {
         return NULL;
     }
 
     VM *vm = (VM *)handle;
 
+    char qualified[256];
+    if (!gab_qualify(qualified, sizeof(qualified), module, name)) {
+        return NULL;
+    }
+
     // Interning is a lookup, not an insert-if-missing, only because the name
     // of a type that exists is already in the pool.
-    String *interned = string_from_cstr(&vm->strings, name);
+    String *interned = string_from_cstr(&vm->strings, qualified);
     if (!interned) {
         return NULL;
     }
@@ -236,8 +271,13 @@ static unsigned int gab_type_slots(const Type *type) {
 }
 
 GabFunc *gab_lookup(GabVM *handle, GabModule *mod, const char *name, GabError *err) {
-    (void)mod;
+    // The unit says which module to look in. A unit is not itself a namespace —
+    // several may share one — so this resolves to the module the unit belongs
+    // to, which is what a host asking "the on_update of this script" means.
+    return gab_lookup_in(handle, mod ? gab_module_name(mod) : NULL, name, err);
+}
 
+GabFunc *gab_lookup_in(GabVM *handle, const char *module, const char *name, GabError *err) {
     gab_error_clear(err);
 
     if (!handle || !name) {
@@ -247,8 +287,28 @@ GabFunc *gab_lookup(GabVM *handle, GabModule *mod, const char *name, GabError *e
 
     VM *vm = (VM *)handle;
 
+    // A module scope parents to the root, so a bare lookup in a module also
+    // finds root declarations — the same visibility a script inside that
+    // module has.
+    Scope *scope = &vm->global_scope;
+
+    if (module && module[0] != '\0') {
+        String *module_interned = string_from_cstr(&vm->strings, module);
+        Scope **found = module_interned ? module_scope_map_lookup(vm->module_scopes, module_interned) : NULL;
+
+        if (!found) {
+            char message[256];
+            snprintf(message, sizeof(message), "no module named '%s'", module);
+            gab_error_set(err, 0, 0, message);
+
+            return NULL;
+        }
+
+        scope = *found;
+    }
+
     String *interned = string_from_cstr(&vm->strings, name);
-    Symbol *symbol = interned ? scope_symbol_lookup(&vm->global_scope, interned) : NULL;
+    Symbol *symbol = interned ? scope_symbol_lookup(scope, interned) : NULL;
 
     if (!symbol) {
         char message[256];

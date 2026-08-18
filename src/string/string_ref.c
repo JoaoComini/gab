@@ -15,3 +15,7 @@ char *string_ref_to_cstr(StringRef ref) {
 bool string_ref_equals_cstr(StringRef ref, const char *cstr) {
     return strlen(cstr) == ref.length && strncmp(ref.data, cstr, ref.length) == 0;
 }
+
+bool string_ref_equals_ref(StringRef ref, StringRef other) {
+    return ref.length == other.length && memcmp(ref.data, other.data, ref.length) == 0;
+}

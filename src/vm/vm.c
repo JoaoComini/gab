@@ -303,13 +303,16 @@ bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *di
     // pipeline rather than let a malformed AST reach codegen.
     Chunk *chunk = NULL;
     unsigned int max_registers = 0;
+    String *module_name = NULL;
 
     if (parser_parse(&parser, script)) {
         // A unit that named no module declares into the root namespace, which
         // is what keeps a single-script host from needing a directive at all.
-        Scope *scope = script->module_name.data
-                           ? vm_module_scope(vm, string_from_ref(&vm->strings, script->module_name))
-                           : &vm->global_scope;
+        if (script->module_name.data) {
+            module_name = string_from_ref(&vm->strings, script->module_name);
+        }
+
+        Scope *scope = module_name ? vm_module_scope(vm, module_name) : &vm->global_scope;
 
         if (ast_script_resolve(vm->compile_arena, script, scope, diagnostics)) {
             chunk = codegen_generate(script, &vm->global_funcs, diagnostics, &max_registers);
@@ -326,6 +329,7 @@ bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *di
 
     out->chunk = chunk;
     out->max_registers = max_registers;
+    out->module_name = module_name;
 
     return true;
 }

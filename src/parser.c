@@ -425,10 +425,33 @@ static TypeSpec *parse_type_spec(Parser *parser) {
         return NULL;
     }
 
-    TypeSpec *spec = type_spec_create(parser->current.lexeme, pointer_depth);
+    StringRef name = parser->current.lexeme;
     parser_next_token(parser); // eat the type name
 
-    return spec;
+    // 'Module::Type' names a type in another module. The whole thing is kept
+    // as one ref over the source, so the resolver sees the qualified name
+    // exactly as the registry stores it and needs no rejoining.
+    if (parser->current.type == TOKEN_COLON_COLON) {
+        parser_next_token(parser); // eat '::'
+
+        if (!parser_expect(parser, TOKEN_IDENT, "expected a type name after '::'")) {
+            return NULL;
+        }
+
+        StringRef member = parser->current.lexeme;
+        name.length = (size_t)(member.data - name.data) + member.length;
+
+        parser_next_token(parser); // eat the type name
+
+        // One '::' only: a module name is a single identifier, so a second
+        // would have nothing left to qualify.
+        if (parser->current.type == TOKEN_COLON_COLON) {
+            parser_error(parser, "a qualified type name has one '::', as 'Module::Type'");
+            return NULL;
+        }
+    }
+
+    return type_spec_create(name, pointer_depth);
 }
 
 static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
