@@ -64,22 +64,24 @@ static unsigned int type_slot_count(const Type *type) {
 
 static bool type_is_struct(const Type *type) { return type && type->kind == TYPE_STRUCT; }
 
-static FieldWidth field_width_for(size_t size, bool *ok) {
+// The field's width is known at compile time, so it picks the opcode instead
+// of spending operand bits. 'load' selects the load or store family.
+static OpCode field_opcode_for(size_t size, bool load, bool *ok) {
     *ok = true;
 
     switch (size) {
     case 1:
-        return FIELD_WIDTH_1;
+        return load ? OP_LOAD_FIELD_1 : OP_STORE_FIELD_1;
     case 2:
-        return FIELD_WIDTH_2;
+        return load ? OP_LOAD_FIELD_2 : OP_STORE_FIELD_2;
     case 4:
-        return FIELD_WIDTH_4;
+        return load ? OP_LOAD_FIELD_4 : OP_STORE_FIELD_4;
     default:
         break;
     }
 
     *ok = false;
-    return FIELD_WIDTH_4;
+    return load ? OP_LOAD_FIELD_4 : OP_STORE_FIELD_4;
 }
 
 typedef struct {
@@ -164,8 +166,8 @@ static void codegen_return_stmt(CodegenState *state, ASTReturnStmt *ast) {
     unsigned int reg = codegen_expr(state, ast->result);
     unsigned int slots = ast->result ? type_slot_count(ast->result->type) : 1;
 
-    // The slot count travels in 5 flag bits, so a wider return value cannot be
-    // encoded at all.
+    // The slot count travels in the r2 field, so a wider return value cannot
+    // be encoded at all.
     if (slots > VM_MAX_RETURN_SLOTS) {
         if (!state->failed) {
             diag_error(state->diagnostics, GAB_ERR_CODEGEN, ast->result->span,
@@ -176,7 +178,12 @@ static void codegen_return_stmt(CodegenState *state, ASTReturnStmt *ast) {
         return;
     }
 
-    chunk_add_instruction(state->chunk, VM_ENCODE_R_FLAGS(OP_RETURN, 0, reg, 0, slots));
+    if (slots == 1) {
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RETURN, 0, reg, 0));
+        return;
+    }
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RETURN_N, 0, reg, slots));
 }
 
 static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
@@ -294,9 +301,12 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
 
     state->failed = state->failed || func_state.failed;
 
-    if (func_chunk->instructions.size == 0 ||
-        VM_DECODE_OPCODE(instruction_list_back(&func_chunk->instructions)) != OP_RETURN) {
-        chunk_add_instruction(func_chunk, VM_ENCODE_R_FLAGS(OP_RETURN, 0, 0, 0, 1));
+    OpCode last = func_chunk->instructions.size > 0
+                      ? VM_DECODE_OPCODE(instruction_list_back(&func_chunk->instructions))
+                      : OP_LOAD_CONST;
+
+    if (func_chunk->instructions.size == 0 || (last != OP_RETURN && last != OP_RETURN_N)) {
+        chunk_add_instruction(func_chunk, VM_ENCODE_R(OP_RETURN, 0, 0, 0));
     }
 
     func_proto_list_emplace(state->global_funcs, proto_index,
@@ -429,7 +439,7 @@ static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node) {
     }
 
     bool ok;
-    FieldWidth width = field_width_for(node->field.field->type->size, &ok);
+    OpCode op = field_opcode_for(node->field.field->type->size, true, &ok);
 
     if (!ok || offset > VM_MAX_REGISTERS) {
         if (!state->failed) {
@@ -442,8 +452,7 @@ static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node) {
 
     unsigned int rd = codegen_alloc_register(state, node->span);
 
-    chunk_add_instruction(state->chunk,
-                          VM_ENCODE_R_FLAGS(OP_LOAD_FIELD, rd, base, (unsigned int)offset, width));
+    chunk_add_instruction(state->chunk, VM_ENCODE_R_FLAGS(op, rd, base, (unsigned int)offset, 0));
 
     return rd;
 }
@@ -461,7 +470,7 @@ static void codegen_store_field(CodegenState *state, ASTExpr *node, unsigned int
     }
 
     bool ok;
-    FieldWidth width = field_width_for(node->field.field->type->size, &ok);
+    OpCode op = field_opcode_for(node->field.field->type->size, false, &ok);
 
     if (!ok || offset > VM_MAX_REGISTERS) {
         if (!state->failed) {
@@ -472,8 +481,7 @@ static void codegen_store_field(CodegenState *state, ASTExpr *node, unsigned int
         return;
     }
 
-    chunk_add_instruction(state->chunk,
-                          VM_ENCODE_R_FLAGS(OP_STORE_FIELD, base, src, (unsigned int)offset, width));
+    chunk_add_instruction(state->chunk, VM_ENCODE_R_FLAGS(op, base, src, (unsigned int)offset, 0));
 }
 
 static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned int src, unsigned int count) {

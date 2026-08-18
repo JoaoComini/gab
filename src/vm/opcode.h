@@ -32,18 +32,21 @@ typedef enum {
     OP_JMP_IF_FALSE,
     OP_JMP_IF_TRUE,
     OP_CALL,
+    // OP_RETURN returns a single slot, the common case; OP_RETURN_N carries a
+    // slot count in r2.
     OP_RETURN,
-    OP_LOAD_FIELD,
-    OP_STORE_FIELD
-} OpCode;
+    OP_RETURN_N,
 
-// Field access is byte-granular: sub-word fields share a slot, so a slot-wide
-// store would clobber a field's neighbours. Width travels in the R-type flag
-// bits as this enum rather than as a raw byte count.
-typedef enum {
-    FIELD_WIDTH_1,
-    FIELD_WIDTH_2,
-    FIELD_WIDTH_4,
-} FieldWidth;
+    // Field access is byte-granular: sub-word fields share a slot, so a
+    // slot-wide store would clobber a field's neighbours. The width is a
+    // compile-time constant, so it selects the opcode rather than costing
+    // operand bits.
+    OP_LOAD_FIELD_1,
+    OP_LOAD_FIELD_2,
+    OP_LOAD_FIELD_4,
+    OP_STORE_FIELD_1,
+    OP_STORE_FIELD_2,
+    OP_STORE_FIELD_4
+} OpCode;
 
 #endif

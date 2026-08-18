@@ -224,16 +224,20 @@ static void test_struct_round_trip_through_recursion() {
 // the equivalent C value. The function's frame is based at stack[0] with r0 as
 // the return slot, so a single struct local starts at slot 1; searching rather
 // than hard-coding keeps the test from pinning the allocator's exact choices.
-static void assert_slots_match(VM *vm, const void *expected, size_t size) {
+static bool slots_match(VM *vm, const void *expected, size_t size) {
     size_t slots = (size + sizeof(Value) - 1) / sizeof(Value);
 
     for (size_t base = 0; base + slots <= vm->stack_capacity; base++) {
         if (memcmp(&vm->stack[base], expected, size) == 0) {
-            return;
+            return true;
         }
     }
 
-    assert(0 && "no run of slots matches the equivalent C struct");
+    return false;
+}
+
+static void assert_slots_match(VM *vm, const void *expected, size_t size) {
+    assert(slots_match(vm, expected, size) && "no run of slots matches the equivalent C struct");
 }
 
 // The whole point of untagging Value: a struct spread over consecutive slots is
@@ -288,6 +292,45 @@ static void test_mixed_width_layout_agrees_with_c() {
     vm_free(vm);
 }
 
+// The positive layout tests only mean something if the search discriminates:
+// a struct whose bytes differ from Gab's must match nowhere in the stack.
+static void test_layout_comparison_rejects_wrong_layouts() {
+    struct Shuffled {
+        float z;
+        float x;
+        float y;
+    };
+
+    struct __attribute__((packed)) Packed {
+        bool flag;
+        int32_t value;
+    };
+
+    VM *vm = vm_create();
+
+    vm_execute(vm, "struct Vec3 { x: float, y: float, z: float }\n"
+                   "struct M { flag: bool, value: int }\n"
+                   "func f(): float { let v: Vec3; let m: M;\n"
+                   "v.x = 1.5; v.y = 2.25; v.z = 7.0;\n"
+                   "m.flag = true; m.value = 305419896;\n"
+                   "return v.x; }\n"
+                   "let r: float = f();");
+
+    // Same three values, wrong field order.
+    struct Shuffled shuffled = {.z = 7.0f, .x = 1.5f, .y = 2.25f};
+    assert(!slots_match(vm, &shuffled, sizeof shuffled));
+
+    // Same two values, no padding after 'flag'.
+    struct Packed packed;
+    memset(&packed, 0, sizeof packed);
+    packed.flag = true;
+    packed.value = 305419896;
+    assert(sizeof packed == 5);
+    assert(!slots_match(vm, &packed, sizeof packed));
+
+    vm_free(vm);
+}
+
 int main() {
     test_read_back_what_was_written();
     test_every_field_is_independent();
@@ -305,6 +348,7 @@ int main() {
     test_struct_round_trip_through_recursion();
     test_layout_agrees_with_c();
     test_mixed_width_layout_agrees_with_c();
+    test_layout_comparison_rejects_wrong_layouts();
 
     printf("struct_value_test: all tests passed\n");
 

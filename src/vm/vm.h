@@ -17,7 +17,7 @@
     r1: Register 1 (7-bit)
     r2: Register 2 (7-bit)
 */
-#define VM_ENCODE_R(op, rd, r1, r2) (((op) << 26) | ((rd) << 19) | ((r1) << 12) | ((r2) << 5))
+#define VM_ENCODE_R(op, rd, r1, r2) VM_ENCODE_R_FLAGS(op, rd, r1, r2, 0)
 
 /*
     As VM_ENCODE_R, plus the 5 flag bits. Every field is masked: an

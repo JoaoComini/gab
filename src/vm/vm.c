@@ -225,18 +225,29 @@ void vm_conditional(VM *vm, Instruction instruction, bool (*func)(VM *, size_t, 
     vm->registers[rd].as_int = func(vm, r1, r2);
 }
 
-static size_t vm_field_width(unsigned int flags) {
-    switch (flags) {
-    case FIELD_WIDTH_1:
-        return 1;
-    case FIELD_WIDTH_2:
-        return 2;
-    case FIELD_WIDTH_4:
-        return 4;
-    }
+static void vm_load_field(VM *vm, Instruction instruction, size_t width) {
+    size_t rd = VM_DECODE_R_RD(instruction);
+    size_t base = VM_DECODE_R_R1(instruction);
+    size_t offset = VM_DECODE_R_R2(instruction);
 
-    assert(0 && "unknown field width");
-    abort();
+    const char *source = (const char *)&vm->registers[base] + offset;
+
+    // The destination is a whole slot, so a narrow field is widened rather
+    // than left beside stale bytes.
+    vm->registers[rd].as_int = 0;
+    memcpy(&vm->registers[rd], source, width);
+}
+
+static void vm_store_field(VM *vm, Instruction instruction, size_t width) {
+    size_t base = VM_DECODE_R_RD(instruction);
+    size_t r1 = VM_DECODE_R_R1(instruction);
+    size_t offset = VM_DECODE_R_R2(instruction);
+
+    char *dest = (char *)&vm->registers[base] + offset;
+
+    // Only the field's own bytes are written; anything sharing the slot keeps
+    // its value.
+    memcpy(dest, &vm->registers[r1], width);
 }
 
 void vm_execute(VM *vm, const char *source) {
@@ -419,9 +430,10 @@ void vm_execute(VM *vm, const char *source) {
 
             continue;
         }
-        case OP_RETURN: {
+        case OP_RETURN:
+        case OP_RETURN_N: {
             size_t r1 = VM_DECODE_R_R1(instruction);
-            size_t slots = VM_DECODE_R_FLAGS(instruction);
+            size_t slots = op == OP_RETURN ? 1 : VM_DECODE_R_R2(instruction);
 
             // The result is copied down to the frame's r0 before unwinding.
             // Source and destination never overlap: the callee builds its
@@ -442,29 +454,28 @@ void vm_execute(VM *vm, const char *source) {
             memcpy(&vm->registers[dest], result, slots * sizeof(Value));
             continue;
         }
-        case OP_LOAD_FIELD: {
-            size_t rd = VM_DECODE_R_RD(instruction);
-            size_t base = VM_DECODE_R_R1(instruction);
-            size_t offset = VM_DECODE_R_R2(instruction);
-
-            const char *source = (const char *)&vm->registers[base] + offset;
-
-            // The destination is a whole slot, so a narrow field is widened
-            // rather than left beside stale bytes.
-            vm->registers[rd].as_int = 0;
-            memcpy(&vm->registers[rd], source, vm_field_width(VM_DECODE_R_FLAGS(instruction)));
+        case OP_LOAD_FIELD_1: {
+            vm_load_field(vm, instruction, 1);
             break;
         }
-        case OP_STORE_FIELD: {
-            size_t base = VM_DECODE_R_RD(instruction);
-            size_t r1 = VM_DECODE_R_R1(instruction);
-            size_t offset = VM_DECODE_R_R2(instruction);
-
-            char *dest = (char *)&vm->registers[base] + offset;
-
-            // Only the field's own bytes are written; anything sharing the
-            // slot keeps its value.
-            memcpy(dest, &vm->registers[r1], vm_field_width(VM_DECODE_R_FLAGS(instruction)));
+        case OP_LOAD_FIELD_2: {
+            vm_load_field(vm, instruction, 2);
+            break;
+        }
+        case OP_LOAD_FIELD_4: {
+            vm_load_field(vm, instruction, 4);
+            break;
+        }
+        case OP_STORE_FIELD_1: {
+            vm_store_field(vm, instruction, 1);
+            break;
+        }
+        case OP_STORE_FIELD_2: {
+            vm_store_field(vm, instruction, 2);
+            break;
+        }
+        case OP_STORE_FIELD_4: {
+            vm_store_field(vm, instruction, 4);
             break;
         }
         case OP_JMP: {
