@@ -46,7 +46,27 @@ typedef enum {
     OP_LOAD_FIELD_4,
     OP_STORE_FIELD_1,
     OP_STORE_FIELD_2,
-    OP_STORE_FIELD_4
+    OP_STORE_FIELD_4,
+
+    // Writes the address of a frame slot into a 2-slot destination.
+    OP_ADDR_OF,
+
+    // As the OP_LOAD_FIELD_* / OP_STORE_FIELD_* family, except the base names
+    // a slot pair holding an address rather than the struct itself.
+    OP_LOAD_FIELD_PTR_1,
+    OP_LOAD_FIELD_PTR_2,
+    OP_LOAD_FIELD_PTR_4,
+    OP_STORE_FIELD_PTR_1,
+    OP_STORE_FIELD_PTR_2,
+    OP_STORE_FIELD_PTR_4,
+
+    // Adds a byte offset to an address, for reaching a field through a pointer.
+    OP_ADD_PTR,
+
+    // Copies a run of slots to or from the address a slot pair holds. The slot
+    // count rides in the third operand, so a whole struct moves in one step.
+    OP_LOAD_PTR_N,
+    OP_STORE_PTR_N,
 } OpCode;
 
 #endif

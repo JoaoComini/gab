@@ -22,6 +22,8 @@ typedef enum {
     EXPR_VARIABLE,
     EXPR_CALL,
     EXPR_FIELD,
+    EXPR_ADDR_OF,
+    EXPR_DEREF,
 } ExprKind;
 
 typedef enum {
@@ -73,6 +75,12 @@ typedef struct ASTExpr {
             // again.
             const TypeField *field;
         } field;
+
+        // '&target' and '*target'. Both are prefix forms over a single
+        // operand, so they share a shape.
+        struct {
+            ASTExpr *target;
+        } unary;
     };
 
     Span span; // Source position, for diagnostics
@@ -86,6 +94,8 @@ ASTExpr *ast_bin_op_expr_create(Span span, ASTExpr *left, BinOp op, ASTExpr *rig
 ASTExpr *ast_variable_expr_create(Span span, StringRef name);
 ASTExpr *ast_call_expr_create(Span span, ASTExpr *target, ASTExprList args);
 ASTExpr *ast_field_expr_create(Span span, ASTExpr *target, StringRef name);
+ASTExpr *ast_addr_of_expr_create(Span span, ASTExpr *target);
+ASTExpr *ast_deref_expr_create(Span span, ASTExpr *target);
 void ast_expr_free(ASTExpr *node);
 
 #endif

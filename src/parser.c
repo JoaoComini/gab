@@ -6,6 +6,7 @@
 #include "type.h"
 
 #include <assert.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -24,6 +25,7 @@ static bool stmt_needs_terminator(ASTStmt *stmt);
 
 static ASTExpr *parse_expression(Parser *parser);
 static ASTExpr *parse_primary(Parser *parser);
+static ASTExpr *parse_unary(Parser *parser);
 static ASTExpr *parse_field_expr(Parser *parser, ASTExpr *target);
 static void parser_synchronize(Parser *parser);
 static ASTExpr *parse_precedence(Parser *parser, int min_precedence);
@@ -496,7 +498,7 @@ static ASTStmt *parse_expr_stmt(Parser *parser) {
         return ast_expr_stmt_create(span, expr);
     }
 
-    if (expr->kind != EXPR_VARIABLE && expr->kind != EXPR_FIELD) {
+    if (expr->kind != EXPR_VARIABLE && expr->kind != EXPR_FIELD && expr->kind != EXPR_DEREF) {
         parser_error(parser, "expression is not assignable");
         ast_expr_free(expr);
         return NULL;
@@ -599,24 +601,53 @@ static ASTExpr *parse_call_expr(Parser *parser, ASTExpr *target) {
     return ast_call_expr_create(span, target, args);
 }
 
-static ASTExpr *parse_precedence(Parser *parser, int min_precedence) {
-    ASTExpr *lhs = parse_primary(parser);
-    if (!lhs)
+// A primary with its postfixes, or a prefix form over one of those. Prefix '&'
+// and '*' bind tighter than any binary operator but looser than a postfix, so
+// '&p.x' takes the address of the field and '*p.x' dereferences it.
+static ASTExpr *parse_unary(Parser *parser) {
+    Span span = parser_span(parser);
+
+    // '*' is the same token as multiplication; only its position tells them
+    // apart, exactly as for a unary minus.
+    if (parser->current.type == TOKEN_AMP || parser->current.type == TOKEN_MUL) {
+        bool addr_of = parser->current.type == TOKEN_AMP;
+
+        parser_next_token(parser); // eat '&' or '*'
+
+        ASTExpr *target = parse_unary(parser);
+        if (!target) {
+            return NULL;
+        }
+
+        return addr_of ? ast_addr_of_expr_create(span, target) : ast_deref_expr_create(span, target);
+    }
+
+    ASTExpr *expr = parse_primary(parser);
+    if (!expr) {
         return NULL;
+    }
 
     // Postfixes bind tighter than any binary operator and chain, so 'a.b.c' and
     // 'f().x' both fall out of looping here.
     while (parser->current.type == TOKEN_LPAREN || parser->current.type == TOKEN_DOT) {
         if (parser->current.type == TOKEN_LPAREN) {
-            lhs = parse_call_expr(parser, lhs);
+            expr = parse_call_expr(parser, expr);
         } else {
-            lhs = parse_field_expr(parser, lhs);
+            expr = parse_field_expr(parser, expr);
         }
 
-        if (!lhs) {
+        if (!expr) {
             return NULL;
         }
     }
+
+    return expr;
+}
+
+static ASTExpr *parse_precedence(Parser *parser, int min_precedence) {
+    ASTExpr *lhs = parse_unary(parser);
+    if (!lhs)
+        return NULL;
 
     while (1) {
         Token token = parser->current;

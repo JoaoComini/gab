@@ -49,6 +49,20 @@ ASTExpr *ast_field_expr_create(Span span, ASTExpr *target, StringRef name) {
     return node;
 }
 
+ASTExpr *ast_addr_of_expr_create(Span span, ASTExpr *target) {
+    ASTExpr *node = ast_expr_create(span);
+    node->kind = EXPR_ADDR_OF;
+    node->unary.target = target;
+    return node;
+}
+
+ASTExpr *ast_deref_expr_create(Span span, ASTExpr *target) {
+    ASTExpr *node = ast_expr_create(span);
+    node->kind = EXPR_DEREF;
+    node->unary.target = target;
+    return node;
+}
+
 void ast_expr_free(ASTExpr *expr) {
     if (!expr)
         return;
@@ -69,6 +83,10 @@ void ast_expr_free(ASTExpr *expr) {
         break;
     case EXPR_FIELD:
         ast_expr_free(expr->field.target);
+        break;
+    case EXPR_ADDR_OF:
+    case EXPR_DEREF:
+        ast_expr_free(expr->unary.target);
         break;
     default:
         break;

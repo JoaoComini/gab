@@ -23,6 +23,7 @@ typedef enum {
     TOKEN_LEQUAL,    // "<="
     TOKEN_GEQUAL,    // ">="
     TOKEN_AND,       // "&&"
+    TOKEN_AMP,       // '&'
     TOKEN_OR,        // "||"
                      // END OPERATORS
     TOKEN_LPAREN,    // '('

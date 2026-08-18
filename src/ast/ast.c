@@ -100,6 +100,22 @@ static const char *bin_op_name(BinOp op) {
     return "?";
 }
 
+// Something with a home in memory whose address can be named: a variable, a
+// field of one, or whatever a pointer already points at. A literal or a call
+// result is a temporary and has no address to take.
+static bool is_addressable(const ASTExpr *expr) {
+    switch (expr->kind) {
+    case EXPR_VARIABLE:
+        return expr->symbol && expr->symbol->kind == SYMBOL_VAR;
+    case EXPR_FIELD:
+        return is_addressable(expr->field.target);
+    case EXPR_DEREF:
+        return true;
+    default:
+        return false;
+    }
+}
+
 bool is_numeric_type(Type *t) { return t->kind == TYPE_INT || t->kind == TYPE_FLOAT; }
 
 bool is_boolean_type(Type *t) { return t->kind == TYPE_BOOL; }
@@ -278,6 +294,50 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         // Field access addresses the target's slots, so it inherits the
         // target's symbol and stays assignable through the chain.
         expr->symbol = expr->field.target->symbol;
+        break;
+    }
+    case EXPR_ADDR_OF: {
+        ast_script_expr_visit(state, expr->unary.target);
+
+        Type *target_type = expr->unary.target->type;
+
+        if (is_error_type(target_type)) {
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        if (!is_addressable(expr->unary.target)) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                       "cannot take the address of a temporary");
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        expr->type = type_registry_pointer_to(state->current_scope->type_registry, target_type);
+        break;
+    }
+    case EXPR_DEREF: {
+        ast_script_expr_visit(state, expr->unary.target);
+
+        Type *target_type = expr->unary.target->type;
+
+        if (is_error_type(target_type)) {
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        if (!type_is_pointer(target_type)) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot dereference %s",
+                       type_name(target_type));
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        expr->type = target_type->pointee;
+
+        // The address itself lives in the target's slots, so a deref stays
+        // assignable through whatever the target was.
+        expr->symbol = expr->unary.target->symbol;
         break;
     }
     case EXPR_LITERAL: {

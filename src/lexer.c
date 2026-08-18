@@ -70,6 +70,8 @@ const char *token_description(TokenType type) {
         return "'>='";
     case TOKEN_AND:
         return "'&&'";
+    case TOKEN_AMP:
+        return "'&'";
     case TOKEN_OR:
         return "'||'";
     case TOKEN_LPAREN:
@@ -217,6 +219,13 @@ Token lexer_handle_op_eq(Lexer *lexer, TokenType base_tok, TokenType eq_tok, cha
     char ch = lexer_peek(lexer);
     if (ch == '=') {
         lexer_eat(lexer);
+
+        // TOKEN_INVALID means there is no such compound operator, so it is
+        // reported rather than handed to the parser as a silent invalid token.
+        if (eq_tok == TOKEN_INVALID) {
+            return lexer_invalid(lexer, op_ch);
+        }
+
         return token_create(lexer, eq_tok);
     }
 
@@ -286,7 +295,7 @@ Token lexer_next(Lexer *lexer) {
     case '>':
         return lexer_handle_eq(lexer, TOKEN_GREATER, TOKEN_GEQUAL);
     case '&':
-        return lexer_handle_op_eq(lexer, TOKEN_INVALID, TOKEN_INVALID, '&', TOKEN_AND);
+        return lexer_handle_op_eq(lexer, TOKEN_AMP, TOKEN_INVALID, '&', TOKEN_AND);
     case '|':
         return lexer_handle_op_eq(lexer, TOKEN_INVALID, TOKEN_INVALID, '|', TOKEN_OR);
     case ';':

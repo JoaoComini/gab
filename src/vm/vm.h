@@ -57,6 +57,10 @@
 // OP_RETURN_N carries its slot count in the 8-bit r2 field.
 #define VM_MAX_RETURN_SLOTS ((1 << 8) - 1)
 
+// A pointer is a raw address, so it spans two slots and wants an even slot
+// index to sit at its natural alignment.
+#define VM_POINTER_SLOTS ((unsigned int)(sizeof(void *) / sizeof(Value)))
+
 // Sentinel value for registers
 #define VM_INVALID_REGISTER VM_MAX_REGISTERS + 1
 

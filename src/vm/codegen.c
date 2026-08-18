@@ -51,6 +51,9 @@ static unsigned int codegen_alloc_slots(CodegenState *state, unsigned int count,
 static void codegen_release_registers(CodegenState *state, unsigned int saved);
 static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node);
 static void codegen_store_field(CodegenState *state, ASTExpr *node, unsigned int src);
+static unsigned int codegen_addr_of_expr(CodegenState *state, ASTExpr *node);
+static unsigned int codegen_deref_expr(CodegenState *state, ASTExpr *node);
+static void codegen_store_deref(CodegenState *state, ASTExpr *node, unsigned int src);
 static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned int src, unsigned int count);
 
 // A value occupies ceil(size / 4) consecutive slots, which is 1 for every
@@ -77,15 +80,24 @@ static bool type_is_struct(const Type *type) { return type && type->kind == TYPE
 
 // The field's width is known at compile time, so it picks the opcode instead
 // of spending operand bits. 'load' selects the load or store family.
-static OpCode field_opcode_for(size_t size, bool load, bool *ok) {
+static OpCode field_opcode_for(size_t size, bool load, bool indirect, bool *ok) {
     *ok = true;
 
     switch (size) {
     case 1:
+        if (indirect) {
+            return load ? OP_LOAD_FIELD_PTR_1 : OP_STORE_FIELD_PTR_1;
+        }
         return load ? OP_LOAD_FIELD_1 : OP_STORE_FIELD_1;
     case 2:
+        if (indirect) {
+            return load ? OP_LOAD_FIELD_PTR_2 : OP_STORE_FIELD_PTR_2;
+        }
         return load ? OP_LOAD_FIELD_2 : OP_STORE_FIELD_2;
     case 4:
+        if (indirect) {
+            return load ? OP_LOAD_FIELD_PTR_4 : OP_STORE_FIELD_PTR_4;
+        }
         return load ? OP_LOAD_FIELD_4 : OP_STORE_FIELD_4;
     default:
         break;
@@ -242,6 +254,12 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
         return;
     }
 
+    // Likewise a deref: '*p = v' writes through p rather than over it.
+    if (ast->target->kind == EXPR_DEREF) {
+        codegen_store_deref(state, ast->target, codegen_expr(state, ast->value));
+        return;
+    }
+
     unsigned int rd = codegen_expr(state, ast->target);
     unsigned int r1 = codegen_expr(state, ast->value);
 
@@ -341,6 +359,10 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
         return codegen_call_expr(state, ast);
     case EXPR_FIELD:
         return codegen_field_expr(state, ast);
+    case EXPR_ADDR_OF:
+        return codegen_addr_of_expr(state, ast);
+    case EXPR_DEREF:
+        return codegen_deref_expr(state, ast);
     }
 
     assert(0 && "unknown expression kind");
@@ -437,34 +459,74 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
     return dest;
 }
 
-// Walks a field chain down to the slot the outermost struct lives in,
+typedef struct FieldTarget FieldTarget;
+static void codegen_store_indirect(CodegenState *state, ASTExpr *node, FieldTarget target, unsigned int src,
+                                   unsigned int slots);
+
+// A resolved field chain: a base slot plus a byte offset within it. When
+// 'indirect' is set the base slot pair holds an address rather than the struct
+// itself, which is what a deref in the chain produces.
+struct FieldTarget {
+    unsigned int base;
+    size_t offset;
+    bool indirect;
+};
+
+// Walks a field chain down to whatever the outermost struct lives in,
 // accumulating the byte offsets on the way. Nested structs are inline, so
-// 'outer.inner.x' is one base slot plus a single summed offset.
-static unsigned int codegen_field_base(CodegenState *state, ASTExpr *node, size_t *offset) {
+// 'outer.inner.x' is one base plus a single summed offset; a deref stops the
+// walk, because from there on the base is an address computed at runtime.
+static FieldTarget codegen_field_base(CodegenState *state, ASTExpr *node) {
     if (node->kind == EXPR_FIELD) {
-        unsigned int base = codegen_field_base(state, node->field.target, offset);
-        *offset += node->field.field->offset;
-        return base;
+        FieldTarget target = codegen_field_base(state, node->field.target);
+        target.offset += node->field.field->offset;
+        return target;
     }
 
-    return codegen_expr(state, node);
+    if (node->kind == EXPR_DEREF) {
+        return (FieldTarget){
+            .base = codegen_expr(state, node->unary.target),
+            .offset = 0,
+            .indirect = true,
+        };
+    }
+
+    return (FieldTarget){
+        .base = codegen_expr(state, node),
+        .offset = 0,
+        .indirect = false,
+    };
 }
 
-static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node) {
-    size_t offset = 0;
-    unsigned int base = codegen_field_base(state, node, &offset);
-
-    // A struct-typed field is addressed, not loaded: its slots are already
-    // laid out inline, so the caller reads them where they sit.
-    if (type_is_struct(node->type)) {
-        assert(offset % sizeof(Value) == 0 && "a struct field is always slot-aligned");
-        return base + (unsigned int)(offset / sizeof(Value));
+// An offset rides in an 8-bit operand, and only 1, 2 and 4 byte fields have an
+// opcode. Both are compile-time facts, so a violation is reported once here.
+static bool codegen_field_access_fits(CodegenState *state, ASTExpr *node, bool ok, size_t offset) {
+    if (ok && offset <= VM_MAX_REGISTERS) {
+        return true;
     }
 
-    bool ok;
-    OpCode op = field_opcode_for(node->field.field->type->size, true, &ok);
+    if (!state->failed) {
+        diag_error(state->diagnostics, GAB_ERR_CODEGEN, node->span, "struct is too large for a frame");
+    }
 
-    if (!ok || offset > VM_MAX_REGISTERS) {
+    state->failed = true;
+    return false;
+}
+
+// The slots a struct occupies, addressed directly. Only valid for a direct
+// target: through a pointer there is no slot to name.
+static unsigned int codegen_field_slots(FieldTarget target) {
+    assert(!target.indirect && "an indirect struct field has no slot of its own");
+    assert(target.offset % sizeof(Value) == 0 && "a struct field is always slot-aligned");
+
+    return target.base + (unsigned int)(target.offset / sizeof(Value));
+}
+
+// Copies a struct out of the address a pointer holds into fresh slots, so the
+// result reads like any other struct-valued expression.
+static unsigned int codegen_load_indirect_struct(CodegenState *state, ASTExpr *node, FieldTarget target,
+                                                 unsigned int slots) {
+    if (target.offset > VM_MAX_REGISTERS || slots > VM_MAX_REGISTERS) {
         if (!state->failed) {
             diag_error(state->diagnostics, GAB_ERR_CODEGEN, node->span, "struct is too large for a frame");
         }
@@ -473,29 +535,79 @@ static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node) {
         return 0;
     }
 
+    unsigned int rd = codegen_alloc_slots(state, slots, type_align_slots(node->type), node->span);
+
+    // The offset is folded into the address first, so OP_LOAD_PTR_N needs only
+    // a base and a count.
+    unsigned int address = target.base;
+
+    if (target.offset > 0) {
+        address = codegen_alloc_slots(state, VM_POINTER_SLOTS, VM_POINTER_SLOTS, node->span);
+        chunk_add_instruction(state->chunk,
+                              VM_ENCODE_R(OP_ADD_PTR, address, target.base, (unsigned int)target.offset));
+    }
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_LOAD_PTR_N, rd, address, slots));
+
+    return rd;
+}
+
+static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node) {
+    FieldTarget target = codegen_field_base(state, node);
+
+    // A struct-typed field is addressed, not loaded: its slots are already laid
+    // out inline, so the caller reads them where they sit. Through a pointer
+    // there are no such slots, so it is copied out instead.
+    if (type_is_struct(node->type)) {
+        if (target.indirect) {
+            return codegen_load_indirect_struct(state, node, target, type_slot_count(node->type));
+        }
+
+        return codegen_field_slots(target);
+    }
+
+    bool ok;
+    OpCode op = field_opcode_for(node->field.field->type->size, true, target.indirect, &ok);
+
+    if (!codegen_field_access_fits(state, node, ok, target.offset)) {
+        return 0;
+    }
+
     unsigned int rd = codegen_alloc_register(state, node->span);
 
-    chunk_add_instruction(state->chunk, VM_ENCODE_R(op, rd, base, (unsigned int)offset));
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(op, rd, target.base, (unsigned int)target.offset));
 
     return rd;
 }
 
 static void codegen_store_field(CodegenState *state, ASTExpr *node, unsigned int src) {
-    size_t offset = 0;
-    unsigned int base = codegen_field_base(state, node, &offset);
+    FieldTarget target = codegen_field_base(state, node);
 
     if (type_is_struct(node->type)) {
-        assert(offset % sizeof(Value) == 0 && "a struct field is always slot-aligned");
+        if (target.indirect) {
+            codegen_store_indirect(state, node, target, src, type_slot_count(node->type));
+            return;
+        }
 
-        codegen_copy_slots(state, base + (unsigned int)(offset / sizeof(Value)), src,
-                           type_slot_count(node->type));
+        codegen_copy_slots(state, codegen_field_slots(target), src, type_slot_count(node->type));
         return;
     }
 
     bool ok;
-    OpCode op = field_opcode_for(node->field.field->type->size, false, &ok);
+    OpCode op = field_opcode_for(node->field.field->type->size, false, target.indirect, &ok);
 
-    if (!ok || offset > VM_MAX_REGISTERS) {
+    if (!codegen_field_access_fits(state, node, ok, target.offset)) {
+        return;
+    }
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(op, target.base, src, (unsigned int)target.offset));
+}
+
+// Writes a run of slots to the address a pointer holds, folding any field
+// offset into the address first.
+static void codegen_store_indirect(CodegenState *state, ASTExpr *node, FieldTarget target, unsigned int src,
+                                   unsigned int slots) {
+    if (target.offset > VM_MAX_REGISTERS || slots > VM_MAX_REGISTERS) {
         if (!state->failed) {
             diag_error(state->diagnostics, GAB_ERR_CODEGEN, node->span, "struct is too large for a frame");
         }
@@ -504,7 +616,102 @@ static void codegen_store_field(CodegenState *state, ASTExpr *node, unsigned int
         return;
     }
 
-    chunk_add_instruction(state->chunk, VM_ENCODE_R(op, base, src, (unsigned int)offset));
+    unsigned int address = target.base;
+
+    if (target.offset > 0) {
+        address = codegen_alloc_slots(state, VM_POINTER_SLOTS, VM_POINTER_SLOTS, node->span);
+        chunk_add_instruction(state->chunk,
+                              VM_ENCODE_R(OP_ADD_PTR, address, target.base, (unsigned int)target.offset));
+    }
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_STORE_PTR_N, address, src, slots));
+}
+
+// '&x' materialises the address of whatever slots the target occupies. The
+// target is addressable by construction: the resolver rejected anything else.
+static unsigned int codegen_addr_of_expr(CodegenState *state, ASTExpr *node) {
+    ASTExpr *inner = node->unary.target;
+
+    // '&*p' is just p: the deref would only load what the address already is.
+    if (inner->kind == EXPR_DEREF) {
+        return codegen_expr(state, inner->unary.target);
+    }
+
+    FieldTarget target = codegen_field_base(state, inner);
+
+    unsigned int rd = codegen_alloc_slots(state, VM_POINTER_SLOTS, VM_POINTER_SLOTS, node->span);
+
+    if (target.offset > VM_MAX_REGISTERS) {
+        if (!state->failed) {
+            diag_error(state->diagnostics, GAB_ERR_CODEGEN, node->span, "struct is too large for a frame");
+        }
+
+        state->failed = true;
+        return rd;
+    }
+
+    // Through a pointer the base is already an address, so the field offset is
+    // added to it rather than to a slot index.
+    OpCode op = target.indirect ? OP_ADD_PTR : OP_ADDR_OF;
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(op, rd, target.base, (unsigned int)target.offset));
+
+    return rd;
+}
+
+// '*p' reads what p points at: a whole run of slots for a struct, a single
+// value otherwise.
+static unsigned int codegen_deref_expr(CodegenState *state, ASTExpr *node) {
+    FieldTarget target = {
+        .base = codegen_expr(state, node->unary.target),
+        .offset = 0,
+        .indirect = true,
+    };
+
+    unsigned int slots = type_slot_count(node->type);
+
+    if (type_is_struct(node->type) || slots > 1) {
+        return codegen_load_indirect_struct(state, node, target, slots);
+    }
+
+    bool ok;
+    OpCode op = field_opcode_for(node->type->size, true, true, &ok);
+
+    if (!codegen_field_access_fits(state, node, ok, 0)) {
+        return 0;
+    }
+
+    unsigned int rd = codegen_alloc_register(state, node->span);
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(op, rd, target.base, 0));
+
+    return rd;
+}
+
+// Assignment through a deref: '*p = v' writes into whatever p points at
+// instead of overwriting p.
+static void codegen_store_deref(CodegenState *state, ASTExpr *node, unsigned int src) {
+    FieldTarget target = {
+        .base = codegen_expr(state, node->unary.target),
+        .offset = 0,
+        .indirect = true,
+    };
+
+    unsigned int slots = type_slot_count(node->type);
+
+    if (type_is_struct(node->type) || slots > 1) {
+        codegen_store_indirect(state, node, target, src, slots);
+        return;
+    }
+
+    bool ok;
+    OpCode op = field_opcode_for(node->type->size, false, true, &ok);
+
+    if (!codegen_field_access_fits(state, node, ok, 0)) {
+        return;
+    }
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(op, target.base, src, 0));
 }
 
 static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned int src, unsigned int count) {
