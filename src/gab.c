@@ -45,6 +45,10 @@ struct GabScript {
 // The per-parameter arrays and the argument staging buffer therefore trail the
 // struct in one allocation, laid out by gab_func_alloc.
 struct GabFunc {
+    // The VM that handed this handle out and owns it. A handle dereferences
+    // symbols living in that VM's arena, so it is only as valid as the VM.
+    VM *vm;
+
     const Symbol *symbol;
 
     // The signature this handle was built against, captured at lookup. Every
@@ -87,11 +91,16 @@ struct GabFunc {
     size_t param_capacity;
     unsigned int slot_capacity;
 
+    // Where the VM's list of live handles holds this one, so releasing it is a
+    // swap-remove rather than a search. The VM owning handles is what makes a
+    // forgotten gab_func_free harmless.
+    size_t registry_index;
+
 };
 
-// A function is looked up through the VM.s scopes, so a handle is only as valid
-// as the VM. Handles are malloc.d rather than arena allocated so that
-// gab_func_free can actually release one.
+// A handle is only as valid as the VM that produced it, which is why the VM
+// owns every one it hands out. They are malloc'd rather than arena allocated
+// so that gab_func_free can genuinely reclaim one before the VM goes.
 
 // Builds the handle's cached call layout from its symbol's current signature.
 static void gab_func_bind(GabFunc *fn);
@@ -177,12 +186,23 @@ static void gab_error_from_diagnostics(GabError *err, const Diagnostics *diagnos
 
 GabVM *gab_vm_new(void) { return (GabVM *)vm_create(); }
 
-void gab_vm_free(GabVM *vm) {
-    if (!vm) {
+void gab_vm_free(GabVM *handle) {
+    if (!handle) {
         return;
     }
 
-    vm_free((VM *)vm);
+    VM *vm = (VM *)handle;
+
+    // Whatever the host did not release. Freed here rather than in vm_free
+    // because a GabFunc is this file's type: the VM tracked the pointers
+    // without ever knowing what they were.
+    for (size_t i = 0; i < vm->func_handles.size; i++) {
+        free(vm->func_handles.data[i]);
+    }
+
+    vm->func_handles.size = 0;
+
+    vm_free(vm);
 }
 
 GabScript *gab_compile(GabVM *handle, const char *name, const char *src, GabError *err) {
@@ -410,14 +430,39 @@ GabFunc *gab_lookup(GabVM *handle, const char *module, const char *name, GabErro
         return NULL;
     }
 
+    fn->vm = vm;
     fn->symbol = symbol;
 
     gab_func_bind(fn);
 
+    // The VM owns it from here. A host that never calls gab_func_free leaks
+    // nothing: gab_vm_free releases whatever is still registered.
+    fn->registry_index = vm->func_handles.size;
+    func_handle_list_add(&vm->func_handles, fn);
+
     return fn;
 }
 
-void gab_func_free(GabFunc *fn) { free(fn); }
+// Releasing early, which a host need not do. The VM would free this handle
+// anyway, so this only reclaims it sooner — worth doing for a handle discarded
+// after a reload widened its signature past what it could hold.
+void gab_func_free(GabFunc *fn) {
+    if (!fn) {
+        return;
+    }
+
+    FuncHandleList *handles = &fn->vm->func_handles;
+    size_t moved_from = 0;
+
+    func_handle_list_swap_remove(handles, fn->registry_index, &moved_from);
+
+    // The last handle moved into the hole, so its own index is now stale.
+    if (moved_from != fn->registry_index) {
+        ((GabFunc *)handles->data[fn->registry_index])->registry_index = fn->registry_index;
+    }
+
+    free(fn);
+}
 
 // The signature this handle was built for, not the symbol's current one: a
 // handle describes the call it can make, and after a signature-changing reload

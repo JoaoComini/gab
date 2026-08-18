@@ -947,9 +947,61 @@ static void test_a_reload_too_wide_for_the_handle_is_reported(void) {
     gab_vm_free(vm);
 }
 
+// The VM owns every handle it hands out, so a host that never calls
+// gab_func_free leaks nothing — and one that does, out of order, must leave the
+// rest working. Releasing is a swap-remove, so a survivor's index moves
+// underneath it.
+static void test_the_vm_owns_its_handles(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    GabScript *script = gab_compile(vm, "m.gab",
+                                    "func a(n: int): int { return n + 1; }\n"
+                                    "func b(n: int): int { return n + 2; }\n"
+                                    "func c(n: int): int { return n + 3; }\n",
+                                    &err);
+    assert(script);
+
+    const char *names[] = {"a", "b", "c"};
+    GabFunc *handles[9];
+
+    for (int i = 0; i < 9; i++) {
+        handles[i] = gab_lookup(vm, NULL, names[i % 3], &err);
+        assert(handles[i]);
+    }
+
+    // First, last, and two from the middle: every position swap-remove has to
+    // deal with.
+    gab_func_free(handles[0]);
+    gab_func_free(handles[8]);
+    gab_func_free(handles[4]);
+    gab_func_free(handles[3]);
+
+    for (int i = 0; i < 9; i++) {
+        if (i == 0 || i == 3 || i == 4 || i == 8) {
+            continue;
+        }
+
+        assert(gab_arg_int(vm, handles[i], 0, 10));
+
+        int result = -1;
+        assert(gab_call(vm, handles[i], &result, &err) == GAB_OK);
+        assert(result == 10 + (i % 3) + 1);
+    }
+
+    gab_func_free(handles[1]);
+
+    // The four still registered are the VM's to release. Under a leak checker
+    // this is the assertion: forgetting them costs nothing.
+    gab_script_free(vm, script);
+    gab_vm_free(vm);
+}
+
 int main(void) {
     test_two_modules_can_share_a_function_name();
     test_the_script_names_its_module_not_the_filename();
+    test_the_vm_owns_its_handles();
     test_lookup_by_module_name();
     test_two_modules_can_share_a_type_name();
     test_builtins_are_shared_across_modules();

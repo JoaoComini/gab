@@ -101,6 +101,16 @@ void func_proto_free(FuncPrototype proto);
 #define func_proto_list_item_free(item) func_proto_free(item)
 GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype)
 
+// Every GabFunc handed out and not yet released. A handle points into the VM's
+// arena, so it cannot outlive the VM in any case; owning them here makes that
+// the actual rule rather than something a host must remember, and a forgotten
+// gab_func_free then leaks nothing.
+//
+// Held as void * because GabFunc is the embedding API's type and opaque here.
+// gab.c does the freeing, which is why the item_free hook is empty.
+#define func_handle_list_item_free(item) ((void)(item))
+GAB_LIST(FuncHandleList, func_handle_list, void *)
+
 // Module name to the scope holding its declarations. Keyed on the interned
 // name, so identity comparison is enough.
 #define module_scope_map_hash(key) (size_t)key
@@ -168,6 +178,9 @@ typedef struct {
     // OP_CALL operands. Top-level variables are not here: they are frame-zero
     // locals on the stack, so top-level state lives and dies with a run.
     FuncProtoList global_funcs;
+
+    // The handles this VM has handed out. See FuncHandleList.
+    FuncHandleList func_handles;
 
     // The stack is byte-addressed and 8-byte aligned at the base, so a value
     // wider than a slot can sit at its natural alignment. Capacity is still

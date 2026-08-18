@@ -41,6 +41,7 @@ VM *vm_create() {
     vm->instruction_pointer = 0;
 
     vm->global_funcs = func_proto_list_create();
+    vm->func_handles = func_handle_list_create();
 
     vm->arena = arena_create(ARENA_BLOCK_SIZE);
     vm->compile_arena = arena_create(ARENA_BLOCK_SIZE);
@@ -116,6 +117,10 @@ void func_proto_free(FuncPrototype proto) {
 
 void vm_free(VM *vm) {
     func_proto_list_free(&vm->global_funcs);
+
+    // The handles themselves are gab.c's to free, and gab_vm_free has done so
+    // by now; this releases only the array that tracked them.
+    func_handle_list_free(&vm->func_handles);
 
     // Frees the bucket arrays; the Scopes themselves are arena-owned.
     module_scope_map_destroy(vm->module_scopes);

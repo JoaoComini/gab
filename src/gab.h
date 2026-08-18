@@ -96,6 +96,14 @@ GabFunc *gab_lookup(GabVM *vm, const char *module, const char *name, GabError *e
 
 int gab_func_arity(const GabFunc *fn);
 
+// Optional. The VM owns every handle it hands out and releases whatever is
+// left when it is freed, so forgetting this leaks nothing — it only reclaims a
+// handle sooner, which is worth doing for one a host is discarding rather than
+// keeping for the life of the VM.
+//
+// A handle must not be used after its VM is freed. It reads symbols the VM
+// owns, so it dies with the VM; this is the one lifetime rule a host has to
+// keep, and it is not checked.
 void gab_func_free(GabFunc *fn);
 
 // Arguments are written into the handle's own buffer, not the live stack:
