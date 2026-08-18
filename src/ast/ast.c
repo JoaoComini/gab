@@ -637,7 +637,7 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
 
         // Local: shadowing an outer type is allowed, declaring the same name
         // twice in one scope is not.
-        if (scope_type_lookup_local(state->current_scope, struct_name)) {
+        if (scope_declares_type_now(state->current_scope, struct_name)) {
             diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "type '%s' is already declared",
                        struct_name->data);
             break;

@@ -52,6 +52,10 @@ VM *vm_create() {
     scope_init(&vm->global_scope, vm->arena, &vm->strings, NULL);
     vm->module_scopes = module_scope_map_create_alloc(arena_allocator(vm->arena), 8);
 
+    // The root scope declares the builtins at generation 0, so the first
+    // compile is generation 1 and never mistakes a builtin for its own work.
+    vm->compile_generation = 0;
+
     vm->stack_capacity = VM_STACK_SIZE;
     vm->stack = calloc(vm->stack_capacity, sizeof(Value));
     vm->registers = vm->stack;
@@ -310,6 +314,11 @@ bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *di
     // until the next compile begins.
     arena_reset(vm->compile_arena);
 
+    // A new generation, so every name this compile declares is stamped as its
+    // own. Anything it meets bearing an older stamp was declared by a previous
+    // compile and is replaced rather than rejected.
+    vm->compile_generation++;
+
     Lexer lexer = lexer_create(source, diagnostics);
     Parser parser = parser_create(&lexer, diagnostics);
     ASTScript *script = ast_script_create();
@@ -328,6 +337,9 @@ bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *di
         }
 
         Scope *scope = module_name ? vm_module_scope(vm, module_name) : &vm->global_scope;
+
+        // Every name this compile declares is stamped with this generation.
+        scope_set_generation(scope, vm->compile_generation);
 
         if (ast_script_resolve(vm->compile_arena, script, scope, vm_module_scope_lookup, vm, diagnostics)) {
             chunk = codegen_generate(script, &vm->global_funcs, diagnostics, &max_registers);

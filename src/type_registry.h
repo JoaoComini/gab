@@ -12,11 +12,20 @@
 
 // The named types of one scope. Scope owns these and chains them, the same way
 // it chains symbol tables.
+//
+// The generation is the compile that declared the name here. A Type is shared
+// and interned, so it cannot carry one; the binding of a name to a type is
+// what belongs to a compile, and that is this entry.
+typedef struct {
+    Type *type;
+    unsigned int generation;
+} TypeBinding;
+
 #define type_map_hash(key) (size_t)key
 #define type_map_key_equals(key, other) key == other
 #define type_map_key_dup(key) key
 
-GAB_HASH_MAP(TypeMap, type_map, String *, Type *)
+GAB_HASH_MAP(TypeMap, type_map, String *, TypeBinding)
 
 // Pointer types are interned on their pointee so that every mention of *T
 // yields the same Type *: the whole type system compares by pointer identity,

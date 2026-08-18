@@ -684,6 +684,97 @@ static void test_handle_survives_later_compiles(void) {
     gab_vm_free(vm);
 }
 
+// Recompiling a unit replaces what it declared last time, which is what hot
+// reload is. A handle looked up before the reload calls the new body, because
+// the symbol it points at is reused rather than replaced.
+static void test_recompiling_a_module_reloads_it(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    GabModule *v1 = gab_compile(vm, "g.gab",
+                                "module Game;\n"
+                                "struct S { hp: int }\n"
+                                "func tick(n: int): int { return n + 1; }\n",
+                                &err);
+    assert(v1);
+
+    GabFunc *fn = gab_lookup(vm, v1, "tick", &err);
+    assert(fn);
+
+    gab_arg_int(vm, fn, 0, 5);
+
+    int result = 0;
+    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(result == 6);
+    assert(gab_type_size(gab_find_type(vm, v1, "S")) == sizeof(int));
+
+    // The same unit again, with a new body and a wider struct.
+    GabModule *v2 = gab_compile(vm, "g.gab",
+                                "module Game;\n"
+                                "struct S { hp: int, mp: int }\n"
+                                "func tick(n: int): int { return n * 3; }\n",
+                                &err);
+    assert(v2);
+
+    // The handle from before the reload runs the new body.
+    gab_arg_int(vm, fn, 0, 5);
+    result = 0;
+    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(result == 15);
+
+    // And the type is the redeclared one, not the original.
+    assert(gab_type_size(gab_find_type(vm, v2, "S")) == 2 * sizeof(int));
+
+    // Reloading repeatedly is the per-frame case, so it must not drift.
+    for (int i = 0; i < 3; i++) {
+        GabModule *again = gab_compile(vm, "g.gab",
+                                       "module Game;\n"
+                                       "struct S { hp: int, mp: int }\n"
+                                       "func tick(n: int): int { return n * 3; }\n",
+                                       &err);
+        assert(again);
+        gab_module_free(vm, again);
+    }
+
+    gab_arg_int(vm, fn, 0, 5);
+    result = 0;
+    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(result == 15);
+
+    gab_func_free(fn);
+    gab_module_free(vm, v2);
+    gab_module_free(vm, v1);
+    gab_vm_free(vm);
+}
+
+// Allowing a reload must not stop one unit declaring the same name twice from
+// being an error: a reload is a *later* compile replacing an earlier one, never
+// a unit contradicting itself.
+static void test_duplicate_declarations_in_one_unit_are_rejected(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    assert(gab_compile(vm, "a.gab", "struct P { a: int }\nstruct P { b: int }\n", &err) == NULL);
+    assert(err.message[0] != '\0');
+
+    assert(gab_compile(vm, "b.gab", "func f(): int { return 1; }\nfunc f(): int { return 2; }\n", &err) ==
+           NULL);
+    assert(err.message[0] != '\0');
+
+    assert(gab_compile(vm, "c.gab", "let x: int = 1;\nlet x: int = 2;\n", &err) == NULL);
+    assert(err.message[0] != '\0');
+
+    // Including inside a block, whose scope is fresh per compile but still
+    // declares at its unit's generation.
+    assert(gab_compile(vm, "d.gab", "func f(): int { let y: int = 1; let y: int = 2; return y; }\n", &err) ==
+           NULL);
+    assert(err.message[0] != '\0');
+
+    gab_vm_free(vm);
+}
+
 int main(void) {
     test_two_modules_can_share_a_function_name();
     test_module_name_is_read_from_the_script();
@@ -693,6 +784,8 @@ int main(void) {
     test_module_type_shadows_the_root();
     test_qualified_type_reference_crosses_modules();
     test_handle_survives_later_compiles();
+    test_recompiling_a_module_reloads_it();
+    test_duplicate_declarations_in_one_unit_are_rejected();
     test_compile_error_is_reported_not_printed();
     test_runtime_error_is_reported();
     test_runtime_error_from_module_run();

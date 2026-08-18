@@ -158,6 +158,12 @@ typedef struct {
     // naming the same module compiles against the scope the first one filled.
     ModuleScopeMap *module_scopes;
 
+    // Bumped once per compile, and stamped onto every symbol that compile
+    // declares. It is what tells a redeclaration apart from a reload: the same
+    // generation means one unit declared the name twice, which is an error,
+    // while an older one means a previous compile did and this one replaces it.
+    unsigned int compile_generation;
+
     // Function prototypes are VM-wide because a prototype index is baked into
     // OP_CALL operands. Top-level variables are not here: they are frame-zero
     // locals on the stack, so top-level state lives and dies with a run.

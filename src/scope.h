@@ -24,7 +24,16 @@ typedef struct Scope {
 
     struct Scope *parent;
     int depth;
+
+    // Stamped onto whatever this scope declares. Set on the scopes a compile
+    // declares into — the root and the module scopes — and inherited by the
+    // block scopes beneath them.
+    unsigned int generation;
 } Scope;
+
+// Sets the generation stamped onto subsequent declarations. Called once per
+// compile on the scope that compile declares into.
+void scope_set_generation(Scope *scope, unsigned int generation);
 
 // Initialize a new scope
 Scope *scope_create(Arena *arena, StringPool *strings, Scope *parent);
@@ -52,8 +61,15 @@ Type *scope_type_lookup(Scope *scope, String *name);
 // an outer name is allowed and redeclaring one of this scope's own is not.
 Type *scope_type_lookup_local(Scope *scope, String *name);
 
-// Returns false if this scope already declares the name.
+// Returns false if this scope already declares the name at the current
+// generation — that is, if this same compile declared it. A name an earlier
+// compile declared is replaced, since recompiling a unit redeclares its types.
 bool scope_decl_type(Scope *scope, String *name, Type *type);
+
+// Whether this scope declares the name at the current generation. Distinct
+// from scope_type_lookup_local, which finds an earlier compile's declaration
+// too and so cannot tell a duplicate from something a reload may replace.
+bool scope_declares_type_now(Scope *scope, String *name);
 Symbol *scope_decl_var(Scope *scope, String *name, Type *type);
 Symbol *scope_decl_func(Scope *scope, String *name, Type *return_type);
 
