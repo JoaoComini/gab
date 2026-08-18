@@ -97,21 +97,27 @@ GabFunc *gab_lookup(GabVM *vm, const char *module, const char *name, GabError *e
 int gab_func_arity(const GabFunc *fn);
 
 void gab_func_free(GabFunc *fn);
+
 // Arguments are written into the handle's own buffer, not the live stack:
 // there is no frame yet when these run, and a call the host abandons halfway
-// through leaves nothing behind. Each setter checks the index and the callee's
-// declared parameter type; a mismatch is remembered and reported by the next
-// gab_call rather than corrupting the frame.
+// through leaves nothing behind.
+//
+// Each returns false if it could not do what it was asked — the index is out
+// of range, the parameter is not declared that type, or a struct's size does
+// not match. A host that wants to know, checks; a host that does not can
+// ignore every one of them, because a setter that failed leaves its parameter
+// unset and gab_call refuses a call with an unset parameter. Either way the
+// frame is never built from a bad argument.
 //
 // There are no varargs by design. C would promote a float to a double, and the
 // VM would read eight bytes where the script declared four.
-void gab_arg_int(GabVM *vm, GabFunc *fn, int index, int32_t value);
-void gab_arg_float(GabVM *vm, GabFunc *fn, int index, float value);
-void gab_arg_bool(GabVM *vm, GabFunc *fn, int index, bool value);
+bool gab_arg_int(GabVM *vm, GabFunc *fn, int index, int32_t value);
+bool gab_arg_float(GabVM *vm, GabFunc *fn, int index, float value);
+bool gab_arg_bool(GabVM *vm, GabFunc *fn, int index, bool value);
 
 // 'size' is checked against the parameter's declared type. Struct layout is
 // the one place a host can get the ABI wrong, so it is checked, not trusted.
-void gab_arg_struct(GabVM *vm, GabFunc *fn, int index, const void *data, size_t size);
+bool gab_arg_struct(GabVM *vm, GabFunc *fn, int index, const void *data, size_t size);
 
 // Calls the function with whatever the setters left in its argument buffer.
 // 'ret' may be NULL for a function that returns nothing; otherwise it receives

@@ -239,25 +239,26 @@ static void test_bad_arguments_are_rejected(void) {
     GabFunc *fn = gab_lookup(vm, NULL, "take", &err);
     assert(fn);
 
-    // Out of range.
-    gab_arg_int(vm, fn, 7, 1);
+    // Out of range: refused by the setter, and the call still cannot happen
+    // because nothing was supplied.
+    assert(!gab_arg_int(vm, fn, 7, 1));
     assert(gab_call(vm, fn, NULL, &err) == GAB_ERR_ARG);
     assert(err.message[0] != '\0');
 
     // Wrong type: parameter 1 is an int, not a float.
-    gab_arg_float(vm, fn, 1, 1.0f);
+    assert(!gab_arg_float(vm, fn, 1, 1.0f));
     assert(gab_call(vm, fn, NULL, &err) == GAB_ERR_ARG);
 
     // Wrong struct size.
     int not_a_player = 0;
-    gab_arg_struct(vm, fn, 0, &not_a_player, sizeof(not_a_player));
+    assert(!gab_arg_struct(vm, fn, 0, &not_a_player, sizeof(not_a_player)));
     assert(gab_call(vm, fn, NULL, &err) == GAB_ERR_ARG);
 
     // After the failures, a correctly built call still works: a rejected
     // argument left nothing behind.
     Player p = {.health = 1, .mana = 2};
-    gab_arg_struct(vm, fn, 0, &p, sizeof(p));
-    gab_arg_int(vm, fn, 1, 99);
+    assert(gab_arg_struct(vm, fn, 0, &p, sizeof(p)));
+    assert(gab_arg_int(vm, fn, 1, 99));
 
     int result = 0;
     assert(gab_call(vm, fn, &result, &err) == GAB_OK);
@@ -362,8 +363,8 @@ static void test_unset_arguments_are_rejected(void) {
     gab_vm_free(vm);
 }
 
-// A setter that was rejected has not supplied its argument, so the parameter
-// stays unset rather than counting as given.
+// A setter reports its own failure and supplies nothing, so the parameter
+// stays unset — which is what keeps a host that ignores the answer safe.
 static void test_rejected_setter_does_not_supply_an_argument(void) {
     GabVM *vm = gab_vm_new();
 
@@ -374,16 +375,29 @@ static void test_rejected_setter_does_not_supply_an_argument(void) {
     GabFunc *fn = gab_lookup(vm, NULL, "two", &err);
     assert(fn);
 
-    gab_arg_int(vm, fn, 0, 5);
-    gab_arg_float(vm, fn, 1, 1.0f); // wrong type for an int parameter
+    assert(gab_arg_int(vm, fn, 0, 5));
 
+    // Wrong type for an int parameter: reported immediately by the setter,
+    // rather than remembered and reported by the next call.
+    assert(!gab_arg_float(vm, fn, 1, 1.0f));
+
+    // A host that ignored the setter's answer is still safe: the parameter was
+    // never given a value, so the call is refused rather than made with
+    // whatever the buffer held.
     int result = 0;
     assert(gab_call(vm, fn, &result, &err) == GAB_ERR_ARG);
-
-    // The rejection was reported and cleared, but argument 1 was never
-    // actually given a value, so the next call must still say so.
-    assert(gab_call(vm, fn, &result, &err) == GAB_ERR_ARG);
     assert(err.message[0] != '\0');
+
+    // And it stays refused until the argument is actually supplied.
+    assert(gab_call(vm, fn, &result, &err) == GAB_ERR_ARG);
+
+    assert(gab_arg_int(vm, fn, 1, 7));
+    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(result == 12);
+
+    // Out of range is refused the same way.
+    assert(!gab_arg_int(vm, fn, 9, 1));
+    assert(!gab_arg_int(vm, fn, -1, 1));
 
     gab_func_free(fn);
     gab_script_free(vm, mod);

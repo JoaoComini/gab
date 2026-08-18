@@ -87,10 +87,6 @@ struct GabFunc {
     size_t param_capacity;
     unsigned int slot_capacity;
 
-    // Set by a setter that could not do what it was asked. Reported by the
-    // next gab_call, so a host can build a call without checking every step.
-    bool arg_error;
-    char arg_message[256];
 };
 
 // A function is looked up through the VM.s scopes, so a handle is only as valid
@@ -428,17 +424,6 @@ void gab_func_free(GabFunc *fn) { free(fn); }
 // that is the captured one until the host looks the function up again.
 int gab_func_arity(const GabFunc *fn) { return fn ? (int)fn->sig_param_count : 0; }
 
-// Records the first thing a setter could not do. Reporting is deferred to
-// gab_call so a host can stage a whole call without checking each step.
-static void gab_arg_fail(GabFunc *fn, const char *fmt, int index, const char *detail) {
-    if (fn->arg_error) {
-        return;
-    }
-
-    fn->arg_error = true;
-    snprintf(fn->arg_message, sizeof(fn->arg_message), fmt, index, detail);
-}
-
 // Validates an argument index and that the parameter has the expected kind,
 // returning where to write it or NULL if it may not be written.
 // Whether the function has been recompiled with a different signature since
@@ -516,7 +501,7 @@ static void gab_func_bind(GabFunc *fn) {
     fn->args_pending = symbol->func.param_count;
 }
 
-static Value *gab_arg_slot(GabFunc *fn, int index, TypeKind expected, const char *expected_name) {
+static Value *gab_arg_slot(GabFunc *fn, int index, TypeKind expected) {
     if (!fn) {
         return NULL;
     }
@@ -530,9 +515,6 @@ static Value *gab_arg_slot(GabFunc *fn, int index, TypeKind expected, const char
     // function up again.
     if (gab_func_is_stale(fn)) {
         if (!gab_func_fits(fn, fn->symbol)) {
-            gab_arg_fail(fn, "argument %d: this function was recompiled with a wider signature than this "
-                             "handle can hold; look it up again%s",
-                         index, "");
             return NULL;
         }
 
@@ -540,14 +522,12 @@ static Value *gab_arg_slot(GabFunc *fn, int index, TypeKind expected, const char
     }
 
     if (index < 0 || (size_t)index >= fn->sig_param_count) {
-        gab_arg_fail(fn, "argument %d is out of range for this function%s", index, "");
         return NULL;
     }
 
     const Type *param = fn->sig_params[index];
 
     if (!param || param->kind != expected) {
-        gab_arg_fail(fn, "argument %d is not declared %s", index, expected_name);
         return NULL;
     }
 
@@ -561,40 +541,46 @@ static Value *gab_arg_slot(GabFunc *fn, int index, TypeKind expected, const char
     return &fn->args[fn->param_slot[index]];
 }
 
-void gab_arg_int(GabVM *vm, GabFunc *fn, int index, int32_t value) {
+bool gab_arg_int(GabVM *vm, GabFunc *fn, int index, int32_t value) {
     (void)vm;
 
-    Value *slot = gab_arg_slot(fn, index, TYPE_INT, "int");
+    Value *slot = gab_arg_slot(fn, index, TYPE_INT);
     if (!slot) {
-        return;
+        return false;
     }
 
     slot->as_int = value;
+
+    return true;
 }
 
-void gab_arg_float(GabVM *vm, GabFunc *fn, int index, float value) {
+bool gab_arg_float(GabVM *vm, GabFunc *fn, int index, float value) {
     (void)vm;
 
-    Value *slot = gab_arg_slot(fn, index, TYPE_FLOAT, "float");
+    Value *slot = gab_arg_slot(fn, index, TYPE_FLOAT);
     if (!slot) {
-        return;
+        return false;
     }
 
     slot->as_float = value;
+
+    return true;
 }
 
-void gab_arg_bool(GabVM *vm, GabFunc *fn, int index, bool value) {
+bool gab_arg_bool(GabVM *vm, GabFunc *fn, int index, bool value) {
     (void)vm;
 
-    Value *slot = gab_arg_slot(fn, index, TYPE_BOOL, "bool");
+    Value *slot = gab_arg_slot(fn, index, TYPE_BOOL);
     if (!slot) {
-        return;
+        return false;
     }
 
     slot->as_int = value ? 1 : 0;
+
+    return true;
 }
 
-void gab_arg_struct(GabVM *vm, GabFunc *fn, int index, const void *data, size_t size) {
+bool gab_arg_struct(GabVM *vm, GabFunc *fn, int index, const void *data, size_t size) {
     (void)vm;
 
     // The size is the one thing a host can get wrong that the type system
@@ -605,17 +591,18 @@ void gab_arg_struct(GabVM *vm, GabFunc *fn, int index, const void *data, size_t 
         const Type *param = fn->sig_params[index];
 
         if (param && param->kind == TYPE_STRUCT && (!data || size != param->size)) {
-            gab_arg_fail(fn, "argument %d was given %s bytes", index, "the wrong number of");
-            return;
+            return false;
         }
     }
 
-    Value *slot = gab_arg_slot(fn, index, TYPE_STRUCT, "a struct");
+    Value *slot = gab_arg_slot(fn, index, TYPE_STRUCT);
     if (!slot) {
-        return;
+        return false;
     }
 
     memcpy(slot, data, size);
+
+    return true;
 }
 
 GabStatus gab_call(GabVM *handle, GabFunc *fn, void *ret, GabError *err) {
@@ -644,23 +631,11 @@ GabStatus gab_call(GabVM *handle, GabFunc *fn, void *ret, GabError *err) {
 
         gab_func_bind(fn);
 
-        fn->arg_error = false;
-
         gab_error_set(err, 0, 0,
                       "this function was recompiled with a different signature; its arguments were cleared "
                       "and must be set again");
 
         return GAB_ERR_STALE;
-    }
-
-    // A setter that failed leaves the frame unbuilt: the call never happens.
-    if (fn->arg_error) {
-        gab_error_set(err, 0, 0, fn->arg_message);
-
-        fn->arg_error = false;
-        fn->arg_message[0] = '\0';
-
-        return GAB_ERR_ARG;
     }
 
     // An argument never set would otherwise pass whatever the buffer held —
