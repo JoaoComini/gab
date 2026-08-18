@@ -96,6 +96,22 @@ void func_proto_free(FuncPrototype proto);
 #define func_proto_list_item_free(item) func_proto_free(item)
 GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype)
 
+// Why a run stopped. A run that completed normally leaves VM_RUN_OK; anything
+// else means the interpreter unwound early, and the frames are already gone.
+typedef enum {
+    VM_RUN_OK,
+    VM_RUN_ERR_CALL_DEPTH,
+    VM_RUN_ERR_STACK_OVERFLOW,
+} VmRunStatus;
+
+// The interpreter's failure channel. A run cannot report through a return value
+// because it unwinds from inside the loop, so the reason is left here for
+// whoever started the run to read. 'message' is a static string, not owned.
+typedef struct {
+    VmRunStatus status;
+    const char *message;
+} VmError;
+
 // Arenas are named for what owns them, and the rule that follows from that is
 // the whole lifetime model: allocate from the arena of the thing that will own
 // the result. A Type published into the registry is owned by the VM; an AST
@@ -137,6 +153,9 @@ typedef struct {
     size_t frame_count;
 
     size_t instruction_pointer;
+
+    // Why the last run stopped. Cleared at the start of every run.
+    VmError error;
 } VM;
 
 // Register r of the current frame. A union member read gives well-defined type
@@ -162,15 +181,16 @@ void vm_free(VM *vm);
 // reclaims — so they stay readable until then, but not past it.
 bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *diagnostics);
 
-// Runs a compiled script as frame zero, leaving its result in slot 0.
-void vm_run(VM *vm, const CompiledScript *script);
+// Runs a compiled script as frame zero, leaving its result in slot 0. Returns
+// why the run stopped; vm->error carries the same status plus a message.
+// Nothing is printed — reporting belongs to the caller.
+VmRunStatus vm_run(VM *vm, const CompiledScript *script);
 
 // Pushes one frame and runs the interpreter until it unwinds. The result is
 // left at the frame's own r0, which is the slot at base. The embedding API
 // calls in through this; base is a byte offset into the stack, and the caller
 // must already have placed the arguments in the parameter slots above it.
-// Returns false if the frame does not fit.
-bool vm_run_frame(VM *vm, const FuncPrototype *proto, size_t base, unsigned int dest);
+VmRunStatus vm_run_frame(VM *vm, const FuncPrototype *proto, size_t base, unsigned int dest);
 
 void vm_compiled_script_free(CompiledScript *script);
 

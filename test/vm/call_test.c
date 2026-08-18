@@ -72,16 +72,35 @@ static void test_deep_recursion_grows_the_stack() {
                    "let r: int = main();") == 100);
 }
 
-// Exceeding the depth limit must unwind cleanly rather than corrupt memory.
+// Exceeding the depth limit must unwind cleanly rather than corrupt memory,
+// and must say why. vm_run is used rather than vm_execute so the failure is
+// read from the status instead of being printed.
 static void test_call_depth_limit() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "func forever(n: int): int { return forever(n + 1); }\n"
-                   "func main(): int { return forever(0); }\n"
-                   "let r: int = main();");
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+
+    CompiledScript script;
+    assert(vm_compile(vm,
+                      "func forever(n: int): int { return forever(n + 1); }\n"
+                      "func main(): int { return forever(0); }\n"
+                      "let r: int = main();",
+                      &script, &diagnostics));
+
+    diagnostics_free(&diagnostics);
+
+    assert(vm_run(vm, &script) == VM_RUN_ERR_CALL_DEPTH);
+    assert(vm->error.status == VM_RUN_ERR_CALL_DEPTH);
+    assert(vm->error.message);
 
     assert(vm->frame_count == 0);
 
+    // The VM is still usable: a later run reports its own outcome rather than
+    // the stale failure.
+    assert(vm_run(vm, &script) == VM_RUN_ERR_CALL_DEPTH);
+
+    vm_compiled_script_free(&script);
     vm_free(vm);
 }
 

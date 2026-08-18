@@ -55,6 +55,7 @@ VM *vm_create() {
     vm->stack = calloc(vm->stack_capacity, sizeof(Value));
     vm->registers = vm->stack;
     vm->frame_count = 0;
+    vm->error = (VmError){.status = VM_RUN_OK, .message = NULL};
 
     return vm;
 }
@@ -303,6 +304,17 @@ void vm_compiled_script_free(CompiledScript *script) {
     script->chunk = NULL;
 }
 
+// Records why a run stopped. The first failure wins: a later one is a
+// consequence of unwinding, not an independent problem.
+static void vm_fail(VM *vm, VmRunStatus status, const char *message) {
+    if (vm->error.status != VM_RUN_OK) {
+        return;
+    }
+
+    vm->error.status = status;
+    vm->error.message = message;
+}
+
 // Runs until every frame the caller pushed has unwound. Both entry points
 // share it: vm_run pushes frame zero, and a host call pushes one frame for the
 // function it is invoking, so there is exactly one interpreter either way.
@@ -431,7 +443,9 @@ static void vm_run_loop(VM *vm) {
             size_t base = frame->base + dest * sizeof(Value);
 
             if (!vm_push_frame(vm, proto, base, vm->instruction_pointer + 1, dest)) {
-                fprintf(stderr, "<script>: call depth exceeded\n");
+                // Unwinding here is what makes the failure safe; the reason is
+                // left on the VM because the loop has no caller to return to.
+                vm_fail(vm, VM_RUN_ERR_CALL_DEPTH, "call depth exceeded");
 
                 while (vm->frame_count > 0) {
                     vm_pop_frame(vm);
@@ -592,17 +606,22 @@ static void vm_run_loop(VM *vm) {
     }
 }
 
-bool vm_run_frame(VM *vm, const FuncPrototype *proto, size_t base, unsigned int dest) {
+VmRunStatus vm_run_frame(VM *vm, const FuncPrototype *proto, size_t base, unsigned int dest) {
+    // A run reports only its own outcome, so whatever the last one left behind
+    // is cleared before this one starts.
+    vm->error = (VmError){.status = VM_RUN_OK, .message = NULL};
+
     if (!vm_push_frame(vm, proto, base, 0, dest)) {
-        return false;
+        vm_fail(vm, VM_RUN_ERR_STACK_OVERFLOW, "out of stack space");
+        return vm->error.status;
     }
 
     vm_run_loop(vm);
 
-    return true;
+    return vm->error.status;
 }
 
-void vm_run(VM *vm, const CompiledScript *script) {
+VmRunStatus vm_run(VM *vm, const CompiledScript *script) {
     // The top level runs as frame zero, so the interpreter has a single path
     // and OP_RETURN means the same thing everywhere.
     FuncPrototype top_level = {
@@ -613,9 +632,7 @@ void vm_run(VM *vm, const CompiledScript *script) {
 
     vm->frame_count = 0;
 
-    if (!vm_run_frame(vm, &top_level, 0, 0)) {
-        fprintf(stderr, "<script>: out of stack space\n");
-    }
+    return vm_run_frame(vm, &top_level, 0, 0);
 }
 
 void vm_execute(VM *vm, const char *source) {
@@ -632,6 +649,11 @@ void vm_execute(VM *vm, const char *source) {
 
     diagnostics_free(&diagnostics);
 
-    vm_run(vm, &script);
+    // The convenience path is the one caller that still reports for itself; a
+    // host uses gab_module_run and gets the status instead.
+    if (vm_run(vm, &script) != VM_RUN_OK) {
+        fprintf(stderr, "<script>: %s\n", vm->error.message);
+    }
+
     vm_compiled_script_free(&script);
 }

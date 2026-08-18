@@ -144,7 +144,12 @@ GabStatus gab_module_run(GabVM *handle, GabModule *mod, GabError *err) {
         return GAB_ERR_RUNTIME;
     }
 
-    vm_run((VM *)handle, &mod->script);
+    VM *vm = (VM *)handle;
+
+    if (vm_run(vm, &mod->script) != VM_RUN_OK) {
+        gab_error_set(err, 0, 0, vm->error.message);
+        return GAB_ERR_RUNTIME;
+    }
 
     return GAB_OK;
 }
@@ -410,8 +415,8 @@ GabStatus gab_call(GabVM *handle, GabFunc *fn, void *ret, GabError *err) {
     // frame — based here — expects its parameters.
     memcpy(vm->stack + base + sizeof(Value), &fn->args[1], fn->arg_slots * sizeof(Value));
 
-    if (!vm_run_frame(vm, proto, base, 0)) {
-        gab_error_set(err, 0, 0, "out of stack space");
+    if (vm_run_frame(vm, proto, base, 0) != VM_RUN_OK) {
+        gab_error_set(err, 0, 0, vm->error.message);
         return GAB_ERR_RUNTIME;
     }
 

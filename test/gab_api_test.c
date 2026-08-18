@@ -268,8 +268,67 @@ static void test_bad_arguments_are_rejected(void) {
     gab_vm_free(vm);
 }
 
+// A runtime failure reaches the caller as GAB_ERR_RUNTIME with a message, and
+// leaves the VM usable. Unbounded recursion is the only runtime failure that
+// exists today; the channel is what matters, not the particular cause.
+static void test_runtime_error_is_reported(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    GabModule *mod = gab_compile(vm, "<m>", "func boom(n: int): int { return boom(n); }\n", &err);
+    assert(mod);
+
+    GabFunc *fn = gab_lookup(vm, mod, "boom", &err);
+    assert(fn);
+
+    gab_arg_int(vm, fn, 0, 1);
+
+    int result = 0;
+    assert(gab_call(vm, fn, &result, &err) == GAB_ERR_RUNTIME);
+    assert(err.message[0] != '\0');
+
+    gab_func_free(fn);
+    gab_module_free(vm, mod);
+
+    // A second module in the same VM still runs: the failure was reported, not
+    // fatal.
+    GabModule *ok = gab_compile(vm, "<ok>", "func fine(n: int): int { return n + 1; }\n", &err);
+    assert(ok);
+
+    GabFunc *good = gab_lookup(vm, ok, "fine", &err);
+    gab_arg_int(vm, good, 0, 41);
+
+    assert(gab_call(vm, good, &result, &err) == GAB_OK);
+    assert(result == 42);
+    assert(err.message[0] == '\0');
+
+    gab_func_free(good);
+    gab_module_free(vm, ok);
+    gab_vm_free(vm);
+}
+
+// The same failure through gab_module_run, which is the other way in.
+static void test_runtime_error_from_module_run(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    GabModule *mod = gab_compile(vm, "<m>",
+                                 "func boom(n: int): int { return boom(n); }\n"
+                                 "let r: int = boom(1);\n",
+                                 &err);
+    assert(mod);
+
+    assert(gab_module_run(vm, mod, &err) == GAB_ERR_RUNTIME);
+    assert(err.message[0] != '\0');
+
+    gab_module_free(vm, mod);
+    gab_vm_free(vm);
+}
+
 int main(void) {
     test_compile_error_is_reported_not_printed();
+    test_runtime_error_is_reported();
+    test_runtime_error_from_module_run();
     test_compile_once_run_many();
     test_type_survives_a_later_compile();
     test_layout_matches_c();
