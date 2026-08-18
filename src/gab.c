@@ -12,11 +12,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-// The handle types are the internal ones under another name. GabVM is VM
-// itself, so there is no wrapper object and no second lifetime to track.
-struct GabVM {
-    VM vm;
-};
+// GabVM is the existing VM under another name: the handle is a cast, not a
+// wrapper, so there is no second object and no second lifetime to track. The
+// tag is only here to give the header something opaque to point at.
+struct GabVM;
 
 struct GabModule {
     CompiledScript script;
@@ -32,7 +31,6 @@ struct GabFunc {
     // Slot layout of the call block, mirroring what codegen emits for a call:
     // slot 0 is the return slot and the arguments tile from slot 1.
     unsigned int arg_slots;
-    unsigned int return_slots;
 
     // Where each parameter starts within the call block.
     unsigned int param_slot[VM_MAX_REGISTERS];
@@ -261,8 +259,6 @@ GabFunc *gab_lookup(GabVM *handle, GabModule *mod, const char *name, GabError *e
     }
 
     fn->symbol = symbol;
-    fn->return_slots = gab_type_slots(symbol->func.return_type);
-
     // Slot 0 of the call block is the return slot, so parameters start at 1 —
     // the same layout codegen_call_expr emits.
     unsigned int offset = 1;
