@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 // The frame size codegen settled on for the given function, which is the number
 // register reuse is supposed to hold flat as a function grows.
@@ -151,7 +152,49 @@ static void test_nested_call_results_survive() {
                    "let r: int = main();") == 21);
 }
 
+// Builds a function of 'count' sequential 'let' statements and reports the
+// frame codegen settled on, or -1 if the frame could not hold them.
+static int compile_sequential_lets(unsigned int count) {
+    size_t capacity = 64 + (size_t)count * 24;
+    char *source = malloc(capacity);
+    size_t used = (size_t)snprintf(source, capacity, "func f(n: int): int {\n");
+
+    for (unsigned int i = 0; i < count; i++) {
+        used += (size_t)snprintf(source + used, capacity - used, "let s%u = n + 1;\n", i);
+    }
+
+    // The script runs f so that a codegen failure is observable: a rejected
+    // program never executes, leaving the result slot at its zeroed value.
+    snprintf(source + used, capacity - used, "return n;\n}\nlet r: int = f(7);\n");
+
+    VM *vm = vm_create();
+    vm_execute(vm, source);
+
+    int result = vm->stack[0].as_int == 7 ? vm->global_funcs.data[0].max_registers : -1;
+
+    vm_free(vm);
+    free(source);
+
+    return result;
+}
+
+// A function's frame is capped by the width of the register field. Each local
+// costs one slot on top of r0 (the return slot), r1 (the parameter), and one
+// temporary, so the ceiling shows up directly in the count of locals that fit.
+static void test_frame_capacity() {
+    // 251 locals fill the 255-slot frame exactly; 252 do not fit.
+    assert(compile_sequential_lets(251) == 255);
+    assert(compile_sequential_lets(252) == -1);
+
+    // Under the previous 7-bit fields the ceiling was 127 slots: 123 locals
+    // fit and 124 did not. Both now compile.
+    assert(compile_sequential_lets(123) == 127);
+    assert(compile_sequential_lets(124) == 128);
+    assert(compile_sequential_lets(200) == 204);
+}
+
 int main() {
+    test_frame_capacity();
     test_frame_size_is_flat_in_statement_count();
     test_block_locals_are_reclaimed();
     test_many_statements_still_compile();

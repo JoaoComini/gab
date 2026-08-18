@@ -404,6 +404,17 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
         offset += slots;
     }
 
+    // The prototype index rides in an 8-bit field. Masking alone would encode
+    // a call to the wrong function, so it is rejected rather than truncated.
+    if (node->symbol->offset > VM_MAX_REGISTERS) {
+        if (!state->failed) {
+            diag_error(state->diagnostics, GAB_ERR_CODEGEN, node->span, "too many functions in one script");
+        }
+
+        state->failed = true;
+        return dest;
+    }
+
     // argc counts slots, not arguments: that is what sizing the callee's frame
     // needs. The resolver has already checked the argument count.
     Instruction call = VM_ENCODE_R(OP_CALL, dest, node->symbol->offset, arg_slots);
@@ -452,7 +463,7 @@ static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node) {
 
     unsigned int rd = codegen_alloc_register(state, node->span);
 
-    chunk_add_instruction(state->chunk, VM_ENCODE_R_FLAGS(op, rd, base, (unsigned int)offset, 0));
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(op, rd, base, (unsigned int)offset));
 
     return rd;
 }
@@ -481,7 +492,7 @@ static void codegen_store_field(CodegenState *state, ASTExpr *node, unsigned int
         return;
     }
 
-    chunk_add_instruction(state->chunk, VM_ENCODE_R_FLAGS(op, base, src, (unsigned int)offset, 0));
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(op, base, src, (unsigned int)offset));
 }
 
 static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned int src, unsigned int count) {
