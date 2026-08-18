@@ -874,6 +874,59 @@ static void test_staging_after_a_signature_change_just_works(void) {
     gab_vm_free(vm);
 }
 
+// A handle carries a little spare capacity, but a reload can outgrow it. The
+// handle cannot grow — the host owns the pointer — so this is the one reload a
+// host must follow with a fresh lookup, and it is told so rather than left with
+// a handle describing the wrong call.
+static void test_a_reload_too_wide_for_the_handle_is_reported(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    GabModule *v1 = gab_compile(vm, "s.gab", "module S;\nfunc f(a: int): int { return a; }\n", &err);
+    assert(v1);
+
+    GabFunc *fn = gab_lookup(vm, v1, "f", &err);
+    assert(fn);
+
+    gab_arg_int(vm, fn, 0, 1);
+
+    int result = 0;
+    assert(gab_call(vm, fn, &result, &err) == GAB_OK);
+    assert(result == 1);
+
+    // Far more parameters than the handle was sized for.
+    GabModule *v2 = gab_compile(vm, "s.gab",
+                                "module S;\n"
+                                "func f(a: int, b: int, c: int, d: int, e: int, g: int, h: int, i: int,\n"
+                                "       j: int, k: int, l: int, m: int): int { return a; }\n",
+                                &err);
+    assert(v2);
+
+    result = -1;
+    assert(gab_call(vm, fn, &result, &err) == GAB_ERR_STALE);
+    assert(err.message[0] != '\0');
+
+    // A fresh handle is sized for the new signature and works.
+    GabFunc *reloaded = gab_lookup(vm, v1, "f", &err);
+    assert(reloaded);
+    assert(gab_func_arity(reloaded) == 12);
+
+    for (int i = 0; i < 12; i++) {
+        gab_arg_int(vm, reloaded, i, i);
+    }
+
+    result = -1;
+    assert(gab_call(vm, reloaded, &result, &err) == GAB_OK);
+    assert(result == 0);
+
+    gab_func_free(reloaded);
+    gab_func_free(fn);
+    gab_module_free(vm, v2);
+    gab_module_free(vm, v1);
+    gab_vm_free(vm);
+}
+
 int main(void) {
     test_two_modules_can_share_a_function_name();
     test_module_name_is_read_from_the_script();
@@ -887,6 +940,7 @@ int main(void) {
     test_duplicate_declarations_in_one_unit_are_rejected();
     test_signature_change_rebinds_the_handle();
     test_staging_after_a_signature_change_just_works();
+    test_a_reload_too_wide_for_the_handle_is_reported();
     test_compile_error_is_reported_not_printed();
     test_runtime_error_is_reported();
     test_runtime_error_from_module_run();
