@@ -573,6 +573,24 @@ static void vm_run_loop(VM *vm) {
             gab_retain(object);
             break;
         }
+        case OP_RETAIN_WEAK: {
+            unsigned int rd = VM_DECODE_R_RD(instruction);
+
+            void *object;
+            memcpy(&object, vm->registers + rd * sizeof(Value), sizeof(object));
+
+            gab_retain_weak(object);
+            break;
+        }
+        case OP_RELEASE_WEAK: {
+            unsigned int rd = VM_DECODE_R_RD(instruction);
+
+            void *object;
+            memcpy(&object, vm->registers + rd * sizeof(Value), sizeof(object));
+
+            gab_release_weak(DEFAULT_ALLOCATOR, object);
+            break;
+        }
         case OP_CALL: {
             // I-type: a prototype index is not a register, and an 8-bit field
             // capped one VM at 255 functions across every module it loaded.

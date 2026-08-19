@@ -288,6 +288,23 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, Type *declar
     return false;
 }
 
+// Whether a value of 'from' may be stored where 'to' is expected. Identity for
+// everything except the one conversion the language allows: a strong reference
+// may become a weak one, since weakening never fails and is how a weak field is
+// ever populated.
+//
+// The reverse is deliberately absent. Promoting 'weak *T' to '*T' can fail —
+// the object may be gone — and a conversion with a failure case needs somewhere
+// to report it, which waits for a nil story.
+static bool type_accepts(Type *to, Type *from) {
+    if (to == from) {
+        return true;
+    }
+
+    return type_is_pointer(to) && type_is_pointer(from) && to->is_weak && !from->is_weak &&
+           to->pointee == from->pointee;
+}
+
 bool is_numeric_type(Type *t) { return t->kind == TYPE_INT || t->kind == TYPE_FLOAT; }
 
 bool is_boolean_type(Type *t) { return t->kind == TYPE_BOOL; }
@@ -652,8 +669,14 @@ Type *ast_script_resolve_type(ResolverState *state, TypeSpec *spec, Span span) {
 
     // Interned in the one shared registry whichever scope named the pointee,
     // so '*Config' is one type however many modules mention it.
+    //
+    // 'weak' qualifies the outermost pointer, which is the last one built: a
+    // 'weak **T' is a strong pointer to a weak one, since only the reference
+    // the type finally denotes is the one that does not keep anything alive.
     for (unsigned int i = 0; i < spec->pointer_depth; i++) {
-        type = type_registry_pointer_to(state->current_scope->type_registry, type);
+        bool weak = spec->weak && i + 1 == spec->pointer_depth;
+
+        type = type_registry_pointer_to_kind(state->current_scope->type_registry, type, weak);
     }
 
     return type;
@@ -681,6 +704,18 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
     }
 
     Type *type = type_struct_create(resolver_owner_arena(state), struct_name, stmt->struct_decl.fields.size);
+
+    // Registered under its name *before* its fields resolve, so that a field
+    // pointing at the struct being declared finds it. A scene graph is exactly
+    // this shape — 'struct Node { parent: weak *Node, child: *Node }' — and
+    // without this it fails with "unknown type", which the containment check
+    // below was already written expecting not to happen.
+    //
+    // Safe because only a pointer to self can appear: a struct containing
+    // itself by value is rejected below, before its size is ever needed, and
+    // the layout is computed only once every field has resolved.
+    scope_decl_type(state->current_scope, struct_name, type);
+
     bool poisoned = false;
 
     for (size_t i = 0; i < stmt->struct_decl.fields.size; i++) {
@@ -715,12 +750,15 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
         type_add_field(type, field_name, field_type);
     }
 
+    // Registered before its fields resolved, so a struct that failed has to be
+    // taken back out: with no layout computed, anything naming it would read a
+    // size of zero.
     if (poisoned) {
+        scope_withdraw_type(state->current_scope, struct_name);
         return;
     }
 
     type_layout_compute(type);
-    scope_decl_type(state->current_scope, struct_name, type);
 
     stmt->struct_decl.type = type;
 }
@@ -912,7 +950,8 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
             if (stmt->var_decl.initializer) {
                 Type *init_type = stmt->var_decl.initializer->type;
 
-                if (!is_error_type(decl_type) && !is_error_type(init_type) && decl_type != init_type) {
+                if (!is_error_type(decl_type) && !is_error_type(init_type) &&
+                    !type_accepts(decl_type, init_type)) {
                     diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->var_decl.initializer->span,
                                "cannot initialize a variable of type %s with a value of type %s",
                                type_name(decl_type), type_name(init_type));
@@ -969,7 +1008,8 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         Type *target_type = stmt->assign.target->type;
         Type *value_type = stmt->assign.value->type;
 
-        if (!is_error_type(target_type) && !is_error_type(value_type) && target_type != value_type) {
+        if (!is_error_type(target_type) && !is_error_type(value_type) &&
+            !type_accepts(target_type, value_type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                        "cannot assign a value of type %s to a target of type %s", type_name(value_type),
                        type_name(target_type));

@@ -64,6 +64,12 @@ Type *scope_type_lookup_local(Scope *scope, String *name);
 // Returns false if this scope already declares the name at the current
 // generation — that is, if this same compile declared it. A name an earlier
 // compile declared is replaced, since recompiling a unit redeclares its types.
+// Removes a name this scope declared. Exists for one case: a struct is
+// registered before its fields resolve, so that a field may point at the struct
+// being declared, and a struct whose fields fail to resolve has to be taken
+// back out — it has no layout, so nothing may use it as a type.
+void scope_withdraw_type(Scope *scope, String *name);
+
 bool scope_decl_type(Scope *scope, String *name, Type *type);
 
 // Whether this scope declares the name at the current generation. Distinct

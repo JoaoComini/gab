@@ -32,6 +32,11 @@ GAB_HASH_MAP(SlotMap, slot_map, Symbol *, unsigned int)
 typedef struct {
     unsigned int slot;
     unsigned int depth;
+
+    // What the slot holds, so the release picks the strong or weak opcode. A
+    // slot is released by the type it was declared with, not by inspecting
+    // anything at runtime.
+    const Type *type;
 } OwnedSlot;
 
 #define owned_list_item_free(item) ((void)(item))
@@ -72,9 +77,14 @@ typedef struct {
 // is settled at compile time from the static type.
 static bool type_is_owned(const Type *type);
 
+// The retain and release opcodes for a reference of this type: a weak one
+// touches the weak count and never the strong one.
+static OpCode retain_op_for(const Type *type);
+static OpCode release_op_for(const Type *type);
+
 // Records that 'slot' holds an owned reference for as long as the current block
 // runs.
-static void codegen_own_slot(CodegenState *state, unsigned int slot);
+static void codegen_own_slot(CodegenState *state, unsigned int slot, const Type *type);
 
 // Whether this slot already owns a reference, and so has one to drop when it is
 // overwritten.
@@ -360,7 +370,7 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
     // borrowed one — reading another variable — is left alone: the slot it came
     // from still owns it, and releasing here would free it twice.
     if (expr_yields_owned(ast->initializer)) {
-        codegen_own_slot(state, slot);
+        codegen_own_slot(state, slot, ast->symbol->var.type);
     }
 
     codegen_release_registers(state, saved);
@@ -389,7 +399,7 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
         // A borrowed value needs a reference of its own, since the slot it came
         // from keeps its; an owned one is simply moved in.
         if (!expr_yields_owned(ast->value)) {
-            chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RETAIN, src, 0, 0));
+            chunk_add_instruction(state->chunk, VM_ENCODE_R(retain_op_for(ast->target->type), src, 0, 0));
         }
 
         if (ast->target->kind == EXPR_FIELD) {
@@ -398,7 +408,7 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
             codegen_store_deref(state, ast->target, src);
         }
 
-        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE, old, 0, 0));
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(release_op_for(ast->target->type), old, 0, 0));
         return;
     }
 
@@ -437,11 +447,11 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
         codegen_copy_slots(state, old, rd, VM_POINTER_SLOTS);
 
         if (!expr_yields_owned(ast->value)) {
-            chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RETAIN, r1, 0, 0));
+            chunk_add_instruction(state->chunk, VM_ENCODE_R(retain_op_for(ast->target->type), r1, 0, 0));
         }
 
         codegen_copy_slots(state, rd, r1, VM_POINTER_SLOTS);
-        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE, old, 0, 0));
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(release_op_for(ast->target->type), old, 0, 0));
         return;
     }
 
@@ -451,7 +461,7 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
     // slot borrowing too, so there is nothing to record. An owned one makes the
     // slot an owner from here on.
     if (type_is_owned(ast->target->type) && expr_yields_owned(ast->value)) {
-        codegen_own_slot(state, rd);
+        codegen_own_slot(state, rd, ast->target->type);
     }
 }
 
@@ -1361,6 +1371,16 @@ static void codegen_release_registers(CodegenState *state, unsigned int saved) {
 
 static bool type_is_owned(const Type *type) { return type_is_pointer(type); }
 
+// The retain and release for a reference of this type. A weak reference touches
+// the weak count and never the strong one, which is the whole difference
+// between the two — and why weakness had to be part of the type rather than a
+// property of how the reference was taken.
+static OpCode retain_op_for(const Type *type) { return (type && type->is_weak) ? OP_RETAIN_WEAK : OP_RETAIN; }
+
+static OpCode release_op_for(const Type *type) {
+    return (type && type->is_weak) ? OP_RELEASE_WEAK : OP_RELEASE;
+}
+
 // Whether an expression hands its caller a reference to own, or merely lends
 // one it keeps. 'new' and a call returning '*T' produce a fresh reference the
 // receiver is responsible for; reading a variable or a field does not, since
@@ -1384,8 +1404,8 @@ static bool expr_yields_owned(const ASTExpr *expr) {
     }
 }
 
-static void codegen_own_slot(CodegenState *state, unsigned int slot) {
-    owned_list_add(&state->owned, (OwnedSlot){.slot = slot, .depth = state->depth});
+static void codegen_own_slot(CodegenState *state, unsigned int slot, const Type *type) {
+    owned_list_add(&state->owned, (OwnedSlot){.slot = slot, .depth = state->depth, .type = type});
 }
 
 // Whether this slot already owns a reference, and so has one to drop when it is
@@ -1412,7 +1432,7 @@ static void codegen_release_owned(CodegenState *state, unsigned int keep_depth, 
             continue;
         }
 
-        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE, owned.slot, 0, 0));
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(release_op_for(owned.type), owned.slot, 0, 0));
     }
 }
 

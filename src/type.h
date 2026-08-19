@@ -58,6 +58,12 @@ struct Type {
     // What a TYPE_POINTER points at; NULL for every other kind.
     Type *pointee;
 
+    // Whether this pointer keeps its pointee alive. A weak '*T' is a distinct
+    // Type from the strong one, interned separately, so that codegen can tell
+    // from a field's type alone whether releasing it touches the strong count —
+    // which is what keeps the whole refcount story type-driven.
+    bool is_weak;
+
     // The methods declared with this type as their receiver. NULL until the
     // first one is, so a struct nobody declares a method on costs nothing.
     MethodMap *methods;
@@ -88,9 +94,14 @@ typedef struct {
 
     // 0 for T, 1 for *T, 2 for **T.
     unsigned int pointer_depth;
+
+    // 'weak *T': the outermost pointer does not keep its object alive. Only
+    // ever set with pointer_depth > 0, since there is nothing to weaken about
+    // a value.
+    bool weak;
 } TypeSpec;
 
-TypeSpec *type_spec_create(StringRef name, unsigned int pointer_depth);
+TypeSpec *type_spec_create(StringRef name, unsigned int pointer_depth, bool weak);
 void type_spec_destroy(TypeSpec *spec);
 
 #endif

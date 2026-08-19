@@ -55,6 +55,10 @@ typedef struct TypeRegistry {
     StringPool *strings;
 
     PointerMap *pointers;
+
+    // Weak pointer types, interned apart from the strong ones so that
+    // pointer-identity comparison keeps telling them apart.
+    PointerMap *weak_pointers;
     TypeBuiltins builtins;
 } TypeRegistry;
 
@@ -68,5 +72,9 @@ Type *type_registry_error_type(TypeRegistry *registry);
 // The interned *pointee. Repeated calls with the same pointee return the same
 // Type *.
 Type *type_registry_pointer_to(TypeRegistry *registry, Type *pointee);
+
+// As type_registry_pointer_to, choosing between the strong and weak flavours.
+// A weak pointer does not keep its pointee alive; the two are distinct types.
+Type *type_registry_pointer_to_kind(TypeRegistry *registry, Type *pointee, bool weak);
 
 #endif

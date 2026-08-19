@@ -428,9 +428,24 @@ static ASTField *parse_field(Parser *parser, const char *name_message) {
 static TypeSpec *parse_type_spec(Parser *parser) {
     unsigned int pointer_depth = 0;
 
+    // 'weak *T' — read before the stars, since it qualifies the pointer rather
+    // than the pointee.
+    bool weak = parser->current.type == TOKEN_WEAK;
+
+    if (weak) {
+        parser_next_token(parser); // eat 'weak'
+    }
+
     while (parser->current.type == TOKEN_MUL) {
         pointer_depth++;
         parser_next_token(parser); // eat '*'
+    }
+
+    // 'weak Node' has nothing to weaken: weakness is a property of a reference,
+    // and a value is not one.
+    if (weak && pointer_depth == 0) {
+        parser_error(parser, "'weak' applies to a pointer, as 'weak *T'");
+        return NULL;
     }
 
     if (!parser_expect(parser, TOKEN_IDENT, "expected a type")) {
@@ -463,7 +478,7 @@ static TypeSpec *parse_type_spec(Parser *parser) {
         }
     }
 
-    return type_spec_create(name, pointer_depth);
+    return type_spec_create(name, pointer_depth, weak);
 }
 
 static ASTStmt *parse_struct_decl_stmt(Parser *parser) {

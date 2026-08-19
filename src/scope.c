@@ -100,6 +100,8 @@ bool scope_declares_type_now(Scope *scope, String *name) {
     return entry && entry->generation == scope->generation;
 }
 
+void scope_withdraw_type(Scope *scope, String *name) { type_map_delete(scope->types, name); }
+
 bool scope_decl_type(Scope *scope, String *name, Type *type) {
     TypeBinding binding = {.type = type, .generation = scope->generation};
 

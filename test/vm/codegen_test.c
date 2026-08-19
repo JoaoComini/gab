@@ -368,8 +368,8 @@ static void test_func_decl() {
     StringRef a_ref = string_ref_create("a");
     StringRef b_ref = string_ref_create("b");
 
-    ASTField *param_a = ast_field_create(TEST_SPAN, a_ref, type_spec_create(int_str, 0));
-    ASTField *param_b = ast_field_create(TEST_SPAN, b_ref, type_spec_create(int_str, 0));
+    ASTField *param_a = ast_field_create(TEST_SPAN, a_ref, type_spec_create(int_str, 0, false));
+    ASTField *param_b = ast_field_create(TEST_SPAN, b_ref, type_spec_create(int_str, 0, false));
 
     ASTFieldList params = ast_field_list_create();
     ast_field_list_add(&params, param_a);
@@ -387,7 +387,7 @@ static void test_func_decl() {
 
     StringRef func_ref = string_ref_create("add");
     ASTStmt *func =
-        ast_func_decl_stmt_create(TEST_SPAN, func_ref, NULL, type_spec_create(int_str, 0), params, body);
+        ast_func_decl_stmt_create(TEST_SPAN, func_ref, NULL, type_spec_create(int_str, 0, false), params, body);
 
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, func);

@@ -31,6 +31,8 @@ void type_registry_register_builtins(TypeRegistry *registry) {
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
     registry->pointers = pointer_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->weak_pointers =
+        pointer_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
     registry->strings = strings;
     type_registry_register_builtins(registry);
@@ -38,29 +40,44 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     return registry;
 }
 
-void type_registry_destroy(TypeRegistry *registry) { pointer_map_destroy(registry->pointers); }
+void type_registry_destroy(TypeRegistry *registry) {
+    pointer_map_destroy(registry->pointers);
+    pointer_map_destroy(registry->weak_pointers);
+}
 
 Type *type_registry_pointer_to(TypeRegistry *registry, Type *pointee) {
-    Type **existing = pointer_map_lookup(registry->pointers, pointee);
+    return type_registry_pointer_to_kind(registry, pointee, false);
+}
+
+Type *type_registry_pointer_to_kind(TypeRegistry *registry, Type *pointee, bool weak) {
+    // Two maps rather than a composite key: 'weak *T' and '*T' are different
+    // types, and the whole type system compares by pointer identity, so they
+    // must never collide in one table.
+    PointerMap *map = weak ? registry->weak_pointers : registry->pointers;
+
+    Type **existing = pointer_map_lookup(map, pointee);
     if (existing) {
         return *existing;
     }
 
     // The name is only ever read by diagnostics, but it is interned like any
     // other so that a Type always has a printable name.
-    size_t length = strlen(pointee->name->data) + 2;
+    const char *prefix = weak ? "weak *" : "*";
+    size_t length = strlen(pointee->name->data) + strlen(prefix) + 1;
     char *name = arena_alloc(registry->arena, length);
-    snprintf(name, length, "*%s", pointee->name->data);
+    snprintf(name, length, "%s%s", prefix, pointee->name->data);
 
     Type *type = type_create(registry->arena, TYPE_POINTER, string_from_cstr(registry->strings, name));
 
     // Always a raw address to the payload, so a stack pointer and a heap one
-    // are byte-identical; only the resolver knows which is which.
+    // are byte-identical; only the resolver knows which is which. A weak
+    // pointer is the same address too — what differs is the count it touches.
     type->size = sizeof(void *);
     type->alignment = _Alignof(void *);
     type->pointee = pointee;
+    type->is_weak = weak;
 
-    pointer_map_insert(registry->pointers, pointee, type);
+    pointer_map_insert(map, pointee, type);
 
     return type;
 }

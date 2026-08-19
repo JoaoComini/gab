@@ -51,6 +51,15 @@ static void release_fields(Allocator allocator, const Type *type, char *payload)
             void *reference;
             memcpy(&reference, payload + field->offset, sizeof(reference));
 
+            // A weak field never held a strong reference, so there is none to
+            // give back — releasing one would free an object this object never
+            // kept alive. The weak count it does hold is dropped instead, which
+            // is what eventually lets the pointee's header go.
+            if (field->type->is_weak) {
+                gab_release_weak(allocator, reference);
+                continue;
+            }
+
             gab_release(allocator, reference);
             continue;
         }
@@ -77,24 +86,33 @@ void gab_release(Allocator allocator, void *payload) {
         return;
     }
 
+    // Releasing a field can come back around to this very object: a cycle
+    // broken by 'weak' does exactly that, since the child's weak field points
+    // at the parent being torn down. That inner release_weak would see
+    // strong == 0, drop the last weak count, and free this header out from
+    // under the code still using it.
+    //
+    // Holding a weak reference across the teardown is what makes that
+    // impossible — the count cannot reach zero while this one is outstanding,
+    // so the header is guaranteed to survive until the matching release below.
+    // The same trick Swift uses for the same reason.
+    header->weak++;
+
     release_fields(allocator, header->type, (char *)payload);
 
     // The payload dies now; the header may not. A weak reference points at the
     // payload address and asks 'is this still alive?' by reading the strong
-    // count behind it, so the header has to outlive whatever it describes —
-    // Swift's side-table arrangement, and why 'weak' is a count rather than a
-    // flag.
+    // count behind it, so the header has to outlive whatever it describes.
     //
     // Zeroed rather than left as-is so that reading a dead payload finds
     // nothing meaningful, and so a debugger shows the death rather than stale
     // contents. strong is already 0, which is what records that it happened.
     memset(payload, 0, header->type->size);
 
-    if (header->weak > 0) {
-        return;
-    }
-
-    allocator.free(allocator.ctx, header);
+    // Drops the reference taken above, and frees the header if it was the last
+    // one — which is the ordinary case, since most objects have no weak
+    // references at all.
+    gab_release_weak(allocator, payload);
 }
 
 void gab_retain_weak(void *payload) {

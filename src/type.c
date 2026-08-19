@@ -19,6 +19,7 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->field_count = 0;
     type->pointee = NULL;
     type->methods = NULL;
+    type->is_weak = false;
 
     return type;
 }
@@ -115,10 +116,11 @@ Symbol *type_find_method(const Type *type, const String *name) {
     return found ? *found : NULL;
 }
 
-TypeSpec *type_spec_create(StringRef name, unsigned int pointer_depth) {
+TypeSpec *type_spec_create(StringRef name, unsigned int pointer_depth, bool weak) {
     TypeSpec *spec = malloc(sizeof(TypeSpec));
     spec->name = name;
     spec->pointer_depth = pointer_depth;
+    spec->weak = weak;
 
     return spec;
 }

@@ -44,6 +44,11 @@ typedef enum {
     // reference is stored somewhere that outlives the statement, since the slot
     // it came from still owns its own.
     OP_RETAIN,
+
+    // The weak counterparts. A weak reference does not keep its object alive,
+    // so these touch the weak count and never the strong one.
+    OP_RETAIN_WEAK,
+    OP_RELEASE_WEAK,
     // OP_RETURN returns a single slot, the common case; OP_RETURN_N carries a
     // slot count in r2.
     OP_RETURN,
