@@ -79,10 +79,57 @@ void gab_release(Allocator allocator, void *payload) {
 
     release_fields(allocator, header->type, (char *)payload);
 
-    // Freed outright because nothing holds a weak reference yet. Once 'weak *T'
-    // exists this is where the header outlives the payload instead: zero the
-    // payload, and free the header only when the weak count also reaches zero.
-    assert(header->weak == 0 && "weak references exist but nothing implements them yet");
+    // The payload dies now; the header may not. A weak reference points at the
+    // payload address and asks 'is this still alive?' by reading the strong
+    // count behind it, so the header has to outlive whatever it describes —
+    // Swift's side-table arrangement, and why 'weak' is a count rather than a
+    // flag.
+    //
+    // Zeroed rather than left as-is so that reading a dead payload finds
+    // nothing meaningful, and so a debugger shows the death rather than stale
+    // contents. strong is already 0, which is what records that it happened.
+    memset(payload, 0, header->type->size);
+
+    if (header->weak > 0) {
+        return;
+    }
 
     allocator.free(allocator.ctx, header);
+}
+
+void gab_retain_weak(void *payload) {
+    if (!payload) {
+        return;
+    }
+
+    gab_refcounted_of(payload)->weak++;
+}
+
+void gab_release_weak(Allocator allocator, void *payload) {
+    if (!payload) {
+        return;
+    }
+
+    RefCounted *header = gab_refcounted_of(payload);
+
+    assert(header->weak > 0 && "released a weak reference that was never taken");
+
+    if (--header->weak > 0) {
+        return;
+    }
+
+    // The last weak reference to an object whose payload is already gone: this
+    // is what finally frees the header the payload's death left behind. An
+    // object still strongly held keeps its header either way.
+    if (header->strong == 0) {
+        allocator.free(allocator.ctx, header);
+    }
+}
+
+bool gab_is_alive(const void *payload) {
+    if (!payload) {
+        return false;
+    }
+
+    return gab_refcounted_of((void *)payload)->strong > 0;
 }

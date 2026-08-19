@@ -237,8 +237,111 @@ static void test_null_is_tolerated() {
     assert(counts.frees == 0);
 }
 
+// A weak reference does not keep its object alive: the payload dies at
+// strong-zero whether or not anything weak still points at it.
+static void test_a_weak_reference_does_not_keep_it_alive() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    TypeRegistry *registry = type_registry_create(ctx.arena, &ctx.strings);
+    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+
+    const char *names[] = {"n"};
+    Type *types[] = {int_type};
+    Type *box = make_struct(&ctx, registry, "Box", names, types, 1);
+
+    AllocCounts counts = {0};
+    Allocator allocator = counting_allocator(&counts);
+
+    void *p = gab_refcounted_alloc(allocator, box);
+    gab_retain_weak(p);
+
+    assert(gab_is_alive(p));
+
+    gab_release(allocator, p);
+
+    // The payload is gone, but the header survives so the weak reference can
+    // still be asked. Nothing has been freed yet.
+    assert(!gab_is_alive(p));
+    assert(counts.frees == 0);
+
+    // The last weak reference is what finally frees the header.
+    gab_release_weak(allocator, p);
+    assert(counts.frees == 1);
+
+    type_registry_destroy(registry);
+    test_context_free(&ctx);
+}
+
+// A weak reference taken and dropped while the object is still strongly held
+// leaves it alive and frees exactly once at the end.
+static void test_weak_released_before_strong() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    TypeRegistry *registry = type_registry_create(ctx.arena, &ctx.strings);
+    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+
+    const char *names[] = {"n"};
+    Type *types[] = {int_type};
+    Type *box = make_struct(&ctx, registry, "Box", names, types, 1);
+
+    AllocCounts counts = {0};
+    Allocator allocator = counting_allocator(&counts);
+
+    void *p = gab_refcounted_alloc(allocator, box);
+
+    gab_retain_weak(p);
+    gab_release_weak(allocator, p);
+
+    assert(gab_is_alive(p));
+    assert(counts.frees == 0);
+
+    gab_release(allocator, p);
+    assert(counts.frees == 1);
+
+    type_registry_destroy(registry);
+    test_context_free(&ctx);
+}
+
+// Several weak references outstanding: only the last one frees the header.
+static void test_the_last_weak_reference_frees_the_header() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    TypeRegistry *registry = type_registry_create(ctx.arena, &ctx.strings);
+    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+
+    const char *names[] = {"n"};
+    Type *types[] = {int_type};
+    Type *box = make_struct(&ctx, registry, "Box", names, types, 1);
+
+    AllocCounts counts = {0};
+    Allocator allocator = counting_allocator(&counts);
+
+    void *p = gab_refcounted_alloc(allocator, box);
+
+    gab_retain_weak(p);
+    gab_retain_weak(p);
+
+    gab_release(allocator, p);
+    assert(counts.frees == 0);
+
+    gab_release_weak(allocator, p);
+    assert(counts.frees == 0);
+
+    gab_release_weak(allocator, p);
+    assert(counts.frees == 1);
+
+    type_registry_destroy(registry);
+    test_context_free(&ctx);
+}
+
 int main(void) {
     test_alloc_starts_at_one_and_frees_at_zero();
+    test_a_weak_reference_does_not_keep_it_alive();
+    test_weak_released_before_strong();
+    test_the_last_weak_reference_frees_the_header();
     test_payload_follows_the_header();
     test_two_references_keep_it_alive();
     test_release_walks_pointer_fields();

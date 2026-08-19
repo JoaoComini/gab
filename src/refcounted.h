@@ -53,8 +53,25 @@ void *gab_refcounted_alloc(Allocator allocator, const Type *type);
 void gab_retain(void *payload);
 
 // Drops one strong reference, and at zero releases the pointer fields the
-// payload holds and frees it. Freeing a tree of objects therefore recurses,
+// payload holds and zeroes it. Freeing a tree of objects therefore recurses,
 // which is O(depth) in C stack for a deep one.
+//
+// The header is freed with the payload only when nothing holds a weak
+// reference; otherwise it stays behind, with strong == 0 recording that the
+// payload is gone, until the last weak reference goes.
 void gab_release(Allocator allocator, void *payload);
+
+// A weak reference does not keep its object alive. It exists so that a cycle —
+// a child pointing back at its parent, an entity at the world holding it, which
+// is the ordinary shape of game data — does not leak both ends.
+//
+// Both are NULL-tolerant, as the strong pair is.
+void gab_retain_weak(void *payload);
+void gab_release_weak(Allocator allocator, void *payload);
+
+// Whether the payload behind a weak reference is still there. False once the
+// last strong reference went, even though the address is still readable: that
+// is precisely what the surviving header is for.
+bool gab_is_alive(const void *payload);
 
 #endif
