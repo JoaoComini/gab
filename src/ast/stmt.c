@@ -24,11 +24,12 @@ ASTStmt *ast_var_decl_stmt_create(Span span, StringRef name, TypeSpec *type_spec
     return stmt;
 }
 
-ASTStmt *ast_func_decl_stmt_create(Span span, StringRef name, TypeSpec *return_type, ASTFieldList params,
-                                   ASTStmt *body) {
+ASTStmt *ast_func_decl_stmt_create(Span span, StringRef name, ASTField *receiver, TypeSpec *return_type,
+                                   ASTFieldList params, ASTStmt *body) {
     ASTStmt *stmt = ast_stmt_create(span);
     stmt->kind = STMT_FUNC_DECL;
     stmt->func_decl.name = name;
+    stmt->func_decl.receiver = receiver;
     stmt->func_decl.return_type = return_type;
     stmt->func_decl.params = params;
     stmt->func_decl.body = body;
@@ -97,6 +98,7 @@ void ast_stmt_destroy(ASTStmt *stmt) {
         if (stmt->func_decl.return_type) {
             type_spec_destroy(stmt->func_decl.return_type);
         }
+        ast_field_destroy(stmt->func_decl.receiver);
         ast_field_list_free(&stmt->func_decl.params);
         ast_stmt_destroy(stmt->func_decl.body);
         break;
@@ -134,6 +136,12 @@ ASTField *ast_field_create(Span span, StringRef name, TypeSpec *type_spec) {
 }
 
 void ast_field_destroy(ASTField *field) {
+    // NULL-tolerant, since an absent receiver is a NULL field and every error
+    // path in the function parser frees one whether or not it was there.
+    if (!field) {
+        return;
+    }
+
     type_spec_destroy(field->type_spec);
     free(field);
 }

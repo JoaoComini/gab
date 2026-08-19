@@ -586,16 +586,109 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
 // caller needs — without touching the body. Split from the body walk so the
 // pre-pass can declare a whole script's top level before resolving any of it,
 // which is what lets a function call one declared below it.
+// The struct a receiver type names, looking through one level of pointer, or
+// NULL if it does not name one. '*Player' and 'Player' share a method set, so
+// both land on the same Type.
+static Type *receiver_base_type(Type *type) {
+    if (type_is_pointer(type)) {
+        type = type->pointee;
+    }
+
+    return (type && type->kind == TYPE_STRUCT) ? type : NULL;
+}
+
+// Declares a method into its receiver type's method map, rather than into any
+// scope: a method has no free-standing name, so 'Player.update' and
+// 'Enemy.update' coexist and neither is reachable as a bare 'update'.
+//
+// The Symbol is an ordinary SYMBOL_FUNC whose parameter zero is the receiver.
+// That is what makes the call free at runtime: codegen puts the receiver in the
+// first argument slot and emits the OP_CALL it already would.
+static void declare_method(ResolverState *state, ASTStmt *stmt) {
+    ASTField *receiver = stmt->func_decl.receiver;
+
+    Type *receiver_type = ast_script_resolve_type(state, receiver->type_spec, receiver->span);
+
+    if (is_error_type(receiver_type)) {
+        return;
+    }
+
+    Type *base = receiver_base_type(receiver_type);
+
+    if (!base) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, receiver->span,
+                   "a method's receiver must be a struct or a pointer to one, found %s",
+                   type_name(receiver_type));
+        return;
+    }
+
+    // Go's rule, and it keeps ownership of the method map unambiguous: a type
+    // and its methods are made by one compile and replaced together on reload.
+    if (!scope_declares_type_now(state->current_scope, base->name)) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, receiver->span,
+                   "cannot declare a method on '%s', which this module does not declare", base->name->data);
+        return;
+    }
+
+    Type *return_type = ast_script_resolve_type(state, stmt->func_decl.return_type, stmt->span);
+
+    stmt->func_decl.resolved_return_type = return_type;
+
+    String *method_name = resolver_intern(state, stmt->func_decl.name);
+
+    // Not scope_decl_func: this name lives on the type, not in a scope. The
+    // Symbol is built directly for the same reason.
+    Symbol *method = arena_alloc(resolver_owner_arena(state), sizeof(Symbol));
+    *method = (Symbol){
+        .kind = SYMBOL_FUNC,
+        .scope_depth = state->current_scope->depth,
+        .generation = state->current_scope->generation,
+        .pinned = false,
+        .func =
+            {
+                .return_type = return_type,
+                .params = NULL,
+                .param_count = 0,
+                .proto_index = SYMBOL_FUNC_NO_PROTO,
+            },
+    };
+
+    // The receiver is parameter zero, so the declared parameters shift up one.
+    size_t param_count = stmt->func_decl.params.size + 1;
+
+    method->func.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(Type *));
+    method->func.param_count = param_count;
+    method->func.params[0] = receiver_type;
+
+    for (size_t i = 0; i < stmt->func_decl.params.size; i++) {
+        ASTField *param = stmt->func_decl.params.data[i];
+
+        method->func.params[i + 1] = ast_script_resolve_type(state, param->type_spec, param->span);
+    }
+
+    if (!type_add_method(resolver_owner_arena(state), base, method_name, method)) {
+        diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' already has a method '%s'",
+                   base->name->data, method_name->data);
+        return;
+    }
+
+    stmt->func_decl.symbol = method;
+}
+
 static void declare_func(ResolverState *state, ASTStmt *stmt) {
     stmt->func_decl.declared = true;
+
+    if (stmt->func_decl.receiver) {
+        declare_method(state, stmt);
+        return;
+    }
 
     StringRef func_name = stmt->func_decl.name;
     Type *func_return_type = ast_script_resolve_type(state, stmt->func_decl.return_type, stmt->span);
 
     stmt->func_decl.resolved_return_type = func_return_type;
 
-    Symbol *func =
-        scope_decl_func(state->current_scope, resolver_intern(state, func_name), func_return_type);
+    Symbol *func = scope_decl_func(state->current_scope, resolver_intern(state, func_name), func_return_type);
 
     if (!func) {
         char *name = string_ref_to_cstr(func_name);
@@ -625,6 +718,18 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
 // name; the types a caller sees were settled by declare_func.
 static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
     resolver_enter_scope(state);
+
+    // The receiver is an ordinary local in the body's scope, so 'p.health'
+    // resolves through the existing field path — including the auto-deref that
+    // a '*Player' receiver needs.
+    ASTField *receiver = stmt->func_decl.receiver;
+
+    if (receiver) {
+        Type *receiver_type = ast_script_resolve_type(state, receiver->type_spec, receiver->span);
+
+        receiver->symbol =
+            scope_decl_var(state->current_scope, resolver_intern(state, receiver->name), receiver_type);
+    }
 
     for (size_t i = 0; i < stmt->func_decl.params.size; i++) {
         ASTField *param = stmt->func_decl.params.data[i];

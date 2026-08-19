@@ -18,6 +18,7 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->fields = NULL;
     type->field_count = 0;
     type->pointee = NULL;
+    type->methods = NULL;
 
     return type;
 }
@@ -86,6 +87,33 @@ bool type_field_offset(const Type *type, const String *name, size_t *out_offset)
 }
 
 bool type_is_pointer(const Type *type) { return type && type->kind == TYPE_POINTER; }
+
+// Sized for a handful: most struct types declare no methods at all, and the map
+// grows if one proves popular.
+#define METHOD_MAP_INITIAL_CAPACITY 4
+
+bool type_add_method(Arena *arena, Type *type, String *name, Symbol *method) {
+    if (!type->methods) {
+        type->methods = method_map_create_alloc(arena_allocator(arena), METHOD_MAP_INITIAL_CAPACITY);
+    }
+
+    if (method_map_lookup(type->methods, name)) {
+        return false;
+    }
+
+    method_map_insert(type->methods, name, method);
+    return true;
+}
+
+Symbol *type_find_method(const Type *type, const String *name) {
+    if (!type || !type->methods) {
+        return NULL;
+    }
+
+    Symbol **found = method_map_lookup(type->methods, (String *)name);
+
+    return found ? *found : NULL;
+}
 
 TypeSpec *type_spec_create(StringRef name, unsigned int pointer_depth) {
     TypeSpec *spec = malloc(sizeof(TypeSpec));

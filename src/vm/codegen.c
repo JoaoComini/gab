@@ -377,6 +377,15 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
         .failed = false,
     };
 
+    // The receiver is parameter zero, so it takes the first slot above the
+    // return slot and every declared parameter shifts up past it.
+    if (ast->receiver && ast->receiver->symbol) {
+        Symbol *receiver = ast->receiver->symbol;
+
+        codegen_set_slot(&func_state, receiver, func_next_reg);
+        func_next_reg += type_slot_count(receiver->var.type);
+    }
+
     // A multi-slot parameter owns consecutive slots starting at its base, so
     // the callee addresses it by that slot exactly like a local.
     for (size_t i = 0; i < ast->params.size; i++) {
@@ -404,7 +413,8 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
     func_proto_list_emplace(state->global_funcs, proto_index,
                             (FuncPrototype){
                                 .chunk = func_chunk,
-                                .arity = ast->params.size,
+                                // The receiver is parameter zero, so it counts.
+                                .arity = ast->params.size + (ast->receiver ? 1 : 0),
                                 .max_registers = func_state.max_reg,
                             });
 
@@ -835,7 +845,8 @@ static unsigned int codegen_bin_op_rhs(CodegenState *state, ASTExpr *node, bool 
 
     // Floats have no immediate form: vm_operand2i reads the field as an
     // integer, and a float literal has no eight-bit encoding.
-    if (node->bin_op.left->type->kind != TYPE_FLOAT && codegen_immediate_operand(node->bin_op.right, &value)) {
+    if (node->bin_op.left->type->kind != TYPE_FLOAT &&
+        codegen_immediate_operand(node->bin_op.right, &value)) {
         *immediate = true;
         return value;
     }
@@ -899,7 +910,6 @@ static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node) {
 
     return result;
 }
-
 
 static unsigned int codegen_bin_op_logical_expr(CodegenState *state, ASTExpr *node) {
     unsigned int lhs = codegen_expr(state, node->bin_op.left);

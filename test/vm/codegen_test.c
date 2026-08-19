@@ -381,7 +381,8 @@ static void test_func_decl() {
     ASTStmt *body = ast_block_stmt_create(TEST_SPAN, body_stmts);
 
     StringRef func_ref = string_ref_create("add");
-    ASTStmt *func = ast_func_decl_stmt_create(TEST_SPAN, func_ref, type_spec_create(int_str, 0), params, body);
+    ASTStmt *func =
+        ast_func_decl_stmt_create(TEST_SPAN, func_ref, NULL, type_spec_create(int_str, 0), params, body);
 
     ASTScript *script = ast_script_create();
     ast_script_add_statement(script, func);

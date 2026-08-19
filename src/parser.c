@@ -509,7 +509,28 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
     parser_next_token(parser); // eat "func"
 
+    // 'func (p: *Player) damage(...)' — an optional receiver clause makes this
+    // a method on that type rather than a free function. Written with a colon
+    // like every other binding in the language, unlike Go's 'p *Player'.
+    ASTField *receiver = NULL;
+    if (parser->current.type == TOKEN_LPAREN) {
+        parser_next_token(parser); // eat '('
+
+        receiver = parse_field(parser, "expected a receiver name");
+        if (!receiver) {
+            return NULL;
+        }
+
+        if (!parser_expect(parser, TOKEN_RPAREN, "expected ')' after the receiver")) {
+            ast_field_destroy(receiver);
+            return NULL;
+        }
+
+        parser_next_token(parser); // eat ')'
+    }
+
     if (!parser_expect(parser, TOKEN_IDENT, "expected a function name")) {
+        ast_field_destroy(receiver);
         return NULL;
     }
 
@@ -517,6 +538,7 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
     parser_next_token(parser); // eat func name
 
     if (!parser_expect(parser, TOKEN_LPAREN, "expected '(' after function name")) {
+        ast_field_destroy(receiver);
         return NULL;
     }
 
@@ -526,12 +548,15 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
     while (parser->current.type != TOKEN_RPAREN) {
         ASTField *param = parse_field(parser, "expected a parameter name");
         if (!param) {
+            ast_field_destroy(receiver);
             ast_field_list_free(&func_params);
             return NULL;
         }
 
         if (parser->current.type != TOKEN_COMMA && parser->current.type != TOKEN_RPAREN) {
             parser_error_found(parser, "expected ',' or ')' after parameter");
+            ast_field_destroy(receiver);
+            ast_field_destroy(param);
             ast_field_list_free(&func_params);
             return NULL;
         }
@@ -551,6 +576,7 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
         func_type = parse_type_spec(parser);
         if (!func_type) {
+            ast_field_destroy(receiver);
             ast_field_list_free(&func_params);
             return NULL;
         }
@@ -560,14 +586,15 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
     if (!func_body) {
         // The return type is parsed before the body, so a body that fails to
         // parse leaves it owned by nobody: the node that would have taken it is
-        // never created.
+        // never created. The receiver is in the same position.
+        ast_field_destroy(receiver);
         type_spec_destroy(func_type);
         ast_field_list_free(&func_params);
 
         return NULL;
     }
 
-    return ast_func_decl_stmt_create(span, func_name, func_type, func_params, func_body);
+    return ast_func_decl_stmt_create(span, func_name, receiver, func_type, func_params, func_body);
 }
 
 static ASTStmt *parse_return_stmt(Parser *parser) {

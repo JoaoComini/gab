@@ -4,6 +4,7 @@
 #include "arena.h"
 #include "string/string.h"
 #include "string/string_ref.h"
+#include "util/hash_map.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -19,6 +20,23 @@ typedef enum {
 } TypeKind;
 
 typedef struct Type Type;
+
+// A method is an ordinary function Symbol — same prototype index, same call
+// path — so the map holds one. Declared rather than included: Symbol's own
+// header reaches back here, and a method is only ever a function.
+typedef struct Symbol Symbol;
+
+// The methods of one struct type, keyed by the interned method name. Held on
+// the Type rather than in a Scope because a method has no free-standing name:
+// 'Player.update' and 'Enemy.update' must coexist, and neither should be
+// reachable by writing 'update'. Go, Rust, and C++ all key methods by their
+// receiver type for the same reason.
+#define method_map_hash(key) (size_t)key
+#define method_map_key_equals(key, other) key == other
+#define method_map_key_dup(key) key
+#define method_map_entry_free(key, value)
+
+GAB_HASH_MAP(MethodMap, method_map, String *, Symbol *)
 
 typedef struct TypeField {
     String *name;
@@ -39,6 +57,10 @@ struct Type {
 
     // What a TYPE_POINTER points at; NULL for every other kind.
     Type *pointee;
+
+    // The methods declared with this type as their receiver. NULL until the
+    // first one is, so a struct nobody declares a method on costs nothing.
+    MethodMap *methods;
 };
 
 Type *type_create(Arena *arena, TypeKind kind, String *name);
@@ -51,6 +73,15 @@ bool type_is_pointer(const Type *type);
 
 bool type_field_offset(const Type *type, const String *name, size_t *out_offset);
 const TypeField *type_find_field(const Type *type, const String *name);
+
+// Declares a method on this type, creating the map on first use. Returns false
+// if the name is already taken, which is a duplicate declaration.
+bool type_add_method(Arena *arena, Type *type, String *name, Symbol *method);
+
+// The method this type declares under that name, or NULL. Does not look
+// through a pointer: the caller strips that first, since '*Player' and
+// 'Player' share one method set.
+Symbol *type_find_method(const Type *type, const String *name);
 
 typedef struct {
     StringRef name;

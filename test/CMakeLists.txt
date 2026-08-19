@@ -16,6 +16,7 @@ set(
     vm/chunk_test.c
     vm/encoding_test.c
     vm/pointer_test.c
+    vm/method_test.c
     vm/stack_test.c
     vm/vm_test.c
     gab_api_test.c
