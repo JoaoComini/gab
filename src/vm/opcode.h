@@ -34,6 +34,16 @@ typedef enum {
     // Allocates a heap object of heap_types[kx] into rd, with one strong
     // reference. I-type: a type index is not a register.
     OP_NEW,
+
+    // Drops one strong reference from the pointer in rd, freeing at zero. The
+    // slot keeps whatever it held: nothing reads it again, since codegen only
+    // emits this where the value goes out of scope.
+    OP_RELEASE,
+
+    // Adds one strong reference to the pointer in rd. Emitted where a borrowed
+    // reference is stored somewhere that outlives the statement, since the slot
+    // it came from still owns its own.
+    OP_RETAIN,
     // OP_RETURN returns a single slot, the common case; OP_RETURN_N carries a
     // slot count in r2.
     OP_RETURN,

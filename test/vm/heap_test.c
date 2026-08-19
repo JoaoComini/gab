@@ -2,29 +2,6 @@
 
 #include <assert.h>
 
-/*
-    'new' allocates and nothing releases yet: release-on-frame-pop is the next
-    commit, and until it lands every object these tests allocate is a leak by
-    construction rather than by mistake.
-
-    LeakSanitizer is turned off for this file only, and only for that window —
-    the other ASan checks stay on, which is the point, since use-after-free and
-    corruption are what matter while the release path is being built. Delete
-    this the moment frames release what they own; if the suite then still leaks,
-    that is a real bug this would otherwise have hidden.
-*/
-#if defined(__has_feature)
-#if __has_feature(address_sanitizer)
-#define GAB_HEAP_TEST_LEAKS_EXPECTED 1
-#endif
-#elif defined(__SANITIZE_ADDRESS__)
-#define GAB_HEAP_TEST_LEAKS_EXPECTED 1
-#endif
-
-#ifdef GAB_HEAP_TEST_LEAKS_EXPECTED
-const char *__lsan_default_options(void);
-const char *__lsan_default_options(void) { return "detect_leaks=0"; }
-#endif
 #include <stdio.h>
 
 // Runs a script and returns whatever ended up in r0, which is where a
@@ -120,8 +97,73 @@ static void test_an_object_can_hold_another() {
                    "let r: int = main();") == 9);
 }
 
+// Two names for one object. The second is borrowed — the first still owns the
+// reference — so releasing both would free it twice.
+static void test_an_alias_is_borrowed_not_owned() {
+    assert(run_int("struct Box { n: int }\n"
+                   "func main(): int {\n"
+                   "    let a: *Box = new Box;\n"
+                   "    a.n = 5;\n"
+                   "    let b: *Box = a;\n"
+                   "    return b.n;\n"
+                   "}\n"
+                   "let r: int = main();") == 5);
+}
+
+// Released where its block closes, not where the frame pops: destruction is
+// deterministic at the brace, which is what refcounting buys over a GC.
+static void test_released_at_the_end_of_its_block() {
+    assert(run_int("struct Box { n: int }\n"
+                   "func main(): int {\n"
+                   "    let t: int = 0;\n"
+                   "    { let a: *Box = new Box; a.n = 3; t = a.n; }\n"
+                   "    return t;\n"
+                   "}\n"
+                   "let r: int = main();") == 3);
+}
+
+// Sibling blocks reuse slots, so the second block's int lands where the first
+// block's pointer was. Releasing at the close rather than at the pop is what
+// stops an integer being released as an object.
+static void test_a_reused_slot_is_not_released_twice() {
+    assert(run_int("struct Box { n: int }\n"
+                   "func main(): int {\n"
+                   "    { let a: *Box = new Box; a.n = 1; }\n"
+                   "    { let x: int = 7; let y: int = 8; return x + y; }\n"
+                   "}\n"
+                   "let r: int = main();") == 15);
+}
+
+// Nothing ever stores it, so the statement is where it dies.
+static void test_a_bare_new_does_not_leak() {
+    assert(run_int("struct Box { n: int }\n"
+                   "func main(): int { new Box; return 4; }\n"
+                   "let r: int = main();") == 4);
+}
+
+// A borrowed reference stored into a field: the local still owns its own, so
+// the field has to take one of its own too. Without the retain the object is
+// freed at the end of the block while the field still points at it.
+static void test_storing_a_borrowed_reference_into_a_field_retains() {
+    assert(run_int("struct Inner { n: int }\n"
+                   "struct Outer { child: *Inner }\n"
+                   "func main(): int {\n"
+                   "    let o: *Outer = new Outer;\n"
+                   "    let i: *Inner = new Inner;\n"
+                   "    i.n = 6;\n"
+                   "    o.child = i;\n"
+                   "    return o.child.n;\n"
+                   "}\n"
+                   "let r: int = main();") == 6);
+}
+
 int main(void) {
     test_new_allocates_a_usable_object();
+    test_storing_a_borrowed_reference_into_a_field_retains();
+    test_an_alias_is_borrowed_not_owned();
+    test_released_at_the_end_of_its_block();
+    test_a_reused_slot_is_not_released_twice();
+    test_a_bare_new_does_not_leak();
     test_new_zeroes_the_payload();
     test_a_heap_pointer_may_be_returned();
     test_two_objects_are_distinct();

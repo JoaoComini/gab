@@ -27,6 +27,16 @@ GAB_HASH_MAP(SlotMap, slot_map, Symbol *, unsigned int)
 
 #define SLOT_MAP_INITIAL_CAPACITY 16
 
+// A slot holding an owned reference, and the block depth that declared it.
+// Kept as a stack because blocks nest and close in order.
+typedef struct {
+    unsigned int slot;
+    unsigned int depth;
+} OwnedSlot;
+
+#define owned_list_item_free(item) ((void)(item))
+GAB_LIST(OwnedList, owned_list, OwnedSlot)
+
 typedef struct {
     Chunk *chunk;
     unsigned int next_reg;
@@ -41,9 +51,39 @@ typedef struct {
     // against its own, and the outer one's slots are not visible in it.
     SlotMap *slots;
 
+    // Slots holding an owned '*T', innermost block last. Released where the
+    // block that declared them closes, rather than where the frame pops:
+    // sibling blocks reuse slots, so a per-frame table could say a slot is
+    // sometimes a pointer but never when, and a pop after the reuse would
+    // release whatever replaced it. Releasing at the close happens while the
+    // slot still holds what it was declared as.
+    OwnedList owned;
+
+    // How deep the block nesting is, so a close knows which owned slots were
+    // declared by the block it is closing.
+    unsigned int depth;
+
     Diagnostics *diagnostics;
     bool failed;
 } CodegenState;
+
+// Whether a value of this type carries a reference that has to be released. A
+// scalar never does, which is why an int costs nothing at runtime: the question
+// is settled at compile time from the static type.
+static bool type_is_owned(const Type *type);
+
+// Records that 'slot' holds an owned reference for as long as the current block
+// runs.
+static void codegen_own_slot(CodegenState *state, unsigned int slot);
+
+// Emits a release for every owned slot the current block declared, and drops
+// them. 'moved' is a slot whose ownership is leaving the frame — a returned
+// pointer — and is skipped; pass VM_INVALID_REGISTER when nothing is moving.
+static void codegen_release_owned(CodegenState *state, unsigned int keep_depth, unsigned int moved);
+
+// Whether an expression hands its caller a reference to own, or merely lends
+// one it keeps.
+static bool expr_yields_owned(const ASTExpr *expr);
 
 // The frame slot a symbol was given. Every read is of a slot this same
 // function body assigned, so a miss is a codegen bug rather than a user error.
@@ -169,6 +209,8 @@ Chunk *codegen_generate(ASTScript *script, CodegenOutput output, Diagnostics *di
         .max_reg = 0,
         .output = output,
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
+        .owned = owned_list_create(),
+        .depth = 0,
         .diagnostics = diagnostics,
         .failed = false,
     };
@@ -191,6 +233,7 @@ Chunk *codegen_generate(ASTScript *script, CodegenOutput output, Diagnostics *di
 
     // The slots were only ever true of this compile, so they go with it.
     slot_map_destroy(state.slots);
+    owned_list_free(&state.owned);
 
     if (state.failed) {
         chunk_free(state.chunk);
@@ -208,9 +251,17 @@ static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
     unsigned int saved = state->next_reg;
 
     switch (ast->kind) {
-    case STMT_EXPR:
-        codegen_expr(state, ast->expr.value);
+    case STMT_EXPR: {
+        unsigned int reg = codegen_expr(state, ast->expr.value);
+
+        // 'new Player;' on its own line owns a reference nothing will ever
+        // store, so the statement is where it dies. Without this the object
+        // leaks with no name left to release it by.
+        if (expr_yields_owned(ast->expr.value)) {
+            chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE, reg, 0, 0));
+        }
         break;
+    }
     case STMT_RETURN: {
         codegen_return_stmt(state, &ast->ret);
         break;
@@ -262,6 +313,15 @@ static void codegen_return_stmt(CodegenState *state, ASTReturnStmt *ast) {
         return;
     }
 
+    // Everything the function owns dies here, so it is released before the
+    // return rather than at each block's close, which this jumps past. The
+    // returned reference is *moved*: ownership passes to the caller, so
+    // releasing its slot would free the object before the caller sees it.
+    //
+    // Depth 0 is the function body, so releasing to depth 0 covers every block
+    // this return escapes, including the body itself.
+    codegen_release_owned(state, 0, ast->result ? reg : VM_INVALID_REGISTER);
+
     if (slots == 1) {
         chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RETURN, 0, reg, 0));
         return;
@@ -287,23 +347,57 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
 
     unsigned int r1 = codegen_expr(state, ast->initializer);
 
-    codegen_copy_slots(state, codegen_slot_of(state, ast->symbol), r1,
-                       type_slot_count(ast->symbol->var.type));
+    unsigned int slot = codegen_slot_of(state, ast->symbol);
+
+    codegen_copy_slots(state, slot, r1, type_slot_count(ast->symbol->var.type));
+
+    // The variable takes over the initializer's reference rather than retaining
+    // a second one, so an owned result is simply now owned by this slot. A
+    // borrowed one — reading another variable — is left alone: the slot it came
+    // from still owns it, and releasing here would free it twice.
+    if (expr_yields_owned(ast->initializer)) {
+        codegen_own_slot(state, slot);
+    }
 
     codegen_release_registers(state, saved);
 }
 
 static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
+    // Storing a reference somewhere that outlives the statement — a field, or
+    // whatever a pointer points at — makes that place an owner. A borrowed
+    // value therefore has to be retained, since the slot it came from still
+    // owns its own reference; an owned one is moved in and needs no retain.
+    //
+    // What the destination previously held is *not* released here. Doing so
+    // needs reading the old value back before overwriting it, and while that is
+    // the correct rule it is a separate change: overwriting a field that
+    // already holds a reference leaks it for now, which is a leak rather than
+    // the double free that skipping the retain would cause.
+    bool stores_into_owner = (ast->target->kind == EXPR_FIELD || ast->target->kind == EXPR_DEREF) &&
+                             type_is_owned(ast->value->type);
+
     // A field target is written in place through its base slot, so the target
     // is never materialised as a value first.
     if (ast->target->kind == EXPR_FIELD) {
-        codegen_store_field(state, ast->target, codegen_expr(state, ast->value));
+        unsigned int src = codegen_expr(state, ast->value);
+
+        if (stores_into_owner && !expr_yields_owned(ast->value)) {
+            chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RETAIN, src, 0, 0));
+        }
+
+        codegen_store_field(state, ast->target, src);
         return;
     }
 
     // Likewise a deref: '*p = v' writes through p rather than over it.
     if (ast->target->kind == EXPR_DEREF) {
-        codegen_store_deref(state, ast->target, codegen_expr(state, ast->value));
+        unsigned int src = codegen_expr(state, ast->value);
+
+        if (stores_into_owner && !expr_yields_owned(ast->value)) {
+            chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RETAIN, src, 0, 0));
+        }
+
+        codegen_store_deref(state, ast->target, src);
         return;
     }
 
@@ -325,11 +419,18 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
 
 static void codegen_block_stmt(CodegenState *state, ASTBlockStmt *ast) {
     unsigned int saved = state->next_reg;
+    unsigned int enclosing_depth = state->depth++;
 
     for (size_t i = 0; i < ast->list.size; i++) {
         codegen_stmt(state, ast->list.data[i]);
     }
 
+    // Released before the slots are reclaimed, so each still holds what it was
+    // declared as. A block ending in 'return' has already released these on the
+    // way out, and the list is empty by now.
+    codegen_release_owned(state, enclosing_depth, VM_INVALID_REGISTER);
+
+    state->depth = enclosing_depth;
     codegen_release_registers(state, saved);
 }
 
@@ -385,6 +486,8 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
         .chunk = func_chunk,
         .output = state->output,
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
+        .owned = owned_list_create(),
+        .depth = 0,
         .diagnostics = state->diagnostics,
         .failed = false,
     };
@@ -430,6 +533,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
                                 .max_registers = func_state.max_reg,
                             });
 
+    owned_list_free(&func_state.owned);
     slot_map_destroy(func_state.slots);
 }
 
@@ -682,9 +786,27 @@ struct FieldTarget {
 // where p is a '*Player' — but '&p' wants the address of p itself.
 static FieldTarget codegen_field_base(CodegenState *state, ASTExpr *node, bool auto_deref) {
     if (node->kind == EXPR_FIELD) {
-        // Everything below a field access is a struct being reached into, so a
-        // pointer there is always reached through.
-        FieldTarget target = codegen_field_base(state, node->field.target, true);
+        ASTExpr *inner = node->field.target;
+
+        // A pointer-typed field ends the chain rather than extending it: from
+        // there the struct lives wherever that pointer says, so the pointer has
+        // to be loaded and followed. Summing the offset instead would address
+        // the pointer's own slot as if its pointee were inline in it.
+        //
+        // Reachable only since a struct could hold a pointer, which is why
+        // 'o.child.n' is the first expression to need this: it loads o.child,
+        // then addresses n from there.
+        if (inner->kind == EXPR_FIELD && type_is_pointer(inner->type)) {
+            return (FieldTarget){
+                .base = codegen_field_expr(state, inner),
+                .offset = node->field.field->offset,
+                .indirect = true,
+            };
+        }
+
+        // Everything else below a field access is a struct being reached into,
+        // so a pointer there is always reached through.
+        FieldTarget target = codegen_field_base(state, inner, true);
         target.offset += node->field.field->offset;
         return target;
     }
@@ -1198,6 +1320,50 @@ static unsigned int codegen_alloc_slots(CodegenState *state, unsigned int count,
 // brace, which is exactly the pinned lifetime. Any future release that is
 // finer-grained than a block has to consult Symbol.pinned here.
 static void codegen_release_registers(CodegenState *state, unsigned int saved) { state->next_reg = saved; }
+
+static bool type_is_owned(const Type *type) { return type_is_pointer(type); }
+
+// Whether an expression hands its caller a reference to own, or merely lends
+// one it keeps. 'new' and a call returning '*T' produce a fresh reference the
+// receiver is responsible for; reading a variable or a field does not, since
+// the variable or the object still holds it.
+//
+// Derived from the expression rather than recorded on it: the two producing
+// forms are exactly these, and a flag on every node would have to be kept in
+// step with them for no extra information.
+static bool expr_yields_owned(const ASTExpr *expr) {
+    if (!expr || !type_is_owned(expr->type)) {
+        return false;
+    }
+
+    switch (expr->kind) {
+    case EXPR_NEW:
+    case EXPR_CALL:
+    case EXPR_METHOD_CALL:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void codegen_own_slot(CodegenState *state, unsigned int slot) {
+    owned_list_add(&state->owned, (OwnedSlot){.slot = slot, .depth = state->depth});
+}
+
+static void codegen_release_owned(CodegenState *state, unsigned int keep_depth, unsigned int moved) {
+    // Innermost first, so an object released here cannot be reached through
+    // one released later in the same sweep.
+    while (state->owned.size > 0 && state->owned.data[state->owned.size - 1].depth > keep_depth) {
+        OwnedSlot owned = state->owned.data[--state->owned.size];
+
+        // A moved slot's reference belongs to whoever it was handed to.
+        if (owned.slot == moved) {
+            continue;
+        }
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE, owned.slot, 0, 0));
+    }
+}
 
 CodegenLabel codegen_create_label(CodegenState *state) {
     return (CodegenLabel){.position = chunk_add_instruction(state->chunk, 0)};
