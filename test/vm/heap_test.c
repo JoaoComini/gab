@@ -157,8 +157,59 @@ static void test_storing_a_borrowed_reference_into_a_field_retains() {
                    "let r: int = main();") == 6);
 }
 
+// Overwriting a field that already holds a reference drops the old one, or the
+// first object leaks with nothing left naming it.
+static void test_overwriting_a_field_releases_the_old_value() {
+    assert(run_int("struct Inner { n: int }\n"
+                   "struct Outer { child: *Inner }\n"
+                   "func main(): int {\n"
+                   "    let o: *Outer = new Outer;\n"
+                   "    o.child = new Inner;\n"
+                   "    o.child.n = 1;\n"
+                   "    o.child = new Inner;\n"
+                   "    o.child.n = 2;\n"
+                   "    return o.child.n;\n"
+                   "}\n"
+                   "let r: int = main();") == 2);
+}
+
+// Reassigning a variable that owns a reference drops the old one too.
+static void test_reassigning_a_variable_releases_the_old_value() {
+    assert(run_int("struct Box { n: int }\n"
+                   "func main(): int {\n"
+                   "    let p: *Box = new Box;\n"
+                   "    p.n = 1;\n"
+                   "    p = new Box;\n"
+                   "    p.n = 9;\n"
+                   "    return p.n;\n"
+                   "}\n"
+                   "let r: int = main();") == 9);
+}
+
+// Self-assignment is why the order is retain-new, store, release-old: releasing
+// first would free the object and then store a pointer to freed memory.
+static void test_self_assignment_survives() {
+    assert(run_int("struct Inner { n: int }\n"
+                   "struct Outer { child: *Inner }\n"
+                   "func main(): int {\n"
+                   "    let o: *Outer = new Outer;\n"
+                   "    o.child = new Inner;\n"
+                   "    o.child.n = 5;\n"
+                   "    o.child = o.child;\n"
+                   "    return o.child.n;\n"
+                   "}\n"
+                   "let r: int = main();") == 5);
+
+    assert(run_int("struct Box { n: int }\n"
+                   "func main(): int { let p: *Box = new Box; p.n = 3; p = p; return p.n; }\n"
+                   "let r: int = main();") == 3);
+}
+
 int main(void) {
     test_new_allocates_a_usable_object();
+    test_overwriting_a_field_releases_the_old_value();
+    test_reassigning_a_variable_releases_the_old_value();
+    test_self_assignment_survives();
     test_storing_a_borrowed_reference_into_a_field_retains();
     test_an_alias_is_borrowed_not_owned();
     test_released_at_the_end_of_its_block();

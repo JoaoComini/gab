@@ -517,8 +517,8 @@ static void test_reports_returning_a_pointer_to_a_local() {
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_LIFETIME);
-    assert(strcmp(diagnostic->message,
-                  "this pointer outlives what it points at, so it cannot be returned") == 0);
+    assert(strcmp(diagnostic->message, "this pointer outlives what it points at, so it cannot be returned") ==
+           0);
 
     test_context_free(&ctx);
 }
@@ -539,6 +539,28 @@ static void test_reports_a_pointer_escaping_its_block() {
     assert(diagnostic->kind == GAB_ERR_LIFETIME);
     assert(strcmp(diagnostic->message,
                   "this pointer outlives what it points at, so it cannot be assigned here") == 0);
+
+    test_context_free(&ctx);
+}
+
+// A heap object outlives every frame, so storing a stack address into one is
+// the escape the rule exists to catch — refcounts cannot save a pointer whose
+// pointee is a frame slot that has already gone.
+static void test_reports_a_stack_pointer_stored_into_a_heap_object() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "struct Inner { n: int }\n"
+                  "struct Outer { child: *Inner }\n"
+                  "func test() { let o: *Outer = new Outer; let local: Inner; o.child = &local; }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_LIFETIME);
+    assert(strcmp(diagnostic->message,
+                  "this pointer outlives what it points at, so it cannot be stored here") == 0);
 
     test_context_free(&ctx);
 }
@@ -594,6 +616,7 @@ int main(void) {
     test_reports_field_access_through_a_non_struct_pointer();
     test_reports_returning_a_pointer_to_a_local();
     test_reports_a_pointer_escaping_its_block();
+    test_reports_a_stack_pointer_stored_into_a_heap_object();
     test_accepts_pointers_that_do_not_outlive_their_pointee();
 
     test_parser_recovers_across_statements();

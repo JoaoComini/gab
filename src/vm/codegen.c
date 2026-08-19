@@ -76,6 +76,10 @@ static bool type_is_owned(const Type *type);
 // runs.
 static void codegen_own_slot(CodegenState *state, unsigned int slot);
 
+// Whether this slot already owns a reference, and so has one to drop when it is
+// overwritten.
+static bool codegen_slot_is_owned(const CodegenState *state, unsigned int slot);
+
 // Emits a release for every owned slot the current block declared, and drops
 // them. 'moved' is a slot whose ownership is leaving the frame — a returned
 // pointer — and is skipped; pass VM_INVALID_REGISTER when nothing is moving.
@@ -364,40 +368,50 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
 
 static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
     // Storing a reference somewhere that outlives the statement — a field, or
-    // whatever a pointer points at — makes that place an owner. A borrowed
-    // value therefore has to be retained, since the slot it came from still
-    // owns its own reference; an owned one is moved in and needs no retain.
+    // whatever a pointer points at — makes that place an owner, and whatever it
+    // held before stops being owned by it.
     //
-    // What the destination previously held is *not* released here. Doing so
-    // needs reading the old value back before overwriting it, and while that is
-    // the correct rule it is a separate change: overwriting a field that
-    // already holds a reference leaks it for now, which is a leak rather than
-    // the double free that skipping the retain would cause.
-    bool stores_into_owner = (ast->target->kind == EXPR_FIELD || ast->target->kind == EXPR_DEREF) &&
-                             type_is_owned(ast->value->type);
+    // The order is retain-new, store, release-old, and it has to be that way
+    // round: 'a.child = a.child' would otherwise free the object and then store
+    // a pointer to freed memory. Releasing last means the count never dips
+    // through zero when the two are the same object.
+    bool target_owns = (ast->target->kind == EXPR_FIELD || ast->target->kind == EXPR_DEREF) &&
+                       type_is_owned(ast->target->type);
+
+    if (target_owns) {
+        // Read what the destination holds before overwriting it. This is the
+        // only reason the old value is materialised at all.
+        unsigned int old = ast->target->kind == EXPR_FIELD ? codegen_field_expr(state, ast->target)
+                                                           : codegen_deref_expr(state, ast->target);
+
+        unsigned int src = codegen_expr(state, ast->value);
+
+        // A borrowed value needs a reference of its own, since the slot it came
+        // from keeps its; an owned one is simply moved in.
+        if (!expr_yields_owned(ast->value)) {
+            chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RETAIN, src, 0, 0));
+        }
+
+        if (ast->target->kind == EXPR_FIELD) {
+            codegen_store_field(state, ast->target, src);
+        } else {
+            codegen_store_deref(state, ast->target, src);
+        }
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE, old, 0, 0));
+        return;
+    }
 
     // A field target is written in place through its base slot, so the target
     // is never materialised as a value first.
     if (ast->target->kind == EXPR_FIELD) {
-        unsigned int src = codegen_expr(state, ast->value);
-
-        if (stores_into_owner && !expr_yields_owned(ast->value)) {
-            chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RETAIN, src, 0, 0));
-        }
-
-        codegen_store_field(state, ast->target, src);
+        codegen_store_field(state, ast->target, codegen_expr(state, ast->value));
         return;
     }
 
     // Likewise a deref: '*p = v' writes through p rather than over it.
     if (ast->target->kind == EXPR_DEREF) {
-        unsigned int src = codegen_expr(state, ast->value);
-
-        if (stores_into_owner && !expr_yields_owned(ast->value)) {
-            chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RETAIN, src, 0, 0));
-        }
-
-        codegen_store_deref(state, ast->target, src);
+        codegen_store_deref(state, ast->target, codegen_expr(state, ast->value));
         return;
     }
 
@@ -414,7 +428,31 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
 
     unsigned int r1 = codegen_expr(state, ast->value);
 
+    // Reassigning a variable that owns a reference: it stops owning the old one
+    // and starts owning the new. Same order as a field store, and for the same
+    // reason — 'p = p' must not free what it is about to store.
+    if (type_is_owned(ast->target->type) && codegen_slot_is_owned(state, rd)) {
+        unsigned int old = codegen_alloc_slots(state, VM_POINTER_SLOTS, VM_POINTER_SLOTS, ast->target->span);
+
+        codegen_copy_slots(state, old, rd, VM_POINTER_SLOTS);
+
+        if (!expr_yields_owned(ast->value)) {
+            chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RETAIN, r1, 0, 0));
+        }
+
+        codegen_copy_slots(state, rd, r1, VM_POINTER_SLOTS);
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE, old, 0, 0));
+        return;
+    }
+
     codegen_copy_slots(state, rd, r1, type_slot_count(ast->target->type));
+
+    // A borrowed value assigned into a slot that owns nothing yet leaves the
+    // slot borrowing too, so there is nothing to record. An owned one makes the
+    // slot an owner from here on.
+    if (type_is_owned(ast->target->type) && expr_yields_owned(ast->value)) {
+        codegen_own_slot(state, rd);
+    }
 }
 
 static void codegen_block_stmt(CodegenState *state, ASTBlockStmt *ast) {
@@ -1348,6 +1386,19 @@ static bool expr_yields_owned(const ASTExpr *expr) {
 
 static void codegen_own_slot(CodegenState *state, unsigned int slot) {
     owned_list_add(&state->owned, (OwnedSlot){.slot = slot, .depth = state->depth});
+}
+
+// Whether this slot already owns a reference, and so has one to drop when it is
+// overwritten. A slot merely borrowing — an alias of another variable — has
+// nothing to release, and releasing it would free what its owner still holds.
+static bool codegen_slot_is_owned(const CodegenState *state, unsigned int slot) {
+    for (size_t i = 0; i < state->owned.size; i++) {
+        if (state->owned.data[i].slot == slot) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 static void codegen_release_owned(CodegenState *state, unsigned int keep_depth, unsigned int moved) {

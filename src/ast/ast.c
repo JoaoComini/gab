@@ -976,6 +976,17 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
             break;
         }
 
+        // Storing through a pointer reaches something whose lifetime this frame
+        // does not bound — a heap object outlives every frame, and a '*T'
+        // parameter may point at a caller's. Depth 0 is that bound: "outlives
+        // everything", so only a pointer to something equally long-lived may be
+        // stored there. Without this, '&local' escapes into a heap object and
+        // dangles the moment the frame returns, refcounts notwithstanding.
+        if (stmt->assign.target->kind == EXPR_FIELD || stmt->assign.target->kind == EXPR_DEREF) {
+            check_pointer_lifetime(state, stmt->assign.value, 0, stmt->span, "stored here");
+            break;
+        }
+
         Symbol *target = stmt->assign.target->symbol;
 
         if (target && target->kind == SYMBOL_VAR) {
