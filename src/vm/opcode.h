@@ -6,6 +6,16 @@ typedef enum {
     OP_LOAD_TRUE,
     OP_LOAD_FALSE,
     OP_MOVE,
+
+    // Copies a run of slots between frame slots, the register-to-register
+    // counterpart of OP_LOAD_PTR_N. A struct or a pointer is several slots, and
+    // one instruction per slot spends a dispatch on each; the count is a
+    // compile-time constant, so it rides in the spare third operand for free.
+    //
+    // OP_MOVE stays for the single-slot case, which is every scalar: decoding a
+    // third operand and calling memmove to move four bytes would be slower than
+    // the assignment it replaced.
+    OP_MOVE_N,
     OP_ADDI,
     OP_SUBI,
     OP_MULI,

@@ -331,6 +331,25 @@ static void test_layout_comparison_rejects_wrong_layouts() {
     vm_free(vm);
 }
 
+// A struct assigned from a struct that shares its slots. Batching the copy into
+// one instruction makes the source and destination ranges overlap, which a
+// memcpy is free to get wrong; this is why OP_MOVE_N uses memmove. The nested
+// copy walks the same slots in both directions, so a wrong one shears the value
+// rather than failing outright.
+static void test_an_overlapping_struct_copy_is_exact() {
+    assert(run_int("struct Inner { a: int, b: int, c: int }\n"
+                   "struct Outer { head: int, inner: Inner }\n"
+                   "func f(): int {\n"
+                   "    let o: Outer;\n"
+                   "    o.head = 1;\n"
+                   "    o.inner.a = 2; o.inner.b = 3; o.inner.c = 4;\n"
+                   "    let copy: Inner = o.inner;\n"
+                   "    o.inner = copy;\n"
+                   "    return o.head * 1000 + o.inner.a * 100 + o.inner.b * 10 + o.inner.c;\n"
+                   "}\n"
+                   "let r: int = f();") == 1234);
+}
+
 int main() {
     test_read_back_what_was_written();
     test_every_field_is_independent();
@@ -338,6 +357,7 @@ int main() {
     test_mixed_widths();
     test_nested_field_access();
     test_whole_struct_assignment();
+    test_an_overlapping_struct_copy_is_exact();
     test_struct_local_is_per_frame();
     test_struct_parameter();
     test_struct_parameter_is_by_value();

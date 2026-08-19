@@ -505,6 +505,18 @@ static void vm_run_loop(VM *vm) {
             (*vm_reg(vm, rd)) = (*vm_reg(vm, r1));
             break;
         }
+        case OP_MOVE_N: {
+            size_t rd = VM_DECODE_R_RD(instruction);
+            size_t r1 = VM_DECODE_R_R1(instruction);
+            size_t slots = VM_DECODE_R_R2(instruction);
+
+            // memmove, not memcpy: a struct assigned from one of its own
+            // fields, or an argument marshalled into the slots just above its
+            // source, gives overlapping ranges. OP_LOAD_PTR_N can use memcpy
+            // because its source is a heap payload and cannot overlap a frame.
+            memmove(vm_reg(vm, rd), vm_reg(vm, r1), slots * sizeof(Value));
+            break;
+        }
         case OP_ADDF: {
             vm_arithmeticf(vm, instruction, vm_addf);
             break;

@@ -1234,6 +1234,18 @@ static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned 
         return;
     }
 
+    // One instruction for the whole run: a struct or a pointer is several
+    // slots, and a dispatch per slot is the interpreter's real cost, not the
+    // four bytes it moves. A single slot keeps OP_MOVE, which is every scalar
+    // and needs no third operand.
+    //
+    // A run too wide for the 8-bit count field falls back to the loop rather
+    // than truncating, so correctness never depends on the encoding's reach.
+    if (count > 1 && count <= VM_MAX_MOVE_SLOTS) {
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_MOVE_N, dest, src, count));
+        return;
+    }
+
     for (unsigned int i = 0; i < count; i++) {
         chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_MOVE, dest + i, src + i, 0));
     }
