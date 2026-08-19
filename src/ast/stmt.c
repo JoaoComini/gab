@@ -33,6 +33,8 @@ ASTStmt *ast_func_decl_stmt_create(Span span, StringRef name, TypeSpec *return_t
     stmt->func_decl.params = params;
     stmt->func_decl.body = body;
     stmt->func_decl.symbol = NULL;
+    stmt->func_decl.resolved_return_type = NULL;
+    stmt->func_decl.declared = false;
     return stmt;
 }
 
@@ -42,6 +44,7 @@ ASTStmt *ast_struct_decl_stmt_create(Span span, StringRef name, ASTFieldList fie
     stmt->struct_decl.name = name;
     stmt->struct_decl.fields = fields;
     stmt->struct_decl.type = NULL;
+    stmt->struct_decl.declared = false;
     return stmt;
 }
 

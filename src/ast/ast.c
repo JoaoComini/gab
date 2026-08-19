@@ -516,6 +516,145 @@ Type *ast_script_resolve_type(ResolverState *state, TypeSpec *spec, Span span) {
     return type;
 }
 
+void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt);
+
+// Declares the struct's Type: its name, its fields, and its layout. Split from
+// the body walk so the pre-pass can run it over a whole script's top level
+// before any signature mentions a type.
+static void declare_struct(ResolverState *state, ASTStmt *stmt) {
+    stmt->struct_decl.declared = true;
+
+    // Declared under its bare name into the scope it appears in, so two
+    // modules may each declare a 'Config' without either name carrying the
+    // module in it.
+    String *struct_name = resolver_intern(state, stmt->struct_decl.name);
+
+    // Local: shadowing an outer type is allowed, declaring the same name
+    // twice in one scope is not.
+    if (scope_declares_type_now(state->current_scope, struct_name)) {
+        diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "type '%s' is already declared",
+                   struct_name->data);
+        return;
+    }
+
+    Type *type = type_struct_create(resolver_owner_arena(state), struct_name, stmt->struct_decl.fields.size);
+    bool poisoned = false;
+
+    for (size_t i = 0; i < stmt->struct_decl.fields.size; i++) {
+        ASTField *field = stmt->struct_decl.fields.data[i];
+        String *field_name = resolver_intern(state, field->name);
+
+        if (type_find_field(type, field_name)) {
+            diag_error(state->diagnostics, GAB_ERR_NAME, field->span, "duplicate field '%s' in struct '%s'",
+                       field_name->data, struct_name->data);
+            poisoned = true;
+            continue;
+        }
+
+        // The struct is registered only after its fields resolve, so a
+        // self-reference would otherwise surface as "unknown type". A
+        // pointer to self is not containment, so only depth 0 is rejected.
+        if (field->type_spec->pointer_depth == 0 &&
+            string_ref_equals_ref(field->type_spec->name, stmt->struct_decl.name)) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, field->span, "struct '%s' cannot contain itself",
+                       struct_name->data);
+            poisoned = true;
+            continue;
+        }
+
+        Type *field_type = ast_script_resolve_type(state, field->type_spec, field->span);
+
+        if (is_error_type(field_type)) {
+            poisoned = true;
+            continue;
+        }
+
+        type_add_field(type, field_name, field_type);
+    }
+
+    if (poisoned) {
+        return;
+    }
+
+    type_layout_compute(type);
+    scope_decl_type(state->current_scope, struct_name, type);
+
+    stmt->struct_decl.type = type;
+}
+
+// Declares the function's name, return type, and parameter types — everything a
+// caller needs — without touching the body. Split from the body walk so the
+// pre-pass can declare a whole script's top level before resolving any of it,
+// which is what lets a function call one declared below it.
+static void declare_func(ResolverState *state, ASTStmt *stmt) {
+    stmt->func_decl.declared = true;
+
+    StringRef func_name = stmt->func_decl.name;
+    Type *func_return_type = ast_script_resolve_type(state, stmt->func_decl.return_type, stmt->span);
+
+    stmt->func_decl.resolved_return_type = func_return_type;
+
+    Symbol *func =
+        scope_decl_func(state->current_scope, resolver_intern(state, func_name), func_return_type);
+
+    if (!func) {
+        char *name = string_ref_to_cstr(func_name);
+        diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' is already declared in this scope",
+                   name);
+        free(name);
+    }
+
+    stmt->func_decl.symbol = func;
+
+    size_t param_count = stmt->func_decl.params.size;
+
+    if (func && param_count > 0) {
+        func->func.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(Type *));
+        func->func.param_count = param_count;
+
+        for (size_t i = 0; i < param_count; i++) {
+            ASTField *param = stmt->func_decl.params.data[i];
+
+            func->func.params[i] = ast_script_resolve_type(state, param->type_spec, param->span);
+        }
+    }
+}
+
+// Walks the body in a scope holding the parameters. The signature is already
+// resolved, so this re-resolves each parameter's TypeSpec only to bind its
+// name; the types a caller sees were settled by declare_func.
+static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
+    resolver_enter_scope(state);
+
+    for (size_t i = 0; i < stmt->func_decl.params.size; i++) {
+        ASTField *param = stmt->func_decl.params.data[i];
+
+        String *param_name = resolver_intern(state, param->name);
+        Type *param_type = ast_script_resolve_type(state, param->type_spec, param->span);
+
+        Symbol *symbol = scope_decl_var(state->current_scope, param_name, param_type);
+
+        if (!symbol) {
+            char *name = string_ref_to_cstr(param->name);
+            diag_error(state->diagnostics, GAB_ERR_NAME, param->span, "duplicate parameter '%s'", name);
+            free(name);
+            continue;
+        }
+
+        param->symbol = symbol;
+    }
+
+    FuncContext previous_context = state->func_context;
+
+    state->func_context.return_type = stmt->func_decl.resolved_return_type;
+
+    ast_script_stmt_visit(state, stmt->func_decl.body);
+
+    state->func_context = previous_context;
+
+    resolver_exit_scope(state);
+}
+
 void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
     if (!stmt) {
         return;
@@ -570,123 +709,20 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         break;
     }
     case STMT_FUNC_DECL: {
-        StringRef func_name = stmt->func_decl.name;
-        Type *func_return_type = ast_script_resolve_type(state, stmt->func_decl.return_type, stmt->span);
-
-        // Declared in the enclosing scope, before the body is visited, so that
-        // callers and the function itself can both see it.
-        Symbol *func =
-            scope_decl_func(state->current_scope, resolver_intern(state, func_name), func_return_type);
-
-        if (!func) {
-            char *name = string_ref_to_cstr(func_name);
-            diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' is already declared in this scope",
-                       name);
-            free(name);
+        // The signature is already declared: at the top level by the pre-pass,
+        // and here for a nested function, whose declaration nothing above it
+        // could have seen.
+        if (!stmt->func_decl.declared) {
+            declare_func(state, stmt);
         }
 
-        stmt->func_decl.symbol = func;
-
-        size_t param_count = stmt->func_decl.params.size;
-
-        if (func && param_count > 0) {
-            func->func.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(Type *));
-            func->func.param_count = param_count;
-        }
-
-        resolver_enter_scope(state);
-
-        for (size_t i = 0; i < param_count; i++) {
-            ASTField *param = stmt->func_decl.params.data[i];
-
-            String *param_name = resolver_intern(state, param->name);
-            Type *param_type = ast_script_resolve_type(state, param->type_spec, param->span);
-
-            if (func) {
-                func->func.params[i] = param_type;
-            }
-
-            Symbol *symbol = scope_decl_var(state->current_scope, param_name, param_type);
-
-            if (!symbol) {
-                char *name = string_ref_to_cstr(param->name);
-                diag_error(state->diagnostics, GAB_ERR_NAME, param->span, "duplicate parameter '%s'", name);
-                free(name);
-                continue;
-            }
-
-            param->symbol = symbol;
-        }
-
-        FuncContext previous_context = state->func_context;
-
-        state->func_context.return_type = func_return_type;
-
-        ast_script_stmt_visit(state, stmt->func_decl.body);
-
-        state->func_context = previous_context;
-
-        resolver_exit_scope(state);
+        resolve_func_body(state, stmt);
         break;
     }
     case STMT_STRUCT_DECL: {
-        // Declared under its bare name into the scope it appears in, so two
-        // modules may each declare a 'Config' without either name carrying the
-        // module in it.
-        String *struct_name = resolver_intern(state, stmt->struct_decl.name);
-
-        // Local: shadowing an outer type is allowed, declaring the same name
-        // twice in one scope is not.
-        if (scope_declares_type_now(state->current_scope, struct_name)) {
-            diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "type '%s' is already declared",
-                       struct_name->data);
-            break;
+        if (!stmt->struct_decl.declared) {
+            declare_struct(state, stmt);
         }
-
-        Type *type =
-            type_struct_create(resolver_owner_arena(state), struct_name, stmt->struct_decl.fields.size);
-        bool poisoned = false;
-
-        for (size_t i = 0; i < stmt->struct_decl.fields.size; i++) {
-            ASTField *field = stmt->struct_decl.fields.data[i];
-            String *field_name = resolver_intern(state, field->name);
-
-            if (type_find_field(type, field_name)) {
-                diag_error(state->diagnostics, GAB_ERR_NAME, field->span,
-                           "duplicate field '%s' in struct '%s'", field_name->data, struct_name->data);
-                poisoned = true;
-                continue;
-            }
-
-            // The struct is registered only after its fields resolve, so a
-            // self-reference would otherwise surface as "unknown type". A
-            // pointer to self is not containment, so only depth 0 is rejected.
-            if (field->type_spec->pointer_depth == 0 &&
-                string_ref_equals_ref(field->type_spec->name, stmt->struct_decl.name)) {
-                diag_error(state->diagnostics, GAB_ERR_TYPE, field->span, "struct '%s' cannot contain itself",
-                           struct_name->data);
-                poisoned = true;
-                continue;
-            }
-
-            Type *field_type = ast_script_resolve_type(state, field->type_spec, field->span);
-
-            if (is_error_type(field_type)) {
-                poisoned = true;
-                continue;
-            }
-
-            type_add_field(type, field_name, field_type);
-        }
-
-        if (poisoned) {
-            break;
-        }
-
-        type_layout_compute(type);
-        scope_decl_type(state->current_scope, struct_name, type);
-
-        stmt->struct_decl.type = type;
         break;
     }
     case STMT_ASSIGN: {
@@ -770,6 +806,30 @@ bool ast_script_resolve(Arena *compile_arena, ASTScript *script, Scope *global_s
     };
 
     size_t errors_before = diagnostics_count(diagnostics);
+
+    // Declarations first, bodies second. A signature may name a type declared
+    // further down the file, and a body may call a function declared further
+    // down, so neither can be resolved in the order it was written. Go and
+    // Rust both hoist for the same reason.
+    //
+    // Types before functions: a signature names types, no type names a
+    // function. This pass resolves signatures only — never a body — so nothing
+    // about scoping or block depth depends on it.
+    for (size_t i = 0; i < script->statements.size; i++) {
+        ASTStmt *stmt = script->statements.data[i];
+
+        if (stmt && stmt->kind == STMT_STRUCT_DECL) {
+            declare_struct(&state, stmt);
+        }
+    }
+
+    for (size_t i = 0; i < script->statements.size; i++) {
+        ASTStmt *stmt = script->statements.data[i];
+
+        if (stmt && stmt->kind == STMT_FUNC_DECL) {
+            declare_func(&state, stmt);
+        }
+    }
 
     for (size_t i = 0; i < script->statements.size; i++) {
         ast_script_stmt_visit(&state, script->statements.data[i]);

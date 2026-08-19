@@ -58,6 +58,16 @@ typedef struct {
     struct ASTStmt *body;
 
     Symbol *symbol;
+
+    // Filled by the resolver's declaration pass. The return type is held here
+    // and not only on the Symbol because a duplicate name leaves no Symbol,
+    // and the body still has to be checked against what it declared.
+    Type *resolved_return_type;
+
+    // Whether the declaration pass has already run over this. A nested
+    // function, which nothing above it could have seen, is declared by the
+    // body walk instead.
+    bool declared;
 } ASTFuncDecl;
 
 typedef struct {
@@ -65,6 +75,9 @@ typedef struct {
     ASTFieldList fields;
 
     Type *type;
+
+    // As ASTFuncDecl::declared.
+    bool declared;
 } ASTStructDecl;
 
 typedef struct {

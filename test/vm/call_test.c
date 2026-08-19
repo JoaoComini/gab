@@ -137,8 +137,42 @@ static void test_recursion_with_a_nested_declaration() {
                    "let r: int = main();") == 120);
 }
 
+// Declarations are hoisted, so a function may call one written below it. Every
+// other statically-typed language with top-level functions works this way, and
+// methods need it: a receiver names a struct that may be declared further down.
+static void test_call_a_function_declared_below() {
+    assert(run_int("func main(): int { return helper(7); }\n"
+                   "func helper(n: int): int { return n * 3; }\n"
+                   "let r: int = main();") == 21);
+}
+
+// Mutual recursion is the case that a single ordered pass cannot express at
+// all: whichever of the two comes first would call an undeclared name.
+static void test_mutual_recursion() {
+    assert(run_int("func is_even(n: int): bool { if n == 0 { return true; } return is_odd(n - 1); }\n"
+                   "func is_odd(n: int): bool { if n == 0 { return false; } return is_even(n - 1); }\n"
+                   "func main(): int { if is_even(10) { return 1; } return 0; }\n"
+                   "let r: int = main();") == 1);
+}
+
+// A signature may name a struct declared below it, which is why types are
+// declared before functions rather than in one interleaved pass.
+static void test_signature_names_a_struct_declared_below() {
+    assert(run_int("func health_of(p: Player): int { return p.health; }\n"
+                   "struct Player { health: int }\n"
+                   "func main(): int {\n"
+                   "    let p: Player;\n"
+                   "    p.health = 42;\n"
+                   "    return health_of(p);\n"
+                   "}\n"
+                   "let r: int = main();") == 42);
+}
+
 int main(void) {
     test_simple_call();
+    test_call_a_function_declared_below();
+    test_mutual_recursion();
+    test_signature_names_a_struct_declared_below();
     test_call_with_no_arguments();
     test_nested_call_arguments();
     test_recursion();

@@ -60,6 +60,7 @@ static void codegen_set_slot(CodegenState *state, Symbol *symbol, unsigned int s
 }
 
 static void codegen_stmt(CodegenState *state, ASTStmt *ast);
+static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast);
 static void codegen_return_stmt(CodegenState *state, ASTReturnStmt *ast);
 static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast);
 static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast);
@@ -159,6 +160,18 @@ Chunk *codegen_generate(ASTScript *script, FuncProtoList *global_funcs, Diagnost
         .diagnostics = diagnostics,
         .failed = false,
     };
+
+    // Prototype indices first, bodies second — mirroring the resolver, which
+    // hoists declarations for the same reason. A body may call a function
+    // declared below it, and the OP_CALL it emits needs that function's index
+    // before its body has been reached.
+    for (size_t i = 0; i < script->statements.size; i++) {
+        ASTStmt *stmt = script->statements.data[i];
+
+        if (stmt && stmt->kind == STMT_FUNC_DECL) {
+            codegen_reserve_proto(&state, &stmt->func_decl);
+        }
+    }
 
     for (size_t i = 0; i < script->statements.size; i++) {
         codegen_stmt(&state, script->statements.data[i]);
@@ -328,18 +341,30 @@ static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast) {
     codegen_patch_jump(state, end, OP_JMP, 0);
 }
 
+// Claims the prototype index a function's OP_CALL will encode, without
+// generating anything. Reserving it before any body is generated is what lets a
+// body call a function whose own body has not been reached yet — the recursion
+// case, and now the forward-call case the resolver's hoisting admits.
+//
+// Durable, unlike a frame slot: this is what OP_CALL encodes and what a host's
+// handle resolves through after the compile is long gone.
+static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast) {
+    if (!ast->symbol || ast->symbol->func.proto_index != SYMBOL_FUNC_NO_PROTO) {
+        return;
+    }
+
+    func_proto_list_add(state->global_funcs, (FuncPrototype){0});
+    ast->symbol->func.proto_index = state->global_funcs->size - 1;
+}
+
 static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
     Chunk *func_chunk = chunk_create();
 
-    // The slot is reserved before the body is generated so that a recursive
-    // call inside it encodes a valid prototype index; the entry is filled in
-    // once codegen knows the chunk and register count.
-    func_proto_list_add(state->global_funcs, (FuncPrototype){0});
-    size_t proto_index = state->global_funcs->size - 1;
+    // Reserved by the pre-pass for a top-level function; a nested one, which no
+    // pre-pass saw, reserves its own here.
+    codegen_reserve_proto(state, ast);
 
-    // Durable, unlike a frame slot: this is what OP_CALL encodes and what a
-    // host's handle resolves through after the compile is long gone.
-    ast->symbol->func.proto_index = proto_index;
+    size_t proto_index = ast->symbol->func.proto_index;
 
     unsigned int func_next_reg = 1;
 
