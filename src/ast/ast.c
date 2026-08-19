@@ -214,6 +214,75 @@ static bool is_addressable(const ASTExpr *expr) {
     }
 }
 
+// The struct a receiver type names, looking through one level of pointer, or
+// NULL if it does not name one. '*Player' and 'Player' share a method set, so
+// both land on the same Type.
+static Type *receiver_base_type(Type *type) {
+    if (type_is_pointer(type)) {
+        type = type->pointee;
+    }
+
+    return (type && type->kind == TYPE_STRUCT) ? type : NULL;
+}
+
+// Checks each argument against the parameter type in the same position. Shared
+// by both call forms, which differ only in where their parameter list starts:
+// a method's skips the receiver.
+static void check_call_args(ResolverState *state, ASTExprList *args, Type **params) {
+    for (size_t i = 0; i < args->size; i++) {
+        ASTExpr *arg = args->data[i];
+        Type *param_type = params[i];
+
+        if (is_error_type(arg->type) || is_error_type(param_type)) {
+            continue;
+        }
+
+        if (arg->type != param_type) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, arg->span, "argument %zu is %s, but %s was declared",
+                       i + 1, type_name(arg->type), type_name(param_type));
+        }
+    }
+}
+
+// Settles how the receiver reaches parameter zero, recording it on the node for
+// codegen. Go's rule: a pointer method on an addressable value takes its
+// address, and a value method through a pointer copies the pointee in. Returns
+// false when neither is possible.
+static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, Type *declared, Type *actual,
+                               const String *name) {
+    if (declared == actual) {
+        return true;
+    }
+
+    if (type_is_pointer(declared) && !type_is_pointer(actual)) {
+        if (!is_addressable(expr->method_call.receiver)) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                       "cannot call '%s' on a temporary, since it takes a pointer receiver", name->data);
+            return false;
+        }
+
+        // The address is loose for the duration of the call, so the slot it
+        // names must survive the whole block — exactly as for '&x'.
+        Symbol *addressed = addressed_symbol(expr->method_call.receiver);
+        if (addressed) {
+            addressed->pinned = true;
+        }
+
+        expr->method_call.take_address = true;
+        return true;
+    }
+
+    if (!type_is_pointer(declared) && type_is_pointer(actual)) {
+        expr->method_call.deref = true;
+        return true;
+    }
+
+    // A '**Player', or some other shape no coercion bridges.
+    diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot call '%s' on %s", name->data,
+               type_name(actual));
+    return false;
+}
+
 bool is_numeric_type(Type *t) { return t->kind == TYPE_INT || t->kind == TYPE_FLOAT; }
 
 bool is_boolean_type(Type *t) { return t->kind == TYPE_BOOL; }
@@ -340,23 +409,69 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
             break;
         }
 
-        for (size_t i = 0; i < expr->call.args.size; i++) {
-            ASTExpr *arg = expr->call.args.data[i];
-            Type *param_type = callee->func.params[i];
-
-            if (is_error_type(arg->type) || is_error_type(param_type)) {
-                continue;
-            }
-
-            if (arg->type != param_type) {
-                diag_error(state->diagnostics, GAB_ERR_TYPE, arg->span,
-                           "argument %zu is %s, but %s was declared", i + 1, type_name(arg->type),
-                           type_name(param_type));
-            }
-        }
+        check_call_args(state, &expr->call.args, callee->func.params);
 
         expr->symbol = callee;
         expr->type = callee->func.return_type;
+        break;
+    }
+    case EXPR_METHOD_CALL: {
+        ast_script_expr_visit(state, expr->method_call.receiver);
+
+        for (size_t i = 0; i < expr->method_call.args.size; i++) {
+            ast_script_expr_visit(state, expr->method_call.args.data[i]);
+        }
+
+        Type *receiver_type = expr->method_call.receiver->type;
+
+        if (is_error_type(receiver_type)) {
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        // '*Player' and 'Player' share one method set, so the lookup and every
+        // message below name the struct rather than what was written.
+        Type *base = receiver_base_type(receiver_type);
+
+        if (!base) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                       "%s is not a struct, so it has no methods", type_name(receiver_type));
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        String *method_name = resolver_intern(state, expr->method_call.name);
+        Symbol *method = type_find_method(base, method_name);
+
+        if (!method) {
+            diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "'%s' has no method '%s'",
+                       base->name->data, method_name->data);
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        // Parameter zero is the receiver, so the declared parameters — the ones
+        // the caller actually writes — are everything after it.
+        Type *declared_receiver = method->func.params[0];
+        size_t declared_params = method->func.param_count - 1;
+
+        if (!reconcile_receiver(state, expr, declared_receiver, receiver_type, method_name)) {
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        // The count the user sees excludes the receiver, which they never wrote.
+        if (expr->method_call.args.size != declared_params) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %zu argument(s), found %zu",
+                       declared_params, expr->method_call.args.size);
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        check_call_args(state, &expr->method_call.args, method->func.params + 1);
+
+        expr->method_call.method = method;
+        expr->type = method->func.return_type;
         break;
     }
     case EXPR_FIELD: {
@@ -586,17 +701,6 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
 // caller needs — without touching the body. Split from the body walk so the
 // pre-pass can declare a whole script's top level before resolving any of it,
 // which is what lets a function call one declared below it.
-// The struct a receiver type names, looking through one level of pointer, or
-// NULL if it does not name one. '*Player' and 'Player' share a method set, so
-// both land on the same Type.
-static Type *receiver_base_type(Type *type) {
-    if (type_is_pointer(type)) {
-        type = type->pointee;
-    }
-
-    return (type && type->kind == TYPE_STRUCT) ? type : NULL;
-}
-
 // Declares a method into its receiver type's method map, rather than into any
 // scope: a method has no free-standing name, so 'Player.update' and
 // 'Enemy.update' coexist and neither is reachable as a bare 'update'.

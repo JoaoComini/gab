@@ -21,6 +21,7 @@ typedef enum {
     EXPR_BIN_OP,
     EXPR_VARIABLE,
     EXPR_CALL,
+    EXPR_METHOD_CALL,
     EXPR_FIELD,
     EXPR_ADDR_OF,
     EXPR_DEREF,
@@ -67,6 +68,28 @@ typedef struct ASTExpr {
             ASTExprList args;
         } call;
 
+        // 'recv.name(args)'. The receiver is kept apart from the arguments
+        // rather than prepended to them: the resolver would otherwise have to
+        // synthesize an '&recv' node over a target it has already walked, and
+        // there is no later lowering pass to host that rewrite. Codegen puts
+        // the receiver in the first argument slot, which is where the callee's
+        // parameter zero already expects it.
+        struct {
+            ASTExpr *receiver;
+            StringRef name;
+            ASTExprList args;
+
+            // Resolved during type resolution. The method is an ordinary
+            // function symbol, so codegen emits the OP_CALL it already would.
+            Symbol *method;
+
+            // How the receiver reaches parameter zero. A '*T' method called on
+            // a 'T' takes its address; a 'T' method called through a '*T'
+            // copies the pointee in. At most one is ever set.
+            bool take_address;
+            bool deref;
+        } method_call;
+
         struct {
             ASTExpr *target;
             StringRef name;
@@ -93,6 +116,7 @@ ASTExpr *ast_literal_expr_create(Span span, Literal value);
 ASTExpr *ast_bin_op_expr_create(Span span, ASTExpr *left, BinOp op, ASTExpr *right);
 ASTExpr *ast_variable_expr_create(Span span, StringRef name);
 ASTExpr *ast_call_expr_create(Span span, ASTExpr *target, ASTExprList args);
+ASTExpr *ast_method_call_expr_create(Span span, ASTExpr *receiver, StringRef name, ASTExprList args);
 ASTExpr *ast_field_expr_create(Span span, ASTExpr *target, StringRef name);
 ASTExpr *ast_addr_of_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_deref_expr_create(Span span, ASTExpr *target);

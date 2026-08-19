@@ -75,6 +75,10 @@ static unsigned int codegen_bin_op_logical_expr(CodegenState *state, ASTExpr *no
 static unsigned int codegen_bin_op_into(CodegenState *state, ASTExpr *node, unsigned int dest);
 static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node);
+static unsigned int codegen_method_call_expr(CodegenState *state, ASTExpr *node);
+static void codegen_addr_of_into(CodegenState *state, ASTExpr *inner, unsigned int rd, Span span);
+static unsigned int codegen_deref_of(CodegenState *state, ASTExpr *node, ASTExpr *pointer,
+                                     const Type *pointee);
 
 static OpCode bin_op_to_float_op(BinOp bin_op);
 static OpCode bin_op_to_int_op(BinOp bin_op);
@@ -431,6 +435,8 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
         return codegen_bin_op_expr(state, ast);
     case EXPR_CALL:
         return codegen_call_expr(state, ast);
+    case EXPR_METHOD_CALL:
+        return codegen_method_call_expr(state, ast);
     case EXPR_FIELD:
         return codegen_field_expr(state, ast);
     case EXPR_ADDR_OF:
@@ -533,6 +539,79 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
     return dest;
 }
 
+// A method call is a plain call with the receiver placed in the first argument
+// slot, which is where parameter zero already lives. Nothing new reaches the
+// VM: the instruction emitted is the same OP_CALL a free function gets, which
+// is what keeps a method exactly as cheap as a function.
+static unsigned int codegen_method_call_expr(CodegenState *state, ASTExpr *node) {
+    Symbol *method = node->method_call.method;
+    ASTExpr *receiver = node->method_call.receiver;
+
+    // The receiver's width in the argument block: a pointer when its address is
+    // being taken, and otherwise whatever parameter zero declared.
+    unsigned int receiver_slots =
+        node->method_call.take_address ? VM_POINTER_SLOTS : type_slot_count(method->func.params[0]);
+
+    unsigned int arg_slots = receiver_slots;
+    for (size_t i = 0; i < node->method_call.args.size; i++) {
+        arg_slots += type_slot_count(node->method_call.args.data[i]->type);
+    }
+
+    unsigned int return_slots = type_slot_count(node->type);
+
+    unsigned int reserved = 1 + arg_slots;
+    if (return_slots > reserved) {
+        reserved = return_slots;
+    }
+
+    unsigned int dest = codegen_alloc_slots(state, reserved, 1, node->span);
+    unsigned int saved = dest + return_slots;
+
+    // The receiver goes first, since it is parameter zero.
+    if (node->method_call.take_address) {
+        // '&recv' straight into the argument slot, so no intermediate is
+        // allocated in the middle of the block.
+        codegen_addr_of_into(state, receiver, dest + 1, node->span);
+    } else if (node->method_call.deref) {
+        // A value method reached through a pointer copies the pointee in, which
+        // is what a deref of the whole struct already does.
+        unsigned int value = codegen_deref_of(state, node, receiver, method->func.params[0]);
+
+        codegen_copy_slots(state, dest + 1, value, receiver_slots);
+    } else {
+        unsigned int value = codegen_expr(state, receiver);
+
+        codegen_copy_slots(state, dest + 1, value, receiver_slots);
+    }
+
+    unsigned int offset = 1 + receiver_slots;
+    for (size_t i = 0; i < node->method_call.args.size; i++) {
+        ASTExpr *arg = node->method_call.args.data[i];
+        unsigned int slots = type_slot_count(arg->type);
+
+        unsigned int arg_reg = codegen_expr(state, arg);
+
+        codegen_copy_slots(state, dest + offset, arg_reg, slots);
+        offset += slots;
+    }
+
+    if (method->func.proto_index > VM_MAX_REGISTERS) {
+        if (!state->failed) {
+            diag_error(state->diagnostics, GAB_ERR_CODEGEN, node->span, "too many functions in one script");
+        }
+
+        state->failed = true;
+        return dest;
+    }
+
+    Instruction call = VM_ENCODE_R(OP_CALL, dest, (unsigned int)method->func.proto_index, arg_slots);
+    chunk_add_instruction(state->chunk, call);
+
+    codegen_release_registers(state, saved);
+
+    return dest;
+}
+
 typedef struct FieldTarget FieldTarget;
 static void codegen_store_indirect(CodegenState *state, ASTExpr *node, FieldTarget target, unsigned int src,
                                    unsigned int slots);
@@ -604,8 +683,10 @@ static unsigned int codegen_field_slots(FieldTarget target) {
 
 // Copies a struct out of the address a pointer holds into fresh slots, so the
 // result reads like any other struct-valued expression.
-static unsigned int codegen_load_indirect_struct(CodegenState *state, ASTExpr *node, FieldTarget target,
-                                                 unsigned int slots) {
+// 'type' is what lands in the destination, which is not always node->type: a
+// method call derefs its receiver, and the node's own type is the return type.
+static unsigned int codegen_load_indirect_struct(CodegenState *state, ASTExpr *node, const Type *type,
+                                                 FieldTarget target, unsigned int slots) {
     if (target.offset > VM_MAX_REGISTERS || slots > VM_MAX_REGISTERS) {
         if (!state->failed) {
             diag_error(state->diagnostics, GAB_ERR_CODEGEN, node->span, "struct is too large for a frame");
@@ -615,7 +696,7 @@ static unsigned int codegen_load_indirect_struct(CodegenState *state, ASTExpr *n
         return 0;
     }
 
-    unsigned int rd = codegen_alloc_slots(state, slots, type_align_slots(node->type), node->span);
+    unsigned int rd = codegen_alloc_slots(state, slots, type_align_slots(type), node->span);
 
     // The offset is folded into the address first, so OP_LOAD_PTR_N needs only
     // a base and a count.
@@ -640,7 +721,7 @@ static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node) {
     // there are no such slots, so it is copied out instead.
     if (type_is_struct(node->type)) {
         if (target.indirect) {
-            return codegen_load_indirect_struct(state, node, target, type_slot_count(node->type));
+            return codegen_load_indirect_struct(state, node, node->type, target, type_slot_count(node->type));
         }
 
         return codegen_field_slots(target);
@@ -709,6 +790,30 @@ static void codegen_store_indirect(CodegenState *state, ASTExpr *node, FieldTarg
 
 // '&x' materialises the address of whatever slots the target occupies. The
 // target is addressable by construction: the resolver rejected anything else.
+// The address of 'inner' written into 'rd'. Split from codegen_addr_of_expr so
+// a method call can put a receiver's address straight into the argument slot it
+// reserved, rather than into a slot of this function's choosing.
+static void codegen_addr_of_into(CodegenState *state, ASTExpr *inner, unsigned int rd, Span span) {
+    // '&p' where p is a pointer names p itself, so the chain must stop at it
+    // rather than reach through.
+    FieldTarget target = codegen_field_base(state, inner, false);
+
+    if (target.offset > VM_MAX_REGISTERS) {
+        if (!state->failed) {
+            diag_error(state->diagnostics, GAB_ERR_CODEGEN, span, "struct is too large for a frame");
+        }
+
+        state->failed = true;
+        return;
+    }
+
+    // Through a pointer the base is already an address, so the field offset is
+    // added to it rather than to a slot index.
+    OpCode op = target.indirect ? OP_ADD_PTR : OP_ADDR_OF;
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(op, rd, target.base, (unsigned int)target.offset));
+}
+
 static unsigned int codegen_addr_of_expr(CodegenState *state, ASTExpr *node) {
     ASTExpr *inner = node->unary.target;
 
@@ -743,6 +848,20 @@ static unsigned int codegen_addr_of_expr(CodegenState *state, ASTExpr *node) {
 
 // '*p' reads what p points at: a whole run of slots for a struct, a single
 // value otherwise.
+// The struct a pointer expression points at, copied into fresh slots. Used for
+// a value receiver reached through a pointer, where the pointee is always a
+// struct — a method's receiver can be nothing else.
+static unsigned int codegen_deref_of(CodegenState *state, ASTExpr *node, ASTExpr *pointer,
+                                     const Type *pointee) {
+    FieldTarget target = {
+        .base = codegen_expr(state, pointer),
+        .offset = 0,
+        .indirect = true,
+    };
+
+    return codegen_load_indirect_struct(state, node, pointee, target, type_slot_count(pointee));
+}
+
 static unsigned int codegen_deref_expr(CodegenState *state, ASTExpr *node) {
     FieldTarget target = {
         .base = codegen_expr(state, node->unary.target),
@@ -753,7 +872,7 @@ static unsigned int codegen_deref_expr(CodegenState *state, ASTExpr *node) {
     unsigned int slots = type_slot_count(node->type);
 
     if (type_is_struct(node->type) || slots > 1) {
-        return codegen_load_indirect_struct(state, node, target, slots);
+        return codegen_load_indirect_struct(state, node, node->type, target, slots);
     }
 
     bool ok;

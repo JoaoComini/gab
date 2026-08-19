@@ -27,6 +27,7 @@ static ASTExpr *parse_expression(Parser *parser);
 static ASTExpr *parse_primary(Parser *parser);
 static ASTExpr *parse_unary(Parser *parser);
 static ASTExpr *parse_field_expr(Parser *parser, ASTExpr *target);
+static ASTExpr *parse_method_call_expr(Parser *parser, ASTExpr *receiver, StringRef name, Span span);
 static void parser_synchronize(Parser *parser);
 static ASTExpr *parse_precedence(Parser *parser, int min_precedence);
 static int get_precedence(TokenType type);
@@ -676,12 +677,19 @@ static ASTExpr *parse_field_expr(Parser *parser, ASTExpr *target) {
 
     parser_next_token(parser); // eat identifier
 
+    // A '.name' followed by '(' is a method call, not a field holding a
+    // function: Gab has no function values, so the two can never be confused.
+    if (parser->current.type == TOKEN_LPAREN) {
+        return parse_method_call_expr(parser, target, name.lexeme, span);
+    }
+
     return ast_field_expr_create(span, target, name.lexeme);
 }
 
-static ASTExpr *parse_call_expr(Parser *parser, ASTExpr *target) {
-    Span span = parser_span(parser);
-
+// The comma-separated arguments between '(' and ')', with the '(' already
+// current and consumed here. Shared by a plain call and a method call, which
+// differ only in what they do with the list.
+static bool parse_call_args(Parser *parser, ASTExprList *out) {
     parser_next_token(parser); // eat '('
 
     ASTExprList args = ast_expr_list_create();
@@ -715,14 +723,38 @@ static ASTExpr *parse_call_expr(Parser *parser, ASTExpr *target) {
 
     if (!ok) {
         ast_expr_list_destroy(&args);
-        ast_expr_free(target);
-
-        return NULL;
+        return false;
     }
 
     parser_next_token(parser); // eat ')'
 
+    *out = args;
+    return true;
+}
+
+static ASTExpr *parse_call_expr(Parser *parser, ASTExpr *target) {
+    Span span = parser_span(parser);
+
+    ASTExprList args;
+    if (!parse_call_args(parser, &args)) {
+        ast_expr_free(target);
+        return NULL;
+    }
+
     return ast_call_expr_create(span, target, args);
+}
+
+// 'recv.name(args)'. Collapsed here rather than left as a call over a field
+// access, because this is where the difference between the two is cheapest to
+// see: a '.name' followed by '(' is a method call and nothing else.
+static ASTExpr *parse_method_call_expr(Parser *parser, ASTExpr *receiver, StringRef name, Span span) {
+    ASTExprList args;
+    if (!parse_call_args(parser, &args)) {
+        ast_expr_free(receiver);
+        return NULL;
+    }
+
+    return ast_method_call_expr_create(span, receiver, name, args);
 }
 
 // A primary with its postfixes, or a prefix form over one of those. Prefix '&'
