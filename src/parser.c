@@ -558,7 +558,12 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
     ASTStmt *func_body = parse_block_stmt(parser);
     if (!func_body) {
+        // The return type is parsed before the body, so a body that fails to
+        // parse leaves it owned by nobody: the node that would have taken it is
+        // never created.
+        type_spec_destroy(func_type);
         ast_field_list_free(&func_params);
+
         return NULL;
     }
 
