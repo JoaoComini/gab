@@ -42,6 +42,7 @@ VM *vm_create() {
 
     vm->global_funcs = func_proto_list_create();
     vm->func_handles = func_handle_list_create();
+    vm->scripts = loaded_script_list_create();
 
     vm->arena = arena_create(ARENA_BLOCK_SIZE);
     vm->compile_arena = arena_create(ARENA_BLOCK_SIZE);
@@ -121,6 +122,9 @@ void vm_free(VM *vm) {
     // The handles themselves are gab.c's to free, and gab_vm_free has done so
     // by now; this releases only the array that tracked them.
     func_handle_list_free(&vm->func_handles);
+
+    // Frees each loaded unit's top-level chunk through the item_free hook.
+    loaded_script_list_free(&vm->scripts);
 
     // Frees the bucket arrays; the Scopes themselves are arena-owned.
     module_scope_map_destroy(vm->module_scopes);

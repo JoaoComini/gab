@@ -10,7 +10,6 @@
 #include <stdint.h>
 
 typedef struct GabVM GabVM;
-typedef struct GabScript GabScript;
 typedef struct GabFunc GabFunc;
 typedef struct GabType GabType;
 typedef struct GabCall GabCall;
@@ -44,26 +43,30 @@ typedef struct {
 GabVM *gab_vm_new(void);
 void gab_vm_free(GabVM *vm);
 
-// --- Compiling and running -------------------------------------------------
+// --- Loading ---------------------------------------------------------------
 
-// Compiles without running, so a script compiles once and its functions are
-// called every frame. Returns NULL on failure and fills 'err' if it is
-// non-NULL. Nothing is printed: reporting is the host's business.
+// Compiles a unit and runs its top level, which is what declares its functions
+// and types to the VM and initialises whatever the unit sets up. Returns false
+// on failure and fills 'err' if it is non-NULL. Nothing is printed: reporting
+// is the host's business.
 //
-// 'name' names the source for diagnostics only. The namespace a unit declares
-// comes from its own 'module' directive, and is a name the host passes to
-// gab_lookup and gab_find_type — not something this handle carries.
-GabScript *gab_compile(GabVM *vm, const char *name, const char *src, GabError *err);
+// There is nothing to free, and nothing to hold. The VM owns the compiled unit
+// and releases it with itself, so loading is a statement rather than a resource
+// a host has to keep track of.
+//
+// 'name' identifies the unit. It names the source in diagnostics, and it is the
+// key a reload replaces: loading a name already loaded compiles the new source
+// over the old one and frees what the old one held, so a host that recompiles a
+// file whenever it changes on disk accumulates nothing. Declarations are
+// replaced the same way, which is what makes this hot reload — a GabFunc looked
+// up before a reload goes on working, calling the new body.
+//
+// The namespace a unit declares into is not this name: it comes from the unit's
+// own 'module' directive, and is what the host passes to gab_lookup and
+// gab_find_type. Two units may name the same module, and one unit's name is
+// never the other's.
+bool gab_load(GabVM *vm, const char *name, const char *src, GabError *err);
 
-// Runs the script's top level. Safe to call repeatedly.
-GabStatus gab_run(GabVM *vm, GabScript *script, GabError *err);
-
-// Frees the script and its top-level chunk. Everything the compile declared —
-// symbols, types, and function prototypes — belongs to the VM and outlives
-// this: a prototype index is baked into OP_CALL operands, so it cannot be
-// reclaimed per script. Unloading is therefore not supported, and a GabFunc
-// looked up from this script keeps working after it is freed.
-void gab_script_free(GabVM *vm, GabScript *script);
 
 // --- Types and layout ------------------------------------------------------
 

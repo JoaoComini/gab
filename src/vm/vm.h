@@ -112,6 +112,21 @@ void func_proto_free(FuncPrototype proto);
 #define func_proto_list_item_free(item) func_proto_free(item)
 GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype)
 
+
+void vm_compiled_script_free(CompiledScript *script);
+
+// A unit the VM has loaded, kept so its top-level chunk can be freed with the
+// VM and replaced when the same name is loaded again. The name is the one the
+// host passed to gab_load, copied because the host's string need not outlive
+// the call.
+typedef struct {
+    char name[128];
+    CompiledScript script;
+} LoadedScript;
+
+#define loaded_script_list_item_free(item) vm_compiled_script_free(&(item).script)
+GAB_LIST(LoadedScriptList, loaded_script_list, LoadedScript)
+
 // Every GabFunc this VM has handed out. A handle points into the VM's arena, so
 // it cannot outlive the VM in any case; owning them here makes that the actual
 // rule rather than a lifetime the host has to manage, and is why there is no
@@ -193,6 +208,9 @@ typedef struct {
     // The handles this VM has handed out. See FuncHandleList.
     FuncHandleList func_handles;
 
+    // Every unit loaded into this VM, by name. See LoadedScript.
+    LoadedScriptList scripts;
+
     // The stack is byte-addressed and 8-byte aligned at the base, so a value
     // wider than a slot can sit at its natural alignment. Capacity is still
     // counted in slots; a slot is sizeof(Value).
@@ -252,7 +270,6 @@ VmRunStatus vm_run(VM *vm, const CompiledScript *script);
 // must already have placed the arguments in the parameter slots above it.
 VmRunStatus vm_run_frame(VM *vm, const FuncPrototype *proto, size_t base, unsigned int dest);
 
-void vm_compiled_script_free(CompiledScript *script);
 
 // Compile, run, and discard, reporting any diagnostics to stderr. The
 // convenience path for a caller with nothing to say about failure.

@@ -17,19 +17,6 @@
 // tag is only here to give the header something opaque to point at.
 struct GabVM;
 
-// One gab_compile: a top-level chunk to run, and nothing else. Deliberately not a
-// namespace — that is the 'module' directive's job, and a host names a module
-// directly when it looks something up. Several units may declare one module,
-// so a unit could not stand in for one anyway.
-
-struct GabScript {
-    CompiledScript script;
-
-    // Diagnostics live on the VM's compile arena, which the next compile
-    // reclaims, so anything a unit must outlive a compile with is copied.
-    char name[128];
-};
-
 // A handle is the signature and call layout of one function, shared by every
 // caller and never written to outside a reload. What a caller stages for a
 // call is per-caller and lives in a GabCall instead.
@@ -233,73 +220,81 @@ void gab_vm_free(GabVM *handle) {
     vm_free(vm);
 }
 
-GabScript *gab_compile(GabVM *handle, const char *name, const char *src, GabError *err) {
+// Where this name's unit is kept, or NULL if it has not been loaded. Linear
+// because a host loads a handful of units and looks one up only when loading,
+// never per frame.
+static LoadedScript *gab_find_script(VM *vm, const char *name) {
+    for (size_t i = 0; i < vm->scripts.size; i++) {
+        if (strcmp(vm->scripts.data[i].name, name) == 0) {
+            return &vm->scripts.data[i];
+        }
+    }
+
+    return NULL;
+}
+
+bool gab_load(GabVM *handle, const char *name, const char *src, GabError *err) {
     gab_error_clear(err);
 
     if (!handle || !src) {
-        gab_error_set(err, 0, 0, "gab_compile requires a VM and a source string");
-        return NULL;
+        gab_error_set(err, 0, 0, "gab_load requires a VM and a source string");
+        return false;
     }
 
     VM *vm = (VM *)handle;
 
-    GabScript *script = calloc(1, sizeof(GabScript));
-    if (!script) {
-        gab_error_set(err, 0, 0, "out of memory");
-        return NULL;
-    }
-
-    snprintf(script->name, sizeof(script->name), "%s", name ? name : "<script>");
+    char unit_name[128];
+    snprintf(unit_name, sizeof(unit_name), "%s", name ? name : "<script>");
 
     Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, vm->compile_arena, script->name);
+    diagnostics_init(&diagnostics, vm->compile_arena, unit_name);
 
-    bool ok = vm_compile(vm, src, &script->script, &diagnostics);
+    // Compiled into a local rather than over the previous unit: a failed
+    // reload must leave what was loaded before intact and running.
+    CompiledScript compiled = {0};
+    bool ok = vm_compile(vm, src, &compiled, &diagnostics);
 
     if (!ok) {
         // Nothing is printed: a host reports through its own console, and the
         // message is copied out before the sink goes.
         gab_error_from_diagnostics(err, &diagnostics);
-
         diagnostics_free(&diagnostics);
-        free(script);
 
-        return NULL;
+        return false;
     }
 
     diagnostics_free(&diagnostics);
 
-    return script;
-}
-
-GabStatus gab_run(GabVM *handle, GabScript *script, GabError *err) {
-    gab_error_clear(err);
-
-    if (!handle || !script) {
-        gab_error_set(err, 0, 0, "gab_run requires a VM and a script");
-        return GAB_ERR_RUNTIME;
-    }
-
-    VM *vm = (VM *)handle;
-
-    if (vm_run(vm, &script->script) != VM_RUN_OK) {
+    // The top level declares the unit's functions and types and initialises
+    // whatever it sets up, so a load that did not run it would leave the unit
+    // half present.
+    if (vm_run(vm, &compiled) != VM_RUN_OK) {
         gab_error_set(err, 0, 0, vm->error.message);
-        return GAB_ERR_RUNTIME;
+        vm_compiled_script_free(&compiled);
+
+        return false;
     }
 
-    return GAB_OK;
-}
+    // Only now that it has compiled and run does it replace the previous unit
+    // of this name. The old chunk is dead: its declarations have already been
+    // superseded by generation, and nothing holds a pointer into it.
+    LoadedScript *existing = gab_find_script(vm, unit_name);
 
-void gab_script_free(GabVM *handle, GabScript *script) {
-    (void)handle;
+    if (existing) {
+        vm_compiled_script_free(&existing->script);
+        existing->script = compiled;
 
-    if (!script) {
-        return;
+        return true;
     }
 
-    vm_compiled_script_free(&script->script);
-    free(script);
+    LoadedScript loaded = {.script = compiled};
+    snprintf(loaded.name, sizeof(loaded.name), "%s", unit_name);
+
+    loaded_script_list_add(&vm->scripts, loaded);
+
+    return true;
 }
+
 
 // --- Types -----------------------------------------------------------------
 

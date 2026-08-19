@@ -15,9 +15,7 @@ static void test_compile_error_is_reported_not_printed(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    GabScript *mod = gab_compile(vm, "<bad>", "func broken(: int { return", &err);
-
-    assert(mod == NULL);
+    assert(!gab_load(vm, "<bad>", "func broken(: int { return", &err));
     assert(err.message[0] != '\0');
     assert(err.line > 0);
 
@@ -29,14 +27,13 @@ static void test_compile_once_run_many(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    GabScript *mod = gab_compile(vm, "<m>", "func seven(): int { return 7; }\nlet r: int = seven();\n", &err);
+    bool mod = gab_load(vm, "<m>", "func seven(): int { return 7; }\nlet r: int = seven();\n", &err);
     assert(mod);
 
     for (int i = 0; i < 3; i++) {
-        assert(gab_run(vm, mod, &err) == GAB_OK);
+        
     }
 
-    gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
 
@@ -47,10 +44,10 @@ static void test_type_survives_a_later_compile(void) {
 
     GabError err;
 
-    GabScript *first = gab_compile(vm, "<first>", "struct Player { health: int, mana: int }\n", &err);
+    bool first = gab_load(vm, "<first>", "struct Player { health: int, mana: int }\n", &err);
     assert(first);
 
-    GabScript *second = gab_compile(vm, "<second>", "func noop() { }\n", &err);
+    bool second = gab_load(vm, "<second>", "func noop() { }\n", &err);
     assert(second);
 
     // Reading the first module's type back after the second compile is what
@@ -63,8 +60,6 @@ static void test_type_survives_a_later_compile(void) {
     assert(gab_field_offset(player, "health", &health_offset));
     assert(health_offset == 0);
 
-    gab_script_free(vm, second);
-    gab_script_free(vm, first);
     gab_vm_free(vm);
 }
 
@@ -79,7 +74,7 @@ static void test_layout_matches_c(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    GabScript *mod = gab_compile(vm, "<layout>", "struct Player { health: int, mana: int }\n", &err);
+    bool mod = gab_load(vm, "<layout>", "struct Player { health: int, mana: int }\n", &err);
     assert(mod);
 
     const GabType *type = gab_find_type(vm, NULL, "Player");
@@ -100,7 +95,6 @@ static void test_layout_matches_c(void) {
     // through an out-parameter at all.
     assert(!gab_field_offset(type, "stamina", &offset));
 
-    gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
 
@@ -109,7 +103,7 @@ static void test_lookup_failures(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    GabScript *mod = gab_compile(vm, "<m>", "func real(): int { return 1; }\nlet notafunc: int = 3;\n", &err);
+    bool mod = gab_load(vm, "<m>", "func real(): int { return 1; }\nlet notafunc: int = 3;\n", &err);
     assert(mod);
 
     assert(gab_lookup(vm, NULL, "missing", &err) == NULL);
@@ -127,7 +121,6 @@ static void test_lookup_failures(void) {
 
     gab_call_free(fn_call);
 
-    gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
 
@@ -136,7 +129,7 @@ static void test_call_with_scalar_args(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    GabScript *mod = gab_compile(vm, "<m>",
+    bool mod = gab_load(vm, "<m>",
                                  "func mix(a: int, b: float, flag: bool): int {\n"
                                  "  if flag { return a * 2; } else { return a; }\n"
                                  "}\n",
@@ -166,7 +159,6 @@ static void test_call_with_scalar_args(void) {
 
     gab_call_free(fn_call);
 
-    gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
 
@@ -175,7 +167,7 @@ static void test_call_in_a_loop(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    GabScript *mod = gab_compile(vm, "<m>", "func step(n: int): int { return n + 1; }\n", &err);
+    bool mod = gab_load(vm, "<m>", "func step(n: int): int { return n + 1; }\n", &err);
     assert(mod);
 
     GabFunc *fn = gab_lookup(vm, NULL, "step", &err);
@@ -198,7 +190,6 @@ static void test_call_in_a_loop(void) {
 
     gab_call_free(fn_call);
 
-    gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
 
@@ -207,7 +198,7 @@ static void test_struct_argument_and_return(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    GabScript *mod = gab_compile(vm, "<m>",
+    bool mod = gab_load(vm, "<m>",
                                  "struct Player { health: int, mana: int }\n"
                                  "func hurt(p: Player, amount: int): Player {\n"
                                  "  let out: Player;\n"
@@ -237,7 +228,6 @@ static void test_struct_argument_and_return(void) {
 
     gab_call_free(fn_call);
 
-    gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
 
@@ -246,7 +236,7 @@ static void test_bad_arguments_are_rejected(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    GabScript *mod = gab_compile(vm, "<m>",
+    bool mod = gab_load(vm, "<m>",
                                  "struct Player { health: int, mana: int }\n"
                                  "func take(p: Player, n: int): int { return n; }\n",
                                  &err);
@@ -285,7 +275,6 @@ static void test_bad_arguments_are_rejected(void) {
 
     gab_call_free(fn_call);
 
-    gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
 
@@ -296,7 +285,7 @@ static void test_runtime_error_is_reported(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    GabScript *mod = gab_compile(vm, "<m>", "func boom(n: int): int { return boom(n); }\n", &err);
+    bool mod = gab_load(vm, "<m>", "func boom(n: int): int { return boom(n); }\n", &err);
     assert(mod);
 
     GabFunc *fn = gab_lookup(vm, NULL, "boom", &err);
@@ -313,11 +302,10 @@ static void test_runtime_error_is_reported(void) {
 
     gab_call_free(fn_call);
 
-    gab_script_free(vm, mod);
 
     // A second module in the same VM still runs: the failure was reported, not
     // fatal.
-    GabScript *ok = gab_compile(vm, "<ok>", "func fine(n: int): int { return n + 1; }\n", &err);
+    bool ok = gab_load(vm, "<ok>", "func fine(n: int): int { return n + 1; }\n", &err);
     assert(ok);
 
     GabFunc *good = gab_lookup(vm, NULL, "fine", &err);
@@ -334,25 +322,23 @@ static void test_runtime_error_is_reported(void) {
 
     gab_call_free(good_call);
 
-    gab_script_free(vm, ok);
     gab_vm_free(vm);
 }
 
-// The same failure through gab_run, which is the other way in.
-static void test_runtime_error_from_module_run(void) {
+// A top level that fails at runtime fails the load: gab_load runs it, so a
+// unit that could not initialise is reported rather than left half present.
+static void test_runtime_error_in_a_top_level_fails_the_load(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    GabScript *mod = gab_compile(vm, "<m>",
-                                 "func boom(n: int): int { return boom(n); }\n"
-                                 "let r: int = boom(1);\n",
-                                 &err);
-    assert(mod);
 
-    assert(gab_run(vm, mod, &err) == GAB_ERR_RUNTIME);
+    assert(!gab_load(vm, "<m>",
+                     "func boom(n: int): int { return boom(n); }\n"
+                     "let r: int = boom(1);\n",
+                     &err));
+
     assert(err.message[0] != '\0');
 
-    gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
 
@@ -364,7 +350,7 @@ static void test_unset_arguments_are_rejected(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    GabScript *mod = gab_compile(vm, "<m>", "func two(a: int, b: int): int { return a + b; }\n", &err);
+    bool mod = gab_load(vm, "<m>", "func two(a: int, b: int): int { return a + b; }\n", &err);
     assert(mod);
 
     GabFunc *fn = gab_lookup(vm, NULL, "two", &err);
@@ -393,7 +379,6 @@ static void test_unset_arguments_are_rejected(void) {
 
     gab_call_free(fn_call);
 
-    gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
 
@@ -403,7 +388,7 @@ static void test_rejected_setter_does_not_supply_an_argument(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    GabScript *mod = gab_compile(vm, "<m>", "func two(a: int, b: int): int { return a + b; }\n", &err);
+    bool mod = gab_load(vm, "<m>", "func two(a: int, b: int): int { return a + b; }\n", &err);
     assert(mod);
 
     GabFunc *fn = gab_lookup(vm, NULL, "two", &err);
@@ -438,7 +423,6 @@ static void test_rejected_setter_does_not_supply_an_argument(void) {
 
     gab_call_free(fn_call);
 
-    gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
 
@@ -451,13 +435,13 @@ static void test_two_modules_can_share_a_function_name(void) {
 
     GabError err;
 
-    GabScript *player = gab_compile(vm, "player.gab",
+    bool player = gab_load(vm, "player.gab",
                                     "module Player;\n"
                                     "func on_update(): int { return 1; }\n",
                                     &err);
     assert(player);
 
-    GabScript *enemy = gab_compile(vm, "enemy.gab",
+    bool enemy = gab_load(vm, "enemy.gab",
                                    "module Enemy;\n"
                                    "func on_update(): int { return 2; }\n",
                                    &err);
@@ -482,12 +466,10 @@ static void test_two_modules_can_share_a_function_name(void) {
     gab_call_free(player_update_call);
     gab_call_free(enemy_update_call);
 
-    gab_script_free(vm, enemy);
-    gab_script_free(vm, player);
     gab_vm_free(vm);
 }
 
-// The script names its module, and the filename passed to gab_compile is only
+// The script names its module, and the filename passed to gab_load is only
 // a label for diagnostics. The two need not agree, and only the directive
 // decides which namespace a name lands in.
 static void test_the_script_names_its_module_not_the_filename(void) {
@@ -495,7 +477,7 @@ static void test_the_script_names_its_module_not_the_filename(void) {
 
     GabError err;
 
-    GabScript *named = gab_compile(vm, "some_file.gab", "module Player;\nfunc f(): int { return 1; }\n", &err);
+    bool named = gab_load(vm, "some_file.gab", "module Player;\nfunc f(): int { return 1; }\n", &err);
     assert(named);
 
     // Found under the declared module, not under the file it came from.
@@ -510,7 +492,7 @@ static void test_the_script_names_its_module_not_the_filename(void) {
 
     // A unit with no directive belongs to the root namespace, reached by
     // passing no module at all.
-    GabScript *anonymous = gab_compile(vm, "other.gab", "func g(): int { return 2; }\n", &err);
+    bool anonymous = gab_load(vm, "other.gab", "func g(): int { return 2; }\n", &err);
     assert(anonymous);
 
     GabFunc *g = gab_lookup(vm, NULL, "g", &err);
@@ -522,8 +504,6 @@ static void test_the_script_names_its_module_not_the_filename(void) {
     gab_call_free(f_call);
     gab_call_free(g_call);
 
-    gab_script_free(vm, anonymous);
-    gab_script_free(vm, named);
     gab_vm_free(vm);
 }
 
@@ -532,7 +512,7 @@ static void test_lookup_by_module_name(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    GabScript *mod = gab_compile(vm, "m.gab", "module Enemy;\nfunc hp(): int { return 42; }\n", &err);
+    bool mod = gab_load(vm, "m.gab", "module Enemy;\nfunc hp(): int { return 42; }\n", &err);
     assert(mod);
 
     GabFunc *fn = gab_lookup(vm, "Enemy", "hp", &err);
@@ -555,7 +535,6 @@ static void test_lookup_by_module_name(void) {
 
     gab_call_free(fn_call);
 
-    gab_script_free(vm, mod);
     gab_vm_free(vm);
 }
 
@@ -566,11 +545,11 @@ static void test_two_modules_can_share_a_type_name(void) {
 
     GabError err;
 
-    GabScript *player =
-        gab_compile(vm, "player.gab", "module Player;\nstruct Config { health: int, mana: int }\n", &err);
+    bool player =
+        gab_load(vm, "player.gab", "module Player;\nstruct Config { health: int, mana: int }\n", &err);
     assert(player);
 
-    GabScript *enemy = gab_compile(vm, "enemy.gab", "module Enemy;\nstruct Config { hp: int }\n", &err);
+    bool enemy = gab_load(vm, "enemy.gab", "module Enemy;\nstruct Config { hp: int }\n", &err);
     assert(enemy);
 
     const GabType *player_config = gab_find_type(vm, "Player", "Config");
@@ -596,8 +575,6 @@ static void test_two_modules_can_share_a_type_name(void) {
     assert(gab_find_type(vm, "Player", "Config") == player_config);
     assert(gab_find_type(vm, "Enemy", "Config") == enemy_config);
 
-    gab_script_free(vm, enemy);
-    gab_script_free(vm, player);
     gab_vm_free(vm);
 }
 
@@ -609,14 +586,14 @@ static void test_builtins_are_shared_across_modules(void) {
 
     GabError err;
 
-    GabScript *player = gab_compile(vm, "player.gab",
+    bool player = gab_load(vm, "player.gab",
                                     "module Player;\n"
                                     "struct Config { health: int }\n"
                                     "func player_size(): int { let p: *Config; return 1; }\n",
                                     &err);
     assert(player);
 
-    GabScript *enemy = gab_compile(vm, "enemy.gab",
+    bool enemy = gab_load(vm, "enemy.gab",
                                    "module Enemy;\n"
                                    "struct Config { hp: int }\n"
                                    "func enemy_size(): int { let p: *Config; return 1; }\n",
@@ -639,8 +616,6 @@ static void test_builtins_are_shared_across_modules(void) {
     assert(enemy_size);
 
 
-    gab_script_free(vm, enemy);
-    gab_script_free(vm, player);
     gab_vm_free(vm);
 }
 
@@ -651,11 +626,11 @@ static void test_module_type_shadows_the_root(void) {
 
     GabError err;
 
-    GabScript *root = gab_compile(vm, "root.gab", "struct Config { a: int, b: int }\n", &err);
+    bool root = gab_load(vm, "root.gab", "struct Config { a: int, b: int }\n", &err);
     assert(root);
 
-    GabScript *player =
-        gab_compile(vm, "player.gab", "module Player;\nstruct Config { only: int }\n", &err);
+    bool player =
+        gab_load(vm, "player.gab", "module Player;\nstruct Config { only: int }\n", &err);
     assert(player);
 
     const GabType *root_config = gab_find_type(vm, NULL, "Config");
@@ -667,16 +642,13 @@ static void test_module_type_shadows_the_root(void) {
     assert(gab_type_size(player_config) == sizeof(int));
 
     // A module with no Config of its own falls through to the root's.
-    GabScript *enemy = gab_compile(vm, "enemy.gab", "module Enemy;\nfunc noop(): int { return 0; }\n", &err);
+    bool enemy = gab_load(vm, "enemy.gab", "module Enemy;\nfunc noop(): int { return 0; }\n", &err);
     assert(enemy);
     assert(gab_find_type(vm, "Enemy", "Config") == root_config);
 
     // An unknown module is a miss, not a quiet fallback to the root.
     assert(gab_find_type(vm, "Nope", "Config") == NULL);
 
-    gab_script_free(vm, enemy);
-    gab_script_free(vm, player);
-    gab_script_free(vm, root);
     gab_vm_free(vm);
 }
 
@@ -687,11 +659,11 @@ static void test_qualified_type_reference_crosses_modules(void) {
 
     GabError err;
 
-    GabScript *player =
-        gab_compile(vm, "player.gab", "module Player;\nstruct Config { health: int }\n", &err);
+    bool player =
+        gab_load(vm, "player.gab", "module Player;\nstruct Config { health: int }\n", &err);
     assert(player);
 
-    GabScript *enemy = gab_compile(vm, "enemy.gab",
+    bool enemy = gab_load(vm, "enemy.gab",
                                    "module Enemy;\n"
                                    "struct Config { hp: int }\n"
                                    "func f(): int { let c: Player::Config; return c.health; }\n",
@@ -703,13 +675,11 @@ static void test_qualified_type_reference_crosses_modules(void) {
 
     // A module that does not exist, and a type that module does not have, are
     // both errors rather than a silent fallback to a same-named local type.
-    assert(gab_compile(vm, "bad.gab", "module A;\nfunc f(): int { let c: Nope::Config; return 0; }\n",
-                       &err) == NULL);
-    assert(gab_compile(vm, "bad2.gab", "module B;\nfunc f(): int { let c: Player::Missing; return 0; }\n",
-                       &err) == NULL);
+    assert(!gab_load(vm, "bad.gab", "module A;\nfunc f(): int { let c: Nope::Config; return 0; }\n",
+                       &err));
+    assert(!gab_load(vm, "bad2.gab", "module B;\nfunc f(): int { let c: Player::Missing; return 0; }\n",
+                       &err));
 
-    gab_script_free(vm, enemy);
-    gab_script_free(vm, player);
     gab_vm_free(vm);
 }
 
@@ -722,7 +692,7 @@ static void test_handle_survives_later_compiles(void) {
 
     GabError err;
 
-    GabScript *first = gab_compile(vm, "first.gab", "func step(n: int): int { return n + 1; }\n", &err);
+    bool first = gab_load(vm, "first.gab", "func step(n: int): int { return n + 1; }\n", &err);
     assert(first);
 
     GabFunc *fn = gab_lookup(vm, NULL, "step", &err);
@@ -740,15 +710,15 @@ static void test_handle_survives_later_compiles(void) {
 
     // Later units compile more functions, appending prototypes and running
     // codegen again over fresh symbols.
-    GabScript *second = gab_compile(vm, "second.gab",
+    bool second = gab_load(vm, "second.gab",
                                     "module Later;\n"
                                     "struct Wide { a: int, b: int, c: int }\n"
                                     "func takes_wide(w: Wide, k: int): int { return k; }\n",
                                     &err);
     assert(second);
 
-    GabScript *third =
-        gab_compile(vm, "third.gab", "module Other;\nfunc unrelated(a: int, b: int): int { return a; }\n", &err);
+    bool third =
+        gab_load(vm, "third.gab", "module Other;\nfunc unrelated(a: int, b: int): int { return a; }\n", &err);
     assert(third);
 
     // The handle from before still calls the body it was looked up for.
@@ -760,9 +730,6 @@ static void test_handle_survives_later_compiles(void) {
 
     gab_call_free(fn_call);
 
-    gab_script_free(vm, third);
-    gab_script_free(vm, second);
-    gab_script_free(vm, first);
     gab_vm_free(vm);
 }
 
@@ -774,7 +741,7 @@ static void test_recompiling_a_module_reloads_it(void) {
 
     GabError err;
 
-    GabScript *v1 = gab_compile(vm, "g.gab",
+    bool v1 = gab_load(vm, "g.gab",
                                 "module Game;\n"
                                 "struct S { hp: int }\n"
                                 "func tick(n: int): int { return n + 1; }\n",
@@ -795,7 +762,7 @@ static void test_recompiling_a_module_reloads_it(void) {
     assert(gab_type_size(gab_find_type(vm, "Game", "S")) == sizeof(int));
 
     // The same unit again, with a new body and a wider struct.
-    GabScript *v2 = gab_compile(vm, "g.gab",
+    bool v2 = gab_load(vm, "g.gab",
                                 "module Game;\n"
                                 "struct S { hp: int, mp: int }\n"
                                 "func tick(n: int): int { return n * 3; }\n",
@@ -813,14 +780,13 @@ static void test_recompiling_a_module_reloads_it(void) {
 
     // Reloading repeatedly is the per-frame case, so it must not drift.
     for (int i = 0; i < 3; i++) {
-        GabScript *again = gab_compile(vm, "g.gab",
+        bool again = gab_load(vm, "g.gab",
                                        "module Game;\n"
                                        "struct S { hp: int, mp: int }\n"
                                        "func tick(n: int): int { return n * 3; }\n",
                                        &err);
         assert(again);
 
-        gab_script_free(vm, again);
     }
 
     gab_arg_int(fn_call, 0, 5);
@@ -830,8 +796,6 @@ static void test_recompiling_a_module_reloads_it(void) {
 
     gab_call_free(fn_call);
 
-    gab_script_free(vm, v2);
-    gab_script_free(vm, v1);
     gab_vm_free(vm);
 }
 
@@ -843,20 +807,19 @@ static void test_duplicate_declarations_in_one_unit_are_rejected(void) {
 
     GabError err;
 
-    assert(gab_compile(vm, "a.gab", "struct P { a: int }\nstruct P { b: int }\n", &err) == NULL);
+    assert(!gab_load(vm, "a.gab", "struct P { a: int }\nstruct P { b: int }\n", &err));
     assert(err.message[0] != '\0');
 
-    assert(gab_compile(vm, "b.gab", "func f(): int { return 1; }\nfunc f(): int { return 2; }\n", &err) ==
-           NULL);
+    assert(!gab_load(vm, "b.gab", "func f(): int { return 1; }\nfunc f(): int { return 2; }\n", &err));
     assert(err.message[0] != '\0');
 
-    assert(gab_compile(vm, "c.gab", "let x: int = 1;\nlet x: int = 2;\n", &err) == NULL);
+    assert(!gab_load(vm, "c.gab", "let x: int = 1;\nlet x: int = 2;\n", &err));
     assert(err.message[0] != '\0');
 
     // Including inside a block, whose scope is fresh per compile but still
     // declares at its unit's generation.
-    assert(gab_compile(vm, "d.gab", "func f(): int { let y: int = 1; let y: int = 2; return y; }\n", &err) ==
-           NULL);
+    assert(!gab_load(vm, "d.gab", "func f(): int { let y: int = 1; let y: int = 2; return y; }\n",
+                     &err));
     assert(err.message[0] != '\0');
 
     gab_vm_free(vm);
@@ -872,7 +835,7 @@ static void test_signature_change_rebinds_the_handle(void) {
 
     GabError err;
 
-    GabScript *v1 = gab_compile(vm, "s.gab", "module S;\nfunc step(n: int): int { return n + 1; }\n", &err);
+    bool v1 = gab_load(vm, "s.gab", "module S;\nfunc step(n: int): int { return n + 1; }\n", &err);
     assert(v1);
 
     GabFunc *fn = gab_lookup(vm, "S", "step", &err);
@@ -888,8 +851,8 @@ static void test_signature_change_rebinds_the_handle(void) {
     assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
     assert(result == 11);
 
-    GabScript *v2 =
-        gab_compile(vm, "s.gab", "module S;\nfunc step(a: int, b: int): int { return a + b; }\n", &err);
+    bool v2 =
+        gab_load(vm, "s.gab", "module S;\nfunc step(a: int, b: int): int { return a + b; }\n", &err);
     assert(v2);
 
     // Calling without re-staging is refused: the old arguments are gone rather
@@ -913,8 +876,6 @@ static void test_signature_change_rebinds_the_handle(void) {
 
     gab_call_free(fn_call);
 
-    gab_script_free(vm, v2);
-    gab_script_free(vm, v1);
     gab_vm_free(vm);
 }
 
@@ -927,7 +888,7 @@ static void test_staging_after_a_signature_change_just_works(void) {
 
     GabError err;
 
-    GabScript *v1 = gab_compile(vm, "s.gab", "module S;\nfunc step(n: int): int { return n + 1; }\n", &err);
+    bool v1 = gab_load(vm, "s.gab", "module S;\nfunc step(n: int): int { return n + 1; }\n", &err);
     assert(v1);
 
     GabFunc *fn = gab_lookup(vm, "S", "step", &err);
@@ -938,8 +899,8 @@ static void test_staging_after_a_signature_change_just_works(void) {
 
     gab_arg_int(fn_call, 0, 10);
 
-    GabScript *v2 =
-        gab_compile(vm, "s.gab", "module S;\nfunc step(a: int, b: int): int { return a + b; }\n", &err);
+    bool v2 =
+        gab_load(vm, "s.gab", "module S;\nfunc step(a: int, b: int): int { return a + b; }\n", &err);
     assert(v2);
 
     // The staged argument describes the old signature, so the call is refused
@@ -958,7 +919,7 @@ static void test_staging_after_a_signature_change_just_works(void) {
 
     // A restage clears every argument, so supplying only some of them is an
     // unset argument rather than a stale value reaching the new body.
-    GabScript *v3 = gab_compile(
+    bool v3 = gab_load(
         vm, "s.gab", "module S;\nfunc step(a: int, b: int, c: int): int { return a + b + c; }\n", &err);
     assert(v3);
 
@@ -969,9 +930,6 @@ static void test_staging_after_a_signature_change_just_works(void) {
 
     gab_call_free(fn_call);
 
-    gab_script_free(vm, v3);
-    gab_script_free(vm, v2);
-    gab_script_free(vm, v1);
     gab_vm_free(vm);
 }
 
@@ -983,7 +941,7 @@ static void test_a_reload_too_wide_for_the_handle_is_reported(void) {
 
     GabError err;
 
-    GabScript *v1 = gab_compile(vm, "s.gab", "module S;\nfunc f(a: int): int { return a; }\n", &err);
+    bool v1 = gab_load(vm, "s.gab", "module S;\nfunc f(a: int): int { return a; }\n", &err);
     assert(v1);
 
     GabFunc *fn = gab_lookup(vm, "S", "f", &err);
@@ -999,7 +957,7 @@ static void test_a_reload_too_wide_for_the_handle_is_reported(void) {
     assert(result == 1);
 
     // Far more parameters than the handle was originally sized for.
-    GabScript *v2 = gab_compile(vm, "s.gab",
+    bool v2 = gab_load(vm, "s.gab",
                                 "module S;\n"
                                 "func f(a: int, b: int, c: int, d: int, e: int, g: int, h: int, i: int,\n"
                                 "       j: int, k: int, l: int, m: int): int { return a; }\n",
@@ -1025,8 +983,6 @@ static void test_a_reload_too_wide_for_the_handle_is_reported(void) {
 
     gab_call_free(fn_call);
 
-    gab_script_free(vm, v2);
-    gab_script_free(vm, v1);
     gab_vm_free(vm);
 }
 
@@ -1038,7 +994,7 @@ static void test_the_vm_owns_its_handles(void) {
 
     GabError err;
 
-    GabScript *script = gab_compile(vm, "m.gab",
+    bool script = gab_load(vm, "m.gab",
                                     "func a(n: int): int { return n + 1; }\n"
                                     "func b(n: int): int { return n + 2; }\n"
                                     "func c(n: int): int { return n + 3; }\n",
@@ -1075,7 +1031,6 @@ static void test_the_vm_owns_its_handles(void) {
         gab_call_free(calls[i]);
     }
 
-    gab_script_free(vm, script);
     gab_vm_free(vm);
 }
 
@@ -1089,7 +1044,7 @@ static void test_two_callers_stage_independently(void) {
 
     GabError err;
 
-    GabScript *mod = gab_compile(vm, "<m>", "func damage(target: int, amount: int): int { return target - amount; }\n", &err);
+    bool mod = gab_load(vm, "<m>", "func damage(target: int, amount: int): int { return target - amount; }\n", &err);
     assert(mod);
 
     GabFunc *fn = gab_lookup(vm, NULL, "damage", &err);
@@ -1133,7 +1088,67 @@ static void test_two_callers_stage_independently(void) {
     gab_call_free(projectile);
     gab_call_free(ai);
 
-    gab_script_free(vm, mod);
+    gab_vm_free(vm);
+}
+
+// Loading a name again replaces what that name held, rather than stacking a
+// second unit beside it. Under a leak checker this is the assertion: a host
+// that recompiles a file whenever it changes on disk does that for as long as
+// it runs, and nothing it loaded is the host's to free.
+static void test_reloading_a_name_replaces_it(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    for (int i = 0; i < 50; i++) {
+        char src[256];
+        snprintf(src, sizeof src, "module S;\nfunc step(n: int): int { return n + %d; }\n", i);
+
+        assert(gab_load(vm, "s.gab", src, &err));
+    }
+
+    // The last load is the one that stands.
+    GabFunc *fn = gab_lookup(vm, "S", "step", &err);
+    assert(fn);
+
+    GabCall *call = gab_call_init(fn, &err);
+    assert(call);
+
+    assert(gab_arg_int(call, 0, 100));
+
+    int result = 0;
+    assert(gab_call(vm, call, &result, &err) == GAB_OK);
+    assert(result == 149);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
+// A load that fails leaves the unit that was there still loaded and running: a
+// designer saving a file mid-edit must not take the running one down with it.
+static void test_a_failed_reload_leaves_the_previous_unit(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    assert(gab_load(vm, "s.gab", "module S;\nfunc step(n: int): int { return n + 1; }\n", &err));
+
+    assert(!gab_load(vm, "s.gab", "module S;\nfunc step(n: int): int { return n +", &err));
+    assert(err.message[0] != '\0');
+
+    GabFunc *fn = gab_lookup(vm, "S", "step", &err);
+    assert(fn);
+
+    GabCall *call = gab_call_init(fn, &err);
+    assert(call);
+
+    assert(gab_arg_int(call, 0, 41));
+
+    int result = 0;
+    assert(gab_call(vm, call, &result, &err) == GAB_OK);
+    assert(result == 42);
+
+    gab_call_free(call);
     gab_vm_free(vm);
 }
 
@@ -1148,13 +1163,15 @@ int main(void) {
     test_qualified_type_reference_crosses_modules();
     test_handle_survives_later_compiles();
     test_recompiling_a_module_reloads_it();
+    test_reloading_a_name_replaces_it();
+    test_a_failed_reload_leaves_the_previous_unit();
     test_duplicate_declarations_in_one_unit_are_rejected();
     test_signature_change_rebinds_the_handle();
     test_staging_after_a_signature_change_just_works();
     test_a_reload_too_wide_for_the_handle_is_reported();
     test_compile_error_is_reported_not_printed();
     test_runtime_error_is_reported();
-    test_runtime_error_from_module_run();
+    test_runtime_error_in_a_top_level_fails_the_load();
     test_unset_arguments_are_rejected();
     test_rejected_setter_does_not_supply_an_argument();
     test_compile_once_run_many();
