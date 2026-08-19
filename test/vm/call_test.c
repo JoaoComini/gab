@@ -124,19 +124,6 @@ static void test_calls_across_several_prototypes() {
                    "let r: int = main();") == 20);
 }
 
-// A nested declaration appends its own prototype while the enclosing function
-// is still being generated, so the enclosing function's index cannot simply be
-// the list size read on entry.
-static void test_recursion_with_a_nested_declaration() {
-    assert(run_int("func rec(n: int): int {\n"
-                   "    func helper(): int { return 0; }\n"
-                   "    if n <= 1 { return 1; }\n"
-                   "    return n * rec(n - 1);\n"
-                   "}\n"
-                   "func main(): int { return rec(5); }\n"
-                   "let r: int = main();") == 120);
-}
-
 // Declarations are hoisted, so a function may call one written below it. Every
 // other statically-typed language with top-level functions works this way, and
 // methods need it: a receiver names a struct that may be declared further down.
@@ -206,7 +193,6 @@ int main(void) {
     test_call_depth_limit();
     test_recursion_from_a_later_prototype();
     test_calls_across_several_prototypes();
-    test_recursion_with_a_nested_declaration();
 
     printf("All call tests passed\n");
     return 0;

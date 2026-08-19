@@ -501,8 +501,31 @@ static void test_module_needs_a_semicolon() {
                        "expected ';' after the module name, found 'func'");
 }
 
+// Reserved for closures rather than merely unimplemented: a nested function
+// today could capture nothing, and letting the syntax mean that now would
+// change what it means once closures define it.
+static void test_function_cannot_be_declared_inside_another() {
+    assert_parse_error("func outer(): int {\n"
+                       "    func inner(): int { return 1; }\n"
+                       "    return inner();\n"
+                       "}\n",
+                       "a function cannot be declared inside another; declare it at module level");
+}
+
+// A method body is a function body, so the same rule holds inside one.
+static void test_function_cannot_be_declared_inside_a_method() {
+    assert_parse_error("struct P { n: int }\n"
+                       "func (p: *P) m(): int {\n"
+                       "    func inner(): int { return 1; }\n"
+                       "    return 0;\n"
+                       "}\n",
+                       "a function cannot be declared inside another; declare it at module level");
+}
+
 int main() {
 
+    test_function_cannot_be_declared_inside_another();
+    test_function_cannot_be_declared_inside_a_method();
     test_module_directive();
     test_module_directive_is_optional();
     test_module_directive_alone();

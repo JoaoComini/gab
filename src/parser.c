@@ -230,8 +230,19 @@ static ASTStmt *parse_statement(Parser *parser) {
         break;
     }
     case TOKEN_FUNC: {
-        stmt = parse_func_decl_stmt(parser);
-        break;
+        // Reserved rather than merely unimplemented. A nested function today
+        // could not capture anything, so it would be a free function with a
+        // narrower name — and once closures exist this same syntax has to mean
+        // a capturing one. Allowing the weaker meaning now would silently
+        // change what already-written code means later, so the syntax is kept
+        // unclaimed until closures can define it.
+        parser_error(parser, "a function cannot be declared inside another; declare it at module level");
+
+        // Consumed anyway, so the body does not cascade into a second error at
+        // every statement it contains.
+        ast_stmt_destroy(parse_func_decl_stmt(parser));
+
+        return NULL;
     }
     case TOKEN_STRUCT: {
         stmt = parse_struct_decl_stmt(parser);
