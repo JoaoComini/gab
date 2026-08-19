@@ -88,6 +88,9 @@
 // like a constant index rather than like a register.
 #define VM_MAX_PROTOTYPES VM_MAX_CONSTANTS
 
+// A type index rides in OP_NEW's 17-bit I-type field, for the same reason.
+#define VM_MAX_HEAP_TYPES VM_MAX_CONSTANTS
+
 // The slots one frame addresses, which is what a register operand indexes.
 #define VM_MAX_FRAME_SLOTS ((1 << 8) - 1)
 
@@ -144,6 +147,11 @@ void func_proto_free(FuncPrototype proto);
 #define func_proto_list_item_free(item) func_proto_free(item)
 GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype)
 
+// The types OP_NEW can allocate. Types are owned by the scope arena and
+// outlive every compile, so the list holds borrowed pointers and frees none.
+#define type_list_item_free(item) ((void)(item))
+GAB_LIST(TypeList, type_list, const Type *)
+
 void vm_compiled_script_free(CompiledScript *script);
 
 // A unit the VM has loaded, kept so its top-level chunk can be freed with the
@@ -183,6 +191,7 @@ typedef enum {
     VM_RUN_OK,
     VM_RUN_ERR_CALL_DEPTH,
     VM_RUN_ERR_STACK_OVERFLOW,
+    VM_RUN_ERR_OUT_OF_MEMORY,
 } VmRunStatus;
 
 // The interpreter's failure channel. A run cannot report through a return value
@@ -235,6 +244,12 @@ typedef struct {
     // OP_CALL operands. Top-level variables are not here: they are frame-zero
     // locals on the stack, so top-level state lives and dies with a run.
     FuncProtoList global_funcs;
+
+    // The types OP_NEW allocates, indexed from the instruction. A Type * is 8
+    // bytes and the constant pool holds 4-byte Values, so an allocation names
+    // its type by index the same way a call names its prototype. Interning is
+    // by pointer identity, which the type system already guarantees.
+    TypeList heap_types;
 
     // The handles this VM has handed out. See FuncHandleList.
     FuncHandleList func_handles;

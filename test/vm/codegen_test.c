@@ -37,7 +37,12 @@ static void assert_resolve(ASTScript *script, Scope *scope) {
 }
 
 static Chunk *assert_codegen(ASTScript *script, FuncProtoList *global_funcs) {
-    Chunk *chunk = codegen_generate(script, global_funcs, &ctx.diagnostics, NULL);
+    TypeList heap_types = type_list_create();
+
+    Chunk *chunk = codegen_generate(script, (CodegenOutput){.funcs = global_funcs, .heap_types = &heap_types},
+                                    &ctx.diagnostics, NULL);
+
+    type_list_free(&heap_types);
 
     if (!chunk) {
         diagnostics_print(&ctx.diagnostics, stderr);

@@ -98,6 +98,8 @@ const char *token_description(TokenType type) {
         return "'func'";
     case TOKEN_STRUCT:
         return "'struct'";
+    case TOKEN_NEW:
+        return "'new'";
     case TOKEN_MODULE:
         return "'module'";
     case TOKEN_RETURN:
@@ -173,6 +175,10 @@ static Token lexer_identifier(Lexer *lexer) {
 
     if (string_ref_equals_cstr(ref, "struct")) {
         return token_create_ref(lexer, TOKEN_STRUCT, ref);
+    }
+
+    if (string_ref_equals_cstr(ref, "new")) {
+        return token_create_ref(lexer, TOKEN_NEW, ref);
     }
 
     if (string_ref_equals_cstr(ref, "module")) {

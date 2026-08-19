@@ -4,6 +4,7 @@
 #include "ast/ast.h"
 #include "lexer.h"
 #include "parser.h"
+#include "refcounted.h"
 #include "scope.h"
 #include "string/string.h"
 #include "type.h"
@@ -41,6 +42,7 @@ VM *vm_create() {
     vm->instruction_pointer = 0;
 
     vm->global_funcs = func_proto_list_create();
+    vm->heap_types = type_list_create();
     vm->func_handles = func_handle_list_create();
     vm->scripts = loaded_script_list_create();
 
@@ -118,6 +120,7 @@ void func_proto_free(FuncPrototype proto) {
 
 void vm_free(VM *vm) {
     func_proto_list_free(&vm->global_funcs);
+    type_list_free(&vm->heap_types);
 
     // The handles themselves are gab.c's to free, and gab_vm_free has done so
     // by now; this releases only the array that tracked them.
@@ -369,7 +372,9 @@ bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *di
         scope_set_generation(scope, vm->compile_generation);
 
         if (ast_script_resolve(vm->compile_arena, script, scope, vm_module_scope_lookup, vm, diagnostics)) {
-            chunk = codegen_generate(script, &vm->global_funcs, diagnostics, &max_registers);
+            chunk = codegen_generate(
+                script, (CodegenOutput){.funcs = &vm->global_funcs, .heap_types = &vm->heap_types},
+                diagnostics, &max_registers);
         }
     }
 
@@ -522,6 +527,32 @@ static void vm_run_loop(VM *vm) {
         }
         case OP_CMP_GEI: {
             vm_conditionali(vm, instruction, vm_less_equali);
+            break;
+        }
+        case OP_NEW: {
+            unsigned int rd = VM_DECODE_I_RD(instruction);
+            size_t type_index = VM_DECODE_I_KX(instruction);
+
+            const Type *type = vm->heap_types.data[type_index];
+
+            // DEFAULT_ALLOCATOR until GabConfig's realloc_fn lands in step 8;
+            // this is the one place a heap object is created, so that is the
+            // only line that has to change.
+            void *object = gab_refcounted_alloc(DEFAULT_ALLOCATOR, type);
+
+            if (!object) {
+                vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory");
+
+                while (vm->frame_count > 0) {
+                    vm_pop_frame(vm);
+                }
+
+                break;
+            }
+
+            // A pointer spans two slots at an even index, which codegen has
+            // already arranged for rd.
+            memcpy(vm->registers + rd * sizeof(Value), &object, sizeof(object));
             break;
         }
         case OP_CALL: {

@@ -25,6 +25,7 @@ typedef enum {
     EXPR_FIELD,
     EXPR_ADDR_OF,
     EXPR_DEREF,
+    EXPR_NEW,
 } ExprKind;
 
 typedef enum {
@@ -104,6 +105,17 @@ typedef struct ASTExpr {
         struct {
             ASTExpr *target;
         } unary;
+
+        // 'new T' — a heap allocation yielding an owned '*T'. Names a type
+        // rather than taking an operand, so it carries a TypeSpec the way a
+        // declaration does rather than an expression.
+        struct {
+            TypeSpec *type_spec;
+
+            // The struct being allocated, resolved from the spec. The
+            // expression's own type is the pointer to it.
+            Type *type;
+        } new_expr;
     };
 
     Span span; // Source position, for diagnostics
@@ -120,6 +132,7 @@ ASTExpr *ast_method_call_expr_create(Span span, ASTExpr *receiver, StringRef nam
 ASTExpr *ast_field_expr_create(Span span, ASTExpr *target, StringRef name);
 ASTExpr *ast_addr_of_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_deref_expr_create(Span span, ASTExpr *target);
+ASTExpr *ast_new_expr_create(Span span, TypeSpec *type_spec);
 void ast_expr_free(ASTExpr *node);
 
 #endif

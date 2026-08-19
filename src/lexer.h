@@ -5,48 +5,49 @@
 #include "string/string_ref.h"
 
 typedef enum {
-    TOKEN_INVALID,   // Invalid token
-    TOKEN_EOF,       // End of input
-    TOKEN_INT,       // Integer literals (1, 2 ,3)
-    TOKEN_FLOAT,     // Float literals (3.14)
-                     // BEGIN OPERATORS
-    TOKEN_PLUS,      // '+'
-    TOKEN_MINUS,     // '-'
-    TOKEN_MUL,       // '*'
-    TOKEN_DIV,       // '/'
-    TOKEN_ASSIGN,    // '='
-    TOKEN_NOT,       // '!'
-    TOKEN_LESS,      // "<"
-    TOKEN_GREATER,   // ">"
-    TOKEN_EQUAL,     // "=="
-    TOKEN_NEQUAL,    // "!="
-    TOKEN_LEQUAL,    // "<="
-    TOKEN_GEQUAL,    // ">="
-    TOKEN_AND,       // "&&"
-    TOKEN_AMP,       // '&'
-    TOKEN_OR,        // "||"
-                     // END OPERATORS
-    TOKEN_LPAREN,    // '('
-    TOKEN_RPAREN,    // ')'
-    TOKEN_LBRACE,    // '{'
-    TOKEN_RBRACE,    // '}'
-    TOKEN_SEMICOLON, // ';'
-    TOKEN_COLON,     // ':'
+    TOKEN_INVALID,     // Invalid token
+    TOKEN_EOF,         // End of input
+    TOKEN_INT,         // Integer literals (1, 2 ,3)
+    TOKEN_FLOAT,       // Float literals (3.14)
+                       // BEGIN OPERATORS
+    TOKEN_PLUS,        // '+'
+    TOKEN_MINUS,       // '-'
+    TOKEN_MUL,         // '*'
+    TOKEN_DIV,         // '/'
+    TOKEN_ASSIGN,      // '='
+    TOKEN_NOT,         // '!'
+    TOKEN_LESS,        // "<"
+    TOKEN_GREATER,     // ">"
+    TOKEN_EQUAL,       // "=="
+    TOKEN_NEQUAL,      // "!="
+    TOKEN_LEQUAL,      // "<="
+    TOKEN_GEQUAL,      // ">="
+    TOKEN_AND,         // "&&"
+    TOKEN_AMP,         // '&'
+    TOKEN_OR,          // "||"
+                       // END OPERATORS
+    TOKEN_LPAREN,      // '('
+    TOKEN_RPAREN,      // ')'
+    TOKEN_LBRACE,      // '{'
+    TOKEN_RBRACE,      // '}'
+    TOKEN_SEMICOLON,   // ';'
+    TOKEN_COLON,       // ':'
     TOKEN_COLON_COLON, // '::'
-    TOKEN_COMMA,     // ','
-    TOKEN_DOT,       // '.'
-                     // BEGIN KEYWORDS
-    TOKEN_LET,       // 'let'
-    TOKEN_FUNC,      // 'func'
-    TOKEN_STRUCT,    // 'struct'
-    TOKEN_MODULE,    // 'module'
-    TOKEN_RETURN,    // 'return'
-    TOKEN_IF,        // 'if'
-    TOKEN_ELSE,      // 'else'
-    TOKEN_TRUE,      // 'true'
-    TOKEN_FALSE,     // 'false'
-                     // END KEYWORDS
-    TOKEN_IDENT,     // Variable and function names
+    TOKEN_COMMA,       // ','
+    TOKEN_DOT,         // '.'
+                       // BEGIN KEYWORDS
+    TOKEN_LET,         // 'let'
+    TOKEN_FUNC,        // 'func'
+    TOKEN_STRUCT,      // 'struct'
+    TOKEN_MODULE,      // 'module'
+    TOKEN_RETURN,      // 'return'
+    TOKEN_IF,          // 'if'
+    TOKEN_ELSE,        // 'else'
+    TOKEN_TRUE,        // 'true'
+    TOKEN_FALSE,       // 'false'
+    TOKEN_NEW,         // 'new'
+                       // END KEYWORDS
+    TOKEN_IDENT,       // Variable and function names
 } TokenType;
 
 typedef struct {

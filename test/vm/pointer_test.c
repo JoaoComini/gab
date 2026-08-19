@@ -279,7 +279,9 @@ static void test_a_pointer_local_is_slot_aligned() {
     assert(ok);
 
     FuncProtoList global_funcs = func_proto_list_create();
-    Chunk *chunk = codegen_generate(script, &global_funcs, &ctx.diagnostics, NULL);
+    TypeList heap_types = type_list_create();
+    Chunk *chunk = codegen_generate(
+        script, (CodegenOutput){.funcs = &global_funcs, .heap_types = &heap_types}, &ctx.diagnostics, NULL);
     assert(chunk);
 
     // Read off the emitted code rather than the symbol: a frame slot belongs to
@@ -307,6 +309,7 @@ static void test_a_pointer_local_is_slot_aligned() {
 
     chunk_free(chunk);
     func_proto_list_free(&global_funcs);
+    type_list_free(&heap_types);
     ast_script_destroy(script);
     test_context_free(&ctx);
 }

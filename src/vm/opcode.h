@@ -30,6 +30,10 @@ typedef enum {
     OP_JMP_IF_FALSE,
     OP_JMP_IF_TRUE,
     OP_CALL,
+
+    // Allocates a heap object of heap_types[kx] into rd, with one strong
+    // reference. I-type: a type index is not a register.
+    OP_NEW,
     // OP_RETURN returns a single slot, the common case; OP_RETURN_N carries a
     // slot count in r2.
     OP_RETURN,

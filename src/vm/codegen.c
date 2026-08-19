@@ -35,7 +35,7 @@ typedef struct {
     // highest slot ever reached rather than the final value.
     unsigned int max_reg;
 
-    FuncProtoList *global_funcs;
+    CodegenOutput output;
 
     // Frame-local, so it is per function body: a nested function generates
     // against its own, and the outer one's slots are not visible in it.
@@ -77,6 +77,7 @@ static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node);
 static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symbol *callee, Span span);
 static unsigned int codegen_method_call_expr(CodegenState *state, ASTExpr *node);
+static unsigned int codegen_new_expr(CodegenState *state, ASTExpr *node);
 static void codegen_addr_of_into(CodegenState *state, ASTExpr *inner, unsigned int rd, Span span);
 static unsigned int codegen_deref_of(CodegenState *state, ASTExpr *node, ASTExpr *pointer,
                                      const Type *pointee);
@@ -117,6 +118,12 @@ static unsigned int type_align_slots(const Type *type) {
 
 static bool type_is_struct(const Type *type) { return type && type->kind == TYPE_STRUCT; }
 
+// Whether a field is moved as a run of slots rather than through a width-tagged
+// field opcode. A struct is, because its slots are laid out inline — and so is
+// a pointer, which is 8 bytes and has no 8-wide opcode. Before heap objects
+// existed no struct could hold a pointer, so the two cases only meet now.
+static bool type_moves_as_slots(const Type *type) { return type_is_struct(type) || type_is_pointer(type); }
+
 // The field's width is known at compile time, so it picks the opcode instead
 // of spending operand bits. 'load' selects the load or store family.
 static OpCode field_opcode_for(size_t size, bool load, bool indirect, bool *ok) {
@@ -154,13 +161,13 @@ typedef struct {
 CodegenLabel codegen_create_label(CodegenState *state);
 void codegen_patch_jump(CodegenState *state, CodegenLabel label, OpCode op, unsigned int reg);
 
-Chunk *codegen_generate(ASTScript *script, FuncProtoList *global_funcs, Diagnostics *diagnostics,
+Chunk *codegen_generate(ASTScript *script, CodegenOutput output, Diagnostics *diagnostics,
                         unsigned int *max_registers) {
     CodegenState state = {
         .chunk = chunk_create(),
         .next_reg = 0,
         .max_reg = 0,
-        .global_funcs = global_funcs,
+        .output = output,
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .diagnostics = diagnostics,
         .failed = false,
@@ -358,8 +365,8 @@ static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast) {
         return;
     }
 
-    func_proto_list_add(state->global_funcs, (FuncPrototype){0});
-    ast->symbol->func.proto_index = state->global_funcs->size - 1;
+    func_proto_list_add(state->output.funcs, (FuncPrototype){0});
+    ast->symbol->func.proto_index = state->output.funcs->size - 1;
 }
 
 static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
@@ -376,7 +383,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
     // The body generates against its own frame, so its slots are its own.
     CodegenState func_state = (CodegenState){
         .chunk = func_chunk,
-        .global_funcs = state->global_funcs,
+        .output = state->output,
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .diagnostics = state->diagnostics,
         .failed = false,
@@ -415,7 +422,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
         chunk_add_instruction(func_chunk, VM_ENCODE_R(OP_RETURN, 0, 0, 0));
     }
 
-    func_proto_list_emplace(state->global_funcs, proto_index,
+    func_proto_list_emplace(state->output.funcs, proto_index,
                             (FuncPrototype){
                                 .chunk = func_chunk,
                                 // The receiver is parameter zero, so it counts.
@@ -444,6 +451,8 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
         return codegen_addr_of_expr(state, ast);
     case EXPR_DEREF:
         return codegen_deref_expr(state, ast);
+    case EXPR_NEW:
+        return codegen_new_expr(state, ast);
     }
 
     assert(0 && "unknown expression kind");
@@ -474,6 +483,43 @@ static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node) {
     chunk_add_instruction(state->chunk, load_const);
 
     return r1;
+}
+
+// 'new T' allocates and leaves an owned '*T' in a pointer-sized destination.
+// The type travels by index because a Type * is 8 bytes and cannot ride in an
+// instruction; the list is interned by pointer identity, which the type system
+// already guarantees.
+static unsigned int codegen_new_expr(CodegenState *state, ASTExpr *node) {
+    unsigned int rd = codegen_alloc_slots(state, VM_POINTER_SLOTS, VM_POINTER_SLOTS, node->span);
+
+    size_t type_index = state->output.heap_types->size;
+
+    for (size_t i = 0; i < state->output.heap_types->size; i++) {
+        if (state->output.heap_types->data[i] == node->new_expr.type) {
+            type_index = i;
+            break;
+        }
+    }
+
+    if (type_index == state->output.heap_types->size) {
+        type_list_add(state->output.heap_types, node->new_expr.type);
+    }
+
+    // Masking alone would allocate the wrong type, so an index too wide for
+    // the field is rejected rather than truncated.
+    if (type_index > VM_MAX_HEAP_TYPES) {
+        if (!state->failed) {
+            diag_error(state->diagnostics, GAB_ERR_CODEGEN, node->span,
+                       "too many allocated types in one program");
+        }
+
+        state->failed = true;
+        return rd;
+    }
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_NEW, rd, (unsigned int)type_index));
+
+    return rd;
 }
 
 // The OP_CALL itself, shared by a plain call and a method call: by this point
@@ -717,10 +763,10 @@ static unsigned int codegen_load_indirect_struct(CodegenState *state, ASTExpr *n
 static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node) {
     FieldTarget target = codegen_field_base(state, node, true);
 
-    // A struct-typed field is addressed, not loaded: its slots are already laid
+    // A multi-slot field is addressed, not loaded: its slots are already laid
     // out inline, so the caller reads them where they sit. Through a pointer
     // there are no such slots, so it is copied out instead.
-    if (type_is_struct(node->type)) {
+    if (type_moves_as_slots(node->type)) {
         if (target.indirect) {
             return codegen_load_indirect_struct(state, node, node->type, target, type_slot_count(node->type));
         }
@@ -745,7 +791,7 @@ static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node) {
 static void codegen_store_field(CodegenState *state, ASTExpr *node, unsigned int src) {
     FieldTarget target = codegen_field_base(state, node, true);
 
-    if (type_is_struct(node->type)) {
+    if (type_moves_as_slots(node->type)) {
         if (target.indirect) {
             codegen_store_indirect(state, node, target, src, type_slot_count(node->type));
             return;

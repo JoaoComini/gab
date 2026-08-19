@@ -177,6 +177,11 @@ static int pointee_depth(const ASTExpr *expr) {
     }
     case EXPR_VARIABLE:
         return expr->symbol ? expr->symbol->var.pointee_depth : 0;
+    case EXPR_NEW:
+        // A heap object outlives every frame, so 0 is the truth here rather
+        // than the "unknown" the default stands for: it can be stored
+        // anywhere, and the depth comparison already says so.
+        return 0;
     default:
         break;
     }
@@ -290,6 +295,8 @@ bool is_boolean_type(Type *t) { return t->kind == TYPE_BOOL; }
 bool is_ordered_type(Type *t) { return is_numeric_type(t) || is_boolean_type(t); }
 
 bool is_comparable_type(Type *t) { return is_numeric_type(t) || is_boolean_type(t); }
+
+Type *ast_script_resolve_type(ResolverState *state, TypeSpec *spec, Span span);
 
 void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
     if (!expr) {
@@ -564,6 +571,27 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         // The address itself lives in the target's slots, so a deref stays
         // assignable through whatever the target was.
         expr->symbol = expr->unary.target->symbol;
+        break;
+    }
+    case EXPR_NEW: {
+        Type *type = ast_script_resolve_type(state, expr->new_expr.type_spec, expr->span);
+
+        if (is_error_type(type)) {
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        // Only a struct has a layout to allocate. 'new int' would be a boxed
+        // scalar, which is a different feature and not this one.
+        if (type->kind != TYPE_STRUCT) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                       "cannot allocate %s; 'new' takes a struct", type_name(type));
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        expr->new_expr.type = type;
+        expr->type = type_registry_pointer_to(state->current_scope->type_registry, type);
         break;
     }
     case EXPR_LITERAL: {

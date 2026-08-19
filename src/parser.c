@@ -774,6 +774,19 @@ static ASTExpr *parse_method_call_expr(Parser *parser, ASTExpr *receiver, String
 static ASTExpr *parse_unary(Parser *parser) {
     Span span = parser_span(parser);
 
+    // 'new T' names a type rather than taking an operand, so it is handled
+    // before the operand-taking prefixes below.
+    if (parser->current.type == TOKEN_NEW) {
+        parser_next_token(parser); // eat 'new'
+
+        TypeSpec *spec = parse_type_spec(parser);
+        if (!spec) {
+            return NULL;
+        }
+
+        return ast_new_expr_create(span, spec);
+    }
+
     // '*' is the same token as multiplication; only its position tells them
     // apart, exactly as for a unary minus.
     if (parser->current.type == TOKEN_AMP || parser->current.type == TOKEN_MUL) {
