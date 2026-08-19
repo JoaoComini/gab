@@ -1080,6 +1080,18 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
     }
     case STMT_IF: {
         ast_script_expr_visit(state, stmt->ifstmt.condition);
+
+        // A branch has to have something to branch on, and bool is the only
+        // thing the jump opcodes read. An already-poisoned condition has
+        // reported its own error, so it is let through rather than complained
+        // about twice.
+        Type *condition_type = stmt->ifstmt.condition->type;
+
+        if (condition_type && !is_error_type(condition_type) && !is_boolean_type(condition_type)) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->ifstmt.condition->span,
+                       "'if' requires a boolean condition, found %s", type_name(state, condition_type));
+        }
+
         ast_script_stmt_visit(state, stmt->ifstmt.then_block);
         ast_script_stmt_visit(state, stmt->ifstmt.else_block);
         break;
