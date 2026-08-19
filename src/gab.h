@@ -56,10 +56,18 @@ void gab_vm_free(GabVM *vm);
 //
 // 'name' identifies the unit. It names the source in diagnostics, and it is the
 // key a reload replaces: loading a name already loaded compiles the new source
-// over the old one and frees what the old one held, so a host that recompiles a
-// file whenever it changes on disk accumulates nothing. Declarations are
-// replaced the same way, which is what makes this hot reload — a GabFunc looked
-// up before a reload goes on working, calling the new body.
+// over the old one and frees the top-level chunk the old one held, so reloading
+// one file for as long as a host runs keeps one of those rather than one per
+// load. Declarations are replaced the same way, which is what makes this hot
+// reload — a GabFunc looked up before a reload goes on working, calling the new
+// body.
+//
+// What a reload does not reclaim is the function prototypes the unit compiled:
+// a prototype index is baked into OP_CALL operands and into every handle that
+// resolves through it, so an index cannot be reused while anything may still
+// name it. A reload therefore leaves its predecessor's prototypes behind, one
+// set per load, which is a cost that grows with how often a host reloads rather
+// than with how long it runs.
 //
 // The namespace a unit declares into is not this name: it comes from the unit's
 // own 'module' directive, and is what the host passes to gab_lookup and
