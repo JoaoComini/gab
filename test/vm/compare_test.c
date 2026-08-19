@@ -6,27 +6,13 @@
 // Every operator is checked on both sides of its boundary and on equality,
 // because an inverted comparison agrees with the correct one on one of those
 // three and only disagrees on the others.
+#include "support/run.h"
 #include "value.h"
 #include "vm/vm.h"
 
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
-
-// Runs a script and returns the slot the top-level result lands in.
-static bool run_bool(const char *source) {
-    VM *vm = vm_create();
-
-    vm_execute(vm, source);
-
-    assert(vm->frame_count == 0);
-
-    bool result = (*vm_slot(vm, 0)).as_int != 0;
-
-    vm_free(vm);
-
-    return result;
-}
 
 // Builds 'a <op> b' over two int locals. They are locals rather than literals
 // so the operand reaches a register: a literal right operand takes the
@@ -39,7 +25,7 @@ static bool cmp_int(int a, const char *op, int b) {
              "let r: bool = f();\n",
              a, b, op);
 
-    return run_bool(source);
+    return test_run_bool(source);
 }
 
 static bool cmp_float(double a, const char *op, double b) {
@@ -50,7 +36,7 @@ static bool cmp_float(double a, const char *op, double b) {
              "let r: bool = f();\n",
              a, b, op);
 
-    return run_bool(source);
+    return test_run_bool(source);
 }
 
 static void test_int_less() {
@@ -128,14 +114,14 @@ static void test_float_not_equal() {
 // the immediate path is a second encoding of every integer comparison and is
 // worth walking once.
 static void test_immediate_operand_compares_the_same() {
-    assert(run_bool("func f(): bool { let a: int = 5; return a >= 3; }\n"
-                    "let r: bool = f();\n"));
+    assert(test_run_bool("func f(): bool { let a: int = 5; return a >= 3; }\n"
+                         "let r: bool = f();\n"));
 
-    assert(!run_bool("func f(): bool { let a: int = 3; return a >= 5; }\n"
-                     "let r: bool = f();\n"));
+    assert(!test_run_bool("func f(): bool { let a: int = 3; return a >= 5; }\n"
+                          "let r: bool = f();\n"));
 
-    assert(run_bool("func f(): bool { let a: int = 4; return a >= 4; }\n"
-                    "let r: bool = f();\n"));
+    assert(test_run_bool("func f(): bool { let a: int = 4; return a >= 4; }\n"
+                         "let r: bool = f();\n"));
 }
 
 int main() {
