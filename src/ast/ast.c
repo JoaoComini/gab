@@ -606,6 +606,30 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         expr->symbol = expr->unary.target->symbol;
         break;
     }
+    case EXPR_NEG: {
+        ast_script_expr_visit(state, expr->unary.target);
+
+        Type *target_type = expr->unary.target->type;
+
+        if (is_error_type(target_type)) {
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        // Bool is ordered and comparable but has no negation, so this asks
+        // for numeric rather than reusing either of those.
+        if (!is_numeric_type(target_type)) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                       "unary '-' requires a numeric type, found %s", type_name(state, target_type));
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        // The result is a fresh value, so it deliberately inherits no symbol:
+        // '-x' is a temporary and must not be assignable or addressable.
+        expr->type = target_type;
+        break;
+    }
     case EXPR_NEW: {
         Type *type = ast_script_resolve_type(state, expr->new_expr.type_spec, expr->span);
 

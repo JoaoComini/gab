@@ -155,6 +155,7 @@ static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node);
 static void codegen_store_field(CodegenState *state, ASTExpr *node, unsigned int src);
 static unsigned int codegen_addr_of_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_deref_expr(CodegenState *state, ASTExpr *node);
+static unsigned int codegen_neg_expr(CodegenState *state, ASTExpr *node);
 static void codegen_store_deref(CodegenState *state, ASTExpr *node, unsigned int src);
 static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned int src, unsigned int count);
 
@@ -682,6 +683,8 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
         return codegen_addr_of_expr(state, ast);
     case EXPR_DEREF:
         return codegen_deref_expr(state, ast);
+    case EXPR_NEG:
+        return codegen_neg_expr(state, ast);
     case EXPR_NEW:
         return codegen_new_expr(state, ast);
     }
@@ -1174,6 +1177,55 @@ static unsigned int codegen_deref_of(CodegenState *state, ASTExpr *node, ASTExpr
     };
 
     return codegen_load_indirect_struct(state, node, pointee, target, type_slot_count(pointee));
+}
+
+// Negation lowers to a subtraction from zero rather than earning an opcode:
+// that is exactly what it is on the machine, and a dedicated OP_NEG would add
+// a dispatch case per numeric type without saving an instruction.
+//
+// The zero has to live in a register. Only the second operand of an arithmetic
+// instruction may be immediate, and the zero here is the first.
+static unsigned int codegen_neg_expr(CodegenState *state, ASTExpr *node) {
+    ASTExpr *inner = node->unary.target;
+
+    // '-5' is a constant, so it is folded into one rather than emitted as a
+    // load of 5 and a subtraction. This is also the only way a negative
+    // literal reaches the constant pool, since the lexer only ever scans
+    // digits and leaves the sign to this node.
+    if (inner->kind == EXPR_LITERAL) {
+        Literal folded = inner->lit;
+
+        if (folded.kind == TYPE_FLOAT) {
+            folded.as_float = -folded.as_float;
+        } else {
+            // Negating on the unsigned width wraps INT32_MIN instead of
+            // overflowing, which is defined and matches what the VM already
+            // does for the same value at runtime.
+            folded.as_int = (int32_t)(0u - (uint32_t)folded.as_int);
+        }
+
+        unsigned int const_index = constpool_add(state->chunk->const_pool, value_from_literal(folded));
+        unsigned int rd = codegen_alloc_register(state, node->span);
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_LOAD_CONST, rd, const_index));
+
+        return rd;
+    }
+
+    bool is_float = node->type->kind == TYPE_FLOAT;
+
+    Value zero_value = is_float ? (Value){.as_float = 0.0f} : (Value){.as_int = 0};
+    unsigned int zero_index = constpool_add(state->chunk->const_pool, zero_value);
+
+    unsigned int zero = codegen_alloc_register(state, node->span);
+    chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_LOAD_CONST, zero, zero_index));
+
+    unsigned int operand = codegen_expr(state, inner);
+    unsigned int rd = codegen_alloc_register(state, node->span);
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(is_float ? OP_SUBF : OP_SUBI, rd, zero, operand));
+
+    return rd;
 }
 
 static unsigned int codegen_deref_expr(CodegenState *state, ASTExpr *node) {

@@ -20,6 +20,7 @@ set(
     vm/method_test.c
     vm/heap_test.c
     vm/weak_test.c
+    vm/neg_test.c
     vm/stack_test.c
     vm/vm_test.c
     gab_api_test.c

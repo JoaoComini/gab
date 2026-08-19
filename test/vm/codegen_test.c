@@ -84,6 +84,34 @@ static void test_number() {
     func_proto_list_free(&global_funcs);
 }
 
+// A negated literal folds into a single constant load rather than emitting a
+// zero, a load of the literal and a subtraction. This is the claim
+// codegen_neg_expr makes; nothing else would notice if it stopped holding.
+static void test_negated_literal_folds_to_one_load() {
+    Literal lit = {.kind = TYPE_INT, .as_int = 42};
+    ASTExpr *neg = ast_neg_expr_create(TEST_SPAN, ast_literal_expr_create(TEST_SPAN, lit));
+    ASTStmt *stmt = ast_expr_stmt_create(TEST_SPAN, neg);
+
+    Scope *scope = scope_create(arena, &ctx.strings, NULL);
+    ASTScript *script = ast_script_create();
+    ast_script_add_statement(script, stmt);
+    assert_resolve(script, scope);
+
+    FuncProtoList global_funcs = func_proto_list_create();
+    Chunk *chunk = assert_codegen(script, &global_funcs);
+
+    assert(chunk->instructions.size == 1);
+    assert(VM_DECODE_OPCODE(chunk->instructions.data[0]) == OP_LOAD_CONST);
+
+    // The sign is in the pooled constant, not in an instruction.
+    assert(chunk->const_pool->count == 1);
+    assert(chunk->const_pool->constants[0].as_int == -42);
+
+    chunk_free(chunk);
+    ast_script_destroy(script);
+    func_proto_list_free(&global_funcs);
+}
+
 static void test_bin_op(OpCode expected_op, BinOp op) {
     Literal var_left = {.kind = TYPE_FLOAT, .as_float = 10};
     Literal var_right = {.kind = TYPE_FLOAT, .as_float = 5};
@@ -439,6 +467,7 @@ int main(void) {
     arena = ctx.arena;
 
     test_number();
+    test_negated_literal_folds_to_one_load();
     test_add();
     test_sub();
     test_mul();
