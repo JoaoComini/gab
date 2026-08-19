@@ -64,6 +64,10 @@ typedef struct {
     // slot still holds what it was declared as.
     OwnedList owned;
 
+    // Every slot this function ever owns a reference in, for the unwinder. See
+    // FuncPrototype::refs.
+    FrameRefList frame_refs;
+
     // How deep the block nesting is, so a close knows which owned slots were
     // declared by the block it is closing.
     unsigned int depth;
@@ -81,6 +85,10 @@ static bool type_is_owned(const Type *type);
 // touches the weak count and never the strong one.
 static OpCode retain_op_for(const Type *type);
 static OpCode release_op_for(const Type *type);
+
+// Guards a reach-through against a weak reference whose object is already gone.
+// Emits nothing for a strong pointer.
+static void codegen_check_alive(CodegenState *state, unsigned int base, const Type *type);
 
 // Records that 'slot' holds an owned reference for as long as the current block
 // runs.
@@ -216,7 +224,7 @@ CodegenLabel codegen_create_label(CodegenState *state);
 void codegen_patch_jump(CodegenState *state, CodegenLabel label, OpCode op, unsigned int reg);
 
 Chunk *codegen_generate(ASTScript *script, CodegenOutput output, Diagnostics *diagnostics,
-                        unsigned int *max_registers) {
+                        CodegenFrameInfo *frame_info) {
     CodegenState state = {
         .chunk = chunk_create(),
         .next_reg = 0,
@@ -225,6 +233,7 @@ Chunk *codegen_generate(ASTScript *script, CodegenOutput output, Diagnostics *di
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .owned = owned_list_create(),
         .depth = 0,
+        .frame_refs = frame_ref_list_create(),
         .diagnostics = diagnostics,
         .failed = false,
     };
@@ -251,11 +260,18 @@ Chunk *codegen_generate(ASTScript *script, CodegenOutput output, Diagnostics *di
 
     if (state.failed) {
         chunk_free(state.chunk);
+        frame_ref_list_free(&state.frame_refs);
         return NULL;
     }
 
-    if (max_registers) {
-        *max_registers = state.max_reg;
+    // The refs outlive the compile, unlike everything above: the top-level
+    // frame is unwound through them, so ownership passes to the caller with the
+    // chunk.
+    if (frame_info) {
+        frame_info->max_registers = state.max_reg;
+        frame_info->refs = state.frame_refs;
+    } else {
+        frame_ref_list_free(&state.frame_refs);
     }
 
     return state.chunk;
@@ -351,6 +367,25 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
                      codegen_alloc_slots(state, type_slot_count(ast->symbol->var.type),
                                          type_align_slots(ast->symbol->var.type), span));
 
+    // A weak variable owns its slot from the moment it is declared, whether or
+    // not it has an initializer — which means the slot has to start as
+    // something every weak operation tolerates, rather than as whatever the
+    // stack happened to hold. NULL is that, and both retain_weak and
+    // release_weak are NULL-tolerant.
+    //
+    // Owning it from the start is what lets an assignment simply swap counts:
+    // otherwise it would have to work out which block declared the slot it is
+    // writing to, and releasing at the assignment's own depth would drop the
+    // count while a variable declared further out is still live.
+    bool weak = ast->symbol->var.type && ast->symbol->var.type->is_weak;
+
+    if (weak) {
+        unsigned int slot = codegen_slot_of(state, ast->symbol);
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_LOAD_NULL_PTR, slot, 0, 0));
+        codegen_own_slot(state, slot, ast->symbol->var.type);
+    }
+
     if (!ast->initializer) {
         return;
     }
@@ -362,6 +397,18 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
     unsigned int r1 = codegen_expr(state, ast->initializer);
 
     unsigned int slot = codegen_slot_of(state, ast->symbol);
+
+    // A weak variable takes a weak reference of its own, whatever the
+    // initializer produced: the value is a strong reference whose count this
+    // must not touch, so there is nothing to take over — only a weak count to
+    // add, which is what keeps the header reachable after the object dies. The
+    // slot is already owned and already NULL, so no old count needs dropping.
+    if (weak) {
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RETAIN_WEAK, r1, 0, 0));
+        codegen_copy_slots(state, slot, r1, type_slot_count(ast->symbol->var.type));
+        codegen_release_registers(state, saved);
+        return;
+    }
 
     codegen_copy_slots(state, slot, r1, type_slot_count(ast->symbol->var.type));
 
@@ -398,7 +445,13 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
 
         // A borrowed value needs a reference of its own, since the slot it came
         // from keeps its; an owned one is simply moved in.
-        if (!expr_yields_owned(ast->value)) {
+        //
+        // A weak target always retains, owned or not: the value is a strong
+        // reference whose count this must not consume, so there is nothing to
+        // move — only a weak count to add.
+        bool weak_target = ast->target->type && ast->target->type->is_weak;
+
+        if (weak_target || !expr_yields_owned(ast->value)) {
             chunk_add_instruction(state->chunk, VM_ENCODE_R(retain_op_for(ast->target->type), src, 0, 0));
         }
 
@@ -452,6 +505,30 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
 
         codegen_copy_slots(state, rd, r1, VM_POINTER_SLOTS);
         chunk_add_instruction(state->chunk, VM_ENCODE_R(release_op_for(ast->target->type), old, 0, 0));
+        return;
+    }
+
+    // A weak slot always takes a weak reference of its own, however the value
+    // arrived. Unlike a strong reference there is nothing to move: the value
+    // being assigned is a *strong* one, whose count this must not touch, so
+    // "borrowed" and "owned" both mean the same thing here — take a weak count,
+    // which is what keeps the header reachable once the object dies.
+    if (ast->target->type && ast->target->type->is_weak) {
+        // The previous weak count goes as the new one arrives, in that order
+        // only when the slot already held something: 'w = w' must not drop the
+        // count it is about to re-take.
+        bool held = codegen_slot_is_owned(state, rd);
+        unsigned int old = VM_INVALID_REGISTER;
+
+        if (held) {
+            old = codegen_alloc_slots(state, VM_POINTER_SLOTS, VM_POINTER_SLOTS, ast->target->span);
+            codegen_copy_slots(state, old, rd, VM_POINTER_SLOTS);
+        }
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RETAIN_WEAK, r1, 0, 0));
+        codegen_copy_slots(state, rd, r1, type_slot_count(ast->target->type));
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE_WEAK, old, 0, 0));
         return;
     }
 
@@ -536,6 +613,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .owned = owned_list_create(),
         .depth = 0,
+        .frame_refs = frame_ref_list_create(),
         .diagnostics = state->diagnostics,
         .failed = false,
     };
@@ -579,6 +657,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
                                 // The receiver is parameter zero, so it counts.
                                 .arity = ast->params.size + (ast->receiver ? 1 : 0),
                                 .max_registers = func_state.max_reg,
+                                .refs = func_state.frame_refs,
                             });
 
     owned_list_free(&func_state.owned);
@@ -845,8 +924,12 @@ static FieldTarget codegen_field_base(CodegenState *state, ASTExpr *node, bool a
         // 'o.child.n' is the first expression to need this: it loads o.child,
         // then addresses n from there.
         if (inner->kind == EXPR_FIELD && type_is_pointer(inner->type)) {
+            unsigned int base = codegen_field_expr(state, inner);
+
+            codegen_check_alive(state, base, inner->type);
+
             return (FieldTarget){
-                .base = codegen_field_expr(state, inner),
+                .base = base,
                 .offset = node->field.field->offset,
                 .indirect = true,
             };
@@ -860,17 +943,31 @@ static FieldTarget codegen_field_base(CodegenState *state, ASTExpr *node, bool a
     }
 
     if (node->kind == EXPR_DEREF) {
+        unsigned int base = codegen_expr(state, node->unary.target);
+
+        codegen_check_alive(state, base, node->unary.target->type);
+
         return (FieldTarget){
-            .base = codegen_expr(state, node->unary.target),
+            .base = base,
             .offset = 0,
             .indirect = true,
         };
     }
 
+    unsigned int base = codegen_expr(state, node);
+    bool indirect = auto_deref && type_is_pointer(node->type);
+
+    // Only a pointer actually reached through needs checking. '&w' names the
+    // slot rather than following it, and is fine whether or not the object is
+    // still there.
+    if (indirect) {
+        codegen_check_alive(state, base, node->type);
+    }
+
     return (FieldTarget){
-        .base = codegen_expr(state, node),
+        .base = base,
         .offset = 0,
-        .indirect = auto_deref && type_is_pointer(node->type),
+        .indirect = indirect,
     };
 }
 
@@ -1381,6 +1478,21 @@ static OpCode release_op_for(const Type *type) {
     return (type && type->is_weak) ? OP_RELEASE_WEAK : OP_RELEASE;
 }
 
+// Guards a reach-through: a weak reference may name an object that is already
+// gone, and reading a zeroed payload would answer plausibly rather than
+// obviously wrongly.
+//
+// Nothing is emitted for a strong pointer, which is the point — a strong
+// reference keeps its object alive by construction, so the check would be
+// provably redundant. Only weak references pay for weakness.
+static void codegen_check_alive(CodegenState *state, unsigned int base, const Type *type) {
+    if (!type || !type->is_weak) {
+        return;
+    }
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_CHECK_ALIVE, base, 0, 0));
+}
+
 // Whether an expression hands its caller a reference to own, or merely lends
 // one it keeps. 'new' and a call returning '*T' produce a fresh reference the
 // receiver is responsible for; reading a variable or a field does not, since
@@ -1406,6 +1518,23 @@ static bool expr_yields_owned(const ASTExpr *expr) {
 
 static void codegen_own_slot(CodegenState *state, unsigned int slot, const Type *type) {
     owned_list_add(&state->owned, (OwnedSlot){.slot = slot, .depth = state->depth, .type = type});
+
+    // Also recorded on the frame, for the unwinder. A failure jumps past every
+    // release emitted below, so the frame has to know what it may still be
+    // holding — and this is the only place that becomes true.
+    //
+    // Recorded once per slot: a slot reused by a later block is the same slot,
+    // and the runtime clears one when it releases it, so a second entry would
+    // only make the unwinder visit an empty slot twice.
+    bool weak = type && type->is_weak;
+
+    for (size_t i = 0; i < state->frame_refs.size; i++) {
+        if (state->frame_refs.data[i].slot == slot && state->frame_refs.data[i].weak == weak) {
+            return;
+        }
+    }
+
+    frame_ref_list_add(&state->frame_refs, (FrameRef){.slot = slot, .weak = weak});
 }
 
 // Whether this slot already owns a reference, and so has one to drop when it is

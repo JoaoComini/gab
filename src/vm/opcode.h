@@ -49,6 +49,16 @@ typedef enum {
     // so these touch the weak count and never the strong one.
     OP_RETAIN_WEAK,
     OP_RELEASE_WEAK,
+
+    // Fails the run if the weak pointer in rd names an object whose payload is
+    // gone. Emitted only where a weak reference is reached through, which is
+    // the one place the answer can change a program.
+    OP_CHECK_ALIVE,
+
+    // Writes a null pointer into the two slots at rd. A weak local owns its slot
+    // from the moment it is declared, so the slot has to start as something
+    // every weak operation tolerates rather than as whatever the stack held.
+    OP_LOAD_NULL_PTR,
     // OP_RETURN returns a single slot, the common case; OP_RETURN_N carries a
     // slot count in r2.
     OP_RETURN,

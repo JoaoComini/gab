@@ -100,6 +100,58 @@ static bool vm_push_frame(VM *vm, const FuncPrototype *proto, size_t base, size_
     return true;
 }
 
+static void vm_pop_frame(VM *vm);
+
+// Writes NULL over a pointer slot, so a slot that has already been released
+// reads as empty rather than as an address that was freed.
+static void vm_clear_pointer(VM *vm, size_t reg) {
+    void *null_pointer = NULL;
+
+    memcpy(vm->registers + reg * sizeof(Value), &null_pointer, sizeof(null_pointer));
+}
+
+// Drops every reference a frame still holds. Only ever called while unwinding
+// from a failure: a run that ends normally has already executed the releases
+// codegen emitted at each scope's close, which is both cheaper and more precise
+// than this — it releases at the brace rather than at the frame's end.
+//
+// A slot listed on the prototype either holds a live reference or holds NULL,
+// because releasing one clears it. That is what makes walking the list safe
+// despite sibling blocks reusing slots.
+static void vm_release_frame_refs(VM *vm, const CallFrame *frame) {
+    const FrameRefList *refs = &frame->proto->refs;
+
+    for (size_t i = 0; i < refs->size; i++) {
+        FrameRef ref = refs->data[i];
+
+        void *object;
+        memcpy(&object, vm->stack + frame->base + ref.slot * sizeof(Value), sizeof(object));
+
+        if (!object) {
+            continue;
+        }
+
+        memcpy(vm->stack + frame->base + ref.slot * sizeof(Value), &(void *){NULL}, sizeof(object));
+
+        if (ref.weak) {
+            gab_release_weak(DEFAULT_ALLOCATOR, object);
+            continue;
+        }
+
+        gab_release(DEFAULT_ALLOCATOR, object);
+    }
+}
+
+// Unwinds every frame after a failure, dropping what each still holds. The
+// ordinary releases are jumped past by the failure, so without this a run that
+// fails leaks everything that was live when it did.
+static void vm_unwind(VM *vm) {
+    while (vm->frame_count > 0) {
+        vm_release_frame_refs(vm, &vm->frames[vm->frame_count - 1]);
+        vm_pop_frame(vm);
+    }
+}
+
 static void vm_pop_frame(VM *vm) {
     CallFrame frame = vm->frames[--vm->frame_count];
 
@@ -116,6 +168,8 @@ void func_proto_free(FuncPrototype proto) {
     if (proto.chunk) {
         chunk_free(proto.chunk);
     }
+
+    frame_ref_list_free(&proto.refs);
 }
 
 void vm_free(VM *vm) {
@@ -356,7 +410,7 @@ bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *di
     // Each stage is a precondition for the next: a failure must stop the
     // pipeline rather than let a malformed AST reach codegen.
     Chunk *chunk = NULL;
-    unsigned int max_registers = 0;
+    CodegenFrameInfo frame_info = {.max_registers = 0, .refs = frame_ref_list_create()};
     String *module_name = NULL;
 
     if (parser_parse(&parser, script)) {
@@ -374,7 +428,7 @@ bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *di
         if (ast_script_resolve(vm->compile_arena, script, scope, vm_module_scope_lookup, vm, diagnostics)) {
             chunk = codegen_generate(
                 script, (CodegenOutput){.funcs = &vm->global_funcs, .heap_types = &vm->heap_types},
-                diagnostics, &max_registers);
+                diagnostics, &frame_info);
         }
     }
 
@@ -387,7 +441,8 @@ bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *di
     }
 
     out->chunk = chunk;
-    out->max_registers = max_registers;
+    out->max_registers = frame_info.max_registers;
+    out->refs = frame_info.refs;
     out->module_name = module_name;
 
     return true;
@@ -399,6 +454,7 @@ void vm_compiled_script_free(CompiledScript *script) {
     }
 
     chunk_free(script->chunk);
+    frame_ref_list_free(&script->refs);
     script->chunk = NULL;
 }
 
@@ -543,9 +599,7 @@ static void vm_run_loop(VM *vm) {
             if (!object) {
                 vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory");
 
-                while (vm->frame_count > 0) {
-                    vm_pop_frame(vm);
-                }
+                vm_unwind(vm);
 
                 break;
             }
@@ -561,6 +615,12 @@ static void vm_run_loop(VM *vm) {
             void *object;
             memcpy(&object, vm->registers + rd * sizeof(Value), sizeof(object));
 
+            // Cleared as well as released, so the slot holds NULL rather than a
+            // pointer to something freed. An abnormal unwind walks every slot
+            // the frame may own a reference in, and this is what makes a slot
+            // that was already released safe to visit again.
+            vm_clear_pointer(vm, rd);
+
             gab_release(DEFAULT_ALLOCATOR, object);
             break;
         }
@@ -571,6 +631,33 @@ static void vm_run_loop(VM *vm) {
             memcpy(&object, vm->registers + rd * sizeof(Value), sizeof(object));
 
             gab_retain(object);
+            break;
+        }
+        case OP_LOAD_NULL_PTR: {
+            unsigned int rd = VM_DECODE_R_RD(instruction);
+            void *null_pointer = NULL;
+
+            memcpy(vm->registers + rd * sizeof(Value), &null_pointer, sizeof(null_pointer));
+            break;
+        }
+        case OP_CHECK_ALIVE: {
+            unsigned int rd = VM_DECODE_R_RD(instruction);
+
+            void *object;
+            memcpy(&object, vm->registers + rd * sizeof(Value), sizeof(object));
+
+            if (gab_is_alive(object)) {
+                break;
+            }
+
+            // The object a weak reference named is gone. Reading through it
+            // would find a zeroed payload, which is a plausible-looking answer
+            // rather than an obviously wrong one — so the run fails here
+            // instead, where the mistake is.
+            vm_fail(vm, VM_RUN_ERR_DANGLING_WEAK, "dereferenced a weak pointer whose object has been freed");
+
+            vm_unwind(vm);
+
             break;
         }
         case OP_RETAIN_WEAK: {
@@ -587,6 +674,8 @@ static void vm_run_loop(VM *vm) {
 
             void *object;
             memcpy(&object, vm->registers + rd * sizeof(Value), sizeof(object));
+
+            vm_clear_pointer(vm, rd);
 
             gab_release_weak(DEFAULT_ALLOCATOR, object);
             break;
@@ -611,9 +700,7 @@ static void vm_run_loop(VM *vm) {
                 // left on the VM because the loop has no caller to return to.
                 vm_fail(vm, VM_RUN_ERR_CALL_DEPTH, "call depth exceeded");
 
-                while (vm->frame_count > 0) {
-                    vm_pop_frame(vm);
-                }
+                vm_unwind(vm);
 
                 break;
             }
@@ -792,6 +879,7 @@ VmRunStatus vm_run(VM *vm, const CompiledScript *script) {
         .chunk = script->chunk,
         .arity = 0,
         .max_registers = (int)script->max_registers,
+        .refs = script->refs,
     };
 
     vm->frame_count = 0;

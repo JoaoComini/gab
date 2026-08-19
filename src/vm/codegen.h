@@ -18,7 +18,15 @@ typedef struct {
 // Returns NULL if code generation failed; see the diagnostics sink.
 // max_registers reports how many registers the top-level chunk addresses, so
 // the caller can size its frame. Pass NULL if that is not needed.
+// What the top-level chunk needs to run as a frame: its size, and the slots it
+// may hold references in. Both are known only to codegen, and both travel with
+// the chunk into CompiledScript.
+typedef struct {
+    unsigned int max_registers;
+    FrameRefList refs;
+} CodegenFrameInfo;
+
 Chunk *codegen_generate(ASTScript *ast, CodegenOutput output, Diagnostics *diagnostics,
-                        unsigned int *max_registers);
+                        CodegenFrameInfo *frame_info);
 
 #endif

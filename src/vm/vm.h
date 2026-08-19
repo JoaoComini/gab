@@ -111,10 +111,32 @@
 // Sentinel value for registers
 #define VM_INVALID_REGISTER VM_MAX_REGISTERS + 1
 
+// A slot a frame may hold a reference in, and whether that reference is weak.
+// Used only when a run fails: an abnormal unwind jumps past every release
+// codegen emitted, so the frames have to be told what to drop.
+typedef struct {
+    unsigned int slot;
+    bool weak;
+} FrameRef;
+
+#define frame_ref_list_item_free(item) ((void)(item))
+GAB_LIST(FrameRefList, frame_ref_list, FrameRef)
+
 typedef struct {
     Chunk *chunk;
     int arity;
     int max_registers;
+
+    // Every slot this function ever owns a reference in. Walked only on an
+    // abnormal unwind, where the ordinary releases are skipped — so it costs
+    // nothing on the path that matters, and the alternative is leaking whatever
+    // the stack held when the run failed.
+    //
+    // A slot may appear here and hold something else by the time a failure
+    // happens, since sibling blocks reuse slots. That is why the runtime clears
+    // a slot when it releases it: a slot listed here either holds a live
+    // reference or holds NULL, and NULL is what both release paths tolerate.
+    FrameRefList refs;
 } FuncPrototype;
 
 #define VM_MAX_CALL_DEPTH 256
@@ -135,6 +157,10 @@ typedef struct {
 typedef struct {
     Chunk *chunk;
     unsigned int max_registers;
+
+    // As FuncPrototype::refs, for the top-level frame. Top-level code owns
+    // references like any other, and a failure there unwinds the same way.
+    FrameRefList refs;
 
     // The module the unit declared, interned in the VM's pool, or NULL for the
     // root namespace. Carried out because the AST that held it is destroyed
@@ -192,6 +218,7 @@ typedef enum {
     VM_RUN_ERR_CALL_DEPTH,
     VM_RUN_ERR_STACK_OVERFLOW,
     VM_RUN_ERR_OUT_OF_MEMORY,
+    VM_RUN_ERR_DANGLING_WEAK,
 } VmRunStatus;
 
 // The interpreter's failure channel. A run cannot report through a return value

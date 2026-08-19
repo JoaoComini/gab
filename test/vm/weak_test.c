@@ -1,4 +1,5 @@
 #include "ast/ast.h"
+#include "diagnostics.h"
 #include "lexer.h"
 #include "parser.h"
 #include "scope.h"
@@ -168,6 +169,75 @@ static void test_a_parent_child_cycle_frees_both() {
                    "let r: int = main();") == 3);
 }
 
+// Reaching through a weak reference whose object is gone fails the run rather
+// than reading the zeroed payload, which would answer plausibly instead of
+// obviously wrongly.
+static void test_a_dead_weak_deref_traps() {
+    VM *vm = vm_create();
+
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+
+    CompiledScript script;
+    assert(vm_compile(vm,
+                      "struct Node { n: int }\n"
+                      "func main(): int {\n"
+                      "    let w: weak *Node;\n"
+                      "    { let owner: *Node = new Node; owner.n = 7; w = owner; }\n"
+                      "    return w.n;\n"
+                      "}\n"
+                      "let r: int = main();",
+                      &script, &diagnostics));
+
+    diagnostics_free(&diagnostics);
+
+    assert(vm_run(vm, &script) == VM_RUN_ERR_DANGLING_WEAK);
+    assert(vm->error.status == VM_RUN_ERR_DANGLING_WEAK);
+    assert(vm->error.message);
+
+    vm_compiled_script_free(&script);
+    vm_free(vm);
+}
+
+// A weak reference whose object is still alive reaches through normally: the
+// check is a guard, not a tax on every use.
+static void test_a_live_weak_deref_works() {
+    assert(run_int("struct Node { n: int }\n"
+                   "func main(): int {\n"
+                   "    let owner: *Node = new Node;\n"
+                   "    owner.n = 12;\n"
+                   "    let w: weak *Node = owner;\n"
+                   "    return w.n;\n"
+                   "}\n"
+                   "let r: int = main();") == 12);
+}
+
+// A failure unwinds past every release codegen emitted, so the frames drop what
+// they hold on the way out. Nothing weak about this one — it is the same path,
+// and it leaked from the moment refcounting landed until the unwind learned to
+// release.
+static void test_an_abnormal_unwind_releases_what_it_held() {
+    VM *vm = vm_create();
+
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+
+    CompiledScript script;
+    assert(vm_compile(vm,
+                      "struct Node { n: int }\n"
+                      "func deep(n: int): int { return deep(n + 1); }\n"
+                      "func main(): int { let p: *Node = new Node; return deep(0); }\n"
+                      "let r: int = main();",
+                      &script, &diagnostics));
+
+    diagnostics_free(&diagnostics);
+
+    assert(vm_run(vm, &script) == VM_RUN_ERR_CALL_DEPTH);
+
+    vm_compiled_script_free(&script);
+    vm_free(vm);
+}
+
 int main(void) {
     test_weak_is_a_distinct_type();
     test_weak_pointers_are_interned();
@@ -176,6 +246,9 @@ int main(void) {
     test_weak_requires_a_pointer();
     test_a_weak_field_reads_and_writes();
     test_a_parent_child_cycle_frees_both();
+    test_a_dead_weak_deref_traps();
+    test_a_live_weak_deref_works();
+    test_an_abnormal_unwind_releases_what_it_held();
 
     printf("All weak tests passed\n");
     return 0;
