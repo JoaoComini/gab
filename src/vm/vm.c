@@ -555,6 +555,32 @@ static void vm_run_loop(VM *vm) {
             break;
         }
         case OP_DIVI: {
+            // Both of these are undefined in C and take the whole host
+            // process down with SIGFPE, so they are checked rather than
+            // performed: division by zero, and INT32_MIN / -1, whose true
+            // quotient is one past the top of the range.
+            //
+            // The float opcodes need no such guard: IEEE division by zero
+            // yields an infinity, which is a value the VM can carry.
+            int32_t divisor = vm_operand2i(vm, instruction);
+            int32_t dividend = vm_reg(vm, VM_DECODE_R_R1(instruction))->as_int;
+
+            if (divisor == 0) {
+                vm_fail(vm, VM_RUN_ERR_DIVIDE_BY_ZERO, "divided by zero");
+
+                vm_unwind(vm);
+
+                break;
+            }
+
+            if (dividend == INT32_MIN && divisor == -1) {
+                vm_fail(vm, VM_RUN_ERR_DIVIDE_OVERFLOW, "divided the most negative int by -1");
+
+                vm_unwind(vm);
+
+                break;
+            }
+
             vm_arithmetici(vm, instruction, vm_divi);
             break;
         }

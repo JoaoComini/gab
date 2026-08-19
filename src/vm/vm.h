@@ -213,6 +213,8 @@ typedef enum {
     VM_RUN_ERR_STACK_OVERFLOW,
     VM_RUN_ERR_OUT_OF_MEMORY,
     VM_RUN_ERR_DANGLING_WEAK,
+    VM_RUN_ERR_DIVIDE_BY_ZERO,
+    VM_RUN_ERR_DIVIDE_OVERFLOW,
 } VmRunStatus;
 
 // The interpreter's failure channel. A run cannot report through a return value

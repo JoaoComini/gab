@@ -76,4 +76,32 @@ static inline bool test_compiles(const char *source) {
     return ok;
 }
 
+// Runs a script expected to fail, and returns why. Compilation must still
+// succeed: this is for runtime traps, where the mistake is only visible once
+// the offending instruction executes.
+static inline VmRunStatus test_run_status(const char *source) {
+    VM *vm = vm_create();
+
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+
+    CompiledScript script;
+    bool compiled = vm_compile(vm, source, &script, &diagnostics);
+
+    diagnostics_free(&diagnostics);
+    assert(compiled);
+
+    VmRunStatus status = vm_run(vm, &script);
+
+    // The status is reported both ways round, and a failure always carries a
+    // message for the host to show.
+    assert(vm->error.status == status);
+    assert(status == VM_RUN_OK || vm->error.message);
+
+    vm_compiled_script_free(&script);
+    vm_free(vm);
+
+    return status;
+}
+
 #endif
