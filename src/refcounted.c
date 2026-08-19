@@ -1,18 +1,18 @@
-#include "object.h"
+#include "refcounted.h"
 
 #include <assert.h>
 #include <string.h>
 
-ObjHeader *gab_header_of(void *payload) {
+RefCounted *gab_refcounted_of(void *payload) {
     assert(payload && "a header is only meaningful for a live object");
 
-    return (ObjHeader *)payload - 1;
+    return (RefCounted *)payload - 1;
 }
 
-void *gab_object_alloc(Allocator allocator, const Type *type) {
+void *gab_refcounted_alloc(Allocator allocator, const Type *type) {
     assert(type && "an object needs a type; release walks its fields");
 
-    ObjHeader *header = allocator.alloc(allocator.ctx, sizeof(ObjHeader) + type->size);
+    RefCounted *header = allocator.alloc(allocator.ctx, sizeof(RefCounted) + type->size);
 
     if (!header) {
         return NULL;
@@ -31,12 +31,12 @@ void *gab_object_alloc(Allocator allocator, const Type *type) {
     return payload;
 }
 
-void gab_object_retain(void *payload) {
+void gab_retain(void *payload) {
     if (!payload) {
         return;
     }
 
-    gab_header_of(payload)->strong++;
+    gab_refcounted_of(payload)->strong++;
 }
 
 // Releases the pointer fields a payload holds, so that freeing an object frees
@@ -51,7 +51,7 @@ static void release_fields(Allocator allocator, const Type *type, char *payload)
             void *reference;
             memcpy(&reference, payload + field->offset, sizeof(reference));
 
-            gab_object_release(allocator, reference);
+            gab_release(allocator, reference);
             continue;
         }
 
@@ -64,12 +64,12 @@ static void release_fields(Allocator allocator, const Type *type, char *payload)
     }
 }
 
-void gab_object_release(Allocator allocator, void *payload) {
+void gab_release(Allocator allocator, void *payload) {
     if (!payload) {
         return;
     }
 
-    ObjHeader *header = gab_header_of(payload);
+    RefCounted *header = gab_refcounted_of(payload);
 
     assert(header->strong > 0 && "released an object that already reached zero");
 

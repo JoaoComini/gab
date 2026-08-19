@@ -1,4 +1,4 @@
-#include "object.h"
+#include "refcounted.h"
 #include "support/test_context.h"
 #include "type.h"
 #include "type_registry.h"
@@ -59,15 +59,15 @@ static void test_alloc_starts_at_one_and_frees_at_zero() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *p = gab_object_alloc(allocator, player);
+    void *p = gab_refcounted_alloc(allocator, player);
 
     assert(p);
     assert(counts.allocs == 1);
-    assert(gab_header_of(p)->strong == 1);
-    assert(gab_header_of(p)->weak == 0);
-    assert(gab_header_of(p)->type == player);
+    assert(gab_refcounted_of(p)->strong == 1);
+    assert(gab_refcounted_of(p)->weak == 0);
+    assert(gab_refcounted_of(p)->type == player);
 
-    gab_object_release(allocator, p);
+    gab_release(allocator, p);
     assert(counts.frees == 1);
 
     type_registry_destroy(registry);
@@ -90,15 +90,15 @@ static void test_payload_follows_the_header() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *p = gab_object_alloc(allocator, pair);
+    void *p = gab_refcounted_alloc(allocator, pair);
 
-    assert((char *)gab_header_of(p) + sizeof(ObjHeader) == (char *)p);
+    assert((char *)gab_refcounted_of(p) + sizeof(RefCounted) == (char *)p);
     assert((uintptr_t)p % 8 == 0);
 
     // Zeroed, so a pointer field nobody set reads as NULL rather than garbage.
     assert(((int *)p)[0] == 0 && ((int *)p)[1] == 0);
 
-    gab_object_release(allocator, p);
+    gab_release(allocator, p);
 
     type_registry_destroy(registry);
     test_context_free(&ctx);
@@ -119,16 +119,16 @@ static void test_two_references_keep_it_alive() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *p = gab_object_alloc(allocator, box);
-    gab_object_retain(p);
+    void *p = gab_refcounted_alloc(allocator, box);
+    gab_retain(p);
 
-    assert(gab_header_of(p)->strong == 2);
+    assert(gab_refcounted_of(p)->strong == 2);
 
-    gab_object_release(allocator, p);
+    gab_release(allocator, p);
     assert(counts.frees == 0);
-    assert(gab_header_of(p)->strong == 1);
+    assert(gab_refcounted_of(p)->strong == 1);
 
-    gab_object_release(allocator, p);
+    gab_release(allocator, p);
     assert(counts.frees == 1);
 
     type_registry_destroy(registry);
@@ -157,22 +157,22 @@ static void test_release_walks_pointer_fields() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *child = gab_object_alloc(allocator, inner);
-    void *parent = gab_object_alloc(allocator, outer);
+    void *child = gab_refcounted_alloc(allocator, inner);
+    void *parent = gab_refcounted_alloc(allocator, outer);
 
     // The parent takes ownership of the child, as a store would.
     memcpy((char *)parent, &child, sizeof(child));
-    gab_object_retain(child);
+    gab_retain(child);
 
-    assert(gab_header_of(child)->strong == 2);
+    assert(gab_refcounted_of(child)->strong == 2);
     assert(counts.allocs == 2);
 
     // The creating reference goes; the parent's keeps it alive.
-    gab_object_release(allocator, child);
+    gab_release(allocator, child);
     assert(counts.frees == 0);
 
     // Releasing the parent frees both, in one call.
-    gab_object_release(allocator, parent);
+    gab_release(allocator, parent);
     assert(counts.frees == 2);
 
     type_registry_destroy(registry);
@@ -206,19 +206,19 @@ static void test_release_walks_into_an_inline_struct() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *leaf_obj = gab_object_alloc(allocator, leaf);
-    void *outer_obj = gab_object_alloc(allocator, outer);
+    void *leaf_obj = gab_refcounted_alloc(allocator, leaf);
+    void *outer_obj = gab_refcounted_alloc(allocator, outer);
 
     size_t held_offset = 0;
     assert(type_field_offset(outer, string_from_cstr(&ctx.strings, "held"), &held_offset));
 
     memcpy((char *)outer_obj + held_offset, &leaf_obj, sizeof(leaf_obj));
-    gab_object_retain(leaf_obj);
+    gab_retain(leaf_obj);
 
-    gab_object_release(allocator, leaf_obj);
+    gab_release(allocator, leaf_obj);
     assert(counts.frees == 0);
 
-    gab_object_release(allocator, outer_obj);
+    gab_release(allocator, outer_obj);
     assert(counts.frees == 2);
 
     type_registry_destroy(registry);
@@ -231,8 +231,8 @@ static void test_null_is_tolerated() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    gab_object_retain(NULL);
-    gab_object_release(allocator, NULL);
+    gab_retain(NULL);
+    gab_release(allocator, NULL);
 
     assert(counts.frees == 0);
 }
