@@ -359,21 +359,6 @@ static void vm_store_field_ptr(VM *vm, Instruction instruction, size_t width) {
 //
 // The scope is parented to the root for builtin lookup but stays at depth 0:
 // its declarations are a unit's top level, not a nested block.
-// Naming another module's type must not bring that module into being, so this
-// only ever looks: an unknown name is a miss the resolver reports as an
-// unknown type. The ModuleScopeFn the resolver calls, hence the void * VM.
-Scope *vm_module_scope_lookup(void *ctx, String *name) {
-    VM *vm = (VM *)ctx;
-
-    if (!name) {
-        return &vm->global_scope;
-    }
-
-    Scope **existing = module_scope_map_lookup(vm->module_scopes, name);
-
-    return existing ? *existing : NULL;
-}
-
 Scope *vm_module_scope(VM *vm, String *name) {
     if (!name) {
         return &vm->global_scope;
@@ -425,7 +410,7 @@ bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *di
         // Every name this compile declares is stamped with this generation.
         scope_set_generation(scope, vm->compile_generation);
 
-        if (ast_script_resolve(vm->compile_arena, script, scope, vm_module_scope_lookup, vm, diagnostics)) {
+        if (ast_script_resolve(vm->compile_arena, script, scope, vm->module_scopes, diagnostics)) {
             chunk = codegen_generate(
                 script, (CodegenOutput){.funcs = &vm->global_funcs, .heap_types = &vm->heap_types},
                 diagnostics, &frame_info);

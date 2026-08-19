@@ -205,15 +205,6 @@ GAB_LIST(LoadedScriptList, loaded_script_list, LoadedScript)
 #define func_handle_list_item_free(item) ((void)(item))
 GAB_LIST(FuncHandleList, func_handle_list, void *)
 
-// Module name to the scope holding its declarations. Keyed on the interned
-// name, so identity comparison is enough.
-#define module_scope_map_hash(key) (size_t)key
-#define module_scope_map_key_equals(key, other) key == other
-#define module_scope_map_key_dup(key) key
-#define module_scope_map_entry_free(key, value)
-
-GAB_HASH_MAP(ModuleScopeMap, module_scope_map, String *, Scope *)
-
 // Why a run stopped. A run that completed normally leaves VM_RUN_OK; anything
 // else means the interpreter unwound early, and the frames are already gone.
 typedef enum {
@@ -331,9 +322,6 @@ bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *di
 // The scope holding a module's declarations, created on first mention and
 // living as long as the VM. NULL names the root namespace.
 Scope *vm_module_scope(VM *vm, String *name);
-
-// Lookup-only, for the resolver: NULL when no such module exists.
-Scope *vm_module_scope_lookup(void *ctx, String *name);
 
 // Runs a compiled script as frame zero, leaving its result in slot 0. Returns
 // why the run stopped; vm->error carries the same status plus a message.

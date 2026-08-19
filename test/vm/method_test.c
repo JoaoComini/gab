@@ -37,7 +37,7 @@ static bool resolve(TestContext *ctx, Scope *scope, ASTScript *script, const cha
         return false;
     }
 
-    return ast_script_resolve(ctx->arena, script, scope, NULL, NULL, &ctx->diagnostics);
+    return ast_script_resolve(ctx->arena, script, scope, NULL, &ctx->diagnostics);
 }
 
 static Type *lookup_type(TestContext *ctx, Scope *scope, const char *name) {

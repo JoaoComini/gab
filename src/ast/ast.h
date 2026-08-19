@@ -27,13 +27,11 @@ void ast_script_add_statement(ASTScript *script, ASTStmt *stmt);
 // publishes into the global scope or the type registry is allocated from that
 // scope's own arena instead, so it outlives the compile that produced it.
 // How the resolver reaches another module's scope, for a 'Module::Type' name.
-// Returns NULL when no such module exists, which the resolver reports as an
-// unknown type. Kept a callback so the resolver needs no dependency on the VM
-// that owns the module table.
-typedef Scope *(*ModuleScopeFn)(void *ctx, String *name);
-
+// The map is passed rather than the VM that owns it, so the resolver depends on
+// a data structure and not on the runtime. NULL means no modules are visible; a
+// name that misses is reported as an unknown type.
 bool ast_script_resolve(Arena *compile_arena, ASTScript *script, Scope *global_scope,
-                        ModuleScopeFn module_scope, void *module_scope_ctx, Diagnostics *diagnostics);
+                        ModuleScopeMap *module_scopes, Diagnostics *diagnostics);
 void ast_script_destroy(ASTScript *script);
 
 #endif

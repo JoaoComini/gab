@@ -5,9 +5,7 @@
 #include "type.h"
 
 #include <assert.h>
-#include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
 static Type *register_builtin(TypeRegistry *registry, TypeKind kind, const char *name, size_t size,
                               size_t alignment) {
@@ -60,14 +58,9 @@ Type *type_registry_pointer_to_kind(TypeRegistry *registry, Type *pointee, bool 
         return *existing;
     }
 
-    // The name is only ever read by diagnostics, but it is interned like any
-    // other so that a Type always has a printable name.
-    const char *prefix = weak ? "weak *" : "*";
-    size_t length = strlen(pointee->name->data) + strlen(prefix) + 1;
-    char *name = arena_alloc(registry->arena, length);
-    snprintf(name, length, "%s%s", prefix, pointee->name->data);
-
-    Type *type = type_create(registry->arena, TYPE_POINTER, string_from_cstr(registry->strings, name));
+    // No name: a pointer type is structural, so its printable form is derived
+    // from the pointee when a diagnostic asks. See Type::name.
+    Type *type = type_create(registry->arena, TYPE_POINTER, NULL);
 
     // Always a raw address to the payload, so a stack pointer and a heap one
     // are byte-identical; only the resolver knows which is which. A weak

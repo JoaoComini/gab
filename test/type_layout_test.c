@@ -44,7 +44,7 @@ static Type *resolve_struct(TestContext *ctx, const char *source, const char *na
     scope_init(&global_scope, ctx->arena, &ctx->strings, NULL);
 
     if (parser_parse(&parser, script)) {
-        ast_script_resolve(ctx->arena, script, &global_scope, NULL, NULL, &ctx->diagnostics);
+        ast_script_resolve(ctx->arena, script, &global_scope, NULL, &ctx->diagnostics);
     }
 
     if (diagnostics_has_errors(&ctx->diagnostics)) {
@@ -192,7 +192,7 @@ static void test_unknown_field_type_is_not_registered() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
 
     parser_parse(&parser, script);
-    ast_script_resolve(ctx.arena, script, &global_scope, NULL, NULL, &ctx.diagnostics);
+    ast_script_resolve(ctx.arena, script, &global_scope, NULL, &ctx.diagnostics);
 
     assert(diagnostics_count(&ctx.diagnostics) == 1);
 

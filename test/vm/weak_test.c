@@ -35,7 +35,7 @@ static bool resolve(TestContext *ctx, Scope *scope, ASTScript *script, const cha
         return false;
     }
 
-    return ast_script_resolve(ctx->arena, script, scope, NULL, NULL, &ctx->diagnostics);
+    return ast_script_resolve(ctx->arena, script, scope, NULL, &ctx->diagnostics);
 }
 
 static bool compiles(const char *source) {

@@ -7,6 +7,16 @@
 
 typedef struct SymbolTable SymbolTable;
 typedef struct Symbol Symbol;
+typedef struct Scope Scope;
+
+// Module name to the scope holding its declarations. Keyed on the interned
+// name, so identity comparison is enough.
+#define module_scope_map_hash(key) (size_t)key
+#define module_scope_map_key_equals(key, other) key == other
+#define module_scope_map_key_dup(key) key
+#define module_scope_map_entry_free(key, value)
+
+GAB_HASH_MAP(ModuleScopeMap, module_scope_map, String *, Scope *)
 
 typedef struct Scope {
     Arena *arena;

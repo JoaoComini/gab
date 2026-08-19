@@ -47,6 +47,11 @@ typedef struct TypeField {
 
 struct Type {
     TypeKind kind;
+
+    // NULL for a type whose identity is structural: a pointer is '*' plus its
+    // pointee and nothing more, so its printable form is derived on demand
+    // rather than stored. Non-NULL only for nominal types — builtins and
+    // structs — where the name is the identity.
     String *name;
 
     size_t size;

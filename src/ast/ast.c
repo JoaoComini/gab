@@ -42,8 +42,7 @@ typedef struct {
     Scope *global_scope;
     Scope *current_scope;
 
-    ModuleScopeFn module_scope;
-    void *module_scope_ctx;
+    ModuleScopeMap *module_scopes;
 
     FuncContext func_context;
 
@@ -92,12 +91,14 @@ static Scope *resolver_spec_scope(ResolverState *state, StringRef name) {
         return state->current_scope;
     }
 
-    if (!state->module_scope) {
+    if (!state->module_scopes) {
         return NULL;
     }
 
-    return state->module_scope(state->module_scope_ctx,
-                               string_from_ref(state->current_scope->strings, module));
+    String *module_name = string_from_ref(state->current_scope->strings, module);
+    Scope **existing = module_scope_map_lookup(state->module_scopes, module_name);
+
+    return existing ? *existing : NULL;
 }
 
 // The half of a spec name a scope holds: 'Type' out of 'Module::Type'.
@@ -115,12 +116,27 @@ static String *resolver_spec_member(ResolverState *state, StringRef name) {
 // further check involving it silently succeeds rather than cascading.
 static bool is_error_type(Type *type) { return !type || type->kind == TYPE_ERROR; }
 
-static const char *type_name(Type *type) {
+// The printable form of a type. A pointer's name is derived from its pointee
+// rather than stored, so 'weak **Player' formats without interning three
+// intermediate names. Built in the compile arena: only diagnostics ask, and
+// they are already on the failing path.
+static const char *type_name(ResolverState *state, Type *type) {
     if (!type) {
         return "none";
     }
 
-    return type->name->data;
+    if (type->name) {
+        return type->name->data;
+    }
+
+    const char *pointee = type_name(state, type->pointee);
+    const char *prefix = type->is_weak ? "weak *" : "*";
+    size_t length = strlen(prefix) + strlen(pointee) + 1;
+    char *out = arena_alloc(state->compile_arena, length);
+
+    snprintf(out, length, "%s%s", prefix, pointee);
+
+    return out;
 }
 
 void resolver_enter_scope(ResolverState *state) {
@@ -244,7 +260,7 @@ static void check_call_args(ResolverState *state, ASTExprList *args, Type **para
 
         if (arg->type != param_type) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, arg->span, "argument %zu is %s, but %s was declared",
-                       i + 1, type_name(arg->type), type_name(param_type));
+                       i + 1, type_name(state, arg->type), type_name(state, param_type));
         }
     }
 }
@@ -284,7 +300,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, Type *declar
 
     // A '**Player', or some other shape no coercion bridges.
     diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot call '%s' on %s", name->data,
-               type_name(actual));
+               type_name(state, actual));
     return false;
 }
 
@@ -337,7 +353,7 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
 
         if (left_type != right_type) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot apply '%s' to %s and %s",
-                       op_name, type_name(left_type), type_name(right_type));
+                       op_name, type_name(state, left_type), type_name(state, right_type));
             expr->type = resolver_error_type(state);
             break;
         }
@@ -349,7 +365,7 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         case BIN_OP_DIV:
             if (!is_numeric_type(left_type)) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                           "'%s' requires a numeric type, found %s", op_name, type_name(left_type));
+                           "'%s' requires a numeric type, found %s", op_name, type_name(state, left_type));
                 expr->type = resolver_error_type(state);
                 return;
             }
@@ -360,7 +376,7 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         case BIN_OP_NEQUAL:
             if (!is_comparable_type(left_type)) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "'%s' is not supported for %s",
-                           op_name, type_name(left_type));
+                           op_name, type_name(state, left_type));
                 expr->type = resolver_error_type(state);
                 return;
             }
@@ -371,7 +387,7 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         case BIN_OP_GEQUAL:
             if (!is_ordered_type(left_type)) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                           "'%s' requires an ordered type, found %s", op_name, type_name(left_type));
+                           "'%s' requires an ordered type, found %s", op_name, type_name(state, left_type));
                 expr->type = resolver_error_type(state);
                 return;
             }
@@ -380,7 +396,7 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         case BIN_OP_OR:
             if (!is_boolean_type(left_type)) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                           "'%s' requires a boolean type, found %s", op_name, type_name(left_type));
+                           "'%s' requires a boolean type, found %s", op_name, type_name(state, left_type));
                 expr->type = resolver_error_type(state);
                 return;
             }
@@ -459,7 +475,7 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
 
         if (!base) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                       "%s is not a struct, so it has no methods", type_name(receiver_type));
+                       "%s is not a struct, so it has no methods", type_name(state, receiver_type));
             expr->type = resolver_error_type(state);
             break;
         }
@@ -516,7 +532,7 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
 
         if (target_type->kind != TYPE_STRUCT) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                       "%s is not a struct, so it has no fields", type_name(expr->field.target->type));
+                       "%s is not a struct, so it has no fields", type_name(state, expr->field.target->type));
             expr->type = resolver_error_type(state);
             break;
         }
@@ -526,7 +542,7 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
 
         if (!field) {
             diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "'%s' has no field '%s'",
-                       type_name(target_type), field_name->data);
+                       type_name(state, target_type), field_name->data);
             expr->type = resolver_error_type(state);
             break;
         }
@@ -578,7 +594,7 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
 
         if (!type_is_pointer(target_type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot dereference %s",
-                       type_name(target_type));
+                       type_name(state, target_type));
             expr->type = resolver_error_type(state);
             break;
         }
@@ -602,7 +618,7 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         // scalar, which is a different feature and not this one.
         if (type->kind != TYPE_STRUCT) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                       "cannot allocate %s; 'new' takes a struct", type_name(type));
+                       "cannot allocate %s; 'new' takes a struct", type_name(state, type));
             expr->type = resolver_error_type(state);
             break;
         }
@@ -788,7 +804,7 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
     if (!base) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, receiver->span,
                    "a method's receiver must be a struct or a pointer to one, found %s",
-                   type_name(receiver_type));
+                   type_name(state, receiver_type));
         return;
     }
 
@@ -954,7 +970,7 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
                     !type_accepts(decl_type, init_type)) {
                     diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->var_decl.initializer->span,
                                "cannot initialize a variable of type %s with a value of type %s",
-                               type_name(decl_type), type_name(init_type));
+                               type_name(state, decl_type), type_name(state, init_type));
                     decl_type = resolver_error_type(state);
                 }
             }
@@ -1011,8 +1027,8 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         if (!is_error_type(target_type) && !is_error_type(value_type) &&
             !type_accepts(target_type, value_type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
-                       "cannot assign a value of type %s to a target of type %s", type_name(value_type),
-                       type_name(target_type));
+                       "cannot assign a value of type %s to a target of type %s", type_name(state, value_type),
+                       type_name(state, target_type));
             break;
         }
 
@@ -1066,7 +1082,7 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
 
         if (!poisoned && actual != expected) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span, "returns %s, but %s was declared",
-                       type_name(actual), type_name(expected));
+                       type_name(state, actual), type_name(state, expected));
             break;
         }
 
@@ -1079,13 +1095,12 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
 }
 
 bool ast_script_resolve(Arena *compile_arena, ASTScript *script, Scope *global_scope,
-                        ModuleScopeFn module_scope, void *module_scope_ctx, Diagnostics *diagnostics) {
+                        ModuleScopeMap *module_scopes, Diagnostics *diagnostics) {
     ResolverState state = {
         .compile_arena = compile_arena,
         .global_scope = global_scope,
         .current_scope = global_scope,
-        .module_scope = module_scope,
-        .module_scope_ctx = module_scope_ctx,
+        .module_scopes = module_scopes,
         .func_context =
             {
                 .return_type = NULL,
