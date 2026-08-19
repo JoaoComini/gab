@@ -799,6 +799,65 @@ static void test_recompiling_a_module_reloads_it(void) {
     gab_vm_free(vm);
 }
 
+// A method's declaration belongs to the struct Type, which a reload replaces.
+// The new Type carries a fresh method table, so the methods are redeclared onto
+// it rather than colliding with the previous compile's.
+static void test_reloading_a_module_redeclares_its_methods(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    assert(gab_load(vm, "m.gab",
+                             "module M;\n"
+                             "struct Player { health: int }\n"
+                             "func (p: *Player) hp(): int { return p.health; }\n"
+                             "func probe(): int { let p: Player; p.health = 7; return p.hp(); }\n",
+                             &err));
+
+    GabFunc *fn = gab_lookup(vm, "M", "probe", &err);
+    assert(fn);
+
+    GabCall *call = gab_call_init(fn, &err);
+    assert(call);
+
+    int result = 0;
+    assert(gab_call(vm, call, &result, &err) == GAB_OK);
+    assert(result == 7);
+
+    // The same unit again, with the method body changed.
+    assert(gab_load(vm, "m.gab",
+                             "module M;\n"
+                             "struct Player { health: int }\n"
+                             "func (p: *Player) hp(): int { return p.health * 100; }\n"
+                             "func probe(): int { let p: Player; p.health = 7; return p.hp(); }\n",
+                             &err));
+
+    result = 0;
+    assert(gab_call(vm, call, &result, &err) == GAB_OK);
+    assert(result == 700);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
+// A method is not a module-level name, so a host cannot reach one through
+// gab_lookup even knowing what it is called.
+static void test_a_method_is_not_reachable_from_a_host(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    assert(gab_load(vm, "m.gab",
+                             "module M;\n"
+                             "struct Player { health: int }\n"
+                             "func (p: *Player) hp(): int { return p.health; }\n",
+                             &err));
+
+    assert(!gab_lookup(vm, "M", "hp", &err));
+
+    gab_vm_free(vm);
+}
+
 // Allowing a reload must not stop one unit declaring the same name twice from
 // being an error: a reload is a *later* compile replacing an earlier one, never
 // a unit contradicting itself.
@@ -1165,6 +1224,8 @@ int main(void) {
     test_recompiling_a_module_reloads_it();
     test_reloading_a_name_replaces_it();
     test_a_failed_reload_leaves_the_previous_unit();
+    test_reloading_a_module_redeclares_its_methods();
+    test_a_method_is_not_reachable_from_a_host();
     test_duplicate_declarations_in_one_unit_are_rejected();
     test_signature_change_rebinds_the_handle();
     test_staging_after_a_signature_change_just_works();
