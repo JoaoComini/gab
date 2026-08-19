@@ -21,6 +21,7 @@ set(
     vm/heap_test.c
     vm/weak_test.c
     vm/neg_test.c
+    vm/compare_test.c
     vm/stack_test.c
     vm/vm_test.c
     gab_api_test.c

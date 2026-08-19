@@ -539,7 +539,7 @@ static void vm_run_loop(VM *vm) {
             break;
         }
         case OP_CMP_GEF: {
-            vm_conditional(vm, instruction, vm_less_equalf);
+            vm_conditional(vm, instruction, vm_greater_equalf);
             break;
         }
         case OP_ADDI: {
@@ -579,7 +579,7 @@ static void vm_run_loop(VM *vm) {
             break;
         }
         case OP_CMP_GEI: {
-            vm_conditionali(vm, instruction, vm_less_equali);
+            vm_conditionali(vm, instruction, vm_greater_equali);
             break;
         }
         case OP_NEW: {
