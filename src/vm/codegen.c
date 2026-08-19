@@ -75,6 +75,7 @@ static unsigned int codegen_bin_op_logical_expr(CodegenState *state, ASTExpr *no
 static unsigned int codegen_bin_op_into(CodegenState *state, ASTExpr *node, unsigned int dest);
 static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node);
+static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symbol *callee, Span span);
 static unsigned int codegen_method_call_expr(CodegenState *state, ASTExpr *node);
 static void codegen_addr_of_into(CodegenState *state, ASTExpr *inner, unsigned int rd, Span span);
 static unsigned int codegen_deref_of(CodegenState *state, ASTExpr *node, ASTExpr *pointer,
@@ -475,6 +476,30 @@ static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node) {
     return r1;
 }
 
+// The OP_CALL itself, shared by a plain call and a method call: by this point
+// the two have laid out an identical block and differ in nothing the
+// instruction records.
+//
+// I-type, so the prototype index gets the 17-bit field. It is not a register,
+// and while it rode in an 8-bit one a single VM could hold only 255 functions
+// across every module it ever loaded. No argument count is encoded: the
+// callee's frame is based at dest, so the arguments written above dest already
+// are its parameters, and its size comes from the prototype.
+static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symbol *callee, Span span) {
+    // Masking alone would encode a call to the wrong function, so an index too
+    // wide for the field is rejected rather than truncated.
+    if (callee->func.proto_index > VM_MAX_PROTOTYPES) {
+        if (!state->failed) {
+            diag_error(state->diagnostics, GAB_ERR_CODEGEN, span, "too many functions in one program");
+        }
+
+        state->failed = true;
+        return;
+    }
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_CALL, dest, (unsigned int)callee->func.proto_index));
+}
+
 // Arguments go into the registers immediately above the destination, which is
 // where the callee's frame expects them: its r0 is the return slot and its
 // parameters are r1..arity.
@@ -518,21 +543,7 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
         offset += slots;
     }
 
-    // The prototype index rides in an 8-bit field. Masking alone would encode
-    // a call to the wrong function, so it is rejected rather than truncated.
-    if (node->symbol->func.proto_index > VM_MAX_REGISTERS) {
-        if (!state->failed) {
-            diag_error(state->diagnostics, GAB_ERR_CODEGEN, node->span, "too many functions in one script");
-        }
-
-        state->failed = true;
-        return dest;
-    }
-
-    // argc counts slots, not arguments: that is what sizing the callee's frame
-    // needs. The resolver has already checked the argument count.
-    Instruction call = VM_ENCODE_R(OP_CALL, dest, (unsigned int)node->symbol->func.proto_index, arg_slots);
-    chunk_add_instruction(state->chunk, call);
+    codegen_emit_call(state, dest, node->symbol, node->span);
 
     codegen_release_registers(state, saved);
 
@@ -595,17 +606,7 @@ static unsigned int codegen_method_call_expr(CodegenState *state, ASTExpr *node)
         offset += slots;
     }
 
-    if (method->func.proto_index > VM_MAX_REGISTERS) {
-        if (!state->failed) {
-            diag_error(state->diagnostics, GAB_ERR_CODEGEN, node->span, "too many functions in one script");
-        }
-
-        state->failed = true;
-        return dest;
-    }
-
-    Instruction call = VM_ENCODE_R(OP_CALL, dest, (unsigned int)method->func.proto_index, arg_slots);
-    chunk_add_instruction(state->chunk, call);
+    codegen_emit_call(state, dest, method, node->span);
 
     codegen_release_registers(state, saved);
 
@@ -660,7 +661,7 @@ static FieldTarget codegen_field_base(CodegenState *state, ASTExpr *node, bool a
 // An offset rides in an 8-bit operand, and only 1, 2 and 4 byte fields have an
 // opcode. Both are compile-time facts, so a violation is reported once here.
 static bool codegen_field_access_fits(CodegenState *state, ASTExpr *node, bool ok, size_t offset) {
-    if (ok && offset <= VM_MAX_REGISTERS) {
+    if (ok && offset <= VM_MAX_FIELD_OFFSET) {
         return true;
     }
 
@@ -687,7 +688,7 @@ static unsigned int codegen_field_slots(FieldTarget target) {
 // method call derefs its receiver, and the node's own type is the return type.
 static unsigned int codegen_load_indirect_struct(CodegenState *state, ASTExpr *node, const Type *type,
                                                  FieldTarget target, unsigned int slots) {
-    if (target.offset > VM_MAX_REGISTERS || slots > VM_MAX_REGISTERS) {
+    if (target.offset > VM_MAX_FIELD_OFFSET || slots > VM_MAX_STRUCT_SLOTS) {
         if (!state->failed) {
             diag_error(state->diagnostics, GAB_ERR_CODEGEN, node->span, "struct is too large for a frame");
         }
@@ -768,7 +769,7 @@ static void codegen_store_field(CodegenState *state, ASTExpr *node, unsigned int
 // offset into the address first.
 static void codegen_store_indirect(CodegenState *state, ASTExpr *node, FieldTarget target, unsigned int src,
                                    unsigned int slots) {
-    if (target.offset > VM_MAX_REGISTERS || slots > VM_MAX_REGISTERS) {
+    if (target.offset > VM_MAX_FIELD_OFFSET || slots > VM_MAX_STRUCT_SLOTS) {
         if (!state->failed) {
             diag_error(state->diagnostics, GAB_ERR_CODEGEN, node->span, "struct is too large for a frame");
         }
@@ -798,7 +799,7 @@ static void codegen_addr_of_into(CodegenState *state, ASTExpr *inner, unsigned i
     // rather than reach through.
     FieldTarget target = codegen_field_base(state, inner, false);
 
-    if (target.offset > VM_MAX_REGISTERS) {
+    if (target.offset > VM_MAX_FIELD_OFFSET) {
         if (!state->failed) {
             diag_error(state->diagnostics, GAB_ERR_CODEGEN, span, "struct is too large for a frame");
         }
@@ -828,7 +829,7 @@ static unsigned int codegen_addr_of_expr(CodegenState *state, ASTExpr *node) {
 
     unsigned int rd = codegen_alloc_slots(state, VM_POINTER_SLOTS, VM_POINTER_SLOTS, node->span);
 
-    if (target.offset > VM_MAX_REGISTERS) {
+    if (target.offset > VM_MAX_FIELD_OFFSET) {
         if (!state->failed) {
             diag_error(state->diagnostics, GAB_ERR_CODEGEN, node->span, "struct is too large for a frame");
         }
@@ -1120,7 +1121,7 @@ static unsigned int codegen_alloc_slots(CodegenState *state, unsigned int count,
         state->next_reg += align_slots - state->next_reg % align_slots;
     }
 
-    if (count > VM_MAX_REGISTERS || state->next_reg > VM_MAX_REGISTERS - count) {
+    if (count > VM_MAX_FRAME_SLOTS || state->next_reg > VM_MAX_FRAME_SLOTS - count) {
         if (!state->failed) {
             // A single value that cannot fit a frame has a different cause and
             // a different fix than a function that simply grew too big.

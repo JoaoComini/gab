@@ -168,8 +168,32 @@ static void test_signature_names_a_struct_declared_below() {
                    "let r: int = main();") == 42);
 }
 
+// A prototype index rides in OP_CALL's 17-bit field, not in a register-sized
+// one. While it was 8 bits a single VM could hold only 255 functions across
+// every module it loaded, which is far too few for a real project: this builds
+// past that and calls the last one, so a regression to an 8-bit field fails
+// here rather than in someone's game.
+static void test_more_functions_than_an_8_bit_index_holds() {
+    // 300 trivial functions, then one that calls the last of them.
+    char source[64 * 1024];
+    size_t used = 0;
+
+    for (int i = 0; i < 300; i++) {
+        used +=
+            (size_t)snprintf(source + used, sizeof(source) - used, "func f%d(): int { return %d; }\n", i, i);
+    }
+
+    used += (size_t)snprintf(source + used, sizeof(source) - used,
+                             "func main(): int { return f299(); }\n"
+                             "let r: int = main();");
+
+    assert(used < sizeof(source));
+    assert(run_int(source) == 299);
+}
+
 int main(void) {
     test_simple_call();
+    test_more_functions_than_an_8_bit_index_holds();
     test_call_a_function_declared_below();
     test_mutual_recursion();
     test_signature_names_a_struct_declared_below();

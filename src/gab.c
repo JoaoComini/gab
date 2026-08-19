@@ -22,7 +22,7 @@ struct GabVM;
 // call is per-caller and lives in a GabCall instead.
 //
 // Sized for the signature it was built against rather than for the largest one
-// the VM could express: VM_MAX_REGISTERS is 255 because that is what an 8-bit
+// the VM could express: VM_MAX_FRAME_SLOTS is 255 because that is what an 8-bit
 // operand addresses — a bound on a frame's slots, not on a function's
 // parameters — so sizing these arrays by it made every handle 4632 bytes to
 // hold a signature that is almost always three or four entries. The
@@ -422,10 +422,9 @@ GabFunc *gab_lookup(GabVM *handle, const char *module, const char *name, GabErro
         return NULL;
     }
 
-    // The handle's per-parameter arrays are all VM_MAX_REGISTERS wide, and a
-    // frame cannot address more slots than that anyway. Refused here so the
-    // fill loops below cannot run past their arrays.
-    if (symbol->func.param_count > VM_MAX_REGISTERS) {
+    // A parameter list cannot outgrow the slots a frame addresses. Refused here
+    // so the fill loops below cannot run past their arrays.
+    if (symbol->func.param_count > VM_MAX_FRAME_SLOTS) {
         char message[256];
         snprintf(message, sizeof(message), "'%s' has more parameters than a frame can hold", name);
         gab_error_set(err, 0, 0, message);

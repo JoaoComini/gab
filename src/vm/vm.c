@@ -525,8 +525,12 @@ static void vm_run_loop(VM *vm) {
             break;
         }
         case OP_CALL: {
-            unsigned int dest = VM_DECODE_R_RD(instruction);
-            size_t proto_index = VM_DECODE_R_R1(instruction);
+            // I-type: a prototype index is not a register, and an 8-bit field
+            // capped one VM at 255 functions across every module it loaded.
+            // The frame is sized from the prototype and the arguments are
+            // already in place above dest, so no third operand is needed.
+            unsigned int dest = VM_DECODE_I_RD(instruction);
+            size_t proto_index = VM_DECODE_I_KX(instruction);
 
             const FuncPrototype *proto = &vm->global_funcs.data[proto_index];
 

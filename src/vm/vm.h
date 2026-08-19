@@ -51,6 +51,11 @@
     op: OpCode (7-bit)
     rd: Destination register (8-bit)
     kx | imm: Constant index (17 bit) or immediate value
+
+    The form for an instruction naming one register plus something that is not
+    a register, where 8 bits would be too narrow: a constant index, or a
+    prototype index. R-type's three 8-bit fields suit an instruction whose
+    operands are all register indices; this suits the rest.
 */
 #define VM_ENCODE_I(op, rd, kx) ((((op) & 0x7F) << 25) | (((rd) & 0xFF) << 17) | ((kx) & 0x1FFFF))
 
@@ -65,6 +70,33 @@
 
 // Maximum registers supported with 8-bit
 #define VM_MAX_REGISTERS ((1 << 8) - 1)
+
+/*
+    The limits below are named for what they bound rather than sharing one
+    constant, because they are different quantities that mostly coincide at
+    255 — the width of an 8-bit operand field. Widening one instruction's
+    field must not silently move the others.
+
+    VM_MAX_PROTOTYPES is why this matters. It was 255 while a prototype index
+    rode in OP_CALL's 8-bit register field, which capped a whole VM at 255
+    functions across every module it loaded — far too few for a real project,
+    and an arbitrary limit besides, since a prototype index is not a register
+    and only sat in a register-sized field by accident.
+*/
+
+// A prototype index rides in OP_CALL's 17-bit I-type field, so it is bounded
+// like a constant index rather than like a register.
+#define VM_MAX_PROTOTYPES VM_MAX_CONSTANTS
+
+// The slots one frame addresses, which is what a register operand indexes.
+#define VM_MAX_FRAME_SLOTS ((1 << 8) - 1)
+
+// A field's byte offset within a struct rides in an 8-bit operand.
+#define VM_MAX_FIELD_OFFSET ((1 << 8) - 1)
+
+// A struct's width in slots, carried in an 8-bit operand by the opcodes that
+// move a whole struct at once.
+#define VM_MAX_STRUCT_SLOTS ((1 << 8) - 1)
 
 // OP_RETURN_N carries its slot count in the 8-bit r2 field.
 #define VM_MAX_RETURN_SLOTS ((1 << 8) - 1)
@@ -111,7 +143,6 @@ void func_proto_free(FuncPrototype proto);
 
 #define func_proto_list_item_free(item) func_proto_free(item)
 GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype)
-
 
 void vm_compiled_script_free(CompiledScript *script);
 
@@ -269,7 +300,6 @@ VmRunStatus vm_run(VM *vm, const CompiledScript *script);
 // calls in through this; base is a byte offset into the stack, and the caller
 // must already have placed the arguments in the parameter slots above it.
 VmRunStatus vm_run_frame(VM *vm, const FuncPrototype *proto, size_t base, unsigned int dest);
-
 
 // Compile, run, and discard, reporting any diagnostics to stderr. The
 // convenience path for a caller with nothing to say about failure.
