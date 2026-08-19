@@ -6,6 +6,7 @@ set(
     parser_test.c
     scope_test.c
     string/string_pool_test.c
+    object_test.c
     type_layout_test.c
     util/hash_map_test.c
     vm/constant_pool_test.c
