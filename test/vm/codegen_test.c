@@ -90,6 +90,25 @@ static void test_a_small_literal_becomes_an_immediate() {
 }
 
 // A float has no immediate form, so the same shape must load its operand.
+// A compound assignment takes the same immediate as the operator it assigns
+// with: 'a += 1' is 'a + 1' stored back, so a small literal rides in the
+// instruction rather than costing a load of its own each time round a loop.
+static void test_a_compound_assignment_takes_an_immediate() {
+    TestProgram program = test_compile("let a: int = 10;\n"
+                                       "func f() { let b: int = 1; b += 1; }\n");
+
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    long add_index = test_find_opcode(chunk, OP_ADDI);
+    assert(add_index >= 0);
+
+    Instruction add = test_instruction(chunk, (size_t)add_index);
+    assert(VM_DECODE_R_K(add) == 1);
+    assert(VM_DECODE_R_R2(add) == 1);
+
+    test_program_free(&program);
+}
+
 static void test_a_float_literal_is_never_an_immediate() {
     TestProgram program = test_compile("let a: float = 10.0;\n"
                                        "let b: float = a + 1.0;\n");
@@ -391,6 +410,7 @@ int main() {
     test_negating_a_variable_emits_a_subtraction();
     test_a_binary_op_reads_its_operands();
     test_a_small_literal_becomes_an_immediate();
+    test_a_compound_assignment_takes_an_immediate();
     test_a_float_literal_is_never_an_immediate();
     test_a_temporary_register_is_reused();
     test_assignment_computes_into_its_target();

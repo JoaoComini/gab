@@ -157,6 +157,8 @@ static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symb
 static unsigned int codegen_new_expr(CodegenState *state, ASTExpr *node);
 static void codegen_addr_of_into(CodegenState *state, ASTExpr *inner, unsigned int rd, Span span);
 
+static unsigned int codegen_rhs(CodegenState *state, ASTExpr *rhs, const Type *left_type, bool *immediate);
+
 static OpCode bin_op_to_float_op(BinOp bin_op);
 static OpCode bin_op_to_int_op(BinOp bin_op);
 
@@ -1405,9 +1407,11 @@ static void codegen_compound_assign_stmt(CodegenState *state, ASTCompoundAssignS
 
     if (ast->target->kind == EXPR_VARIABLE) {
         unsigned int rd = codegen_expr(state, ast->target);
-        unsigned int rhs = codegen_expr(state, ast->value);
 
-        chunk_add_instruction(state->chunk, VM_ENCODE_R(op_code, rd, rd, rhs));
+        bool immediate = false;
+        unsigned int rhs = codegen_rhs(state, ast->value, ast->target->type, &immediate);
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_RK(op_code, rd, rd, rhs, immediate ? 1 : 0));
         return;
     }
 
@@ -1433,9 +1437,10 @@ static void codegen_compound_assign_stmt(CodegenState *state, ASTCompoundAssignS
     chunk_add_instruction(state->chunk,
                           VM_ENCODE_R(load_op, value, target.base, (unsigned int)target.offset));
 
-    unsigned int rhs = codegen_expr(state, ast->value);
+    bool immediate = false;
+    unsigned int rhs = codegen_rhs(state, ast->value, ast->target->type, &immediate);
 
-    chunk_add_instruction(state->chunk, VM_ENCODE_R(op_code, value, value, rhs));
+    chunk_add_instruction(state->chunk, VM_ENCODE_RK(op_code, value, value, rhs, immediate ? 1 : 0));
 
     bool store_ok;
     OpCode store_op = field_opcode_for(size, false, target.indirect, &store_ok);
@@ -1504,20 +1509,23 @@ static bool codegen_immediate_operand(const ASTExpr *node, unsigned int *out) {
 // Generating it is what may allocate a register, so this runs before the result
 // register is allocated — the order the original codegen used, and the one the
 // register numbering in the tests reflects.
-static unsigned int codegen_bin_op_rhs(CodegenState *state, ASTExpr *node, bool *immediate) {
+static unsigned int codegen_rhs(CodegenState *state, ASTExpr *rhs, const Type *left_type, bool *immediate) {
     unsigned int value = 0;
 
     // Floats have no immediate form: vm_operand2i reads the field as an
     // integer, and a float literal has no eight-bit encoding.
-    if (node->bin_op.left->type->kind != TYPE_FLOAT &&
-        codegen_immediate_operand(node->bin_op.right, &value)) {
+    if (left_type->kind != TYPE_FLOAT && codegen_immediate_operand(rhs, &value)) {
         *immediate = true;
         return value;
     }
 
     *immediate = false;
 
-    return codegen_expr(state, node->bin_op.right);
+    return codegen_expr(state, rhs);
+}
+
+static unsigned int codegen_bin_op_rhs(CodegenState *state, ASTExpr *node, bool *immediate) {
+    return codegen_rhs(state, node->bin_op.right, node->bin_op.left->type, immediate);
 }
 
 // Emits one arithmetic or comparison instruction. Shared by both binary-op
