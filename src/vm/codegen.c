@@ -134,6 +134,19 @@ static void codegen_set_slot(CodegenState *state, Symbol *symbol, unsigned int s
     slot_map_insert(state->slots, symbol, slot);
 }
 
+// What the right operand of an arithmetic instruction turned out to be.
+typedef enum {
+    // A register holding it, which every shape falls back to.
+    RHS_REGISTER,
+
+    // A small non-negative integer, encoded in the instruction itself.
+    RHS_IMMEDIATE,
+
+    // An index into the constant pool, for a float literal -- which has no
+    // eight-bit encoding and would otherwise cost a load of its own.
+    RHS_CONSTANT,
+} RhsKind;
+
 static void codegen_stmt(CodegenState *state, ASTStmt *ast);
 static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast);
 static void codegen_return_stmt(CodegenState *state, ASTReturnStmt *ast);
@@ -157,13 +170,14 @@ static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symb
 static unsigned int codegen_new_expr(CodegenState *state, ASTExpr *node);
 static void codegen_addr_of_into(CodegenState *state, ASTExpr *inner, unsigned int rd, Span span);
 
-static unsigned int codegen_rhs(CodegenState *state, ASTExpr *rhs, const Type *left_type, bool *immediate);
+static unsigned int codegen_rhs(CodegenState *state, ASTExpr *rhs, const Type *left_type, RhsKind *kind);
 
 static bool codegen_expr_into(CodegenState *state, ASTExpr *value, unsigned int dest);
 static Constant value_from_literal(Literal lit);
 static unsigned int codegen_slot_of(CodegenState *state, Symbol *symbol);
 static bool type_is_owned(const Type *type);
 
+static OpCode bin_op_opcode_for(BinOp op, const Type *left_type, RhsKind kind);
 static OpCode bin_op_to_float_op(BinOp bin_op);
 static OpCode bin_op_to_int_op(BinOp bin_op);
 
@@ -1607,16 +1621,16 @@ static void codegen_compound_assign_stmt(CodegenState *state, ASTCompoundAssignS
     // nothing to do here.
     assert(type_slot_count(ast->target->type) == 1 && "a compound assignment target is a single slot");
 
-    OpCode op_code =
-        ast->target->type->kind == TYPE_FLOAT ? bin_op_to_float_op(ast->op) : bin_op_to_int_op(ast->op);
-
     if (ast->target->kind == EXPR_VARIABLE) {
         unsigned int rd = codegen_expr(state, ast->target);
 
-        bool immediate = false;
-        unsigned int rhs = codegen_rhs(state, ast->value, ast->target->type, &immediate);
+        RhsKind rhs_kind = RHS_REGISTER;
+        unsigned int rhs = codegen_rhs(state, ast->value, ast->target->type, &rhs_kind);
 
-        chunk_add_instruction(state->chunk, VM_ENCODE_RK(op_code, rd, rd, rhs, immediate ? 1 : 0));
+        OpCode op_code = bin_op_opcode_for(ast->op, ast->target->type, rhs_kind);
+
+        chunk_add_instruction(state->chunk,
+                              VM_ENCODE_RK(op_code, rd, rd, rhs, rhs_kind == RHS_IMMEDIATE ? 1 : 0));
         return;
     }
 
@@ -1642,10 +1656,13 @@ static void codegen_compound_assign_stmt(CodegenState *state, ASTCompoundAssignS
     chunk_add_instruction(state->chunk,
                           VM_ENCODE_R(load_op, value, target.base, (unsigned int)target.offset));
 
-    bool immediate = false;
-    unsigned int rhs = codegen_rhs(state, ast->value, ast->target->type, &immediate);
+    RhsKind rhs_kind = RHS_REGISTER;
+    unsigned int rhs = codegen_rhs(state, ast->value, ast->target->type, &rhs_kind);
 
-    chunk_add_instruction(state->chunk, VM_ENCODE_RK(op_code, value, value, rhs, immediate ? 1 : 0));
+    OpCode op_code = bin_op_opcode_for(ast->op, ast->target->type, rhs_kind);
+
+    chunk_add_instruction(state->chunk,
+                          VM_ENCODE_RK(op_code, value, value, rhs, rhs_kind == RHS_IMMEDIATE ? 1 : 0));
 
     bool store_ok;
     OpCode store_op = field_opcode_for(size, false, target.indirect, &store_ok);
@@ -1707,40 +1724,76 @@ static bool codegen_immediate_operand(const ASTExpr *node, unsigned int *out) {
     return true;
 }
 
-// The right operand of a binary op: either a register holding it, or the value
-// itself when it fits the instruction. Reports which through 'immediate', so the
-// caller knows whether to set the k bit.
+// The right operand of a binary op: a register, the value itself, or the pool
+// index of the value. Reports which through 'kind', so the caller knows what
+// instruction to emit.
 //
 // Generating it is what may allocate a register, so this runs before the result
-// register is allocated — the order the original codegen used, and the one the
+// register is allocated -- the order the original codegen used, and the one the
 // register numbering in the tests reflects.
-static unsigned int codegen_rhs(CodegenState *state, ASTExpr *rhs, const Type *left_type, bool *immediate) {
+static unsigned int codegen_rhs(CodegenState *state, ASTExpr *rhs, const Type *left_type, RhsKind *kind) {
     unsigned int value = 0;
 
-    // Floats have no immediate form: vm_operand2i reads the field as an
-    // integer, and a float literal has no eight-bit encoding.
-    if (left_type->kind != TYPE_FLOAT && codegen_immediate_operand(rhs, &value)) {
-        *immediate = true;
+    if (left_type->kind == TYPE_FLOAT) {
+        // A float literal is reached by index rather than by value: the operand
+        // field is eight bits, and no float fits those.
+        if (rhs->kind == EXPR_LITERAL && rhs->lit.kind == TYPE_FLOAT) {
+            size_t index = constpool_add(state->chunk->const_pool, value_from_literal(rhs->lit));
+
+            // Past what the field addresses, so this one is loaded as before.
+            // Constants are pooled per function and deduplicated, so a chunk
+            // reaching here has far more literals than anything hand-written.
+            if (index <= VM_MAX_IMMEDIATE) {
+                *kind = RHS_CONSTANT;
+                return (unsigned int)index;
+            }
+        }
+    } else if (codegen_immediate_operand(rhs, &value)) {
+        *kind = RHS_IMMEDIATE;
         return value;
     }
 
-    *immediate = false;
+    *kind = RHS_REGISTER;
 
     return codegen_expr(state, rhs);
 }
 
-static unsigned int codegen_bin_op_rhs(CodegenState *state, ASTExpr *node, bool *immediate) {
-    return codegen_rhs(state, node->bin_op.right, node->bin_op.left->type, immediate);
+static unsigned int codegen_bin_op_rhs(CodegenState *state, ASTExpr *node, RhsKind *kind) {
+    return codegen_rhs(state, node->bin_op.right, node->bin_op.left->type, kind);
+}
+
+// The instruction an operator and its right operand call for. A float literal
+// takes the constant-pool form, and anything else the register or immediate
+// form the k bit already distinguished.
+static OpCode bin_op_opcode_for(BinOp op, const Type *left_type, RhsKind kind) {
+    if (kind != RHS_CONSTANT) {
+        return left_type->kind == TYPE_FLOAT ? bin_op_to_float_op(op) : bin_op_to_int_op(op);
+    }
+
+    switch (op) {
+    case BIN_OP_ADD:
+        return OP_ADDFK;
+    case BIN_OP_SUB:
+        return OP_SUBFK;
+    case BIN_OP_MUL:
+        return OP_MULFK;
+    case BIN_OP_DIV:
+        return OP_DIVFK;
+    default:
+        break;
+    }
+
+    assert(0 && "only the arithmetic operators have a constant form");
+    abort();
 }
 
 // Emits one arithmetic or comparison instruction. Shared by both binary-op
-// paths so the two cannot disagree about when the k bit is set.
+// paths so the two cannot disagree about how the operand is encoded.
 static void codegen_emit_bin_op(CodegenState *state, ASTExpr *node, unsigned int dest, unsigned int lhs,
-                                unsigned int rhs, bool immediate) {
-    OpCode op_code = node->bin_op.left->type->kind == TYPE_FLOAT ? bin_op_to_float_op(node->bin_op.op)
-                                                                 : bin_op_to_int_op(node->bin_op.op);
+                                unsigned int rhs, RhsKind kind) {
+    OpCode op_code = bin_op_opcode_for(node->bin_op.op, node->bin_op.left->type, kind);
 
-    chunk_add_instruction(state->chunk, VM_ENCODE_RK(op_code, dest, lhs, rhs, immediate ? 1 : 0));
+    chunk_add_instruction(state->chunk, VM_ENCODE_RK(op_code, dest, lhs, rhs, kind == RHS_IMMEDIATE ? 1 : 0));
 }
 
 // Emits a binary op into a caller-chosen register rather than a fresh one.
@@ -1759,10 +1812,10 @@ static void codegen_emit_bin_op(CodegenState *state, ASTExpr *node, unsigned int
 static unsigned int codegen_bin_op_into(CodegenState *state, ASTExpr *node, unsigned int dest) {
     unsigned int lhs = codegen_expr(state, node->bin_op.left);
 
-    bool immediate = false;
-    unsigned int rhs = codegen_bin_op_rhs(state, node, &immediate);
+    RhsKind rhs_kind = RHS_REGISTER;
+    unsigned int rhs = codegen_bin_op_rhs(state, node, &rhs_kind);
 
-    codegen_emit_bin_op(state, node, dest, lhs, rhs, immediate);
+    codegen_emit_bin_op(state, node, dest, lhs, rhs, rhs_kind);
 
     return dest;
 }
@@ -1778,12 +1831,12 @@ static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node) {
 
     unsigned int lhs = codegen_expr(state, node->bin_op.left);
 
-    bool immediate = false;
-    unsigned int rhs = codegen_bin_op_rhs(state, node, &immediate);
+    RhsKind rhs_kind = RHS_REGISTER;
+    unsigned int rhs = codegen_bin_op_rhs(state, node, &rhs_kind);
 
     unsigned int result = codegen_alloc_register(state, node->span);
 
-    codegen_emit_bin_op(state, node, result, lhs, rhs, immediate);
+    codegen_emit_bin_op(state, node, result, lhs, rhs, rhs_kind);
 
     return result;
 }

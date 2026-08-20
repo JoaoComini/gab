@@ -223,6 +223,23 @@ void vm_arithmeticf(VM *vm, Instruction instruction, float (*func)(VM *, size_t,
     vm_write_f32(vm, rd, func(vm, r1, r2));
 }
 
+// The right operand read from the constant pool rather than a register, for
+// the OP_*FK family. Separate from vm_arithmeticf because those take their
+// operands as register indices, and this one has a value in hand.
+static void vm_arithmeticfk(VM *vm, Instruction instruction, const Chunk *chunk,
+                            float (*func)(float, float)) {
+    size_t rd = VM_DECODE_R_RD(instruction);
+    size_t r1 = VM_DECODE_R_R1(instruction);
+    Constant constant = constpool_get(chunk->const_pool, VM_DECODE_R_R2(instruction));
+
+    vm_write_f32(vm, rd, func(vm_read_f32(vm, r1), constant.as_float));
+}
+
+static float vm_add_floats(float a, float b) { return a + b; }
+static float vm_sub_floats(float a, float b) { return a - b; }
+static float vm_mul_floats(float a, float b) { return a * b; }
+static float vm_div_floats(float a, float b) { return a / b; }
+
 // The integer operations take values rather than register indices, so the same
 // body serves a register operand and an immediate one.
 int32_t vm_addi(int32_t a, int32_t b) { return a + b; }
@@ -617,6 +634,10 @@ static void vm_run_loop(VM *vm) {
         [OP_SUBF] = &&OP_SUBF_label,
         [OP_MULF] = &&OP_MULF_label,
         [OP_DIVF] = &&OP_DIVF_label,
+        [OP_ADDFK] = &&OP_ADDFK_label,
+        [OP_SUBFK] = &&OP_SUBFK_label,
+        [OP_MULFK] = &&OP_MULFK_label,
+        [OP_DIVFK] = &&OP_DIVFK_label,
         [OP_CMP_LTF] = &&OP_CMP_LTF_label,
         [OP_CMP_GTF] = &&OP_CMP_GTF_label,
         [OP_CMP_EQF] = &&OP_CMP_EQF_label,
@@ -716,6 +737,22 @@ vm_retry:
         // source, gives overlapping ranges. OP_LOAD_PTR_N can use memcpy
         // because its source is a heap payload and cannot overlap a frame.
         memmove(vm_reg_at(vm, rd), vm_reg_at(vm, r1), slots * VM_SLOT_SIZE);
+        VM_NEXT();
+    }
+    VM_CASE(OP_ADDFK) : {
+        vm_arithmeticfk(vm, instruction, chunk, vm_add_floats);
+        VM_NEXT();
+    }
+    VM_CASE(OP_SUBFK) : {
+        vm_arithmeticfk(vm, instruction, chunk, vm_sub_floats);
+        VM_NEXT();
+    }
+    VM_CASE(OP_MULFK) : {
+        vm_arithmeticfk(vm, instruction, chunk, vm_mul_floats);
+        VM_NEXT();
+    }
+    VM_CASE(OP_DIVFK) : {
+        vm_arithmeticfk(vm, instruction, chunk, vm_div_floats);
         VM_NEXT();
     }
     VM_CASE(OP_ADDF) : {

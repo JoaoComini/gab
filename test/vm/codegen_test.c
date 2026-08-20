@@ -109,13 +109,16 @@ static void test_a_compound_assignment_takes_an_immediate() {
     test_program_free(&program);
 }
 
+// A float is never an immediate: the operand field is eight bits and reads as
+// an integer. It reaches the instruction as a pool index instead, which is
+// what the K form is for -- but the k bit stays clear either way.
 static void test_a_float_literal_is_never_an_immediate() {
     TestProgram program = test_compile("let a: float = 10.0;\n"
                                        "let b: float = a + 1.0;\n");
 
     Chunk *chunk = test_top_chunk(&program);
 
-    long add_index = test_find_opcode(chunk, OP_ADDF);
+    long add_index = test_find_opcode(chunk, OP_ADDFK);
     assert(add_index >= 0);
     assert(VM_DECODE_R_K(test_instruction(chunk, (size_t)add_index)) == 0);
 
@@ -421,6 +424,114 @@ static void test_break_releases_what_the_body_owns() {
     test_program_free(&program);
 }
 
+// A float literal on the right of an arithmetic operator is read from the
+// constant pool by the instruction itself. Without this every such operation
+// costs a load of its own, because the 8-bit immediate field holds an integer
+// and no float has an eight-bit encoding.
+static void test_a_float_literal_needs_no_load() {
+    TestProgram program = test_compile("func f(): float { let x: float = 1.0; return x + 1.5; }\n");
+
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    assert(test_count_opcode(chunk, OP_ADDFK) == 1);
+    assert(test_count_opcode(chunk, OP_ADDF) == 0);
+
+    // Only the initialiser's own constant is loaded; the 1.5 rides in the add.
+    assert(test_count_opcode(chunk, OP_LOAD_CONST) == 1);
+
+    test_program_free(&program);
+}
+
+// The constant is the right operand only. 'literal - x' cannot use the form,
+// since subtraction does not commute and the instruction reads its left
+// operand from a register.
+static void test_a_float_literal_on_the_left_keeps_the_register_form() {
+    TestProgram program = test_compile("func f(): float { let x: float = 1.0; return 1.5 - x; }\n");
+
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    assert(test_count_opcode(chunk, OP_SUBFK) == 0);
+    assert(test_count_opcode(chunk, OP_SUBF) == 1);
+
+    test_program_free(&program);
+}
+
+// Integers keep the immediate form, which costs no pool entry at all.
+static void test_an_int_literal_still_uses_the_immediate() {
+    TestProgram program = test_compile("func f(): int { let x: int = 1; return x + 2; }\n");
+
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    long add = test_find_opcode(chunk, OP_ADDI);
+    assert(add >= 0);
+    assert(VM_DECODE_R_K(test_instruction(chunk, (size_t)add)) == 1);
+
+    test_program_free(&program);
+}
+
+// The four arithmetic operators, and the values they must still produce.
+static void test_float_constant_arithmetic_computes() {
+    assert(test_run_float("func f(): float { let x: float = 2.0; return x + 1.5; }\n"
+                          "let r: float = f();\n") == 3.5f);
+
+    assert(test_run_float("func f(): float { let x: float = 2.0; return x - 1.5; }\n"
+                          "let r: float = f();\n") == 0.5f);
+
+    assert(test_run_float("func f(): float { let x: float = 2.0; return x * 1.5; }\n"
+                          "let r: float = f();\n") == 3.0f);
+
+    assert(test_run_float("func f(): float { let x: float = 3.0; return x / 1.5; }\n"
+                          "let r: float = f();\n") == 2.0f);
+}
+
+// Subtraction and division do not commute, so these are what catch an
+// implementation that read the operands the other way round.
+static void test_the_constant_is_the_right_operand() {
+    assert(test_run_float("func f(): float { let x: float = 10.0; return x - 4.0; }\n"
+                          "let r: float = f();\n") == 6.0f);
+
+    assert(test_run_float("func f(): float { let x: float = 10.0; return x / 4.0; }\n"
+                          "let r: float = f();\n") == 2.5f);
+}
+
+// A compound assignment assigns the result of the same operator, so it takes
+// the same form.
+static void test_a_float_compound_assignment_takes_the_constant() {
+    TestProgram program = test_compile("func f(): float { let x: float = 1.0; x *= 2.5; return x; }\n");
+
+    assert(test_count_opcode(test_func_chunk(&program, 0), OP_MULFK) == 1);
+
+    test_program_free(&program);
+
+    assert(test_run_float("func f(): float { let x: float = 4.0; x /= 2.0; return x; }\n"
+                          "let r: float = f();\n") == 2.0f);
+}
+
+// Past the 256th constant the index no longer fits the operand field, so those
+// operations fall back to loading the value into a register. The fallback is
+// what keeps the bound an optimisation rather than a limit on what compiles.
+static void test_a_chunk_past_the_index_bound_falls_back() {
+    char source[32768];
+    size_t used = (size_t)snprintf(source, sizeof(source), "func f(): float {\n    let x: float = 0.0;\n");
+
+    // Each literal is distinct, so each takes a pool entry of its own; the
+    // pool deduplicates, and repeating one would never grow it.
+    for (unsigned int i = 0; i < 300; i++) {
+        used += (size_t)snprintf(source + used, sizeof(source) - used, "    x += %u.5;\n", i);
+    }
+
+    snprintf(source + used, sizeof(source) - used, "    return x;\n}\n");
+
+    TestProgram program = test_compile(source);
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    // The first 256 ride in the instruction; the rest are loaded.
+    assert(test_count_opcode(chunk, OP_ADDFK) > 0);
+    assert(test_count_opcode(chunk, OP_ADDF) > 0);
+
+    test_program_free(&program);
+}
+
 int main() {
     test_negated_literal_folds_to_one_load();
     test_negating_a_variable_emits_a_subtraction();
@@ -428,6 +539,13 @@ int main() {
     test_a_small_literal_becomes_an_immediate();
     test_a_compound_assignment_takes_an_immediate();
     test_a_float_literal_is_never_an_immediate();
+    test_a_float_literal_needs_no_load();
+    test_a_float_literal_on_the_left_keeps_the_register_form();
+    test_an_int_literal_still_uses_the_immediate();
+    test_float_constant_arithmetic_computes();
+    test_the_constant_is_the_right_operand();
+    test_a_float_compound_assignment_takes_the_constant();
+    test_a_chunk_past_the_index_bound_falls_back();
     test_a_temporary_register_is_reused();
     test_assignment_computes_into_its_target();
     test_if_jumps_past_its_then_block();

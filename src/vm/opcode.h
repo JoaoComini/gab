@@ -40,6 +40,19 @@ typedef enum {
     OP_SUBF,
     OP_MULF,
     OP_DIVF,
+
+    // As the four above, with the right operand read from the constant pool by
+    // the index in r2 rather than from a register. A float literal has no
+    // eight-bit encoding, so without these every 'x + 1.5' costs a load of its
+    // own -- which is most of what float arithmetic is made of.
+    //
+    // The index is 8 bits, so a chunk past its 256th constant falls back to the
+    // register form. Constants are pooled per function and deduplicated, so
+    // that bound is far past any function anyone writes.
+    OP_ADDFK,
+    OP_SUBFK,
+    OP_MULFK,
+    OP_DIVFK,
     OP_CMP_LTF,
     OP_CMP_GTF,
     OP_CMP_EQF,
