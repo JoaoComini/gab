@@ -137,7 +137,6 @@ static inline void test_program_free(TestProgram *program) {
     vm_free(program->vm);
 }
 
-// The top-level chunk: what the script's own statements compiled to.
 static inline Chunk *test_top_chunk(TestProgram *program) { return program->script.chunk; }
 
 // The chunk of a declared function, by declaration order.

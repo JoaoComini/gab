@@ -25,11 +25,9 @@ static void test_negated_literal_folds_to_one_load() {
     TestProgram program = test_compile("let x: int = -42;\n");
     Chunk *chunk = test_top_chunk(&program);
 
-    // One load for the folded constant, one move into x's slot. No SUBI.
     assert(test_count_opcode(chunk, OP_LOAD_CONST) == 1);
     assert(test_count_opcode(chunk, OP_SUBI) == 0);
 
-    // The sign is in the pooled constant, not in an instruction.
     assert(chunk->const_pool->count == 1);
     assert(chunk->const_pool->constants[0].as_int == -42);
 
@@ -84,13 +82,10 @@ static void test_a_small_literal_becomes_an_immediate() {
     long add_index = test_find_opcode(chunk, OP_ADDI);
     assert(add_index >= 0);
 
-    // The k bit is set, and the operand is the value itself rather than a
-    // register holding it.
     Instruction add = test_instruction(chunk, (size_t)add_index);
     assert(VM_DECODE_R_K(add) == 1);
     assert(VM_DECODE_R_R2(add) == 1);
 
-    // Only the 10 is pooled; the 1 never becomes a constant.
     assert(chunk->const_pool->count == 1);
 
     test_program_free(&program);
@@ -107,7 +102,6 @@ static void test_a_float_literal_is_never_an_immediate() {
     assert(add_index >= 0);
     assert(VM_DECODE_R_K(test_instruction(chunk, (size_t)add_index)) == 0);
 
-    // Both floats are pooled, since neither can ride in the instruction.
     assert(chunk->const_pool->count == 2);
 
     test_program_free(&program);
@@ -124,14 +118,12 @@ static void test_a_temporary_register_is_reused() {
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
-    // Two loads, each into a temporary, each moved into x.
     assert(test_count_opcode(chunk, OP_LOAD_CONST) == 2);
     assert(test_count_opcode(chunk, OP_MOVE) == 2);
 
     Instruction first_move = test_instruction(chunk, 1);
     Instruction second_move = test_instruction(chunk, 3);
 
-    // Both moves write x's slot and read the same reclaimed temporary.
     assert(VM_DECODE_R_RD(first_move) == VM_DECODE_R_RD(second_move));
     assert(VM_DECODE_R_R1(first_move) == VM_DECODE_R_R1(second_move));
 
@@ -149,14 +141,12 @@ static void test_assignment_computes_into_its_target() {
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
-    // One move for the initializer. The compound assignment adds none.
     assert(test_count_opcode(chunk, OP_MOVE) == 1);
     assert(test_count_opcode(chunk, OP_ADDI) == 1);
 
     long add_index = test_find_opcode(chunk, OP_ADDI);
     Instruction add = test_instruction(chunk, (size_t)add_index);
 
-    // The add writes the register it read, which is x's slot.
     assert(VM_DECODE_R_RD(add) == VM_DECODE_R_R1(add));
 
     test_program_free(&program);
@@ -177,18 +167,15 @@ static void test_if_jumps_past_its_then_block() {
 
     Instruction jump = test_instruction(chunk, (size_t)jump_index);
 
-    // The jump reads the register the comparison wrote.
     long cmp_index = test_find_opcode(chunk, OP_CMP_GTI);
     assert(cmp_index >= 0);
     assert(cmp_index < jump_index);
     assert(VM_DECODE_I_RD(jump) == VM_DECODE_R_RD(test_instruction(chunk, (size_t)cmp_index)));
 
-    // It skips forward, and lands no further than the end of the chunk.
     unsigned int offset = VM_DECODE_I_IMM(jump);
     assert(offset > 0);
     assert((size_t)jump_index + 1 + offset <= chunk->instructions.size);
 
-    // With no else, there is nothing to jump over on the way out.
     assert(test_count_opcode(chunk, OP_JMP) == 0);
 
     test_program_free(&program);
@@ -210,8 +197,6 @@ static void test_if_else_jumps_over_the_else_block() {
     long conditional = test_find_opcode(chunk, OP_JMP_IF_FALSE);
     long unconditional = test_find_opcode(chunk, OP_JMP);
 
-    // The unconditional jump ends the then-block, so it comes after the test
-    // and before the end.
     assert(conditional < unconditional);
 
     unsigned int offset = VM_DECODE_I_IMM(test_instruction(chunk, (size_t)unconditional));
@@ -224,7 +209,6 @@ static void test_if_else_jumps_over_the_else_block() {
 static void test_a_function_compiles_into_its_own_chunk() {
     TestProgram program = test_compile("func add(a: int, b: int): int { return a + b; }\n");
 
-    // The declaration emits no top-level code.
     assert(test_top_chunk(&program)->instructions.size == 0);
 
     assert(program.vm->global_funcs.size == 1);
@@ -235,7 +219,6 @@ static void test_a_function_compiles_into_its_own_chunk() {
     assert(test_count_opcode(body, OP_ADDI) == 1);
     assert(test_count_opcode(body, OP_RETURN) == 1);
 
-    // The return carries what the add produced.
     long add_index = test_find_opcode(body, OP_ADDI);
     long ret_index = test_find_opcode(body, OP_RETURN);
 
@@ -270,11 +253,9 @@ static void test_a_struct_copy_is_one_instruction() {
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
-    // One batched copy, and no per-slot moves standing in for it.
     assert(test_count_opcode(chunk, OP_MOVE_N) == 1);
     assert(test_count_opcode(chunk, OP_MOVE) == 0);
 
-    // The count operand carries the whole run: three ints, one slot each.
     long copy = test_find_opcode(chunk, OP_MOVE_N);
     assert(VM_DECODE_R_R2(test_instruction(chunk, (size_t)copy)) == 3);
 

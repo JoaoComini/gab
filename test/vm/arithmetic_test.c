@@ -43,11 +43,9 @@ static void test_int_divide() {
     assert(test_run_int("func f(): int { let a: int = 20; let b: int = 4; return a / b; }\n"
                         "let r: int = f();\n") == 5);
 
-    // Truncation, not rounding: 7/2 is 3.
     assert(test_run_int("func f(): int { let a: int = 7; let b: int = 2; return a / b; }\n"
                         "let r: int = f();\n") == 3);
 
-    // Operand order, which a swap would turn into 0.
     assert(test_run_int("func f(): int { let a: int = 20; let b: int = 4; return b / a; }\n"
                         "let r: int = f();\n") == 0);
 }
