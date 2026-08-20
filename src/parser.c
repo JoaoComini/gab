@@ -1105,6 +1105,7 @@ static int get_precedence(TokenType type) {
         return 4;
     case TOKEN_MUL:
     case TOKEN_DIV:
+    case TOKEN_MOD:
         return 5;
     default:
         return 0; // Not a binary operator
@@ -1133,6 +1134,8 @@ static BinOp parse_bin_op(TokenType type) {
         return BIN_OP_MUL;
     case TOKEN_DIV:
         return BIN_OP_DIV;
+    case TOKEN_MOD:
+        return BIN_OP_MOD;
     case TOKEN_AND:
         return BIN_OP_AND;
     case TOKEN_OR:

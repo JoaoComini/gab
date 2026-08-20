@@ -34,6 +34,7 @@ typedef enum {
     BIN_OP_SUB,
     BIN_OP_MUL,
     BIN_OP_DIV,
+    BIN_OP_MOD,
     BIN_OP_LESS,
     BIN_OP_GREATER,
     BIN_OP_EQUAL,

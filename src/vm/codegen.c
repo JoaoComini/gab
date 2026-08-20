@@ -1542,6 +1542,8 @@ static OpCode bin_op_to_int_op(BinOp bin_op) {
         return OP_MULI;
     case BIN_OP_DIV:
         return OP_DIVI;
+    case BIN_OP_MOD:
+        return OP_MODI;
     case BIN_OP_LESS:
         return OP_CMP_LTI;
     case BIN_OP_GREATER:

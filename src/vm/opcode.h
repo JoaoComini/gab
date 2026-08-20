@@ -20,6 +20,11 @@ typedef enum {
     OP_SUBI,
     OP_MULI,
     OP_DIVI,
+
+    // Remainder. Int-only: there is no OP_MODF, because a float remainder is
+    // fmodf rather than a hardware instruction. Shares OP_DIVI's two undefined
+    // operand pairs, since it is computed by the same instruction.
+    OP_MODI,
     OP_CMP_LTI,
     OP_CMP_GTI,
     OP_CMP_EQI,

@@ -52,6 +52,8 @@ const char *token_description(TokenType type) {
         return "'*'";
     case TOKEN_DIV:
         return "'/'";
+    case TOKEN_MOD:
+        return "'%'";
     case TOKEN_ASSIGN:
         return "'='";
     case TOKEN_NOT:
@@ -365,6 +367,8 @@ Token lexer_next(Lexer *lexer) {
         return token_create(lexer, TOKEN_MUL);
     case '/':
         return token_create(lexer, TOKEN_DIV);
+    case '%':
+        return token_create(lexer, TOKEN_MOD);
     case '(':
         return token_create(lexer, TOKEN_LPAREN);
     case ')':

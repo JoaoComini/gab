@@ -161,6 +161,8 @@ static const char *bin_op_name(BinOp op) {
         return "*";
     case BIN_OP_DIV:
         return "/";
+    case BIN_OP_MOD:
+        return "%";
     case BIN_OP_LESS:
         return "<";
     case BIN_OP_GREATER:
@@ -545,6 +547,8 @@ static bool type_accepts(Type *to, Type *from) {
 
 bool is_numeric_type(Type *t) { return t->kind == TYPE_INT || t->kind == TYPE_FLOAT; }
 
+bool is_integer_type(Type *t) { return t->kind == TYPE_INT; }
+
 bool is_boolean_type(Type *t) { return t->kind == TYPE_BOOL; }
 
 bool is_ordered_type(Type *t) { return is_numeric_type(t) || is_boolean_type(t); }
@@ -588,6 +592,20 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
             if (!is_numeric_type(left_type)) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                            "'%s' requires a numeric type, found %s", op_name, type_name(state, left_type));
+                expr->type = resolver_error_type(state);
+                return;
+            }
+
+            expr->type = left_type;
+            return;
+
+        // Alone among the arithmetic operators, '%' takes ints and not floats:
+        // a float remainder is a libc call rather than an instruction, and is
+        // a different feature than this one.
+        case BIN_OP_MOD:
+            if (!is_integer_type(left_type)) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                           "'%s' requires an integer type, found %s", op_name, type_name(state, left_type));
                 expr->type = resolver_error_type(state);
                 return;
             }

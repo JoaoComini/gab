@@ -231,6 +231,8 @@ int32_t vm_muli(int32_t a, int32_t b) { return a * b; }
 
 int32_t vm_divi(int32_t a, int32_t b) { return a / b; }
 
+int32_t vm_modi(int32_t a, int32_t b) { return a % b; }
+
 void vm_arithmetici(VM *vm, Instruction instruction, int32_t (*func)(int32_t, int32_t)) {
     size_t rd = VM_DECODE_R_RD(instruction);
     size_t r1 = VM_DECODE_R_R1(instruction);
@@ -449,6 +451,37 @@ static void vm_fail(VM *vm, VmRunStatus status, const char *message) {
     vm->error.message = message;
 }
 
+// Whether an int division or remainder may go ahead, failing the run when it
+// may not. Two operand pairs are undefined in C and take the whole host
+// process down with SIGFPE, so they are checked rather than performed: a zero
+// divisor, and INT32_MIN over -1, whose true quotient is one past the top of
+// the range. Both opcodes are the same hardware instruction, so both are
+// undefined for '%' too, even though INT32_MIN % -1 is mathematically 0.
+//
+// The float opcodes need no such guard: IEEE division by zero yields an
+// infinity, which is a value the VM can carry.
+static bool vm_check_divisor(VM *vm, Instruction instruction, const char *zero_message,
+                             const char *overflow_message) {
+    int32_t divisor = vm_operand2i(vm, instruction);
+    int32_t dividend = vm_reg(vm, VM_DECODE_R_R1(instruction))->as_int;
+
+    if (divisor == 0) {
+        vm_fail(vm, VM_RUN_ERR_DIVIDE_BY_ZERO, zero_message);
+        vm_unwind(vm);
+
+        return false;
+    }
+
+    if (dividend == INT32_MIN && divisor == -1) {
+        vm_fail(vm, VM_RUN_ERR_DIVIDE_OVERFLOW, overflow_message);
+        vm_unwind(vm);
+
+        return false;
+    }
+
+    return true;
+}
+
 // Runs until every frame the caller pushed has unwound. Both entry points
 // share it: vm_run pushes frame zero, and a host call pushes one frame for the
 // function it is invoking, so there is exactly one interpreter either way.
@@ -554,33 +587,21 @@ static void vm_run_loop(VM *vm) {
             break;
         }
         case OP_DIVI: {
-            // Both of these are undefined in C and take the whole host
-            // process down with SIGFPE, so they are checked rather than
-            // performed: division by zero, and INT32_MIN / -1, whose true
-            // quotient is one past the top of the range.
-            //
-            // The float opcodes need no such guard: IEEE division by zero
-            // yields an infinity, which is a value the VM can carry.
-            int32_t divisor = vm_operand2i(vm, instruction);
-            int32_t dividend = vm_reg(vm, VM_DECODE_R_R1(instruction))->as_int;
-
-            if (divisor == 0) {
-                vm_fail(vm, VM_RUN_ERR_DIVIDE_BY_ZERO, "divided by zero");
-
-                vm_unwind(vm);
-
-                break;
-            }
-
-            if (dividend == INT32_MIN && divisor == -1) {
-                vm_fail(vm, VM_RUN_ERR_DIVIDE_OVERFLOW, "divided the most negative int by -1");
-
-                vm_unwind(vm);
-
+            if (!vm_check_divisor(vm, instruction, "divided by zero",
+                                  "divided the most negative int by -1")) {
                 break;
             }
 
             vm_arithmetici(vm, instruction, vm_divi);
+            break;
+        }
+        case OP_MODI: {
+            if (!vm_check_divisor(vm, instruction, "took the remainder of a division by zero",
+                                  "took the remainder of the most negative int and -1")) {
+                break;
+            }
+
+            vm_arithmetici(vm, instruction, vm_modi);
             break;
         }
         case OP_CMP_LTI: {

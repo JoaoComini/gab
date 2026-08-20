@@ -14,6 +14,7 @@ typedef enum {
     TOKEN_MINUS,       // '-'
     TOKEN_MUL,         // '*'
     TOKEN_DIV,         // '/'
+    TOKEN_MOD,         // '%'
     TOKEN_ASSIGN,      // '='
     TOKEN_NOT,         // '!'
     TOKEN_LESS,        // "<"
