@@ -295,7 +295,6 @@ bool gab_load(GabVM *handle, const char *name, const char *src, GabError *err) {
     return true;
 }
 
-
 // --- Types -----------------------------------------------------------------
 
 // The scope a module's names live in. NULL or "" is the root namespace; an

@@ -75,7 +75,6 @@ void gab_vm_free(GabVM *vm);
 // never the other's.
 bool gab_load(GabVM *vm, const char *name, const char *src, GabError *err);
 
-
 // --- Types and layout ------------------------------------------------------
 
 // A script struct's layout is the C layout, which is the whole zero-

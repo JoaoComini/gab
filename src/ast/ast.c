@@ -1051,8 +1051,8 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         if (!is_error_type(target_type) && !is_error_type(value_type) &&
             !type_accepts(target_type, value_type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
-                       "cannot assign a value of type %s to a target of type %s", type_name(state, value_type),
-                       type_name(state, target_type));
+                       "cannot assign a value of type %s to a target of type %s",
+                       type_name(state, value_type), type_name(state, target_type));
             break;
         }
 

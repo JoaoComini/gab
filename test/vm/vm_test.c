@@ -161,7 +161,8 @@ static void test_compile_once_run_many() {
     diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
 
     CompiledScript script;
-    bool ok = vm_compile(vm, "func seven(): int { return 7; }\nlet r: int = seven();\n", &script, &diagnostics);
+    bool ok =
+        vm_compile(vm, "func seven(): int { return 7; }\nlet r: int = seven();\n", &script, &diagnostics);
     assert(ok);
 
     diagnostics_free(&diagnostics);

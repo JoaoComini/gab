@@ -31,7 +31,6 @@ static void test_compile_once_run_many(void) {
     assert(mod);
 
     for (int i = 0; i < 3; i++) {
-        
     }
 
     gab_vm_free(vm);
@@ -129,10 +128,10 @@ static void test_call_with_scalar_args(void) {
 
     GabError err;
     bool mod = gab_load(vm, "<m>",
-                                 "func mix(a: int, b: float, flag: bool): int {\n"
-                                 "  if flag { return a * 2; } else { return a; }\n"
-                                 "}\n",
-                                 &err);
+                        "func mix(a: int, b: float, flag: bool): int {\n"
+                        "  if flag { return a * 2; } else { return a; }\n"
+                        "}\n",
+                        &err);
     assert(mod);
 
     GabFunc *fn = gab_lookup(vm, NULL, "mix", &err);
@@ -198,14 +197,14 @@ static void test_struct_argument_and_return(void) {
 
     GabError err;
     bool mod = gab_load(vm, "<m>",
-                                 "struct Player { health: int, mana: int }\n"
-                                 "func hurt(p: Player, amount: int): Player {\n"
-                                 "  let out: Player;\n"
-                                 "  out.health = p.health - amount;\n"
-                                 "  out.mana = p.mana;\n"
-                                 "  return out;\n"
-                                 "}\n",
-                                 &err);
+                        "struct Player { health: int, mana: int }\n"
+                        "func hurt(p: Player, amount: int): Player {\n"
+                        "  let out: Player;\n"
+                        "  out.health = p.health - amount;\n"
+                        "  out.mana = p.mana;\n"
+                        "  return out;\n"
+                        "}\n",
+                        &err);
     assert(mod);
 
     GabFunc *fn = gab_lookup(vm, NULL, "hurt", &err);
@@ -236,9 +235,9 @@ static void test_bad_arguments_are_rejected(void) {
 
     GabError err;
     bool mod = gab_load(vm, "<m>",
-                                 "struct Player { health: int, mana: int }\n"
-                                 "func take(p: Player, n: int): int { return n; }\n",
-                                 &err);
+                        "struct Player { health: int, mana: int }\n"
+                        "func take(p: Player, n: int): int { return n; }\n",
+                        &err);
     assert(mod);
 
     GabFunc *fn = gab_lookup(vm, NULL, "take", &err);
@@ -300,7 +299,6 @@ static void test_runtime_error_is_reported(void) {
     assert(err.message[0] != '\0');
 
     gab_call_free(fn_call);
-
 
     // A second module in the same VM still runs: the failure was reported, not
     // fatal.
@@ -434,15 +432,15 @@ static void test_two_modules_can_share_a_function_name(void) {
     GabError err;
 
     bool player = gab_load(vm, "player.gab",
-                                    "module Player;\n"
-                                    "func on_update(): int { return 1; }\n",
-                                    &err);
+                           "module Player;\n"
+                           "func on_update(): int { return 1; }\n",
+                           &err);
     assert(player);
 
     bool enemy = gab_load(vm, "enemy.gab",
-                                   "module Enemy;\n"
-                                   "func on_update(): int { return 2; }\n",
-                                   &err);
+                          "module Enemy;\n"
+                          "func on_update(): int { return 2; }\n",
+                          &err);
     assert(enemy);
     assert(err.message[0] == '\0');
 
@@ -585,17 +583,17 @@ static void test_builtins_are_shared_across_modules(void) {
     GabError err;
 
     bool player = gab_load(vm, "player.gab",
-                                    "module Player;\n"
-                                    "struct Config { health: int }\n"
-                                    "func player_size(): int { let p: *Config; return 1; }\n",
-                                    &err);
+                           "module Player;\n"
+                           "struct Config { health: int }\n"
+                           "func player_size(): int { let p: *Config; return 1; }\n",
+                           &err);
     assert(player);
 
     bool enemy = gab_load(vm, "enemy.gab",
-                                   "module Enemy;\n"
-                                   "struct Config { hp: int }\n"
-                                   "func enemy_size(): int { let p: *Config; return 1; }\n",
-                                   &err);
+                          "module Enemy;\n"
+                          "struct Config { hp: int }\n"
+                          "func enemy_size(): int { let p: *Config; return 1; }\n",
+                          &err);
     assert(enemy);
 
     // 'int' names one type from either module, with no import.
@@ -613,7 +611,6 @@ static void test_builtins_are_shared_across_modules(void) {
     assert(player_size);
     assert(enemy_size);
 
-
     gab_vm_free(vm);
 }
 
@@ -627,8 +624,7 @@ static void test_module_type_shadows_the_root(void) {
     bool root = gab_load(vm, "root.gab", "struct Config { a: int, b: int }\n", &err);
     assert(root);
 
-    bool player =
-        gab_load(vm, "player.gab", "module Player;\nstruct Config { only: int }\n", &err);
+    bool player = gab_load(vm, "player.gab", "module Player;\nstruct Config { only: int }\n", &err);
     assert(player);
 
     const GabType *root_config = gab_find_type(vm, NULL, "Config");
@@ -657,15 +653,14 @@ static void test_qualified_type_reference_crosses_modules(void) {
 
     GabError err;
 
-    bool player =
-        gab_load(vm, "player.gab", "module Player;\nstruct Config { health: int }\n", &err);
+    bool player = gab_load(vm, "player.gab", "module Player;\nstruct Config { health: int }\n", &err);
     assert(player);
 
     bool enemy = gab_load(vm, "enemy.gab",
-                                   "module Enemy;\n"
-                                   "struct Config { hp: int }\n"
-                                   "func f(): int { let c: Player::Config; return c.health; }\n",
-                                   &err);
+                          "module Enemy;\n"
+                          "struct Config { hp: int }\n"
+                          "func f(): int { let c: Player::Config; return c.health; }\n",
+                          &err);
     assert(enemy);
 
     // Its own Config is untouched by the qualified mention of Player's.
@@ -673,10 +668,9 @@ static void test_qualified_type_reference_crosses_modules(void) {
 
     // A module that does not exist, and a type that module does not have, are
     // both errors rather than a silent fallback to a same-named local type.
-    assert(!gab_load(vm, "bad.gab", "module A;\nfunc f(): int { let c: Nope::Config; return 0; }\n",
-                       &err));
-    assert(!gab_load(vm, "bad2.gab", "module B;\nfunc f(): int { let c: Player::Missing; return 0; }\n",
-                       &err));
+    assert(!gab_load(vm, "bad.gab", "module A;\nfunc f(): int { let c: Nope::Config; return 0; }\n", &err));
+    assert(
+        !gab_load(vm, "bad2.gab", "module B;\nfunc f(): int { let c: Player::Missing; return 0; }\n", &err));
 
     gab_vm_free(vm);
 }
@@ -709,10 +703,10 @@ static void test_handle_survives_later_compiles(void) {
     // Later units compile more functions, appending prototypes and running
     // codegen again over fresh symbols.
     bool second = gab_load(vm, "second.gab",
-                                    "module Later;\n"
-                                    "struct Wide { a: int, b: int, c: int }\n"
-                                    "func takes_wide(w: Wide, k: int): int { return k; }\n",
-                                    &err);
+                           "module Later;\n"
+                           "struct Wide { a: int, b: int, c: int }\n"
+                           "func takes_wide(w: Wide, k: int): int { return k; }\n",
+                           &err);
     assert(second);
 
     bool third =
@@ -740,10 +734,10 @@ static void test_recompiling_a_module_reloads_it(void) {
     GabError err;
 
     bool v1 = gab_load(vm, "g.gab",
-                                "module Game;\n"
-                                "struct S { hp: int }\n"
-                                "func tick(n: int): int { return n + 1; }\n",
-                                &err);
+                       "module Game;\n"
+                       "struct S { hp: int }\n"
+                       "func tick(n: int): int { return n + 1; }\n",
+                       &err);
     assert(v1);
 
     GabFunc *fn = gab_lookup(vm, "Game", "tick", &err);
@@ -761,10 +755,10 @@ static void test_recompiling_a_module_reloads_it(void) {
 
     // The same unit again, with a new body and a wider struct.
     bool v2 = gab_load(vm, "g.gab",
-                                "module Game;\n"
-                                "struct S { hp: int, mp: int }\n"
-                                "func tick(n: int): int { return n * 3; }\n",
-                                &err);
+                       "module Game;\n"
+                       "struct S { hp: int, mp: int }\n"
+                       "func tick(n: int): int { return n * 3; }\n",
+                       &err);
     assert(v2);
 
     // The handle from before the reload runs the new body.
@@ -779,12 +773,11 @@ static void test_recompiling_a_module_reloads_it(void) {
     // Reloading repeatedly is the per-frame case, so it must not drift.
     for (int i = 0; i < 3; i++) {
         bool again = gab_load(vm, "g.gab",
-                                       "module Game;\n"
-                                       "struct S { hp: int, mp: int }\n"
-                                       "func tick(n: int): int { return n * 3; }\n",
-                                       &err);
+                              "module Game;\n"
+                              "struct S { hp: int, mp: int }\n"
+                              "func tick(n: int): int { return n * 3; }\n",
+                              &err);
         assert(again);
-
     }
 
     gab_arg_int(fn_call, 0, 5);
@@ -806,11 +799,11 @@ static void test_reloading_a_module_redeclares_its_methods(void) {
     GabError err;
 
     assert(gab_load(vm, "m.gab",
-                             "module M;\n"
-                             "struct Player { health: int }\n"
-                             "func (p: *Player) hp(): int { return p.health; }\n"
-                             "func probe(): int { let p: Player; p.health = 7; return p.hp(); }\n",
-                             &err));
+                    "module M;\n"
+                    "struct Player { health: int }\n"
+                    "func (p: *Player) hp(): int { return p.health; }\n"
+                    "func probe(): int { let p: Player; p.health = 7; return p.hp(); }\n",
+                    &err));
 
     GabFunc *fn = gab_lookup(vm, "M", "probe", &err);
     assert(fn);
@@ -824,11 +817,11 @@ static void test_reloading_a_module_redeclares_its_methods(void) {
 
     // The same unit again, with the method body changed.
     assert(gab_load(vm, "m.gab",
-                             "module M;\n"
-                             "struct Player { health: int }\n"
-                             "func (p: *Player) hp(): int { return p.health * 100; }\n"
-                             "func probe(): int { let p: Player; p.health = 7; return p.hp(); }\n",
-                             &err));
+                    "module M;\n"
+                    "struct Player { health: int }\n"
+                    "func (p: *Player) hp(): int { return p.health * 100; }\n"
+                    "func probe(): int { let p: Player; p.health = 7; return p.hp(); }\n",
+                    &err));
 
     result = 0;
     assert(gab_call(vm, call, &result, &err) == GAB_OK);
@@ -846,10 +839,10 @@ static void test_a_method_is_not_reachable_from_a_host(void) {
     GabError err;
 
     assert(gab_load(vm, "m.gab",
-                             "module M;\n"
-                             "struct Player { health: int }\n"
-                             "func (p: *Player) hp(): int { return p.health; }\n",
-                             &err));
+                    "module M;\n"
+                    "struct Player { health: int }\n"
+                    "func (p: *Player) hp(): int { return p.health; }\n",
+                    &err));
 
     assert(!gab_lookup(vm, "M", "hp", &err));
 
@@ -875,8 +868,7 @@ static void test_duplicate_declarations_in_one_unit_are_rejected(void) {
 
     // Including inside a block, whose scope is fresh per compile but still
     // declares at its unit's generation.
-    assert(!gab_load(vm, "d.gab", "func f(): int { let y: int = 1; let y: int = 2; return y; }\n",
-                     &err));
+    assert(!gab_load(vm, "d.gab", "func f(): int { let y: int = 1; let y: int = 2; return y; }\n", &err));
     assert(err.message[0] != '\0');
 
     gab_vm_free(vm);
@@ -908,8 +900,7 @@ static void test_signature_change_rebinds_the_handle(void) {
     assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
     assert(result == 11);
 
-    bool v2 =
-        gab_load(vm, "s.gab", "module S;\nfunc step(a: int, b: int): int { return a + b; }\n", &err);
+    bool v2 = gab_load(vm, "s.gab", "module S;\nfunc step(a: int, b: int): int { return a + b; }\n", &err);
     assert(v2);
 
     // Calling without re-staging is refused: the old arguments are gone rather
@@ -956,8 +947,7 @@ static void test_staging_after_a_signature_change_just_works(void) {
 
     gab_arg_int(fn_call, 0, 10);
 
-    bool v2 =
-        gab_load(vm, "s.gab", "module S;\nfunc step(a: int, b: int): int { return a + b; }\n", &err);
+    bool v2 = gab_load(vm, "s.gab", "module S;\nfunc step(a: int, b: int): int { return a + b; }\n", &err);
     assert(v2);
 
     // The staged argument describes the old signature, so the call is refused
@@ -976,8 +966,8 @@ static void test_staging_after_a_signature_change_just_works(void) {
 
     // A restage clears every argument, so supplying only some of them is an
     // unset argument rather than a stale value reaching the new body.
-    bool v3 = gab_load(
-        vm, "s.gab", "module S;\nfunc step(a: int, b: int, c: int): int { return a + b + c; }\n", &err);
+    bool v3 = gab_load(vm, "s.gab",
+                       "module S;\nfunc step(a: int, b: int, c: int): int { return a + b + c; }\n", &err);
     assert(v3);
 
     gab_arg_int(fn_call, 0, 1);
@@ -1015,10 +1005,10 @@ static void test_a_reload_too_wide_for_the_handle_is_reported(void) {
 
     // Far more parameters than the handle was originally sized for.
     bool v2 = gab_load(vm, "s.gab",
-                                "module S;\n"
-                                "func f(a: int, b: int, c: int, d: int, e: int, g: int, h: int, i: int,\n"
-                                "       j: int, k: int, l: int, m: int): int { return a; }\n",
-                                &err);
+                       "module S;\n"
+                       "func f(a: int, b: int, c: int, d: int, e: int, g: int, h: int, i: int,\n"
+                       "       j: int, k: int, l: int, m: int): int { return a; }\n",
+                       &err);
     assert(v2);
 
     result = -1;
@@ -1052,10 +1042,10 @@ static void test_the_vm_owns_its_handles(void) {
     GabError err;
 
     bool script = gab_load(vm, "m.gab",
-                                    "func a(n: int): int { return n + 1; }\n"
-                                    "func b(n: int): int { return n + 2; }\n"
-                                    "func c(n: int): int { return n + 3; }\n",
-                                    &err);
+                           "func a(n: int): int { return n + 1; }\n"
+                           "func b(n: int): int { return n + 2; }\n"
+                           "func c(n: int): int { return n + 3; }\n",
+                           &err);
     assert(script);
 
     const char *names[] = {"a", "b", "c"};
@@ -1081,7 +1071,6 @@ static void test_the_vm_owns_its_handles(void) {
         assert(result == 10 + (i % 3) + 1);
     }
 
-
     // All nine are the VM's to release. Under a leak checker this is the
     // assertion: the host frees nothing and nothing leaks.
     for (int i = 0; i < 9; i++) {
@@ -1101,7 +1090,8 @@ static void test_two_callers_stage_independently(void) {
 
     GabError err;
 
-    bool mod = gab_load(vm, "<m>", "func damage(target: int, amount: int): int { return target - amount; }\n", &err);
+    bool mod =
+        gab_load(vm, "<m>", "func damage(target: int, amount: int): int { return target - amount; }\n", &err);
     assert(mod);
 
     GabFunc *fn = gab_lookup(vm, NULL, "damage", &err);
