@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.16)
 
 project(gab C)
 
@@ -17,6 +17,22 @@ set(CMAKE_C_COMPILER clang)
 # That is inherent to the macros rather than a defect, so it is the one warning
 # turned off.
 add_compile_options(-Wall -Wextra -Werror -Wno-unused-function)
+
+# Sanitizers are a whole-program property: the library and the tests must agree
+# on them, so this is a build option rather than a second set of targets.
+# Configure a separate build directory to use it:
+#
+#   cmake -S . -B build-asan -DGAB_SANITIZE=address,undefined
+#
+# ASan finds the leaks and use-after-frees that manual refcounting invites;
+# UBSan finds the overflow and alignment faults a VM decoding its own
+# instructions can produce.
+set(GAB_SANITIZE "" CACHE STRING "Sanitizers to build with, e.g. address,undefined")
+
+if(GAB_SANITIZE)
+    add_compile_options(-fsanitize=${GAB_SANITIZE} -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=${GAB_SANITIZE})
+endif()
 
 add_library(gab
     src/arena.c
