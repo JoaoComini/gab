@@ -801,7 +801,7 @@ static void test_reloading_a_module_redeclares_its_methods(void) {
     assert(gab_load(vm, "m.gab",
                     "module M;\n"
                     "struct Player { health: int }\n"
-                    "func (p: *Player) hp(): int { return p.health; }\n"
+                    "func (p: ref Player) hp(): int { return p.health; }\n"
                     "func probe(): int { let p: Player; p.health = 7; return p.hp(); }\n",
                     &err));
 
@@ -819,7 +819,7 @@ static void test_reloading_a_module_redeclares_its_methods(void) {
     assert(gab_load(vm, "m.gab",
                     "module M;\n"
                     "struct Player { health: int }\n"
-                    "func (p: *Player) hp(): int { return p.health * 100; }\n"
+                    "func (p: ref Player) hp(): int { return p.health * 100; }\n"
                     "func probe(): int { let p: Player; p.health = 7; return p.hp(); }\n",
                     &err));
 
@@ -841,7 +841,7 @@ static void test_a_method_is_not_reachable_from_a_host(void) {
     assert(gab_load(vm, "m.gab",
                     "module M;\n"
                     "struct Player { health: int }\n"
-                    "func (p: *Player) hp(): int { return p.health; }\n",
+                    "func (p: ref Player) hp(): int { return p.health; }\n",
                     &err));
 
     assert(!gab_lookup(vm, "M", "hp", &err));
@@ -1199,7 +1199,109 @@ static void test_a_failed_reload_leaves_the_previous_unit(void) {
     gab_vm_free(vm);
 }
 
+// The gap the README recorded as "no way to pass a pointer from C into a
+// script": a host allocates an object, fills it through the layout the type
+// reports, and hands it over.
+static void test_a_host_pointer_reaches_a_script() {
+    GabVM *vm = gab_vm_new();
+    GabError err;
+
+    assert(gab_load(vm, "u",
+                    "struct Player { health: int }\n"
+                    "func hurt(p: ref Player, amount: int): int {\n"
+                    "  p.health = p.health - amount;\n"
+                    "  return p.health;\n"
+                    "}\n",
+                    &err));
+
+    const GabType *player = gab_find_type(vm, NULL, "Player");
+    assert(player);
+
+    void *object = gab_new(vm, player);
+    assert(object);
+
+    size_t health_at = 0;
+    assert(gab_field_offset(player, "health", &health_at));
+
+    int32_t health = 100;
+    memcpy((char *)object + health_at, &health, sizeof(health));
+
+    GabFunc *fn = gab_lookup(vm, NULL, "hurt", &err);
+    GabCall *call = gab_call_init(fn, &err);
+
+    assert(gab_arg_pointer(call, 0, object, player));
+    assert(gab_arg_int(call, 1, 40));
+
+    int32_t left = 0;
+    assert(gab_call(vm, call, &left, &err) == GAB_OK);
+    assert(left == 60);
+
+    // The script wrote through the pointer, so the host's own object changed —
+    // which is the whole point of passing one rather than a copy.
+    memcpy(&health, (char *)object + health_at, sizeof(health));
+    assert(health == 60);
+
+    gab_call_free(call);
+    gab_free(vm, object);
+    gab_vm_free(vm);
+}
+
+// The pointee is checked rather than trusted: a '*Enemy' where '*Player' was
+// declared is the one mistake the shared-layout story cannot survive.
+static void test_a_pointer_argument_checks_its_pointee() {
+    GabVM *vm = gab_vm_new();
+    GabError err;
+
+    assert(gab_load(vm, "u",
+                    "struct Player { health: int }\n"
+                    "struct Enemy { health: int }\n"
+                    "func hurt(p: ref Player): int { return p.health; }\n",
+                    &err));
+
+    const GabType *player = gab_find_type(vm, NULL, "Player");
+    const GabType *enemy = gab_find_type(vm, NULL, "Enemy");
+
+    void *object = gab_new(vm, player);
+
+    GabFunc *fn = gab_lookup(vm, NULL, "hurt", &err);
+    GabCall *call = gab_call_init(fn, &err);
+
+    // Same size, same layout, different type — and refused on the type alone.
+    assert(!gab_arg_pointer(call, 0, object, enemy));
+
+    // Refused leaves the parameter unset, so the call still will not build.
+    assert(gab_call(vm, call, NULL, &err) == GAB_ERR_ARG);
+
+    assert(gab_arg_pointer(call, 0, object, player));
+
+    gab_call_free(call);
+    gab_free(vm, object);
+    gab_vm_free(vm);
+}
+
+// A fresh object is zeroed, which is what lets a host fill only the fields it
+// cares about.
+static void test_a_new_object_is_zeroed() {
+    GabVM *vm = gab_vm_new();
+    GabError err;
+
+    assert(gab_load(vm, "u", "struct Player { health: int, mana: int }\n", &err));
+
+    const GabType *player = gab_find_type(vm, NULL, "Player");
+    char *object = gab_new(vm, player);
+
+    for (size_t i = 0; i < gab_type_size(player); i++) {
+        assert(object[i] == 0);
+    }
+
+    gab_free(vm, object);
+    gab_vm_free(vm);
+}
+
 int main(void) {
+    test_a_host_pointer_reaches_a_script();
+    test_a_pointer_argument_checks_its_pointee();
+    test_a_new_object_is_zeroed();
     test_two_modules_can_share_a_function_name();
     test_the_script_names_its_module_not_the_filename();
     test_the_vm_owns_its_handles();

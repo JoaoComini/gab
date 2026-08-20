@@ -68,7 +68,7 @@ documentation: every call carries a comment saying what it guarantees and what
 it does not. Nothing is printed by the library — diagnostics come back through
 `GabError` so the host decides where they go.
 
-Three properties are worth knowing before you build against it:
+Four properties are worth knowing before you build against it:
 
 - **Hot reload.** Loading a unit name that is already loaded compiles the new
   source over the old. Handles taken before the reload keep working and call
@@ -81,44 +81,90 @@ Three properties are worth knowing before you build against it:
 - **Layout is checked, not trusted.** `gab_type_size`, `gab_type_align`, and
   `gab_field_offset` exist so a host can assert the script's layout against its
   own `sizeof` and `offsetof`.
+- **Objects have one owner.** `gab_new` hands the host the only reference to an
+  object, and `gab_free` gives it back. A pointer staged with
+  `gab_arg_pointer` is borrowed for the call, so the host goes on owning it; a
+  function returning `*T` hands ownership over, and the host frees it.
 
 ## The language
 
 ```
 module game;
 
+struct World {
+    tick: int,
+}
+
 struct Player {
     health: int,
     mana: int,
+
+    world: ref World,
 }
 
-func heal(p: *Player, amount: int) {
+func heal(p: ref Player, amount: int) {
     p.health = p.health + amount;
 }
 
-func (p: *Player) is_alive(): bool {
+func (p: ref Player) is_alive(): bool {
     return p.health > 0;
 }
 ```
 
 Field access reaches through a pointer the way `->` does in C, so `p.health`
-works whether `p` is a `Player` or a `*Player`.
+works whether `p` is a `Player`, a `*Player`, or a `ref Player`.
 
-Memory is reference counted. `new T` yields an owned `*T` that is released when
-it goes out of scope, and `weak *T` breaks the cycle a parent/child pair would
-otherwise form — dereferencing a dead weak pointer fails the run rather than
-reading freed memory.
+Parameters and receivers borrow. A receiver is `T` or `ref T` — by value, which
+copies, or by borrow, which mutates what the caller holds — and a parameter is
+`T` or `ref T` the same way. Never `*T`: a callee is handed its arguments for the
+duration of the call and frees nothing, so an owning parameter would spell an
+ownership it cannot have. An owned `*T` is lent to either, since lending is all
+a callee asks for.
+
+`&x` yields `ref T`, because taking an address borrows: the slot it names is
+owned by whoever declared it. `ref ref T` is a borrow of a borrow, which is what
+`&` applied twice produces.
+
+Taking the address of an *owning* pointer is refused. It would be a `ref *T` — a
+borrow of the variable rather than of the object — which is what an out-parameter
+needs, and assigning through one would free the caller's old object from inside
+the callee. Return ownership instead; the transfer is then visible at the call
+site. Writing *through* a borrow is unaffected, so a callee filling in a struct
+the caller owns works as it always did.
+
+Memory is uniquely owned. `new T` yields a `*T` that exactly one slot owns and
+that is freed where that slot goes out of scope; freeing an object frees what
+its fields own. An owning field or variable may only be given a value nothing
+else owns — `new`, or a call handing its result over — so `ref T` is how
+something is named without being owned, as a child names its parent.
+
+The rule behind all of this: **`*T` marks a slot that can free what it holds.**
+That is a `let`, a struct field, and a return type — each outlives the statement
+and each is where a free is emitted. A parameter and a receiver are neither, so
+they take `ref T`; `&x` is an address rather than an allocation, so it yields one
+too.
+
+There is no reference count and no runtime liveness check: a `ref T` whose
+object has been freed dangles, exactly as a C pointer would.
+
+What the compiler does catch is a borrow moved somewhere that outlives what it
+names — returning a `ref` to a local, or storing one where the pointee dies
+first. A borrow handed back by a call is taken to borrow from its
+shortest-lived argument, since which one it really came from would need a
+per-function summary. What is not caught is a borrow that outlives its pointee
+without ever being moved: holding a `ref` while the object's owner frees it is
+undefined, as holding a C++ reference across the owner's destruction is.
 
 ## Features
 
 | | |
 | --- | --- |
-| Types | `int` (32-bit), `float` (32-bit), `bool`, structs, pointers `*T`, `weak *T` |
+| Types | `int` (32-bit), `float` (32-bit), `bool`, structs, pointers `*T`, borrows `ref T` |
 | Declarations | `let` with inferred or annotated type, `func`, `struct`, `module` |
 | Functions | Parameters and returns of any type, structs by value, methods with a receiver, recursion, forward references |
 | Control flow | `if` / `else`, `return`, nested blocks with shadowing |
 | Operators | `+` `-` `*` `/`, unary `-`, `==` `!=` `<` `>` `<=` `>=`, `&&` `||`, `&` and `*`, field access |
-| Memory | Reference-counted `new`, `weak` references, scope-based release |
+| Memory | Unique ownership, `new`, `ref` borrows, scope-based free |
 | Modules | `module` namespaces, resolved per unit with a root fallback |
 
 Not yet implemented:
@@ -132,7 +178,6 @@ Not yet implemented:
 | Operators | `!`, `%`, compound assignment (`+=`), bitwise |
 | Literals | No struct literals (`V{x: 1}`) |
 | Conversion | `int` and `float` do not mix; no cast syntax |
-| Host API | No way to pass a pointer from C into a script |
 
 Loops are the largest gap.
 

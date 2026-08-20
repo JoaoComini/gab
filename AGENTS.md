@@ -43,10 +43,11 @@ guard, disable the thing it covers, confirm the test fails, then restore. A
 passing test proves nothing until you have seen it fail.
 
 Helpers live in `test/support/run.h`: `test_run_int`, `test_run_float`,
-`test_run_bool` for behaviour, `test_compiles` for programs that must be
-rejected, `test_run_status` for runtime traps, and `test_compile` with
-`test_count_opcode` / `test_find_opcode` for asserting on emitted code. Use
-them rather than rebuilding a harness.
+`test_run_bool` for behaviour, `test_compiles` for programs the resolver must
+reject, `test_codegens` for those a rule in codegen rejects, `test_run_status`
+for runtime traps, and `test_compile` with `test_count_opcode` /
+`test_find_opcode` for asserting on emitted code. Use them rather than
+rebuilding a harness.
 
 Register a new test file in `test/CMakeLists.txt`.
 

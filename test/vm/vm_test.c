@@ -268,7 +268,7 @@ static void test_module_scope_does_not_change_pointer_lifetimes() {
 
     const char *takes_address = "func f(): int {\n"
                                 "  let x: int = 1;\n"
-                                "  let p: *int = &x;\n"
+                                "  let p: ref int = &x;\n"
                                 "  return *p;\n"
                                 "}\n";
 

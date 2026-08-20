@@ -32,7 +32,7 @@ static void test_method_lands_on_its_receiver_type() {
 
     bool ok = test_resolve(&ctx, scope, script,
                            "struct Player { health: int }\n"
-                           "func (p: *Player) damage(n: int): bool { return true; }\n");
+                           "func (p: ref Player) damage(n: int): bool { return true; }\n");
     assert(ok);
 
     Symbol *damage = lookup_method(&ctx, scope, "Player", "damage");
@@ -60,7 +60,7 @@ static void test_method_is_not_reachable_as_a_bare_name() {
 
     bool ok = test_resolve(&ctx, scope, script,
                            "struct Player { health: int }\n"
-                           "func (p: *Player) damage(n: int): bool { return true; }\n");
+                           "func (p: ref Player) damage(n: int): bool { return true; }\n");
     assert(ok);
 
     assert(!scope_symbol_lookup(scope, string_from_cstr(&ctx.strings, "damage")));
@@ -81,8 +81,8 @@ static void test_same_name_on_two_types() {
     bool ok = test_resolve(&ctx, scope, script,
                            "struct Player { health: int }\n"
                            "struct Enemy { health: int }\n"
-                           "func (p: *Player) update(): int { return 1; }\n"
-                           "func (e: *Enemy) update(): int { return 2; }\n");
+                           "func (p: ref Player) update(): int { return 1; }\n"
+                           "func (e: ref Enemy) update(): int { return 2; }\n");
     assert(ok);
 
     Symbol *player = lookup_method(&ctx, scope, "Player", "update");
@@ -126,7 +126,7 @@ static void test_method_declared_above_its_struct() {
     ASTScript *script = ast_script_create();
 
     bool ok = test_resolve(&ctx, scope, script,
-                           "func (p: *Player) health_of(): int { return p.health; }\n"
+                           "func (p: ref Player) health_of(): int { return p.health; }\n"
                            "struct Player { health: int }\n");
     assert(ok);
 
@@ -147,7 +147,7 @@ static void test_receiver_fields_resolve_in_the_body() {
 
     bool ok = test_resolve(&ctx, scope, script,
                            "struct Player { health: int }\n"
-                           "func (p: *Player) hp(): int { return p.health; }\n"
+                           "func (p: ref Player) hp(): int { return p.health; }\n"
                            "func (q: Player) hp2(): int { return q.health; }\n");
     assert(ok);
 
@@ -173,29 +173,29 @@ static bool fails(const char *source) {
 static void test_diagnostics() {
     // One type may not declare the same method twice.
     assert(fails("struct Player { health: int }\n"
-                 "func (p: *Player) update(): int { return 1; }\n"
-                 "func (p: *Player) update(): int { return 2; }\n"));
+                 "func (p: ref Player) update(): int { return 1; }\n"
+                 "func (p: ref Player) update(): int { return 2; }\n"));
 
     // A receiver has to be a struct; 'int' has no method set to hang one on.
     assert(fails("func (n: int) double(): int { return n; }\n"));
 
     // Nor a type that does not exist at all.
-    assert(fails("func (p: *Missing) update(): int { return 1; }\n"));
+    assert(fails("func (p: ref Missing) update(): int { return 1; }\n"));
 }
 
 // A pointer receiver mutates what the caller holds, which is the whole reason
 // to declare one.
 static void test_pointer_receiver_mutates_the_caller() {
-    assert(
-        test_run_int("struct Player { health: int }\n"
-                     "func (p: *Player) damage(n: int): int { p.health = p.health - n; return p.health; }\n"
-                     "func main(): int {\n"
-                     "    let p: Player;\n"
-                     "    p.health = 100;\n"
-                     "    let ignored: int = p.damage(30);\n"
-                     "    return p.health;\n"
-                     "}\n"
-                     "let r: int = main();") == 70);
+    assert(test_run_int(
+               "struct Player { health: int }\n"
+               "func (p: ref Player) damage(n: int): int { p.health = p.health - n; return p.health; }\n"
+               "func main(): int {\n"
+               "    let p: Player;\n"
+               "    p.health = 100;\n"
+               "    let ignored: int = p.damage(30);\n"
+               "    return p.health;\n"
+               "}\n"
+               "let r: int = main();") == 70);
 }
 
 // A value receiver is a copy, so assigning to it leaves the caller's struct
@@ -217,8 +217,8 @@ static void test_value_receiver_does_not_mutate_the_caller() {
 static void test_same_name_dispatches_by_type() {
     assert(test_run_int("struct Player { health: int }\n"
                         "struct Enemy { health: int }\n"
-                        "func (p: *Player) tag(): int { return 1; }\n"
-                        "func (e: *Enemy) tag(): int { return 2; }\n"
+                        "func (p: ref Player) tag(): int { return 1; }\n"
+                        "func (e: ref Enemy) tag(): int { return 2; }\n"
                         "func main(): int {\n"
                         "    let p: Player;\n"
                         "    let e: Enemy;\n"
@@ -231,8 +231,8 @@ static void test_same_name_dispatches_by_type() {
 // own argument block inside the outer one's frame.
 static void test_method_calls_another_method() {
     assert(test_run_int("struct Player { health: int }\n"
-                        "func (p: *Player) hp(): int { return p.health; }\n"
-                        "func (p: *Player) double_hp(): int { return p.hp() + p.hp(); }\n"
+                        "func (p: ref Player) hp(): int { return p.health; }\n"
+                        "func (p: ref Player) double_hp(): int { return p.hp() + p.hp(); }\n"
                         "func main(): int {\n"
                         "    let p: Player;\n"
                         "    p.health = 21;\n"
@@ -245,7 +245,7 @@ static void test_method_calls_another_method() {
 // excludes it.
 static void test_method_arguments() {
     assert(test_run_int("struct Vec { x: int, y: int }\n"
-                        "func (v: *Vec) set(a: int, b: int): int { v.x = a; v.y = b; return v.x + v.y; }\n"
+                        "func (v: ref Vec) set(a: int, b: int): int { v.x = a; v.y = b; return v.x + v.y; }\n"
                         "func main(): int {\n"
                         "    let v: Vec;\n"
                         "    return v.set(3, 4);\n"
@@ -257,7 +257,7 @@ static void test_method_arguments() {
 // copy of the receiver slot.
 static void test_recursive_method() {
     assert(test_run_int("struct Counter { n: int }\n"
-                        "func (c: *Counter) countdown(n: int): int {\n"
+                        "func (c: ref Counter) countdown(n: int): int {\n"
                         "    if n <= 0 { return c.n; }\n"
                         "    c.n = c.n + n;\n"
                         "    return c.countdown(n - 1);\n"
@@ -274,11 +274,11 @@ static void test_recursive_method() {
 // address needs taking.
 static void test_call_through_a_pointer_receiver() {
     assert(test_run_int("struct Player { health: int }\n"
-                        "func (p: *Player) hp(): int { return p.health; }\n"
+                        "func (p: ref Player) hp(): int { return p.health; }\n"
                         "func main(): int {\n"
                         "    let p: Player;\n"
                         "    p.health = 9;\n"
-                        "    let q: *Player = &p;\n"
+                        "    let q: ref Player = &p;\n"
                         "    return q.hp();\n"
                         "}\n"
                         "let r: int = main();") == 9);
@@ -291,7 +291,7 @@ static void test_value_method_through_a_pointer() {
                         "func main(): int {\n"
                         "    let p: Player;\n"
                         "    p.health = 13;\n"
-                        "    let q: *Player = &p;\n"
+                        "    let q: ref Player = &p;\n"
                         "    return q.hp();\n"
                         "}\n"
                         "let r: int = main();") == 13);
@@ -302,7 +302,7 @@ static void test_value_method_through_a_pointer() {
 static void test_struct_parameter_and_return() {
     assert(test_run_int("struct Vec { x: int, y: int }\n"
                         "struct Adder { bias: int }\n"
-                        "func (a: *Adder) add(v: Vec): Vec {\n"
+                        "func (a: ref Adder) add(v: Vec): Vec {\n"
                         "    let out: Vec;\n"
                         "    out.x = v.x + a.bias;\n"
                         "    out.y = v.y + a.bias;\n"
@@ -325,7 +325,7 @@ static void test_struct_parameter_and_return() {
 static void test_call_on_a_nested_struct() {
     assert(test_run_int("struct Inner { n: int }\n"
                         "struct Outer { inner: Inner }\n"
-                        "func (i: *Inner) bump(): int { i.n = i.n + 1; return i.n; }\n"
+                        "func (i: ref Inner) bump(): int { i.n = i.n + 1; return i.n; }\n"
                         "func main(): int {\n"
                         "    let o: Outer;\n"
                         "    o.inner.n = 5;\n"
@@ -342,18 +342,18 @@ static void test_call_diagnostics() {
 
     // The arity a caller sees excludes the receiver.
     assert(fails("struct Player { health: int }\n"
-                 "func (p: *Player) hp(): int { return p.health; }\n"
+                 "func (p: ref Player) hp(): int { return p.health; }\n"
                  "func main(): int { let p: Player; return p.hp(1); }\n"));
 
     // Argument types are checked past the receiver.
     assert(fails("struct Player { health: int }\n"
-                 "func (p: *Player) set(n: int): int { return n; }\n"
+                 "func (p: ref Player) set(n: int): int { return n; }\n"
                  "func main(): int { let p: Player; return p.set(true); }\n"));
 
     // A pointer receiver needs something with an address; a call result is a
     // temporary and has none.
     assert(fails("struct Player { health: int }\n"
-                 "func (p: *Player) hp(): int { return p.health; }\n"
+                 "func (p: ref Player) hp(): int { return p.health; }\n"
                  "func make(): Player { let p: Player; return p; }\n"
                  "func main(): int { return make().hp(); }\n"));
 
@@ -361,7 +361,86 @@ static void test_call_diagnostics() {
     assert(fails("func main(): int { let n: int = 1; return n.hp(); }\n"));
 }
 
+// Resolution rewrites 'recv.m(a)' into 'm(recv', a)', so the three ways a
+// receiver reaches parameter zero all have to survive the rewrite. Each is one
+// adjustment: none, an address taken, a pointee copied in.
+
+// The receiver already matches parameter zero, so it is passed as written.
+static void test_a_matching_receiver_needs_no_adjustment() {
+    assert(test_run_int("struct Box { n: int }\n"
+                        "func (b: ref Box) get(): int { return b.n; }\n"
+                        "func main(): int {\n"
+                        "    let b: *Box = new Box;\n"
+                        "    b.n = 7;\n"
+                        "    return b.get();\n"
+                        "}\n"
+                        "let r: int = main();") == 7);
+}
+
+// A '*T' method called on a 'T' takes the receiver's address, which the rewrite
+// spells as a real '&recv' node.
+static void test_a_value_receiver_has_its_address_taken() {
+    assert(test_run_int("struct Box { n: int }\n"
+                        "func (b: ref Box) bump(): int { b.n = b.n + 1; return b.n; }\n"
+                        "func main(): int {\n"
+                        "    let b: Box;\n"
+                        "    b.n = 4;\n"
+                        "    let got: int = b.bump();\n"
+                        "    return got * 10 + b.n;\n"
+                        "}\n"
+                        "let r: int = main();") == 55);
+}
+
+// A 'T' method called through a '*T' copies the pointee in, which the rewrite
+// spells as a '*recv' node.
+static void test_a_pointer_receiver_is_dereferenced() {
+    assert(test_run_int("struct Box { n: int }\n"
+                        "func (b: Box) peek(): int { return b.n; }\n"
+                        "func main(): int {\n"
+                        "    let b: *Box = new Box;\n"
+                        "    b.n = 9;\n"
+                        "    return b.peek();\n"
+                        "}\n"
+                        "let r: int = main();") == 9);
+}
+
+// A method on a temporary that takes a pointer receiver has no address to take,
+// and the rewrite must not invent one.
+static void test_a_pointer_method_on_a_temporary_is_refused() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "func (b: ref Box) get(): int { return b.n; }\n"
+                          "func make(): Box { let b: Box; return b; }\n"
+                          "func main(): int { return make().get(); }\n"));
+}
+
+// The receiver is argument zero after the rewrite, so an arity error must still
+// count only the arguments the user actually wrote.
+static void test_arity_errors_exclude_the_receiver() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "func (b: ref Box) add(x: int): int { return b.n + x; }\n"
+                          "func main(): int {\n"
+                          "    let b: *Box = new Box;\n"
+                          "    return b.add(1, 2);\n"
+                          "}\n"));
+}
+
+// A name that is not a method is still a miss, and reports as one rather than
+// as a missing field: the call target looks like a field until it resolves.
+static void test_an_unknown_method_is_refused() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "func main(): int {\n"
+                          "    let b: *Box = new Box;\n"
+                          "    return b.nope();\n"
+                          "}\n"));
+}
+
 int main(void) {
+    test_a_matching_receiver_needs_no_adjustment();
+    test_a_value_receiver_has_its_address_taken();
+    test_a_pointer_receiver_is_dereferenced();
+    test_a_pointer_method_on_a_temporary_is_refused();
+    test_arity_errors_exclude_the_receiver();
+    test_an_unknown_method_is_refused();
     test_method_lands_on_its_receiver_type();
     test_method_is_not_reachable_as_a_bare_name();
     test_same_name_on_two_types();

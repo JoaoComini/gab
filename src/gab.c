@@ -1,6 +1,7 @@
 #include "gab.h"
 
 #include "diagnostics.h"
+#include "object.h"
 #include "scope.h"
 #include "string/string.h"
 #include "symbol_table.h"
@@ -367,6 +368,27 @@ bool gab_field_offset(const GabType *handle, const char *field, size_t *out_offs
     return false;
 }
 
+// --- Heap objects ----------------------------------------------------------
+
+// The VM is taken but unused: an allocator is global today, and a host that
+// installs its own later would reach it through the VM rather than through a
+// changed signature.
+void *gab_new(GabVM *handle, const GabType *type) {
+    (void)handle;
+
+    if (!type) {
+        return NULL;
+    }
+
+    return gab_object_alloc(DEFAULT_ALLOCATOR, (const Type *)type);
+}
+
+void gab_free(GabVM *handle, void *object) {
+    (void)handle;
+
+    gab_object_free(DEFAULT_ALLOCATOR, object);
+}
+
 // --- Calling ---------------------------------------------------------------
 
 // Slots a value of this type occupies, matching codegen's tiling exactly: the
@@ -716,6 +738,30 @@ bool gab_arg_struct(GabCall *call, int index, const void *data, size_t size) {
     }
 
     memcpy(slot, data, size);
+
+    return true;
+}
+
+bool gab_arg_pointer(GabCall *call, int index, void *pointer, const GabType *pointee) {
+    // The pointee is checked before the slot is claimed, so a rejected pointer
+    // leaves the parameter unset rather than counting as supplied. Pointer types
+    // are interned, so this is a pointer compare rather than a structural one.
+    if (call && index >= 0 && (size_t)index < call->fn->sig_param_count) {
+        const Type *param = call->fn->sig_params[index];
+
+        if (param && param->kind == TYPE_POINTER && param->pointee != (const Type *)pointee) {
+            return false;
+        }
+    }
+
+    Value *slot = gab_arg_slot(call, index, TYPE_POINTER);
+    if (!slot) {
+        return false;
+    }
+
+    // Written through memcpy rather than a Value field: a slot is four bytes
+    // with no pointer member, and a pointer tiles over two of them.
+    memcpy(slot, &pointer, sizeof(pointer));
 
     return true;
 }

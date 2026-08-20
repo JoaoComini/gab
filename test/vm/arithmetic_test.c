@@ -111,8 +111,7 @@ static void test_precedence_and_associativity() {
 }
 
 // Integer division by zero is undefined in C and traps with SIGFPE. An
-// embedded VM must not let a script kill its host, so it fails the run
-// instead, the way a dangling weak deref does.
+// embedded VM must not let a script kill its host, so it fails the run instead.
 static void test_int_divide_by_zero_traps() {
     assert(test_run_status("func f(): int { let a: int = 1; let b: int = 0; return a / b; }\n"
                            "let r: int = f();\n") == VM_RUN_ERR_DIVIDE_BY_ZERO);

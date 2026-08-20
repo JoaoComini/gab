@@ -100,8 +100,8 @@ const char *token_description(TokenType type) {
         return "'struct'";
     case TOKEN_NEW:
         return "'new'";
-    case TOKEN_WEAK:
-        return "'weak'";
+    case TOKEN_REF:
+        return "'ref'";
     case TOKEN_MODULE:
         return "'module'";
     case TOKEN_RETURN:
@@ -183,8 +183,8 @@ static Token lexer_identifier(Lexer *lexer) {
         return token_create_ref(lexer, TOKEN_NEW, ref);
     }
 
-    if (string_ref_equals_cstr(ref, "weak")) {
-        return token_create_ref(lexer, TOKEN_WEAK, ref);
+    if (string_ref_equals_cstr(ref, "ref")) {
+        return token_create_ref(lexer, TOKEN_REF, ref);
     }
 
     if (string_ref_equals_cstr(ref, "module")) {

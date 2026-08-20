@@ -58,14 +58,15 @@ static void test_two_objects_are_distinct() {
 // A method on a pointer receiver is called through a heap pointer with no
 // address-taking, since the receiver already is one.
 static void test_method_on_a_heap_object() {
-    assert(test_run_int("struct Player { health: int }\n"
-                        "func (p: *Player) hurt(n: int): int { p.health = p.health - n; return p.health; }\n"
-                        "func main(): int {\n"
-                        "    let p: *Player = new Player;\n"
-                        "    p.health = 50;\n"
-                        "    return p.hurt(8);\n"
-                        "}\n"
-                        "let r: int = main();") == 42);
+    assert(
+        test_run_int("struct Player { health: int }\n"
+                     "func (p: ref Player) hurt(n: int): int { p.health = p.health - n; return p.health; }\n"
+                     "func main(): int {\n"
+                     "    let p: *Player = new Player;\n"
+                     "    p.health = 50;\n"
+                     "    return p.hurt(8);\n"
+                     "}\n"
+                     "let r: int = main();") == 42);
 }
 
 // A heap object holding a pointer to another: the field is a '*T' like any
@@ -95,8 +96,8 @@ static void test_an_alias_is_borrowed_not_owned() {
                         "let r: int = main();") == 5);
 }
 
-// Released where its block closes, not where the frame pops: destruction is
-// deterministic at the brace, which is what refcounting buys over a GC.
+// Freed where its block closes, not where the frame pops: destruction is
+// deterministic at the brace rather than whenever a collector runs.
 static void test_released_at_the_end_of_its_block() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
@@ -126,17 +127,47 @@ static void test_a_bare_new_does_not_leak() {
                         "let r: int = main();") == 4);
 }
 
-// A borrowed reference stored into a field: the local still owns its own, so
-// the field has to take one of its own too. Without the retain the object is
-// freed at the end of the block while the field still points at it.
-static void test_storing_a_borrowed_reference_into_a_field_retains() {
+// A strong field owns what it names, so it may only be given something nothing
+// else owns. 'i' is owned by its own slot, and storing it would leave the object
+// with two owners — the field and the slot — each releasing it independently.
+static void test_storing_a_borrowed_reference_into_a_field_is_refused() {
+    assert(!test_codegens("struct Inner { n: int }\n"
+                          "struct Outer { child: *Inner }\n"
+                          "func main(): int {\n"
+                          "    let o: *Outer = new Outer;\n"
+                          "    let i: *Inner = new Inner;\n"
+                          "    i.n = 6;\n"
+                          "    o.child = i;\n"
+                          "    return o.child.n;\n"
+                          "}\n"
+                          "let r: int = main();"));
+}
+
+// A parameter is a borrow like any other name, so it is refused for the same
+// reason. This is the case that would otherwise outlive its caller's ownership.
+static void test_storing_a_parameter_into_a_field_is_refused() {
+    assert(!test_codegens("struct Inner { n: int }\n"
+                          "struct Outer { child: *Inner }\n"
+                          "func adopt(o: ref Outer, i: ref Inner): int {\n"
+                          "    o.child = i;\n"
+                          "    return 0;\n"
+                          "}\n"
+                          "let r: int = 0;"));
+}
+
+// The other half of the rule: an expression that hands its result over is
+// exactly what a field may be given, and a call is one.
+static void test_storing_a_call_result_into_a_field_is_allowed() {
     assert(test_run_int("struct Inner { n: int }\n"
                         "struct Outer { child: *Inner }\n"
-                        "func main(): int {\n"
-                        "    let o: *Outer = new Outer;\n"
+                        "func make(): *Inner {\n"
                         "    let i: *Inner = new Inner;\n"
                         "    i.n = 6;\n"
-                        "    o.child = i;\n"
+                        "    return i;\n"
+                        "}\n"
+                        "func main(): int {\n"
+                        "    let o: *Outer = new Outer;\n"
+                        "    o.child = make();\n"
                         "    return o.child.n;\n"
                         "}\n"
                         "let r: int = main();") == 6);
@@ -171,31 +202,58 @@ static void test_reassigning_a_variable_releases_the_old_value() {
                         "let r: int = main();") == 9);
 }
 
-// Self-assignment is why the order is retain-new, store, release-old: releasing
-// first would free the object and then store a pointer to freed memory.
-static void test_self_assignment_survives() {
-    assert(test_run_int("struct Inner { n: int }\n"
-                        "struct Outer { child: *Inner }\n"
-                        "func main(): int {\n"
-                        "    let o: *Outer = new Outer;\n"
-                        "    o.child = new Inner;\n"
-                        "    o.child.n = 5;\n"
-                        "    o.child = o.child;\n"
-                        "    return o.child.n;\n"
-                        "}\n"
-                        "let r: int = main();") == 5);
+// 'o.child = o.child' was the case that forced the retain-new, store,
+// release-old order. A field may now only be given something unowned, and a
+// field read is a borrow, so the program the ordering existed to survive is
+// refused before it runs — which is the ordering problem going away rather than
+// being solved.
+static void test_field_self_assignment_is_refused() {
+    assert(!test_codegens("struct Inner { n: int }\n"
+                          "struct Outer { child: *Inner }\n"
+                          "func main(): int {\n"
+                          "    let o: *Outer = new Outer;\n"
+                          "    o.child = new Inner;\n"
+                          "    o.child.n = 5;\n"
+                          "    o.child = o.child;\n"
+                          "    return o.child.n;\n"
+                          "}\n"
+                          "let r: int = main();"));
+}
 
+// An owning variable may only be given something unowned, exactly as a field
+// may. 'p = p' reads as a borrow like any other variable read, so it is refused
+// with the rest — self-assignment needs no special handling when the assignment
+// itself is not expressible.
+static void test_variable_self_assignment_is_refused() {
+    assert(!test_codegens("struct Box { n: int }\n"
+                          "func main(): int { let p: *Box = new Box; p.n = 3; p = p; return p.n; }\n"
+                          "let r: int = main();"));
+}
+
+// Reassigning an owning variable with a fresh object is the legal shape, and it
+// frees what the slot held before.
+static void test_reassigning_an_owning_variable_frees_the_old_object() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func main(): int { let p: *Box = new Box; p.n = 3; p = p; return p.n; }\n"
-                        "let r: int = main();") == 3);
+                        "func main(): int {\n"
+                        "    let p: *Box = new Box;\n"
+                        "    p.n = 1;\n"
+                        "    p = new Box;\n"
+                        "    p.n = 9;\n"
+                        "    return p.n;\n"
+                        "}\n"
+                        "let r: int = main();") == 9);
 }
 
 int main(void) {
     test_new_allocates_a_usable_object();
     test_overwriting_a_field_releases_the_old_value();
     test_reassigning_a_variable_releases_the_old_value();
-    test_self_assignment_survives();
-    test_storing_a_borrowed_reference_into_a_field_retains();
+    test_field_self_assignment_is_refused();
+    test_variable_self_assignment_is_refused();
+    test_reassigning_an_owning_variable_frees_the_old_object();
+    test_storing_a_borrowed_reference_into_a_field_is_refused();
+    test_storing_a_parameter_into_a_field_is_refused();
+    test_storing_a_call_result_into_a_field_is_allowed();
     test_an_alias_is_borrowed_not_owned();
     test_released_at_the_end_of_its_block();
     test_a_reused_slot_is_not_released_twice();

@@ -95,6 +95,26 @@ size_t gab_type_align(const GabType *type);
 // an out-parameter: a field at offset 0 is otherwise indistinguishable.
 bool gab_field_offset(const GabType *type, const char *field, size_t *out_offset);
 
+// --- Heap objects ----------------------------------------------------------
+
+// Allocates a zeroed object of 'type' and hands the host the only reference to
+// it. Ownership is unique: exactly one owner at a time, and here that is the
+// caller, who must pass it to gab_free or hand it to a script that takes it
+// over. Returns NULL if 'type' is NULL or memory ran out.
+//
+// The address is the payload's, so it can be read and written through
+// gab_field_offset exactly as a struct passed by value would be — this is the
+// same zero-marshalling layout, on the heap instead of the stack.
+void *gab_new(GabVM *vm, const GabType *type);
+
+// Frees an object and everything it owns. A 'ref T' field is not followed: it
+// names something it does not own.
+//
+// NULL-tolerant. Freeing an object a script still names is a use-after-free
+// that nothing detects — ownership is not tracked at runtime, so this is the
+// one place a host has to know what it owns.
+void gab_free(GabVM *vm, void *object);
+
 // --- Calling into a script -------------------------------------------------
 
 // Resolves a name to a callable handle once, so that calling it every frame
@@ -161,9 +181,28 @@ bool gab_arg_bool(GabCall *call, int index, bool value);
 // the one place a host can get the ABI wrong, so it is checked, not trusted.
 bool gab_arg_struct(GabCall *call, int index, const void *data, size_t size);
 
+// Stages a pointer argument. 'pointee' is what the parameter must point at, as
+// returned by gab_find_type — the pointee is checked rather than trusted, since
+// a '*Player' where '*Enemy' was declared is exactly the mistake the layout
+// story cannot survive.
+//
+// A parameter is a borrow whichever way it is declared: the callee neither
+// takes ownership on entry nor frees it on return, so the object must outlive
+// the call and the host goes on owning it. What the callee may do with it
+// differs — an owning '*T' parameter may be stored into a field, which hands
+// ownership to that object; a 'ref T' one may not.
+//
+// Returns false if the index is out of range, the parameter is not a pointer,
+// or its pointee is not this type.
+bool gab_arg_pointer(GabCall *call, int index, void *pointer, const GabType *pointee);
+
 // Calls the function with whatever the setters left in the call's buffer.
 // 'ret' may be NULL for a function that returns nothing; otherwise it receives
 // the return type's size in bytes, so a struct return works the same way.
+//
+// A function returning '*T' hands over ownership: the object is the host's to
+// gab_free once it is done. A 'ref T' return does not — it names something the
+// script still owns, and freeing it would be a double free.
 GabStatus gab_call(GabVM *vm, GabCall *call, void *ret, GabError *err);
 
 #endif

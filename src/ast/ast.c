@@ -117,7 +117,7 @@ static String *resolver_spec_member(ResolverState *state, StringRef name) {
 static bool is_error_type(Type *type) { return !type || type->kind == TYPE_ERROR; }
 
 // The printable form of a type. A pointer's name is derived from its pointee
-// rather than stored, so 'weak **Player' formats without interning three
+// rather than stored, so '**Player' formats without interning two
 // intermediate names. Built in the compile arena: only diagnostics ask, and
 // they are already on the failing path.
 static const char *type_name(ResolverState *state, Type *type) {
@@ -130,7 +130,7 @@ static const char *type_name(ResolverState *state, Type *type) {
     }
 
     const char *pointee = type_name(state, type->pointee);
-    const char *prefix = type->is_weak ? "weak *" : "*";
+    const char *prefix = type->is_ref ? "ref " : "*";
     size_t length = strlen(prefix) + strlen(pointee) + 1;
     char *out = arena_alloc(state->compile_arena, length);
 
@@ -180,6 +180,14 @@ static const char *bin_op_name(BinOp op) {
 // The block depth of what a pointer-valued expression points at, or 0 when it
 // points at nothing known. Comparing depths is what catches a pointer being
 // moved somewhere that outlives its pointee: a smaller depth is a longer life.
+//
+// Flow-insensitive: a variable carries one depth, overwritten at each
+// assignment, with no merge where branches rejoin. That is sound for the
+// straight-line and if/else code the language has today, because a later
+// assignment is the only thing that can change what a pointer names. A loop
+// would break it — a back-edge can carry a depth from an iteration this has
+// already walked past — so whichever lands second, loops or a precise analysis,
+// has to reckon with the other.
 static int pointee_depth(const ASTExpr *expr) {
     if (!expr) {
         return 0;
@@ -198,6 +206,36 @@ static int pointee_depth(const ASTExpr *expr) {
         // than the "unknown" the default stands for: it can be stored
         // anywhere, and the depth comparison already says so.
         return 0;
+    case EXPR_CALL: {
+        // A call handing back a 'ref T' hands back a borrow of something, and
+        // that something can only have come from an argument: the callee's own
+        // locals die with its frame, and returning a borrow of one is already
+        // refused where the callee returns it.
+        //
+        // Which argument is not knowable without a per-function summary, so the
+        // result is treated as borrowing from the shortest-lived of them. That
+        // is conservative in one direction only — it can refuse a borrow of
+        // something longer-lived than the deepest argument, never accept one
+        // that dangles.
+        //
+        // An owned '*T' return is a heap object whatever it was made from, so
+        // it outlives every frame and inherits nothing.
+        if (!expr->type || !expr->type->is_ref) {
+            return 0;
+        }
+
+        int deepest = 0;
+
+        for (size_t i = 0; i < expr->call.args.size; i++) {
+            int depth = pointee_depth(expr->call.args.data[i]);
+
+            if (depth > deepest) {
+                deepest = depth;
+            }
+        }
+
+        return deepest;
+    }
     default:
         break;
     }
@@ -249,6 +287,8 @@ static Type *receiver_base_type(Type *type) {
 // Checks each argument against the parameter type in the same position. Shared
 // by both call forms, which differ only in where their parameter list starts:
 // a method's skips the receiver.
+static bool type_accepts(Type *to, Type *from);
+
 static void check_call_args(ResolverState *state, ASTExprList *args, Type **params) {
     for (size_t i = 0; i < args->size; i++) {
         ASTExpr *arg = args->data[i];
@@ -258,7 +298,10 @@ static void check_call_args(ResolverState *state, ASTExprList *args, Type **para
             continue;
         }
 
-        if (arg->type != param_type) {
+        // type_accepts rather than identity, so an owned '*T' fills a 'ref T'
+        // parameter: lending is what a borrow parameter asks for, and the
+        // caller goes on owning what it lent.
+        if (!type_accepts(param_type, arg->type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, arg->span, "argument %zu is %s, but %s was declared",
                        i + 1, type_name(state, arg->type), type_name(state, param_type));
         }
@@ -269,14 +312,100 @@ static void check_call_args(ResolverState *state, ASTExprList *args, Type **para
 // codegen. Go's rule: a pointer method on an addressable value takes its
 // address, and a value method through a pointer copies the pointee in. Returns
 // false when neither is possible.
-static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, Type *declared, Type *actual,
-                               const String *name) {
+// Rewrites 'recv.m(a)' into 'm(recv', a)', where recv' is the receiver adjusted
+// to what parameter zero declared: '&recv' where the method takes a pointer and
+// the receiver is a value, '*recv' the other way round.
+//
+// After this there is no method call left in the tree — only a call whose first
+// argument happens to be a receiver, which is exactly what parameter zero has
+// always been. Codegen therefore has one call path rather than two near-copies
+// of one, and anything later that reasons about arguments sees the receiver
+// among them without knowing to look for it.
+//
+// The adjustment is a real node rather than a flag because the tree is the only
+// place it can be honestly recorded: '&recv' is an expression, and every pass
+// that walks expressions should see it as one. Rust and Go both lower method
+// calls this way, and for this reason.
+//
+// Runs after the call is fully checked, so the diagnostics above all report
+// against what the user wrote rather than against the rewrite.
+// How a receiver reaches parameter zero. A '*T' method called on a 'T' takes
+// its address; a 'T' method called through a '*T' copies the pointee in.
+typedef enum {
+    RECEIVER_AS_IS,
+    RECEIVER_ADDRESS_OF,
+    RECEIVER_DEREF,
+} ReceiverAdjustment;
+
+// Rewrites 'recv.m(a)' — parsed as a call over the field expression 'recv.m' —
+// into 'm(recv', a)', where recv' is the receiver adjusted to what parameter
+// zero declared.
+//
+// After this there is no method call left in the tree, and no node kind for one
+// either: only a call whose first argument happens to be a receiver, which is
+// exactly what parameter zero has always been. Codegen therefore has one call
+// path rather than two near-copies of one, and anything later that reasons
+// about arguments sees the receiver among them without knowing to look.
+//
+// The adjustment is a real node rather than a flag because the tree is the only
+// place it can be honestly recorded: '&recv' is an expression, and every pass
+// that walks expressions should see it as one. Rust and Go both lower method
+// calls this way, and for this reason.
+//
+// Runs after the call is fully checked, so every diagnostic above reports
+// against what the user wrote rather than against the rewrite.
+static void lower_method_call(ASTExpr *expr, Symbol *method, ReceiverAdjustment adjustment) {
+    ASTExpr *target = expr->call.target;
+
+    // Lifted out of the field node before it is freed: the field held the
+    // receiver, and the call is about to hold it directly.
+    ASTExpr *receiver = target->field.target;
+    Span span = receiver->span;
+
+    target->field.target = NULL;
+    ast_expr_free(target);
+
+    switch (adjustment) {
+    case RECEIVER_ADDRESS_OF:
+        receiver = ast_addr_of_expr_create(span, receiver);
+        receiver->type = method->func.params[0];
+        break;
+    case RECEIVER_DEREF:
+        receiver = ast_deref_expr_create(span, receiver);
+        receiver->type = method->func.params[0];
+        break;
+    case RECEIVER_AS_IS:
+        break;
+    }
+
+    // A fresh list, since the receiver has to lead and the list only appends.
+    ASTExprList args = ast_expr_list_create();
+    ast_expr_list_add(&args, receiver);
+
+    for (size_t i = 0; i < expr->call.args.size; i++) {
+        ast_expr_list_add(&args, expr->call.args.data[i]);
+    }
+
+    // The old list's storage only, never its elements: every one of them is now
+    // held by the new list, and the receiver by the adjustment node above it.
+    ast_expr_list_free(&expr->call.args);
+
+    expr->call.target = NULL;
+    expr->call.args = args;
+    expr->symbol = method;
+}
+
+// How the receiver has to be adjusted to reach parameter zero, reported through
+// 'out'. Returns false when no adjustment bridges the two, having said why.
+static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *receiver, Type *declared,
+                               Type *actual, const String *name, ReceiverAdjustment *out) {
     if (declared == actual) {
+        *out = RECEIVER_AS_IS;
         return true;
     }
 
     if (type_is_pointer(declared) && !type_is_pointer(actual)) {
-        if (!is_addressable(expr->method_call.receiver)) {
+        if (!is_addressable(receiver)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "cannot call '%s' on a temporary, since it takes a pointer receiver", name->data);
             return false;
@@ -284,17 +413,30 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, Type *declar
 
         // The address is loose for the duration of the call, so the slot it
         // names must survive the whole block — exactly as for '&x'.
-        Symbol *addressed = addressed_symbol(expr->method_call.receiver);
+        Symbol *addressed = addressed_symbol(receiver);
         if (addressed) {
             addressed->pinned = true;
         }
 
-        expr->method_call.take_address = true;
+        *out = RECEIVER_ADDRESS_OF;
         return true;
     }
 
     if (!type_is_pointer(declared) && type_is_pointer(actual)) {
-        expr->method_call.deref = true;
+        *out = RECEIVER_DEREF;
+        return true;
+    }
+
+    // An owned '*T' calling a 'ref T' method, which is the only pointer-to-
+    // pointer case left: a receiver is declared 'ref T' or it is not a pointer
+    // at all, so 'declared' is never an owning pointer here.
+    //
+    // Lending is what the method asked for, and the caller goes on owning what
+    // it lent. The same widening type_accepts allows for any argument — which
+    // is what a receiver is — and 'declared == actual' above does not catch it
+    // only because the two are distinct interned types.
+    if (type_accepts(declared, actual)) {
+        *out = RECEIVER_AS_IS;
         return true;
     }
 
@@ -304,20 +446,95 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, Type *declar
     return false;
 }
 
-// Whether a value of 'from' may be stored where 'to' is expected. Identity for
-// everything except the one conversion the language allows: a strong reference
-// may become a weak one, since weakening never fails and is how a weak field is
-// ever populated.
+void ast_script_expr_visit(ResolverState *state, ASTExpr *expr);
+
+// A call whose target is a field expression: 'recv.m(args)'. Resolves the
+// method against the receiver's type, checks the call, and lowers the whole
+// thing into an ordinary call with the receiver as argument zero.
 //
-// The reverse is deliberately absent. Promoting 'weak *T' to '*T' can fail —
-// the object may be gone — and a conversion with a failure case needs somewhere
-// to report it, which waits for a nil story.
+// The target is never visited as a field expression — 'm' names a method, and
+// the struct has no field by it — so the receiver inside it is what gets
+// walked.
+static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
+    ASTExpr *receiver = expr->call.target->field.target;
+    StringRef name = expr->call.target->field.name;
+
+    ast_script_expr_visit(state, receiver);
+
+    for (size_t i = 0; i < expr->call.args.size; i++) {
+        ast_script_expr_visit(state, expr->call.args.data[i]);
+    }
+
+    Type *receiver_type = receiver->type;
+
+    if (is_error_type(receiver_type)) {
+        expr->type = resolver_error_type(state);
+        return;
+    }
+
+    // '*Player' and 'Player' share one method set, so the lookup and every
+    // message below name the struct rather than what was written.
+    Type *base = receiver_base_type(receiver_type);
+
+    if (!base) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "%s is not a struct, so it has no methods",
+                   type_name(state, receiver_type));
+        expr->type = resolver_error_type(state);
+        return;
+    }
+
+    String *method_name = resolver_intern(state, name);
+    Symbol *method = type_find_method(base, method_name);
+
+    if (!method) {
+        diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "'%s' has no method '%s'", base->name->data,
+                   method_name->data);
+        expr->type = resolver_error_type(state);
+        return;
+    }
+
+    // Parameter zero is the receiver, so the declared parameters — the ones the
+    // caller actually writes — are everything after it.
+    Type *declared_receiver = method->func.params[0];
+    size_t declared_params = method->func.param_count - 1;
+
+    ReceiverAdjustment adjustment;
+
+    if (!reconcile_receiver(state, expr, receiver, declared_receiver, receiver_type, method_name,
+                            &adjustment)) {
+        expr->type = resolver_error_type(state);
+        return;
+    }
+
+    // The count the user sees excludes the receiver, which they never wrote.
+    if (expr->call.args.size != declared_params) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %zu argument(s), found %zu",
+                   declared_params, expr->call.args.size);
+        expr->type = resolver_error_type(state);
+        return;
+    }
+
+    check_call_args(state, &expr->call.args, method->func.params + 1);
+
+    lower_method_call(expr, method, adjustment);
+
+    expr->type = method->func.return_type;
+}
+
+// Whether a value of 'from' may be stored where 'to' is expected. Identity for
+// everything except the one conversion the language allows: an owned '*T' may
+// be stored where a 'ref T' is expected, since giving something up to be named
+// costs nothing and is how a borrowing field is ever populated.
+//
+// The reverse is deliberately absent: promoting 'ref T' to '*T' would hand out
+// ownership nobody granted, and the object already has an owner that will free
+// it.
 static bool type_accepts(Type *to, Type *from) {
     if (to == from) {
         return true;
     }
 
-    return type_is_pointer(to) && type_is_pointer(from) && to->is_weak && !from->is_weak &&
+    return type_is_pointer(to) && type_is_pointer(from) && to->is_ref && !from->is_ref &&
            to->pointee == from->pointee;
 }
 
@@ -423,6 +640,15 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         break;
     }
     case EXPR_CALL: {
+        // 'recv.m(args)' parsed as a call over the field expression 'recv.m'.
+        // The target is not a field and must not be visited as one — 'm' is a
+        // method name, and a struct has no field by it — so the method path
+        // takes over before anything walks it.
+        if (expr->call.target && expr->call.target->kind == EXPR_FIELD) {
+            resolve_method_call(state, expr);
+            break;
+        }
+
         ast_script_expr_visit(state, expr->call.target);
 
         for (size_t i = 0; i < expr->call.args.size; i++) {
@@ -453,65 +679,6 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
 
         expr->symbol = callee;
         expr->type = callee->func.return_type;
-        break;
-    }
-    case EXPR_METHOD_CALL: {
-        ast_script_expr_visit(state, expr->method_call.receiver);
-
-        for (size_t i = 0; i < expr->method_call.args.size; i++) {
-            ast_script_expr_visit(state, expr->method_call.args.data[i]);
-        }
-
-        Type *receiver_type = expr->method_call.receiver->type;
-
-        if (is_error_type(receiver_type)) {
-            expr->type = resolver_error_type(state);
-            break;
-        }
-
-        // '*Player' and 'Player' share one method set, so the lookup and every
-        // message below name the struct rather than what was written.
-        Type *base = receiver_base_type(receiver_type);
-
-        if (!base) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                       "%s is not a struct, so it has no methods", type_name(state, receiver_type));
-            expr->type = resolver_error_type(state);
-            break;
-        }
-
-        String *method_name = resolver_intern(state, expr->method_call.name);
-        Symbol *method = type_find_method(base, method_name);
-
-        if (!method) {
-            diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "'%s' has no method '%s'",
-                       base->name->data, method_name->data);
-            expr->type = resolver_error_type(state);
-            break;
-        }
-
-        // Parameter zero is the receiver, so the declared parameters — the ones
-        // the caller actually writes — are everything after it.
-        Type *declared_receiver = method->func.params[0];
-        size_t declared_params = method->func.param_count - 1;
-
-        if (!reconcile_receiver(state, expr, declared_receiver, receiver_type, method_name)) {
-            expr->type = resolver_error_type(state);
-            break;
-        }
-
-        // The count the user sees excludes the receiver, which they never wrote.
-        if (expr->method_call.args.size != declared_params) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %zu argument(s), found %zu",
-                       declared_params, expr->method_call.args.size);
-            expr->type = resolver_error_type(state);
-            break;
-        }
-
-        check_call_args(state, &expr->method_call.args, method->func.params + 1);
-
-        expr->method_call.method = method;
-        expr->type = method->func.return_type;
         break;
     }
     case EXPR_FIELD: {
@@ -572,6 +739,25 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
             break;
         }
 
+        // '&o' where 'o' owns would be a borrow of an owning pointer, and
+        // 'ref *T' cannot be written: 'ref' does not combine with '*'. Producing
+        // a value nothing can name is worse than refusing it here, where the
+        // mistake is.
+        //
+        // That type is what an out-parameter would need — a borrow of the
+        // caller's variable rather than of the object, so the callee could
+        // repoint it. Which is more than a spelling: assigning through one would
+        // free the caller's old object from inside the callee, an owning slot
+        // changing owner mid-call. Returning ownership says the same thing with
+        // the transfer visible at the call site.
+        if (type_is_pointer(target_type) && !target_type->is_ref) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                       "cannot take the address of an owning pointer; return ownership instead of "
+                       "repointing it through a borrow");
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
         // The slot must survive the whole block now that its address is loose,
         // so codegen may not reclaim it at the end of the statement.
         Symbol *addressed = addressed_symbol(expr->unary.target);
@@ -579,7 +765,14 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
             addressed->pinned = true;
         }
 
-        expr->type = type_registry_pointer_to(state->current_scope->type_registry, target_type);
+        // '&x' is a borrow, and 'ref T' is what a borrow is spelled. The slot it
+        // names is owned by whoever declared it — a stack local owns itself, and
+        // freeing through this address would free something 'new' never made.
+        //
+        // Typing it '*T' would make one type mean two things: an address of
+        // something, and ownership of a heap object. Nothing could then tell
+        // them apart from the type alone.
+        expr->type = type_registry_pointer_to_kind(state->current_scope->type_registry, target_type, true);
         break;
     }
     case EXPR_DEREF: {
@@ -710,13 +903,11 @@ Type *ast_script_resolve_type(ResolverState *state, TypeSpec *spec, Span span) {
     // Interned in the one shared registry whichever scope named the pointee,
     // so '*Config' is one type however many modules mention it.
     //
-    // 'weak' qualifies the outermost pointer, which is the last one built: a
-    // 'weak **T' is a strong pointer to a weak one, since only the reference
-    // the type finally denotes is the one that does not keep anything alive.
+    // Every level is a borrow or none is, since the parser rejects the two
+    // spellings mixed: 'ref ref T' is a borrow of a borrow, and '**T' an owning
+    // pointer to an owning pointer.
     for (unsigned int i = 0; i < spec->pointer_depth; i++) {
-        bool weak = spec->weak && i + 1 == spec->pointer_depth;
-
-        type = type_registry_pointer_to_kind(state->current_scope->type_registry, type, weak);
+        type = type_registry_pointer_to_kind(state->current_scope->type_registry, type, spec->is_ref);
     }
 
     return type;
@@ -747,7 +938,7 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
 
     // Registered under its name *before* its fields resolve, so that a field
     // pointing at the struct being declared finds it. A scene graph is exactly
-    // this shape — 'struct Node { parent: weak *Node, child: *Node }' — and
+    // this shape — 'struct Node { parent: ref Node, child: *Node }' — and
     // without this it fails with "unknown type", which the containment check
     // below was already written expecting not to happen.
     //
@@ -806,6 +997,36 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
 // Declares the function's name, return type, and parameter types — everything a
 // caller needs — without touching the body. Split from the body walk so the
 // pre-pass can declare a whole script's top level before resolving any of it,
+// Resolves one parameter's declared type, refusing an owning '*T'.
+//
+// A parameter never owns what it is given. The caller keeps owning it across
+// the call, no callee frees one — codegen_own_slot is never reached for a
+// parameter slot — and none may be stored where something else would own it,
+// since an owning field takes only 'new' or a call's result. So '*T' here would
+// spell an ownership that cannot happen, and would let one signature be written
+// two ways that behave identically.
+//
+// It is also how a borrow was laundered into an owned return, which the
+// sanitizer caught as a use-after-free: 'func f(b: *Box): *Box { return b; }'
+// handed the caller a second owner of what it already owned. With no owning
+// parameter there is nothing to launder.
+//
+// '*T' keeps its meaning everywhere a slot can outlive the statement and free
+// what it holds: 'let', a struct field, 'new', and a return type.
+static Type *resolve_param_type(ResolverState *state, ASTField *param) {
+    Type *type = ast_script_resolve_type(state, param->type_spec, param->span);
+
+    if (!is_error_type(type) && type_is_pointer(type) && !type->is_ref) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, param->span,
+                   "a parameter borrows rather than owning, so write 'ref %s' instead of '*%s'",
+                   type_name(state, type->pointee), type_name(state, type->pointee));
+
+        return resolver_error_type(state);
+    }
+
+    return type;
+}
+
 // which is what lets a function call one declared below it.
 // Declares a method into its receiver type's method map, rather than into any
 // scope: a method has no free-standing name, so 'Player.update' and
@@ -829,6 +1050,21 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, receiver->span,
                    "a method's receiver must be a struct or a pointer to one, found %s",
                    type_name(state, receiver_type));
+        return;
+    }
+
+    // A method never owns its receiver. It is handed one for the duration of
+    // the call and frees nothing — no callee frees a parameter — so declaring
+    // one '*T' would spell an ownership the method cannot have, and would let
+    // the same method be written two ways that behave identically.
+    //
+    // 'ref T' is the form that says what is true. A receiver by value stays
+    // available as 'T', which copies; the two axes are separate, and only this
+    // one is about ownership.
+    if (type_is_pointer(receiver_type) && !receiver_type->is_ref) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, receiver->span,
+                   "a method borrows its receiver rather than owning it, so write 'ref %s' instead of '*%s'",
+                   base->name->data, base->name->data);
         return;
     }
 
@@ -873,7 +1109,7 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
     for (size_t i = 0; i < stmt->func_decl.params.size; i++) {
         ASTField *param = stmt->func_decl.params.data[i];
 
-        method->func.params[i + 1] = ast_script_resolve_type(state, param->type_spec, param->span);
+        method->func.params[i + 1] = resolve_param_type(state, param);
     }
 
     if (!type_add_method(resolver_owner_arena(state), base, method_name, method)) {
@@ -918,7 +1154,7 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
         for (size_t i = 0; i < param_count; i++) {
             ASTField *param = stmt->func_decl.params.data[i];
 
-            func->func.params[i] = ast_script_resolve_type(state, param->type_spec, param->span);
+            func->func.params[i] = resolve_param_type(state, param);
         }
     }
 }
@@ -1061,7 +1297,7 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         // parameter may point at a caller's. Depth 0 is that bound: "outlives
         // everything", so only a pointer to something equally long-lived may be
         // stored there. Without this, '&local' escapes into a heap object and
-        // dangles the moment the frame returns, refcounts notwithstanding.
+        // dangles the moment the frame returns, ownership notwithstanding.
         if (stmt->assign.target->kind == EXPR_FIELD || stmt->assign.target->kind == EXPR_DEREF) {
             check_pointer_lifetime(state, stmt->assign.value, 0, stmt->span, "stored here");
             break;
@@ -1116,7 +1352,13 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         // poisoned one: it must still be checked against the declared type.
         bool poisoned = (expected && expected->kind == TYPE_ERROR) || (actual && actual->kind == TYPE_ERROR);
 
-        if (!poisoned && actual != expected) {
+        // type_accepts once both are present, so a function declaring 'ref T'
+        // may return an owned '*T' — it lends what it was given rather than
+        // handing ownership out. A NULL on either side is "no value", which
+        // only identity settles.
+        bool accepted = actual && expected ? type_accepts(expected, actual) : actual == expected;
+
+        if (!poisoned && !accepted) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span, "returns %s, but %s was declared",
                        type_name(state, actual), type_name(state, expected));
             break;

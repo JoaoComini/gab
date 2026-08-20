@@ -46,7 +46,7 @@ typedef enum {
     TOKEN_TRUE,        // 'true'
     TOKEN_FALSE,       // 'false'
     TOKEN_NEW,         // 'new'
-    TOKEN_WEAK,        // 'weak'
+    TOKEN_REF,         // 'ref'
                        // END KEYWORDS
     TOKEN_IDENT,       // Variable and function names
 } TokenType;

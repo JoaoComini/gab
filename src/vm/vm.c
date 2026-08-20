@@ -3,8 +3,8 @@
 #include "arena.h"
 #include "ast/ast.h"
 #include "lexer.h"
+#include "object.h"
 #include "parser.h"
-#include "refcounted.h"
 #include "scope.h"
 #include "string/string.h"
 #include "type.h"
@@ -110,14 +110,14 @@ static void vm_clear_pointer(VM *vm, size_t reg) {
     memcpy(vm->registers + reg * sizeof(Value), &null_pointer, sizeof(null_pointer));
 }
 
-// Drops every reference a frame still holds. Only ever called while unwinding
-// from a failure: a run that ends normally has already executed the releases
-// codegen emitted at each scope's close, which is both cheaper and more precise
-// than this — it releases at the brace rather than at the frame's end.
+// Frees every object a frame still owns. Only ever called while unwinding from
+// a failure: a run that ends normally has already executed the frees codegen
+// emitted at each scope's close, which is both cheaper and more precise than
+// this — it frees at the brace rather than at the frame's end.
 //
-// A slot listed on the prototype either holds a live reference or holds NULL,
-// because releasing one clears it. That is what makes walking the list safe
-// despite sibling blocks reusing slots.
+// A slot listed on the prototype either owns a live object or holds NULL,
+// because freeing one clears it. That is what makes walking the list safe
+// despite sibling blocks reusing slots. A 'ref T' slot is never listed.
 static void vm_release_frame_refs(VM *vm, const CallFrame *frame) {
     const FrameRefList *refs = &frame->proto->refs;
 
@@ -133,12 +133,7 @@ static void vm_release_frame_refs(VM *vm, const CallFrame *frame) {
 
         memcpy(vm->stack + frame->base + ref.slot * sizeof(Value), &(void *){NULL}, sizeof(object));
 
-        if (ref.weak) {
-            gab_release_weak(DEFAULT_ALLOCATOR, object);
-            continue;
-        }
-
-        gab_release(DEFAULT_ALLOCATOR, object);
+        gab_object_free(DEFAULT_ALLOCATOR, object);
     }
 }
 
@@ -616,7 +611,7 @@ static void vm_run_loop(VM *vm) {
 
             // The one place a heap object is created, so a host-supplied
             // allocator would replace this single call.
-            void *object = gab_refcounted_alloc(DEFAULT_ALLOCATOR, type);
+            void *object = gab_object_alloc(DEFAULT_ALLOCATOR, type);
 
             if (!object) {
                 vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory");
@@ -643,63 +638,7 @@ static void vm_run_loop(VM *vm) {
             // that was already released safe to visit again.
             vm_clear_pointer(vm, rd);
 
-            gab_release(DEFAULT_ALLOCATOR, object);
-            break;
-        }
-        case OP_RETAIN: {
-            unsigned int rd = VM_DECODE_R_RD(instruction);
-
-            void *object;
-            memcpy(&object, vm->registers + rd * sizeof(Value), sizeof(object));
-
-            gab_retain(object);
-            break;
-        }
-        case OP_LOAD_NULL_PTR: {
-            unsigned int rd = VM_DECODE_R_RD(instruction);
-            void *null_pointer = NULL;
-
-            memcpy(vm->registers + rd * sizeof(Value), &null_pointer, sizeof(null_pointer));
-            break;
-        }
-        case OP_CHECK_ALIVE: {
-            unsigned int rd = VM_DECODE_R_RD(instruction);
-
-            void *object;
-            memcpy(&object, vm->registers + rd * sizeof(Value), sizeof(object));
-
-            if (gab_is_alive(object)) {
-                break;
-            }
-
-            // The object a weak reference named is gone. Reading through it
-            // would find a zeroed payload, which is a plausible-looking answer
-            // rather than an obviously wrong one — so the run fails here
-            // instead, where the mistake is.
-            vm_fail(vm, VM_RUN_ERR_DANGLING_WEAK, "dereferenced a weak pointer whose object has been freed");
-
-            vm_unwind(vm);
-
-            break;
-        }
-        case OP_RETAIN_WEAK: {
-            unsigned int rd = VM_DECODE_R_RD(instruction);
-
-            void *object;
-            memcpy(&object, vm->registers + rd * sizeof(Value), sizeof(object));
-
-            gab_retain_weak(object);
-            break;
-        }
-        case OP_RELEASE_WEAK: {
-            unsigned int rd = VM_DECODE_R_RD(instruction);
-
-            void *object;
-            memcpy(&object, vm->registers + rd * sizeof(Value), sizeof(object));
-
-            vm_clear_pointer(vm, rd);
-
-            gab_release_weak(DEFAULT_ALLOCATOR, object);
+            gab_object_free(DEFAULT_ALLOCATOR, object);
             break;
         }
         case OP_CALL: {

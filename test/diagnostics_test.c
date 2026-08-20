@@ -444,7 +444,7 @@ static void test_reports_address_of_a_temporary() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test() { let p: *int = &1; }");
+    compile(&ctx, "func test() { let p: ref int = &1; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -462,7 +462,7 @@ static void test_reports_address_of_a_call_result() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func g(): int { return 1; }\nfunc test() { let p: *int = &g(); }");
+    compile(&ctx, "func g(): int { return 1; }\nfunc test() { let p: ref int = &g(); }");
 
     assert(diagnostics_count(diagnostics) == 1);
     assert(strcmp(diagnostics_get(diagnostics, 0)->message, "cannot take the address of a temporary") == 0);
@@ -493,13 +493,13 @@ static void test_reports_field_access_through_a_non_struct_pointer() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test() { let x: int = 1; let p: *int = &x; let y: int = p.field; }");
+    compile(&ctx, "func test() { let x: int = 1; let p: ref int = &x; let y: int = p.field; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_TYPE);
-    assert(strcmp(diagnostic->message, "*int is not a struct, so it has no fields") == 0);
+    assert(strcmp(diagnostic->message, "ref int is not a struct, so it has no fields") == 0);
 
     test_context_free(&ctx);
 }
@@ -511,7 +511,7 @@ static void test_reports_returning_a_pointer_to_a_local() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test(): *int { let x: int = 1; return &x; }");
+    compile(&ctx, "func test(): ref int { let x: int = 1; return &x; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -531,7 +531,7 @@ static void test_reports_a_pointer_escaping_its_block() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test() { let p: *int; { let x: int = 1; p = &x; } }");
+    compile(&ctx, "func test() { let p: ref int; { let x: int = 1; p = &x; } }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -544,15 +544,15 @@ static void test_reports_a_pointer_escaping_its_block() {
 }
 
 // A heap object outlives every frame, so storing a stack address into one is
-// the escape the rule exists to catch — refcounts cannot save a pointer whose
-// pointee is a frame slot that has already gone.
+// the escape the rule exists to catch: nothing can save a pointer whose pointee
+// is a frame slot that has already gone.
 static void test_reports_a_stack_pointer_stored_into_a_heap_object() {
     TestContext ctx;
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
     compile(&ctx, "struct Inner { n: int }\n"
-                  "struct Outer { child: *Inner }\n"
+                  "struct Outer { child: ref Inner }\n"
                   "func test() { let o: *Outer = new Outer; let local: Inner; o.child = &local; }");
 
     assert(diagnostics_count(diagnostics) == 1);
@@ -571,11 +571,11 @@ static void test_accepts_pointers_that_do_not_outlive_their_pointee() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    compile(&ctx, "func take(p: *int): int { return *p; }\n"
+    compile(&ctx, "func take(p: ref int): int { return *p; }\n"
                   "func test(): int {\n"
                   "let x: int = 1;\n"
-                  "let p: *int = &x;\n"
-                  "{ let inner: *int = &x; }\n"
+                  "let p: ref int = &x;\n"
+                  "{ let inner: ref int = &x; }\n"
                   "return take(&x) + *p;\n"
                   "}");
 

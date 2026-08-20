@@ -41,34 +41,19 @@ typedef enum {
     OP_JMP_IF_TRUE,
     OP_CALL,
 
-    // Allocates a heap object of heap_types[kx] into rd, with one strong
-    // reference. I-type: a type index is not a register.
+    // Allocates a heap object of heap_types[kx] into rd. I-type: a type index
+    // is not a register.
     OP_NEW,
 
-    // Drops one strong reference from the pointer in rd, freeing at zero. The
-    // slot keeps whatever it held: nothing reads it again, since codegen only
-    // emits this where the value goes out of scope.
+    // Frees the object in rd, and everything it owns. The slot keeps whatever
+    // it held: nothing reads it again, since codegen only emits this where the
+    // value goes out of scope.
+    //
+    // There is no counterpart. Ownership is unique and static — exactly one
+    // slot owns an object — so nothing ever needs to claim a second share of
+    // one, and a 'ref T' claims none.
     OP_RELEASE,
 
-    // Adds one strong reference to the pointer in rd. Emitted where a borrowed
-    // reference is stored somewhere that outlives the statement, since the slot
-    // it came from still owns its own.
-    OP_RETAIN,
-
-    // The weak counterparts. A weak reference does not keep its object alive,
-    // so these touch the weak count and never the strong one.
-    OP_RETAIN_WEAK,
-    OP_RELEASE_WEAK,
-
-    // Fails the run if the weak pointer in rd names an object whose payload is
-    // gone. Emitted only where a weak reference is reached through, which is
-    // the one place the answer can change a program.
-    OP_CHECK_ALIVE,
-
-    // Writes a null pointer into the two slots at rd. A weak local owns its slot
-    // from the moment it is declared, so the slot has to start as something
-    // every weak operation tolerates rather than as whatever the stack held.
-    OP_LOAD_NULL_PTR,
     // OP_RETURN returns a single slot, the common case; OP_RETURN_N carries a
     // slot count in r2.
     OP_RETURN,

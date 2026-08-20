@@ -231,7 +231,7 @@ static void test_a_function_compiles_into_its_own_chunk() {
 // the parameters it declares.
 static void test_a_method_counts_its_receiver() {
     TestProgram program = test_compile("struct Vec { x: int }\n"
-                                       "func (v: *Vec) scaled(by: int): int { return v.x * by; }\n");
+                                       "func (v: ref Vec) scaled(by: int): int { return v.x * by; }\n");
 
     assert(program.vm->global_funcs.size == 1);
     assert(program.vm->global_funcs.data[0].arity == 2);
@@ -283,7 +283,7 @@ static void test_a_scalar_copy_stays_a_single_move() {
 static void test_a_pointer_copy_batches_when_it_is_wide() {
     TestProgram program = test_compile("func f(): int {\n"
                                        "    let x: int = 1;\n"
-                                       "    let p: *int = &x;\n"
+                                       "    let p: ref int = &x;\n"
                                        "    return *p;\n"
                                        "}\n");
 
@@ -333,7 +333,7 @@ static void test_a_struct_read_through_a_pointer_is_one_instruction() {
     TestProgram program = test_compile("struct Vec { x: int, y: int, z: int }\n"
                                        "func f() {\n"
                                        "    let a: Vec;\n"
-                                       "    let p: *Vec = &a;\n"
+                                       "    let p: ref Vec = &a;\n"
                                        "    let b: Vec = *p;\n"
                                        "}\n");
 
@@ -353,7 +353,7 @@ static void test_a_struct_write_through_a_pointer_is_one_instruction() {
                                        "func f() {\n"
                                        "    let a: Vec;\n"
                                        "    let b: Vec;\n"
-                                       "    let p: *Vec = &a;\n"
+                                       "    let p: ref Vec = &a;\n"
                                        "    *p = b;\n"
                                        "}\n");
 

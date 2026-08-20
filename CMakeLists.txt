@@ -39,7 +39,7 @@ add_library(gab
     src/diagnostics.c
     src/lexer.c
     src/parser.c
-    src/refcounted.c
+    src/object.c
     src/type.c
     src/type_registry.c
     src/scope.c

@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-// Step 6's refcounted pointers need 8-byte alignment. A 4-byte-aligned base
+// Heap pointers need 8-byte alignment. A 4-byte-aligned base
 // would put half the even slots on a 4-byte boundary, so the guarantee is on
 // the base of the stack rather than on any particular slot.
 static bool is_8_byte_aligned(const void *p) { return ((uintptr_t)p & 7u) == 0; }

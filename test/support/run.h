@@ -78,6 +78,29 @@ static inline bool test_compiles(const char *source) {
     return ok;
 }
 
+// Whether a source survives codegen, which is further than test_compiles goes.
+// A rule enforced while emitting code -- an ownership rule, say -- rejects a
+// program the resolver was happy with, and only this can see that.
+static inline bool test_codegens(const char *source) {
+    VM *vm = vm_create();
+
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+
+    CompiledScript script;
+    bool ok = vm_compile(vm, source, &script, &diagnostics);
+
+    diagnostics_free(&diagnostics);
+
+    if (ok) {
+        vm_compiled_script_free(&script);
+    }
+
+    vm_free(vm);
+
+    return ok;
+}
+
 // Runs a script expected to fail, and returns why. Compilation must still
 // succeed: this is for runtime traps, where the mistake is only visible once
 // the offending instruction executes.

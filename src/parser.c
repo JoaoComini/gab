@@ -428,24 +428,29 @@ static ASTField *parse_field(Parser *parser, const char *name_message) {
 static TypeSpec *parse_type_spec(Parser *parser) {
     unsigned int pointer_depth = 0;
 
-    // 'weak *T' — read before the stars, since it qualifies the pointer rather
-    // than the pointee.
-    bool weak = parser->current.type == TOKEN_WEAK;
+    // 'ref T' is a borrow: a pointer that does not own what it names. It stands
+    // in place of the '*', not before it — 'ref T' and '*T' are both one
+    // pointer deep, and differ only in who frees the pointee.
+    // 'ref T' is a borrow, and 'ref ref T' a borrow of one — which is what '&'
+    // applied twice produces. Each 'ref' is one level of pointer, so they count
+    // the same way stars do.
+    bool is_ref = parser->current.type == TOKEN_REF;
 
-    if (weak) {
-        parser_next_token(parser); // eat 'weak'
+    while (parser->current.type == TOKEN_REF) {
+        pointer_depth++;
+        parser_next_token(parser); // eat 'ref'
+    }
+
+    // Every level is a borrow or none is: mixing them would need a flag per
+    // level, and nothing yet wants '*ref T' — an owning pointer to a borrow.
+    if (is_ref && parser->current.type == TOKEN_MUL) {
+        parser_error(parser, "'ref' does not combine with '*', as 'ref T' or 'ref ref T'");
+        return NULL;
     }
 
     while (parser->current.type == TOKEN_MUL) {
         pointer_depth++;
         parser_next_token(parser); // eat '*'
-    }
-
-    // 'weak Node' has nothing to weaken: weakness is a property of a reference,
-    // and a value is not one.
-    if (weak && pointer_depth == 0) {
-        parser_error(parser, "'weak' applies to a pointer, as 'weak *T'");
-        return NULL;
     }
 
     if (!parser_expect(parser, TOKEN_IDENT, "expected a type")) {
@@ -478,7 +483,7 @@ static TypeSpec *parse_type_spec(Parser *parser) {
         }
     }
 
-    return type_spec_create(name, pointer_depth, weak);
+    return type_spec_create(name, pointer_depth, is_ref);
 }
 
 static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
@@ -773,14 +778,22 @@ static ASTExpr *parse_call_expr(Parser *parser, ASTExpr *target) {
 // 'recv.name(args)'. Collapsed here rather than left as a call over a field
 // access, because this is where the difference between the two is cheapest to
 // see: a '.name' followed by '(' is a method call and nothing else.
+// 'recv.name(args)' parses as a call whose target is the field expression
+// 'recv.name'. There is no separate method-call node: a method is a function
+// whose parameter zero is the receiver, and resolution is where that becomes
+// true of the tree — it rewrites this into a call with the receiver as argument
+// zero. Until then the receiver is simply the field target, which is where the
+// parser already put it.
 static ASTExpr *parse_method_call_expr(Parser *parser, ASTExpr *receiver, StringRef name, Span span) {
+    ASTExpr *target = ast_field_expr_create(span, receiver, name);
+
     ASTExprList args;
     if (!parse_call_args(parser, &args)) {
-        ast_expr_free(receiver);
+        ast_expr_free(target);
         return NULL;
     }
 
-    return ast_method_call_expr_create(span, receiver, name, args);
+    return ast_call_expr_create(span, target, args);
 }
 
 // A primary with its postfixes, or a prefix form over one of those. Prefix '&'

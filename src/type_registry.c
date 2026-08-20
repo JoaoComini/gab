@@ -29,8 +29,7 @@ void type_registry_register_builtins(TypeRegistry *registry) {
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
     registry->pointers = pointer_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
-    registry->weak_pointers =
-        pointer_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->ref_pointers = pointer_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
     registry->strings = strings;
     type_registry_register_builtins(registry);
@@ -40,18 +39,18 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
 
 void type_registry_destroy(TypeRegistry *registry) {
     pointer_map_destroy(registry->pointers);
-    pointer_map_destroy(registry->weak_pointers);
+    pointer_map_destroy(registry->ref_pointers);
 }
 
 Type *type_registry_pointer_to(TypeRegistry *registry, Type *pointee) {
     return type_registry_pointer_to_kind(registry, pointee, false);
 }
 
-Type *type_registry_pointer_to_kind(TypeRegistry *registry, Type *pointee, bool weak) {
-    // Two maps rather than a composite key: 'weak *T' and '*T' are different
+Type *type_registry_pointer_to_kind(TypeRegistry *registry, Type *pointee, bool is_ref) {
+    // Two maps rather than a composite key: 'ref T' and '*T' are different
     // types, and the whole type system compares by pointer identity, so they
     // must never collide in one table.
-    PointerMap *map = weak ? registry->weak_pointers : registry->pointers;
+    PointerMap *map = is_ref ? registry->ref_pointers : registry->pointers;
 
     Type **existing = pointer_map_lookup(map, pointee);
     if (existing) {
@@ -63,12 +62,12 @@ Type *type_registry_pointer_to_kind(TypeRegistry *registry, Type *pointee, bool 
     Type *type = type_create(registry->arena, TYPE_POINTER, NULL);
 
     // Always a raw address to the payload, so a stack pointer and a heap one
-    // are byte-identical; only the resolver knows which is which. A weak
-    // pointer is the same address too — what differs is the count it touches.
+    // are byte-identical; only the resolver knows which is which. A 'ref T' is
+    // the same address too — what differs is who frees the pointee.
     type->size = sizeof(void *);
     type->alignment = _Alignof(void *);
     type->pointee = pointee;
-    type->is_weak = weak;
+    type->is_ref = is_ref;
 
     pointer_map_insert(map, pointee, type);
 

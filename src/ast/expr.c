@@ -40,18 +40,6 @@ ASTExpr *ast_call_expr_create(Span span, ASTExpr *target, ASTExprList args) {
     return node;
 }
 
-ASTExpr *ast_method_call_expr_create(Span span, ASTExpr *receiver, StringRef name, ASTExprList args) {
-    ASTExpr *node = ast_expr_create(span);
-    node->kind = EXPR_METHOD_CALL;
-    node->method_call.receiver = receiver;
-    node->method_call.name = name;
-    node->method_call.args = args;
-    node->method_call.method = NULL;
-    node->method_call.take_address = false;
-    node->method_call.deref = false;
-    return node;
-}
-
 ASTExpr *ast_field_expr_create(Span span, ASTExpr *target, StringRef name) {
     ASTExpr *node = ast_expr_create(span);
     node->kind = EXPR_FIELD;
@@ -107,15 +95,6 @@ void ast_expr_free(ASTExpr *expr) {
         }
 
         ast_expr_list_free(&expr->call.args);
-        break;
-    case EXPR_METHOD_CALL:
-        ast_expr_free(expr->method_call.receiver);
-
-        for (size_t i = 0; i < expr->method_call.args.size; i++) {
-            ast_expr_free(expr->method_call.args.data[i]);
-        }
-
-        ast_expr_list_free(&expr->method_call.args);
         break;
     case EXPR_FIELD:
         ast_expr_free(expr->field.target);

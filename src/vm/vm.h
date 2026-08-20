@@ -114,12 +114,13 @@
 // Sentinel value for registers
 #define VM_INVALID_REGISTER VM_MAX_REGISTERS + 1
 
-// A slot a frame may hold a reference in, and whether that reference is weak.
-// Used only when a run fails: an abnormal unwind jumps past every release
-// codegen emitted, so the frames have to be told what to drop.
+// A slot a frame owns an object in. Used only when a run fails: an abnormal
+// unwind jumps past every free codegen emitted, so the frames have to be told
+// what to drop.
+//
+// A 'ref T' slot is never listed: it borrows, so there is nothing to free.
 typedef struct {
     unsigned int slot;
-    bool weak;
 } FrameRef;
 
 #define frame_ref_list_item_free(item) ((void)(item))
@@ -212,7 +213,6 @@ typedef enum {
     VM_RUN_ERR_CALL_DEPTH,
     VM_RUN_ERR_STACK_OVERFLOW,
     VM_RUN_ERR_OUT_OF_MEMORY,
-    VM_RUN_ERR_DANGLING_WEAK,
     VM_RUN_ERR_DIVIDE_BY_ZERO,
     VM_RUN_ERR_DIVIDE_OVERFLOW,
 } VmRunStatus;

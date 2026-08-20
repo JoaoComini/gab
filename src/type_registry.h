@@ -56,9 +56,9 @@ typedef struct TypeRegistry {
 
     PointerMap *pointers;
 
-    // Weak pointer types, interned apart from the strong ones so that
+    // Borrowing 'ref T' types, interned apart from the owning ones so that
     // pointer-identity comparison keeps telling them apart.
-    PointerMap *weak_pointers;
+    PointerMap *ref_pointers;
     TypeBuiltins builtins;
 } TypeRegistry;
 
@@ -73,8 +73,8 @@ Type *type_registry_error_type(TypeRegistry *registry);
 // Type *.
 Type *type_registry_pointer_to(TypeRegistry *registry, Type *pointee);
 
-// As type_registry_pointer_to, choosing between the strong and weak flavours.
-// A weak pointer does not keep its pointee alive; the two are distinct types.
-Type *type_registry_pointer_to_kind(TypeRegistry *registry, Type *pointee, bool weak);
+// As type_registry_pointer_to, choosing between the owning and borrowing
+// flavours. A 'ref T' does not own its pointee; the two are distinct types.
+Type *type_registry_pointer_to_kind(TypeRegistry *registry, Type *pointee, bool is_ref);
 
 #endif

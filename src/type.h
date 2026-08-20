@@ -63,11 +63,11 @@ struct Type {
     // What a TYPE_POINTER points at; NULL for every other kind.
     Type *pointee;
 
-    // Whether this pointer keeps its pointee alive. A weak '*T' is a distinct
-    // Type from the strong one, interned separately, so that codegen can tell
-    // from a field's type alone whether releasing it touches the strong count —
-    // which is what keeps the whole refcount story type-driven.
-    bool is_weak;
+    // Whether this pointer borrows rather than owns. A 'ref T' is a distinct
+    // Type from '*T', interned separately, so that freeing an object can tell
+    // from a field's type alone whether it owns what the field names — which is
+    // what keeps the whole ownership story type-driven.
+    bool is_ref;
 
     // The methods declared with this type as their receiver. NULL until the
     // first one is, so a struct nobody declares a method on costs nothing.
@@ -100,13 +100,13 @@ typedef struct {
     // 0 for T, 1 for *T, 2 for **T.
     unsigned int pointer_depth;
 
-    // 'weak *T': the outermost pointer does not keep its object alive. Only
-    // ever set with pointer_depth > 0, since there is nothing to weaken about
-    // a value.
-    bool weak;
+    // 'ref T': the pointer borrows rather than owns. Always with
+    // pointer_depth == 1, since 'ref' stands in place of the '*' rather than
+    // qualifying it.
+    bool is_ref;
 } TypeSpec;
 
-TypeSpec *type_spec_create(StringRef name, unsigned int pointer_depth, bool weak);
+TypeSpec *type_spec_create(StringRef name, unsigned int pointer_depth, bool is_ref);
 void type_spec_destroy(TypeSpec *spec);
 
 #endif

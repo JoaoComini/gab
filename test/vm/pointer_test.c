@@ -98,14 +98,15 @@ static void test_pointer_is_a_word() {
 // The address is a real address into the stack, so writing through it must be
 // visible to the variable itself.
 static void test_scalar_read_and_write_through_a_pointer() {
-    assert(test_run_int("func f(): int { let x: int = 7; let p: *int = &x; return *p; }\n"
+    assert(test_run_int("func f(): int { let x: int = 7; let p: ref int = &x; return *p; }\n"
                         "let r: int = f();") == 7);
 
-    assert(test_run_int("func f(): int { let x: int = 3; let p: *int = &x; *p = 42; return x; }\n"
+    assert(test_run_int("func f(): int { let x: int = 3; let p: ref int = &x; *p = 42; return x; }\n"
                         "let r: int = f();") == 42);
 
-    assert(test_run_float("func f(): float { let x: float = 1.5; let p: *float = &x; *p = 2.5; return x; }\n"
-                          "let r: float = f();") == 2.5f);
+    assert(
+        test_run_float("func f(): float { let x: float = 1.5; let p: ref float = &x; *p = 2.5; return x; }\n"
+                       "let r: float = f();") == 2.5f);
 }
 
 // A field write through a pointer must land in the pointee and disturb nothing
@@ -113,7 +114,7 @@ static void test_scalar_read_and_write_through_a_pointer() {
 static void test_field_write_through_a_pointer() {
     assert(test_run_int("struct Player { health: int, mana: int }\n"
                         "func f(): int { let p: Player; p.health = 1; p.mana = 2;\n"
-                        "let q: *Player = &p; (*q).health = 10;\n"
+                        "let q: ref Player = &p; (*q).health = 10;\n"
                         "return p.health * 100 + p.mana; }\n"
                         "let r: int = f();") == 1002);
 }
@@ -123,7 +124,7 @@ static void test_field_write_through_a_pointer() {
 static void test_pointer_to_a_struct_field() {
     assert(test_run_int("struct Vec { x: int, y: int }\n"
                         "func f(): int { let v: Vec; v.x = 1; v.y = 2;\n"
-                        "let p: *int = &v.y; *p = 9;\n"
+                        "let p: ref int = &v.y; *p = 9;\n"
                         "return v.x * 100 + v.y; }\n"
                         "let r: int = f();") == 109);
 }
@@ -134,7 +135,7 @@ static void test_pointer_to_a_sub_word_field() {
     assert(test_run_int("struct Flags { a: bool, b: bool, c: bool, d: bool }\n"
                         "func f(): int { let v: Flags;\n"
                         "v.a = true; v.b = true; v.c = true; v.d = true;\n"
-                        "let p: *bool = &v.b; *p = false;\n"
+                        "let p: ref bool = &v.b; *p = false;\n"
                         "let n: int = 0;\n"
                         "if v.a { n = n + 1000; }\n"
                         "if v.b { n = n + 100; }\n"
@@ -149,7 +150,7 @@ static void test_pointer_to_a_sub_word_field() {
 static void test_dereferencing_a_whole_struct() {
     assert(test_run_int("struct Vec { x: int, y: int }\n"
                         "func f(): int { let v: Vec; v.x = 3; v.y = 4;\n"
-                        "let p: *Vec = &v;\n"
+                        "let p: ref Vec = &v;\n"
                         "let copy: Vec = *p;\n"
                         "v.x = 100;\n"
                         "return copy.x * 10 + copy.y; }\n"
@@ -159,8 +160,8 @@ static void test_dereferencing_a_whole_struct() {
 // A pointer to a pointer still resolves to one address at the end of the chain.
 static void test_pointer_to_a_pointer() {
     assert(test_run_int("func f(): int { let x: int = 5;\n"
-                        "let p: *int = &x;\n"
-                        "let q: **int = &p;\n"
+                        "let p: ref int = &x;\n"
+                        "let q: ref ref int = &p;\n"
                         "**q = 11;\n"
                         "return x; }\n"
                         "let r: int = f();") == 11);
@@ -170,7 +171,7 @@ static void test_pointer_to_a_pointer() {
 // force the growth while a pointer to an outer frame is live is what catches a
 // missing rebase.
 static void test_a_pointer_survives_a_stack_growth() {
-    assert(test_run_int("func deep(n: int, p: *int): int {\n"
+    assert(test_run_int("func deep(n: int, p: ref int): int {\n"
                         "if n > 0 { return deep(n - 1, p); }\n"
                         "return *p;\n"
                         "}\n"
@@ -179,7 +180,7 @@ static void test_a_pointer_survives_a_stack_growth() {
 
     // And writing through it, so the frame the address came from is what
     // actually changed.
-    assert(test_run_int("func deep(n: int, p: *int): int {\n"
+    assert(test_run_int("func deep(n: int, p: ref int): int {\n"
                         "if n > 0 { return deep(n - 1, p); }\n"
                         "*p = 88;\n"
                         "return 0;\n"
@@ -193,13 +194,13 @@ static void test_a_pointer_survives_a_stack_growth() {
 static void test_field_access_auto_derefs() {
     assert(test_run_int("struct Player { health: int, mana: int }\n"
                         "func f(): int { let p: Player; p.health = 1; p.mana = 2;\n"
-                        "let q: *Player = &p; q.health = 10;\n"
+                        "let q: ref Player = &p; q.health = 10;\n"
                         "return p.health * 100 + p.mana; }\n"
                         "let r: int = f();") == 1002);
 
     assert(test_run_int("struct Player { health: int, mana: int }\n"
                         "func f(): int { let p: Player; p.health = 10;\n"
-                        "let q: *Player = &p; return q.health; }\n"
+                        "let q: ref Player = &p; return q.health; }\n"
                         "let r: int = f();") == 10);
 }
 
@@ -208,7 +209,7 @@ static void test_field_access_auto_derefs() {
 static void test_auto_deref_reaches_a_nested_field() {
     assert(test_run_int("struct Inner { v: int }\n"
                         "struct Outer { a: int, inner: Inner }\n"
-                        "func f(): int { let o: Outer; let q: *Outer = &o;\n"
+                        "func f(): int { let o: Outer; let q: ref Outer = &o;\n"
                         "q.inner.v = 7; return o.inner.v; }\n"
                         "let r: int = f();") == 7);
 }
@@ -218,8 +219,8 @@ static void test_auto_deref_reaches_a_nested_field() {
 static void test_address_of_a_field_through_a_pointer() {
     assert(test_run_int("struct Player { health: int, mana: int }\n"
                         "func f(): int { let p: Player; p.mana = 2;\n"
-                        "let q: *Player = &p;\n"
-                        "let h: *int = &q.health; *h = 9;\n"
+                        "let q: ref Player = &p;\n"
+                        "let h: ref int = &q.health; *h = 9;\n"
                         "return p.health * 100 + p.mana; }\n"
                         "let r: int = f();") == 902);
 }
