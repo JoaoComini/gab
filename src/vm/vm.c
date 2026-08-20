@@ -499,387 +499,539 @@ static bool vm_check_divisor(VM *vm, Instruction instruction, const char *zero_m
 // Runs until every frame the caller pushed has unwound. Both entry points
 // share it: vm_run pushes frame zero, and a host call pushes one frame for the
 // function it is invoking, so there is exactly one interpreter either way.
+// Dispatch. Two spellings of the same interpreter: a jump through a table of
+// label addresses where the compiler has the extension for it, and a switch
+// everywhere else.
+//
+// The table costs one indirect jump per instruction where the switch costs a
+// bounds check and then the same jump. What actually makes it faster is the
+// branch predictor: the switch has a single indirect jump that every opcode
+// shares, so one history entry has to predict the whole instruction stream,
+// while a jump at the end of each case is predicted on what tends to follow
+// that opcode -- and bytecode is full of pairs that follow each other.
+//
+// The two must stay in step. Every opcode needs a label here and a case there,
+// which _Static_assert on OP__COUNT and -Wswitch respectively enforce.
+#if defined(VM_FORCE_SWITCH)
+#define VM_COMPUTED_GOTO 0
+#elif defined(__GNUC__) || defined(__clang__)
+#define VM_COMPUTED_GOTO 1
+#else
+#define VM_COMPUTED_GOTO 0
+#endif
+
+#if VM_COMPUTED_GOTO
+
+// Reads the next instruction and jumps straight to its handler. The bounds are
+// the loop condition the switch form spells out, and failing them lands on the
+// exit label rather than falling out of a loop.
+#define VM_DISPATCH()                                                                                        \
+    do {                                                                                                     \
+        if (vm->frame_count == 0 || vm->instruction_pointer < 0) {                                           \
+            goto vm_done;                                                                                    \
+        }                                                                                                    \
+                                                                                                             \
+        frame = &vm->frames[vm->frame_count - 1];                                                            \
+        chunk = frame->proto->chunk;                                                                         \
+                                                                                                             \
+        if (vm->instruction_pointer >= (ptrdiff_t)chunk->instructions.size) {                                \
+            goto vm_done;                                                                                    \
+        }                                                                                                    \
+                                                                                                             \
+        instruction = instruction_list_get(&chunk->instructions, (size_t)vm->instruction_pointer);           \
+        op = VM_DECODE_OPCODE(instruction);                                                                  \
+                                                                                                             \
+        goto *vm_dispatch_table[op];                                                                         \
+    } while (0)
+
+#define VM_CASE(name) name##_label
+#define VM_NEXT()                                                                                            \
+    do {                                                                                                     \
+        vm->instruction_pointer += 1;                                                                        \
+        VM_DISPATCH();                                                                                       \
+    } while (0)
+
+// A handler that has already placed the instruction pointer itself: a call, a
+// return, or a failure that unwound.
+#define VM_RETRY() VM_DISPATCH()
+
+#else
+
+#define VM_CASE(name) case name
+#define VM_NEXT()                                                                                            \
+    do {                                                                                                     \
+        goto vm_next;                                                                                        \
+    } while (0)
+#define VM_RETRY()                                                                                           \
+    do {                                                                                                     \
+        goto vm_retry;                                                                                       \
+    } while (0)
+
+#endif
+
 static void vm_run_loop(VM *vm) {
-    // Bounded on both ends: the pointer is signed, so a jump that went backwards
-    // too far is negative here rather than a huge index that would read as a
-    // normal end of function.
+#if VM_COMPUTED_GOTO
+    // One entry per opcode, in enum order: the index is the opcode itself.
+    static void *const vm_dispatch_table[] = {
+        [OP_LOAD_CONST] = &&OP_LOAD_CONST_label,
+        [OP_LOAD_TRUE] = &&OP_LOAD_TRUE_label,
+        [OP_LOAD_FALSE] = &&OP_LOAD_FALSE_label,
+        [OP_MOVE] = &&OP_MOVE_label,
+        [OP_MOVE_N] = &&OP_MOVE_N_label,
+        [OP_ADDI] = &&OP_ADDI_label,
+        [OP_SUBI] = &&OP_SUBI_label,
+        [OP_MULI] = &&OP_MULI_label,
+        [OP_DIVI] = &&OP_DIVI_label,
+        [OP_MODI] = &&OP_MODI_label,
+        [OP_ITOF] = &&OP_ITOF_label,
+        [OP_FTOI] = &&OP_FTOI_label,
+        [OP_CMP_LTI] = &&OP_CMP_LTI_label,
+        [OP_CMP_GTI] = &&OP_CMP_GTI_label,
+        [OP_CMP_EQI] = &&OP_CMP_EQI_label,
+        [OP_CMP_NEI] = &&OP_CMP_NEI_label,
+        [OP_CMP_LEI] = &&OP_CMP_LEI_label,
+        [OP_CMP_GEI] = &&OP_CMP_GEI_label,
+        [OP_ADDF] = &&OP_ADDF_label,
+        [OP_SUBF] = &&OP_SUBF_label,
+        [OP_MULF] = &&OP_MULF_label,
+        [OP_DIVF] = &&OP_DIVF_label,
+        [OP_CMP_LTF] = &&OP_CMP_LTF_label,
+        [OP_CMP_GTF] = &&OP_CMP_GTF_label,
+        [OP_CMP_EQF] = &&OP_CMP_EQF_label,
+        [OP_CMP_NEF] = &&OP_CMP_NEF_label,
+        [OP_CMP_LEF] = &&OP_CMP_LEF_label,
+        [OP_CMP_GEF] = &&OP_CMP_GEF_label,
+        [OP_JMP] = &&OP_JMP_label,
+        [OP_JMP_IF_FALSE] = &&OP_JMP_IF_FALSE_label,
+        [OP_JMP_IF_TRUE] = &&OP_JMP_IF_TRUE_label,
+        [OP_CALL] = &&OP_CALL_label,
+        [OP_NEW] = &&OP_NEW_label,
+        [OP_RELEASE] = &&OP_RELEASE_label,
+        [OP_RETURN] = &&OP_RETURN_label,
+        [OP_RETURN_N] = &&OP_RETURN_N_label,
+        [OP_LOAD_FIELD_1] = &&OP_LOAD_FIELD_1_label,
+        [OP_LOAD_FIELD_2] = &&OP_LOAD_FIELD_2_label,
+        [OP_LOAD_FIELD_4] = &&OP_LOAD_FIELD_4_label,
+        [OP_STORE_FIELD_1] = &&OP_STORE_FIELD_1_label,
+        [OP_STORE_FIELD_2] = &&OP_STORE_FIELD_2_label,
+        [OP_STORE_FIELD_4] = &&OP_STORE_FIELD_4_label,
+        [OP_ADDR_OF] = &&OP_ADDR_OF_label,
+        [OP_LOAD_FIELD_PTR_1] = &&OP_LOAD_FIELD_PTR_1_label,
+        [OP_LOAD_FIELD_PTR_2] = &&OP_LOAD_FIELD_PTR_2_label,
+        [OP_LOAD_FIELD_PTR_4] = &&OP_LOAD_FIELD_PTR_4_label,
+        [OP_STORE_FIELD_PTR_1] = &&OP_STORE_FIELD_PTR_1_label,
+        [OP_STORE_FIELD_PTR_2] = &&OP_STORE_FIELD_PTR_2_label,
+        [OP_STORE_FIELD_PTR_4] = &&OP_STORE_FIELD_PTR_4_label,
+        [OP_ADD_PTR] = &&OP_ADD_PTR_label,
+        [OP_LOAD_PTR_N] = &&OP_LOAD_PTR_N_label,
+        [OP_STORE_PTR_N] = &&OP_STORE_PTR_N_label,
+        [OP_FOR_LOOP] = &&OP_FOR_LOOP_label,
+    };
+
+    _Static_assert(sizeof(vm_dispatch_table) / sizeof(vm_dispatch_table[0]) == OP__COUNT,
+                   "the dispatch table must have an entry for every opcode");
+#endif
+
+    CallFrame *frame;
+    Chunk *chunk;
+    Instruction instruction;
+    OpCode op;
+
+#if VM_COMPUTED_GOTO
+    VM_DISPATCH();
+#else
+    // The switch form spells the same bounds as VM_DISPATCH does: the pointer
+    // is signed, so a jump that went too far back is negative here rather than
+    // a huge index that would read as a normal end of function.
+vm_retry:
     while (vm->frame_count > 0 && vm->instruction_pointer >= 0 &&
            vm->instruction_pointer <
                (ptrdiff_t)vm->frames[vm->frame_count - 1].proto->chunk->instructions.size) {
-        CallFrame *frame = &vm->frames[vm->frame_count - 1];
-        Chunk *chunk = frame->proto->chunk;
+        frame = &vm->frames[vm->frame_count - 1];
+        chunk = frame->proto->chunk;
 
-        Instruction instruction = instruction_list_get(&chunk->instructions, (size_t)vm->instruction_pointer);
+        instruction = instruction_list_get(&chunk->instructions, (size_t)vm->instruction_pointer);
+        op = VM_DECODE_OPCODE(instruction);
 
-        OpCode op = VM_DECODE_OPCODE(instruction);
         switch (op) {
-        case OP_LOAD_CONST: {
-            size_t reg = VM_DECODE_I_RD(instruction);
-            size_t const_index = VM_DECODE_I_KX(instruction);
-            Constant constant = constpool_get(chunk->const_pool, const_index);
+#endif
+    VM_CASE(OP_LOAD_CONST) : {
+        size_t reg = VM_DECODE_I_RD(instruction);
+        size_t const_index = VM_DECODE_I_KX(instruction);
+        Constant constant = constpool_get(chunk->const_pool, const_index);
 
-            memcpy(vm_reg_at(vm, reg), &constant, VM_SLOT_SIZE);
-            break;
-        }
-        case OP_LOAD_TRUE: {
-            size_t reg = VM_DECODE_I_RD(instruction);
-            vm_write_i32(vm, reg, 1);
-            break;
-        }
-        case OP_LOAD_FALSE: {
-            size_t reg = VM_DECODE_I_RD(instruction);
-            vm_write_i32(vm, reg, 0);
-            break;
-        }
-        case OP_MOVE: {
-            int rd = VM_DECODE_R_RD(instruction);
-            int r1 = VM_DECODE_R_R1(instruction);
-
-            memcpy(vm_reg_at(vm, rd), vm_reg_at(vm, r1), VM_SLOT_SIZE);
-            break;
-        }
-        case OP_MOVE_N: {
-            size_t rd = VM_DECODE_R_RD(instruction);
-            size_t r1 = VM_DECODE_R_R1(instruction);
-            size_t slots = VM_DECODE_R_R2(instruction);
-
-            // memmove, not memcpy: a struct assigned from one of its own
-            // fields, or an argument marshalled into the slots just above its
-            // source, gives overlapping ranges. OP_LOAD_PTR_N can use memcpy
-            // because its source is a heap payload and cannot overlap a frame.
-            memmove(vm_reg_at(vm, rd), vm_reg_at(vm, r1), slots * VM_SLOT_SIZE);
-            break;
-        }
-        case OP_ADDF: {
-            vm_arithmeticf(vm, instruction, vm_addf);
-            break;
-        }
-        case OP_SUBF: {
-            vm_arithmeticf(vm, instruction, vm_subf);
-            break;
-        }
-        case OP_MULF: {
-            vm_arithmeticf(vm, instruction, vm_mulf);
-            break;
-        }
-        case OP_DIVF: {
-            vm_arithmeticf(vm, instruction, vm_divf);
-            break;
-        }
-        case OP_CMP_LTF: {
-            vm_conditional(vm, instruction, vm_less_thanf);
-            break;
-        }
-        case OP_CMP_GTF: {
-            vm_conditional(vm, instruction, vm_greater_thanf);
-            break;
-        }
-        case OP_CMP_EQF: {
-            vm_conditional(vm, instruction, vm_equalf);
-            break;
-        }
-        case OP_CMP_NEF: {
-            vm_conditional(vm, instruction, vm_not_equalf);
-            break;
-        }
-        case OP_CMP_LEF: {
-            vm_conditional(vm, instruction, vm_less_equalf);
-            break;
-        }
-        case OP_CMP_GEF: {
-            vm_conditional(vm, instruction, vm_greater_equalf);
-            break;
-        }
-        case OP_ADDI: {
-            vm_arithmetici(vm, instruction, vm_addi);
-            break;
-        }
-        case OP_SUBI: {
-            vm_arithmetici(vm, instruction, vm_subi);
-            break;
-        }
-        case OP_MULI: {
-            vm_arithmetici(vm, instruction, vm_muli);
-            break;
-        }
-        case OP_DIVI: {
-            if (!vm_check_divisor(vm, instruction, "divided by zero",
-                                  "divided the most negative int by -1")) {
-                break;
-            }
-
-            vm_arithmetici(vm, instruction, vm_divi);
-            break;
-        }
-        case OP_ITOF: {
-            size_t rd = VM_DECODE_R_RD(instruction);
-            size_t r1 = VM_DECODE_R_R1(instruction);
-
-            vm_write_f32(vm, rd, (float)vm_read_i32(vm, r1));
-            break;
-        }
-        case OP_FTOI: {
-            size_t rd = VM_DECODE_R_RD(instruction);
-            size_t r1 = VM_DECODE_R_R1(instruction);
-
-            vm_write_i32(vm, rd, vm_ftoi(vm_read_f32(vm, r1)));
-            break;
-        }
-        case OP_MODI: {
-            if (!vm_check_divisor(vm, instruction, "took the remainder of a division by zero",
-                                  "took the remainder of the most negative int and -1")) {
-                break;
-            }
-
-            vm_arithmetici(vm, instruction, vm_modi);
-            break;
-        }
-        case OP_CMP_LTI: {
-            vm_conditionali(vm, instruction, vm_less_thani);
-            break;
-        }
-        case OP_CMP_GTI: {
-            vm_conditionali(vm, instruction, vm_greater_thani);
-            break;
-        }
-        case OP_CMP_EQI: {
-            vm_conditionali(vm, instruction, vm_equali);
-            break;
-        }
-        case OP_CMP_NEI: {
-            vm_conditionali(vm, instruction, vm_not_equali);
-            break;
-        }
-        case OP_CMP_LEI: {
-            vm_conditionali(vm, instruction, vm_less_equali);
-            break;
-        }
-        case OP_CMP_GEI: {
-            vm_conditionali(vm, instruction, vm_greater_equali);
-            break;
-        }
-        case OP_NEW: {
-            unsigned int rd = VM_DECODE_I_RD(instruction);
-            size_t type_index = VM_DECODE_I_KX(instruction);
-
-            const Type *type = vm->heap_types.data[type_index];
-
-            // The one place a heap object is created, so a host-supplied
-            // allocator would replace this single call.
-            void *object = gab_object_alloc(DEFAULT_ALLOCATOR, type);
-
-            if (!object) {
-                vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory");
-
-                vm_unwind(vm);
-
-                break;
-            }
-
-            // A pointer spans two slots at an even index, which codegen has
-            // already arranged for rd.
-            memcpy(vm->registers + rd * VM_SLOT_SIZE, &object, sizeof(object));
-            break;
-        }
-        case OP_RELEASE: {
-            unsigned int rd = VM_DECODE_R_RD(instruction);
-
-            void *object;
-            memcpy(&object, vm->registers + rd * VM_SLOT_SIZE, sizeof(object));
-
-            // Cleared as well as released, so the slot holds NULL rather than a
-            // pointer to something freed. An abnormal unwind walks every slot
-            // the frame may own a reference in, and this is what makes a slot
-            // that was already released safe to visit again.
-            vm_clear_pointer(vm, rd);
-
-            gab_object_free(DEFAULT_ALLOCATOR, object);
-            break;
-        }
-        case OP_CALL: {
-            // I-type: a prototype index is not a register, and an 8-bit field
-            // capped one VM at 255 functions across every module it loaded.
-            // The frame is sized from the prototype and the arguments are
-            // already in place above dest, so no third operand is needed.
-            unsigned int dest = VM_DECODE_I_RD(instruction);
-            size_t proto_index = VM_DECODE_I_KX(instruction);
-
-            const FuncPrototype *proto = &vm->global_funcs.data[proto_index];
-
-            // The callee's r0 is its return slot and its parameters are
-            // r1..arity, so basing it at dest lines its parameters up with the
-            // arguments the caller already placed above dest.
-            size_t base = frame->base + dest * VM_SLOT_SIZE;
-
-            if (!vm_push_frame(vm, proto, base, vm->instruction_pointer + 1, dest)) {
-                // Unwinding here is what makes the failure safe; the reason is
-                // left on the VM because the loop has no caller to return to.
-                vm_fail(vm, VM_RUN_ERR_CALL_DEPTH, "call depth exceeded");
-
-                vm_unwind(vm);
-
-                break;
-            }
-
-            continue;
-        }
-        case OP_RETURN:
-        case OP_RETURN_N: {
-            size_t r1 = VM_DECODE_R_R1(instruction);
-            size_t slots = op == OP_RETURN ? 1 : VM_DECODE_R_R2(instruction);
-
-            // The result is copied down to the frame's r0 before unwinding.
-            // Source and destination never overlap: the callee builds its
-            // result in temporaries above its parameters.
-            uint8_t result[VM_MAX_RETURN_SLOTS * VM_SLOT_SIZE];
-            memcpy(result, vm_reg_at(vm, r1), slots * VM_SLOT_SIZE);
-
-            unsigned int dest = frame->dest;
-            size_t frame_base = frame->base;
-            vm_pop_frame(vm);
-
-            if (vm->frame_count == 0) {
-                // The last frame returning ends this run, and its result stays
-                // at its own r0 so the caller can read it. That is stack slot 0
-                // for frame zero, and the call block's base for a host call —
-                // which is why it is written relative to the frame, not the
-                // stack.
-                memcpy(vm->stack + frame_base, result, slots * VM_SLOT_SIZE);
-                continue;
-            }
-
-            memcpy(vm_reg_at(vm, dest), result, slots * VM_SLOT_SIZE);
-            continue;
-        }
-        case OP_LOAD_FIELD_1: {
-            vm_load_field(vm, instruction, 1);
-            break;
-        }
-        case OP_LOAD_FIELD_2: {
-            vm_load_field(vm, instruction, 2);
-            break;
-        }
-        case OP_LOAD_FIELD_4: {
-            vm_load_field(vm, instruction, 4);
-            break;
-        }
-        case OP_STORE_FIELD_1: {
-            vm_store_field(vm, instruction, 1);
-            break;
-        }
-        case OP_STORE_FIELD_2: {
-            vm_store_field(vm, instruction, 2);
-            break;
-        }
-        case OP_STORE_FIELD_4: {
-            vm_store_field(vm, instruction, 4);
-            break;
-        }
-        case OP_ADDR_OF: {
-            size_t rd = VM_DECODE_R_RD(instruction);
-            size_t base = VM_DECODE_R_R1(instruction);
-            size_t offset = VM_DECODE_R_R2(instruction);
-
-            // Addresses are absolute, not frame-relative: the pointee may
-            // outlive the frame the address was taken in, and a caller reading
-            // through the pointer has a different base. The byte offset reaches
-            // a field within the slots, so '&v.y' names the field, not v.
-            vm_write_ptr(vm, rd, vm->registers + base * VM_SLOT_SIZE + offset);
-            break;
-        }
-        case OP_LOAD_FIELD_PTR_1: {
-            vm_load_field_ptr(vm, instruction, 1);
-            break;
-        }
-        case OP_LOAD_FIELD_PTR_2: {
-            vm_load_field_ptr(vm, instruction, 2);
-            break;
-        }
-        case OP_LOAD_FIELD_PTR_4: {
-            vm_load_field_ptr(vm, instruction, 4);
-            break;
-        }
-        case OP_STORE_FIELD_PTR_1: {
-            vm_store_field_ptr(vm, instruction, 1);
-            break;
-        }
-        case OP_STORE_FIELD_PTR_2: {
-            vm_store_field_ptr(vm, instruction, 2);
-            break;
-        }
-        case OP_STORE_FIELD_PTR_4: {
-            vm_store_field_ptr(vm, instruction, 4);
-            break;
-        }
-        case OP_ADD_PTR: {
-            size_t rd = VM_DECODE_R_RD(instruction);
-            size_t base = VM_DECODE_R_R1(instruction);
-            size_t offset = VM_DECODE_R_R2(instruction);
-
-            vm_write_ptr(vm, rd, vm_read_ptr(vm, base) + offset);
-            break;
-        }
-        case OP_LOAD_PTR_N: {
-            size_t rd = VM_DECODE_R_RD(instruction);
-            size_t base = VM_DECODE_R_R1(instruction);
-            size_t slots = VM_DECODE_R_R2(instruction);
-
-            memcpy(vm_reg_at(vm, rd), vm_read_ptr(vm, base), slots * VM_SLOT_SIZE);
-            break;
-        }
-        case OP_STORE_PTR_N: {
-            size_t base = VM_DECODE_R_RD(instruction);
-            size_t r1 = VM_DECODE_R_R1(instruction);
-            size_t slots = VM_DECODE_R_R2(instruction);
-
-            memcpy(vm_read_ptr(vm, base), vm_reg_at(vm, r1), slots * VM_SLOT_SIZE);
-            break;
-        }
-        case OP_FOR_LOOP: {
-            int32_t next = vm_read_i32(vm, VM_DECODE_R_RD(instruction)) + 1;
-
-            vm_write_i32(vm, VM_DECODE_R_RD(instruction), next);
-
-            if (next < vm_read_i32(vm, VM_DECODE_R_R1(instruction))) {
-                vm->instruction_pointer += VM_DECODE_R_SIMM(instruction);
-            }
-
-            break;
-        }
-        case OP_JMP: {
-            vm->instruction_pointer += VM_DECODE_I_SIMM(instruction);
-            break;
-        }
-        case OP_JMP_IF_FALSE: {
-            size_t reg = VM_DECODE_I_RD(instruction);
-
-            bool cond = vm_read_i32(vm, reg);
-            if (!cond) {
-                vm->instruction_pointer += VM_DECODE_I_SIMM(instruction);
-            }
-
-            break;
-        }
-        case OP_JMP_IF_TRUE: {
-            size_t reg = VM_DECODE_I_RD(instruction);
-
-            bool cond = vm_read_i32(vm, reg);
-            if (cond) {
-                vm->instruction_pointer += VM_DECODE_I_SIMM(instruction);
-            }
-
-            break;
-        }
-        }
-
-        vm->instruction_pointer += 1;
+        memcpy(vm_reg_at(vm, reg), &constant, VM_SLOT_SIZE);
+        VM_NEXT();
     }
+    VM_CASE(OP_LOAD_TRUE) : {
+        size_t reg = VM_DECODE_I_RD(instruction);
+        vm_write_i32(vm, reg, 1);
+        VM_NEXT();
+    }
+    VM_CASE(OP_LOAD_FALSE) : {
+        size_t reg = VM_DECODE_I_RD(instruction);
+        vm_write_i32(vm, reg, 0);
+        VM_NEXT();
+    }
+    VM_CASE(OP_MOVE) : {
+        int rd = VM_DECODE_R_RD(instruction);
+        int r1 = VM_DECODE_R_R1(instruction);
 
-    // Top-level code has no trailing return, so the loop usually ends by
-    // running off the end of the chunk rather than through OP_RETURN.
-    while (vm->frame_count > 0) {
+        memcpy(vm_reg_at(vm, rd), vm_reg_at(vm, r1), VM_SLOT_SIZE);
+        VM_NEXT();
+    }
+    VM_CASE(OP_MOVE_N) : {
+        size_t rd = VM_DECODE_R_RD(instruction);
+        size_t r1 = VM_DECODE_R_R1(instruction);
+        size_t slots = VM_DECODE_R_R2(instruction);
+
+        // memmove, not memcpy: a struct assigned from one of its own
+        // fields, or an argument marshalled into the slots just above its
+        // source, gives overlapping ranges. OP_LOAD_PTR_N can use memcpy
+        // because its source is a heap payload and cannot overlap a frame.
+        memmove(vm_reg_at(vm, rd), vm_reg_at(vm, r1), slots * VM_SLOT_SIZE);
+        VM_NEXT();
+    }
+    VM_CASE(OP_ADDF) : {
+        vm_arithmeticf(vm, instruction, vm_addf);
+        VM_NEXT();
+    }
+    VM_CASE(OP_SUBF) : {
+        vm_arithmeticf(vm, instruction, vm_subf);
+        VM_NEXT();
+    }
+    VM_CASE(OP_MULF) : {
+        vm_arithmeticf(vm, instruction, vm_mulf);
+        VM_NEXT();
+    }
+    VM_CASE(OP_DIVF) : {
+        vm_arithmeticf(vm, instruction, vm_divf);
+        VM_NEXT();
+    }
+    VM_CASE(OP_CMP_LTF) : {
+        vm_conditional(vm, instruction, vm_less_thanf);
+        VM_NEXT();
+    }
+    VM_CASE(OP_CMP_GTF) : {
+        vm_conditional(vm, instruction, vm_greater_thanf);
+        VM_NEXT();
+    }
+    VM_CASE(OP_CMP_EQF) : {
+        vm_conditional(vm, instruction, vm_equalf);
+        VM_NEXT();
+    }
+    VM_CASE(OP_CMP_NEF) : {
+        vm_conditional(vm, instruction, vm_not_equalf);
+        VM_NEXT();
+    }
+    VM_CASE(OP_CMP_LEF) : {
+        vm_conditional(vm, instruction, vm_less_equalf);
+        VM_NEXT();
+    }
+    VM_CASE(OP_CMP_GEF) : {
+        vm_conditional(vm, instruction, vm_greater_equalf);
+        VM_NEXT();
+    }
+    VM_CASE(OP_ADDI) : {
+        vm_arithmetici(vm, instruction, vm_addi);
+        VM_NEXT();
+    }
+    VM_CASE(OP_SUBI) : {
+        vm_arithmetici(vm, instruction, vm_subi);
+        VM_NEXT();
+    }
+    VM_CASE(OP_MULI) : {
+        vm_arithmetici(vm, instruction, vm_muli);
+        VM_NEXT();
+    }
+    VM_CASE(OP_DIVI) : {
+        if (!vm_check_divisor(vm, instruction, "divided by zero", "divided the most negative int by -1")) {
+            VM_NEXT();
+        }
+
+        vm_arithmetici(vm, instruction, vm_divi);
+        VM_NEXT();
+    }
+    VM_CASE(OP_ITOF) : {
+        size_t rd = VM_DECODE_R_RD(instruction);
+        size_t r1 = VM_DECODE_R_R1(instruction);
+
+        vm_write_f32(vm, rd, (float)vm_read_i32(vm, r1));
+        VM_NEXT();
+    }
+    VM_CASE(OP_FTOI) : {
+        size_t rd = VM_DECODE_R_RD(instruction);
+        size_t r1 = VM_DECODE_R_R1(instruction);
+
+        vm_write_i32(vm, rd, vm_ftoi(vm_read_f32(vm, r1)));
+        VM_NEXT();
+    }
+    VM_CASE(OP_MODI) : {
+        if (!vm_check_divisor(vm, instruction, "took the remainder of a division by zero",
+                              "took the remainder of the most negative int and -1")) {
+            VM_NEXT();
+        }
+
+        vm_arithmetici(vm, instruction, vm_modi);
+        VM_NEXT();
+    }
+    VM_CASE(OP_CMP_LTI) : {
+        vm_conditionali(vm, instruction, vm_less_thani);
+        VM_NEXT();
+    }
+    VM_CASE(OP_CMP_GTI) : {
+        vm_conditionali(vm, instruction, vm_greater_thani);
+        VM_NEXT();
+    }
+    VM_CASE(OP_CMP_EQI) : {
+        vm_conditionali(vm, instruction, vm_equali);
+        VM_NEXT();
+    }
+    VM_CASE(OP_CMP_NEI) : {
+        vm_conditionali(vm, instruction, vm_not_equali);
+        VM_NEXT();
+    }
+    VM_CASE(OP_CMP_LEI) : {
+        vm_conditionali(vm, instruction, vm_less_equali);
+        VM_NEXT();
+    }
+    VM_CASE(OP_CMP_GEI) : {
+        vm_conditionali(vm, instruction, vm_greater_equali);
+        VM_NEXT();
+    }
+    VM_CASE(OP_NEW) : {
+        unsigned int rd = VM_DECODE_I_RD(instruction);
+        size_t type_index = VM_DECODE_I_KX(instruction);
+
+        const Type *type = vm->heap_types.data[type_index];
+
+        // The one place a heap object is created, so a host-supplied
+        // allocator would replace this single call.
+        void *object = gab_object_alloc(DEFAULT_ALLOCATOR, type);
+
+        if (!object) {
+            vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory");
+
+            vm_unwind(vm);
+
+            VM_NEXT();
+        }
+
+        // A pointer spans two slots at an even index, which codegen has
+        // already arranged for rd.
+        memcpy(vm->registers + rd * VM_SLOT_SIZE, &object, sizeof(object));
+        VM_NEXT();
+    }
+    VM_CASE(OP_RELEASE) : {
+        unsigned int rd = VM_DECODE_R_RD(instruction);
+
+        void *object;
+        memcpy(&object, vm->registers + rd * VM_SLOT_SIZE, sizeof(object));
+
+        // Cleared as well as released, so the slot holds NULL rather than a
+        // pointer to something freed. An abnormal unwind walks every slot
+        // the frame may own a reference in, and this is what makes a slot
+        // that was already released safe to visit again.
+        vm_clear_pointer(vm, rd);
+
+        gab_object_free(DEFAULT_ALLOCATOR, object);
+        VM_NEXT();
+    }
+    VM_CASE(OP_CALL) : {
+        // I-type: a prototype index is not a register, and an 8-bit field
+        // capped one VM at 255 functions across every module it loaded.
+        // The frame is sized from the prototype and the arguments are
+        // already in place above dest, so no third operand is needed.
+        unsigned int dest = VM_DECODE_I_RD(instruction);
+        size_t proto_index = VM_DECODE_I_KX(instruction);
+
+        const FuncPrototype *proto = &vm->global_funcs.data[proto_index];
+
+        // The callee's r0 is its return slot and its parameters are
+        // r1..arity, so basing it at dest lines its parameters up with the
+        // arguments the caller already placed above dest.
+        size_t base = frame->base + dest * VM_SLOT_SIZE;
+
+        if (!vm_push_frame(vm, proto, base, vm->instruction_pointer + 1, dest)) {
+            // Unwinding here is what makes the failure safe; the reason is
+            // left on the VM because the loop has no caller to return to.
+            vm_fail(vm, VM_RUN_ERR_CALL_DEPTH, "call depth exceeded");
+
+            vm_unwind(vm);
+
+            VM_NEXT();
+        }
+
+        VM_RETRY();
+    }
+    VM_CASE(OP_RETURN) : VM_CASE(OP_RETURN_N) : {
+        size_t r1 = VM_DECODE_R_R1(instruction);
+        size_t slots = op == OP_RETURN ? 1 : VM_DECODE_R_R2(instruction);
+
+        // The result is copied down to the frame's r0 before unwinding.
+        // Source and destination never overlap: the callee builds its
+        // result in temporaries above its parameters.
+        uint8_t result[VM_MAX_RETURN_SLOTS * VM_SLOT_SIZE];
+        memcpy(result, vm_reg_at(vm, r1), slots * VM_SLOT_SIZE);
+
+        unsigned int dest = frame->dest;
+        size_t frame_base = frame->base;
         vm_pop_frame(vm);
+
+        if (vm->frame_count == 0) {
+            // The last frame returning ends this run, and its result stays
+            // at its own r0 so the caller can read it. That is stack slot 0
+            // for frame zero, and the call block's base for a host call —
+            // which is why it is written relative to the frame, not the
+            // stack.
+            memcpy(vm->stack + frame_base, result, slots * VM_SLOT_SIZE);
+            VM_RETRY();
+        }
+
+        memcpy(vm_reg_at(vm, dest), result, slots * VM_SLOT_SIZE);
+        VM_RETRY();
     }
+    VM_CASE(OP_LOAD_FIELD_1) : {
+        vm_load_field(vm, instruction, 1);
+        VM_NEXT();
+    }
+    VM_CASE(OP_LOAD_FIELD_2) : {
+        vm_load_field(vm, instruction, 2);
+        VM_NEXT();
+    }
+    VM_CASE(OP_LOAD_FIELD_4) : {
+        vm_load_field(vm, instruction, 4);
+        VM_NEXT();
+    }
+    VM_CASE(OP_STORE_FIELD_1) : {
+        vm_store_field(vm, instruction, 1);
+        VM_NEXT();
+    }
+    VM_CASE(OP_STORE_FIELD_2) : {
+        vm_store_field(vm, instruction, 2);
+        VM_NEXT();
+    }
+    VM_CASE(OP_STORE_FIELD_4) : {
+        vm_store_field(vm, instruction, 4);
+        VM_NEXT();
+    }
+    VM_CASE(OP_ADDR_OF) : {
+        size_t rd = VM_DECODE_R_RD(instruction);
+        size_t base = VM_DECODE_R_R1(instruction);
+        size_t offset = VM_DECODE_R_R2(instruction);
+
+        // Addresses are absolute, not frame-relative: the pointee may
+        // outlive the frame the address was taken in, and a caller reading
+        // through the pointer has a different base. The byte offset reaches
+        // a field within the slots, so '&v.y' names the field, not v.
+        vm_write_ptr(vm, rd, vm->registers + base * VM_SLOT_SIZE + offset);
+        VM_NEXT();
+    }
+    VM_CASE(OP_LOAD_FIELD_PTR_1) : {
+        vm_load_field_ptr(vm, instruction, 1);
+        VM_NEXT();
+    }
+    VM_CASE(OP_LOAD_FIELD_PTR_2) : {
+        vm_load_field_ptr(vm, instruction, 2);
+        VM_NEXT();
+    }
+    VM_CASE(OP_LOAD_FIELD_PTR_4) : {
+        vm_load_field_ptr(vm, instruction, 4);
+        VM_NEXT();
+    }
+    VM_CASE(OP_STORE_FIELD_PTR_1) : {
+        vm_store_field_ptr(vm, instruction, 1);
+        VM_NEXT();
+    }
+    VM_CASE(OP_STORE_FIELD_PTR_2) : {
+        vm_store_field_ptr(vm, instruction, 2);
+        VM_NEXT();
+    }
+    VM_CASE(OP_STORE_FIELD_PTR_4) : {
+        vm_store_field_ptr(vm, instruction, 4);
+        VM_NEXT();
+    }
+    VM_CASE(OP_ADD_PTR) : {
+        size_t rd = VM_DECODE_R_RD(instruction);
+        size_t base = VM_DECODE_R_R1(instruction);
+        size_t offset = VM_DECODE_R_R2(instruction);
+
+        vm_write_ptr(vm, rd, vm_read_ptr(vm, base) + offset);
+        VM_NEXT();
+    }
+    VM_CASE(OP_LOAD_PTR_N) : {
+        size_t rd = VM_DECODE_R_RD(instruction);
+        size_t base = VM_DECODE_R_R1(instruction);
+        size_t slots = VM_DECODE_R_R2(instruction);
+
+        memcpy(vm_reg_at(vm, rd), vm_read_ptr(vm, base), slots * VM_SLOT_SIZE);
+        VM_NEXT();
+    }
+    VM_CASE(OP_STORE_PTR_N) : {
+        size_t base = VM_DECODE_R_RD(instruction);
+        size_t r1 = VM_DECODE_R_R1(instruction);
+        size_t slots = VM_DECODE_R_R2(instruction);
+
+        memcpy(vm_read_ptr(vm, base), vm_reg_at(vm, r1), slots * VM_SLOT_SIZE);
+        VM_NEXT();
+    }
+    VM_CASE(OP_FOR_LOOP) : {
+        int32_t next = vm_read_i32(vm, VM_DECODE_R_RD(instruction)) + 1;
+
+        vm_write_i32(vm, VM_DECODE_R_RD(instruction), next);
+
+        if (next < vm_read_i32(vm, VM_DECODE_R_R1(instruction))) {
+            vm->instruction_pointer += VM_DECODE_R_SIMM(instruction);
+        }
+
+        VM_NEXT();
+    }
+    VM_CASE(OP_JMP) : {
+        vm->instruction_pointer += VM_DECODE_I_SIMM(instruction);
+        VM_NEXT();
+    }
+    VM_CASE(OP_JMP_IF_FALSE) : {
+        size_t reg = VM_DECODE_I_RD(instruction);
+
+        bool cond = vm_read_i32(vm, reg);
+        if (!cond) {
+            vm->instruction_pointer += VM_DECODE_I_SIMM(instruction);
+        }
+
+        VM_NEXT();
+    }
+    VM_CASE(OP_JMP_IF_TRUE) : {
+        size_t reg = VM_DECODE_I_RD(instruction);
+
+        bool cond = vm_read_i32(vm, reg);
+        if (cond) {
+            vm->instruction_pointer += VM_DECODE_I_SIMM(instruction);
+        }
+
+        VM_NEXT();
+    }
+
+#if !VM_COMPUTED_GOTO
+// Not an instruction, so nothing encodes it. Listed because -Wswitch
+// counts it, and reaching it would mean a decoded opcode outside the
+// enum -- which the 7-bit field cannot produce for 53 opcodes.
+case OP__COUNT:
+    goto vm_done;
+}
+
+vm_next : vm->instruction_pointer += 1;
+}
+
+goto vm_done;
+#endif
+
+vm_done:;
+
+// Top-level code has no trailing return, so the loop usually ends by
+// running off the end of the chunk rather than through OP_RETURN.
+while (vm->frame_count > 0) {
+    vm_pop_frame(vm);
+}
 }
 
 VmRunStatus vm_run_frame(VM *vm, const FuncPrototype *proto, size_t base, unsigned int dest) {

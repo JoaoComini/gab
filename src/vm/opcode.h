@@ -108,6 +108,11 @@ typedef enum {
     // The step is fixed at one and the comparison at '<', because that is the
     // shape codegen recognises; anything else keeps the general form.
     OP_FOR_LOOP,
+
+    // Not an instruction: the number of them. The dispatch table in vm.c is
+    // sized by this and must have an entry for every opcode below it, so a new
+    // opcode added without one fails to build rather than jumping nowhere.
+    OP__COUNT,
 } OpCode;
 
 #endif
