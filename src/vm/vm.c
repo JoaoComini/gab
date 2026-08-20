@@ -513,9 +513,6 @@ static bool vm_check_divisor(VM *vm, Instruction instruction, const char *zero_m
     return true;
 }
 
-// Runs until every frame the caller pushed has unwound. Both entry points
-// share it: vm_run pushes frame zero, and a host call pushes one frame for the
-// function it is invoking, so there is exactly one interpreter either way.
 // Dispatch. Two spellings of the same interpreter: a jump through a table of
 // label addresses where the compiler has the extension for it, and a switch
 // everywhere else.
@@ -536,6 +533,26 @@ static bool vm_check_divisor(VM *vm, Instruction instruction, const char *zero_m
 #else
 #define VM_COMPUTED_GOTO 0
 #endif
+
+// Reloads what the running frame's bytecode is, for the handlers that change
+// which frame that is: a call, a return, or an unwind. The guard is the one
+// VM_DISPATCH makes anyway, hoisted here so the common path never repeats it.
+//
+// Independent of how the interpreter dispatches, so both spellings share it.
+#define VM_RELOAD()                                                                                          \
+    do {                                                                                                     \
+        if (vm->frame_count > 0) {                                                                           \
+            frame = &vm->frames[vm->frame_count - 1];                                                        \
+            chunk = frame->proto->chunk;                                                                     \
+            code = chunk->instructions.data;                                                                 \
+            code_size = chunk->instructions.size;                                                            \
+        }                                                                                                    \
+    } while (0)
+
+// The two forms below differ only in how they reach the next handler. VM_NEXT
+// advances to the following instruction; VM_RETRY resumes at wherever a handler
+// has already placed the instruction pointer -- a call, a return, or a failure
+// that unwound -- reloading the frame first.
 
 #if VM_COMPUTED_GOTO
 
@@ -562,21 +579,6 @@ static bool vm_check_divisor(VM *vm, Instruction instruction, const char *zero_m
         VM_DISPATCH();                                                                                       \
     } while (0)
 
-// A handler that has already placed the instruction pointer itself: a call, a
-// return, or a failure that unwound.
-// Reloads what the running frame's bytecode is, for the handlers that change
-// which frame that is: a call, a return, or an unwind. The guard is the one
-// VM_DISPATCH makes anyway, hoisted here so the common path never repeats it.
-#define VM_RELOAD()                                                                                          \
-    do {                                                                                                     \
-        if (vm->frame_count > 0) {                                                                           \
-            frame = &vm->frames[vm->frame_count - 1];                                                        \
-            chunk = frame->proto->chunk;                                                                     \
-            code = chunk->instructions.data;                                                                 \
-            code_size = chunk->instructions.size;                                                            \
-        }                                                                                                    \
-    } while (0)
-
 #define VM_RETRY()                                                                                           \
     do {                                                                                                     \
         VM_RELOAD();                                                                                         \
@@ -586,16 +588,6 @@ static bool vm_check_divisor(VM *vm, Instruction instruction, const char *zero_m
 #else
 
 #define VM_CASE(name) case name
-
-#define VM_RELOAD()                                                                                          \
-    do {                                                                                                     \
-        if (vm->frame_count > 0) {                                                                           \
-            frame = &vm->frames[vm->frame_count - 1];                                                        \
-            chunk = frame->proto->chunk;                                                                     \
-            code = chunk->instructions.data;                                                                 \
-            code_size = chunk->instructions.size;                                                            \
-        }                                                                                                    \
-    } while (0)
 
 #define VM_NEXT()                                                                                            \
     do {                                                                                                     \
@@ -608,6 +600,9 @@ static bool vm_check_divisor(VM *vm, Instruction instruction, const char *zero_m
 
 #endif
 
+// Runs until every frame the caller pushed has unwound. Both entry points
+// share it: vm_run pushes frame zero, and a host call pushes one frame for the
+// function it is invoking, so there is exactly one interpreter either way.
 static void vm_run_loop(VM *vm) {
 #if VM_COMPUTED_GOTO
     // One entry per opcode, in enum order: the index is the opcode itself.
@@ -686,9 +681,6 @@ static void vm_run_loop(VM *vm) {
     VM_RELOAD();
     VM_DISPATCH();
 #else
-    // The switch form spells the same bounds as VM_DISPATCH does: the pointer
-    // is signed, so a jump that went too far back is negative here rather than
-    // a huge index that would read as a normal end of function.
 vm_retry:
     VM_RELOAD();
 
