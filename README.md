@@ -1,0 +1,164 @@
+# Gab
+
+Gab is a small, statically typed scripting language for embedding in C
+programs.
+
+It is built around one idea: **a script struct has the same memory layout as
+the equivalent C struct.** There is no marshalling layer and no conversion step
+at the boundary — a host passes a `Player` to a script by handing over its
+bytes, and the script reads them in place. Static types are what make that
+layout knowable ahead of time.
+
+Gab is early. The embedding API is the finished part; the language surface is
+still small. See [Features](#features) for what works today.
+
+## Embedding
+
+```c
+#include "gab.h"
+#include <stdio.h>
+
+typedef struct { int health; int mana; } Player;
+
+int main(void) {
+    GabVM *vm = gab_vm_new();
+    GabError err;
+
+    const char *src =
+        "module game;\n"
+        "struct Player { health: int, mana: int }\n"
+        "func damage(p: Player, amount: int): int {\n"
+        "    let left: int = p.health - amount;\n"
+        "    if left < 0 { return 0; }\n"
+        "    return left;\n"
+        "}\n";
+
+    if (!gab_load(vm, "game.gab", src, &err)) {
+        fprintf(stderr, "game.gab:%d: %s\n", err.line, err.message);
+        return 1;
+    }
+
+    // The script's layout is the C layout. Check it rather than trust it.
+    const GabType *type = gab_find_type(vm, "game", "Player");
+    if (gab_type_size(type) != sizeof(Player)) {
+        return 1;
+    }
+
+    // Resolve once; call every frame with no lookup.
+    GabFunc *fn = gab_lookup(vm, "game", "damage", &err);
+    GabCall *call = gab_call_init(fn, &err);
+
+    Player p = { .health = 100, .mana = 50 };
+    gab_arg_struct(call, 0, &p, sizeof p);
+    gab_arg_int(call, 1, 30);
+
+    int32_t left = 0;
+    if (gab_call(vm, call, &left, &err) == GAB_OK) {
+        printf("health: %d\n", left);   // health: 70
+    }
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+    return 0;
+}
+```
+
+`src/gab.h` is the only header a host includes, and it is the reference
+documentation: every call carries a comment saying what it guarantees and what
+it does not. Nothing is printed by the library — diagnostics come back through
+`GabError` so the host decides where they go.
+
+Three properties are worth knowing before you build against it:
+
+- **Hot reload.** Loading a unit name that is already loaded compiles the new
+  source over the old. Handles taken before the reload keep working and call
+  the new body. If a reload changes a function's signature, calls staged
+  against it report `GAB_ERR_STALE` rather than building a frame from stale
+  arguments; the host restages and calls again.
+- **Little to free.** The VM owns the units it compiles and the handles it
+  hands out. `GabCall` is the one exception, because it holds one caller's
+  staged arguments.
+- **Layout is checked, not trusted.** `gab_type_size`, `gab_type_align`, and
+  `gab_field_offset` exist so a host can assert the script's layout against its
+  own `sizeof` and `offsetof`.
+
+## The language
+
+```
+module game;
+
+struct Player {
+    health: int,
+    mana: int,
+}
+
+func heal(p: *Player, amount: int) {
+    p.health = p.health + amount;
+}
+
+func (p: *Player) is_alive(): bool {
+    return p.health > 0;
+}
+```
+
+Field access reaches through a pointer the way `->` does in C, so `p.health`
+works whether `p` is a `Player` or a `*Player`.
+
+Memory is reference counted. `new T` yields an owned `*T` that is released when
+it goes out of scope, and `weak *T` breaks the cycle a parent/child pair would
+otherwise form — dereferencing a dead weak pointer fails the run rather than
+reading freed memory.
+
+## Features
+
+| | |
+| --- | --- |
+| Types | `int` (32-bit), `float` (32-bit), `bool`, structs, pointers `*T`, `weak *T` |
+| Declarations | `let` with inferred or annotated type, `func`, `struct`, `module` |
+| Functions | Parameters and returns of any type, structs by value, methods with a receiver, recursion, forward references |
+| Control flow | `if` / `else`, `return`, nested blocks with shadowing |
+| Operators | `+` `-` `*` `/`, unary `-`, `==` `!=` `<` `>` `<=` `>=`, `&&` `||`, `&` and `*`, field access |
+| Memory | Reference-counted `new`, `weak` references, scope-based release |
+| Modules | `module` namespaces, resolved per unit with a root fallback |
+
+Not yet implemented:
+
+| | |
+| --- | --- |
+| Loops | No `while` or `for`; recursion is the only iteration |
+| Strings | No string type or literals |
+| Arrays | No array type or indexing |
+| Comments | Not recognised by the lexer |
+| Operators | `!`, `%`, compound assignment (`+=`), bitwise |
+| Literals | No struct literals (`V{x: 1}`) |
+| Conversion | `int` and `float` do not mix; no cast syntax |
+| Host API | No way to pass a pointer from C into a script |
+
+Loops are the largest gap.
+
+## Building
+
+Requires CMake 3.16+ and clang.
+
+```sh
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build
+```
+
+Warnings are errors. To build and run the suite under AddressSanitizer and
+UndefinedBehaviorSanitizer:
+
+```sh
+cmake -S . -B build-asan -DGAB_SANITIZE=address,undefined
+cmake --build build-asan
+ctest --test-dir build-asan
+```
+
+The suite passes clean under both, so any sanitizer report is a regression.
+
+## Contributing
+
+Run `clang-format` before committing; the config is in `.clang-format`. Add a
+test in `test/` for whatever you change, and check that it fails before your
+fix as well as passing after it.
