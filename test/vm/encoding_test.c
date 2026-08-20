@@ -85,13 +85,14 @@ static void test_out_of_range_operands_stay_in_their_field() {
 static void test_emit_site_rejects_an_over_large_frame() {
     VM *vm = vm_create();
 
-    // 253 locals need 256 slots, one past what the register field can address.
-    // One register each: 'n + 1' takes the literal as an immediate operand, so
-    // it needs no register of its own to hold the constant.
+    // 254 locals need more slots than the register field can address. One
+    // register each: 'n + 1' takes the literal as an immediate operand and is
+    // generated straight into the variable's slot, so neither the constant nor
+    // the sum needs a register of its own.
     char source[8192];
     size_t used = (size_t)snprintf(source, sizeof(source), "func f(n: int): int {\n");
 
-    for (unsigned int i = 0; i < 253; i++) {
+    for (unsigned int i = 0; i < 254; i++) {
         used += (size_t)snprintf(source + used, sizeof(source) - used, "let s%u = n + 1;\n", i);
     }
 

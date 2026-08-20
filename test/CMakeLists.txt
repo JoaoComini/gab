@@ -14,6 +14,7 @@ set(
     vm/register_reuse_test.c
     vm/struct_value_test.c
     vm/codegen_test.c
+    vm/loop_shape_test.c
     vm/chunk_test.c
     vm/encoding_test.c
     vm/pointer_test.c

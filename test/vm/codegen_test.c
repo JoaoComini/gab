@@ -127,22 +127,36 @@ static void test_a_float_literal_is_never_an_immediate() {
 // Each statement reclaims the registers it allocated above the locals, so two
 // statements of the same shape reuse the same temporary rather than growing
 // the frame.
+//
+// A call is what still needs a temporary: its result lands in a fresh register
+// before anything consumes it, where a literal or a variable is generated
+// straight into its destination.
 static void test_a_temporary_register_is_reused() {
-    TestProgram program = test_compile("func f() {\n"
-                                       "    let x: float = 3.0;\n"
-                                       "    x = 2.0;\n"
+    TestProgram program = test_compile("func g(): int { return 1; }\n"
+                                       "func f() {\n"
+                                       "    let x: int = 0;\n"
+                                       "    x = g() + 1;\n"
+                                       "    x = g() + 2;\n"
                                        "}\n");
 
-    Chunk *chunk = test_func_chunk(&program, 0);
+    Chunk *chunk = test_func_chunk(&program, 1);
 
-    assert(test_count_opcode(chunk, OP_LOAD_CONST) == 2);
-    assert(test_count_opcode(chunk, OP_MOVE) == 2);
+    long first = test_find_opcode(chunk, OP_CALL);
+    assert(first >= 0);
 
-    Instruction first_move = test_instruction(chunk, 1);
-    Instruction second_move = test_instruction(chunk, 3);
+    // The second call must land in the same register the first did, which is
+    // what reclaiming between statements buys.
+    long second = -1;
+    for (size_t i = (size_t)first + 1; i < chunk->instructions.size; i++) {
+        if (VM_DECODE_OPCODE(test_instruction(chunk, i)) == OP_CALL) {
+            second = (long)i;
+            break;
+        }
+    }
 
-    assert(VM_DECODE_R_RD(first_move) == VM_DECODE_R_RD(second_move));
-    assert(VM_DECODE_R_R1(first_move) == VM_DECODE_R_R1(second_move));
+    assert(second >= 0);
+    assert(VM_DECODE_R_RD(test_instruction(chunk, (size_t)first)) ==
+           VM_DECODE_R_RD(test_instruction(chunk, (size_t)second)));
 
     test_program_free(&program);
 }
@@ -158,7 +172,9 @@ static void test_assignment_computes_into_its_target() {
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
-    assert(test_count_opcode(chunk, OP_MOVE) == 1);
+    // No move at all: the initialiser loads into x, and the sum computes into
+    // it, so nothing is ever staged elsewhere and copied down.
+    assert(test_count_opcode(chunk, OP_MOVE) == 0);
     assert(test_count_opcode(chunk, OP_ADDI) == 1);
 
     long add_index = test_find_opcode(chunk, OP_ADDI);

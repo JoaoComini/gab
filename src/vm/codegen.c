@@ -159,6 +159,11 @@ static void codegen_addr_of_into(CodegenState *state, ASTExpr *inner, unsigned i
 
 static unsigned int codegen_rhs(CodegenState *state, ASTExpr *rhs, const Type *left_type, bool *immediate);
 
+static bool codegen_expr_into(CodegenState *state, ASTExpr *value, unsigned int dest);
+static Constant value_from_literal(Literal lit);
+static unsigned int codegen_slot_of(CodegenState *state, Symbol *symbol);
+static bool type_is_owned(const Type *type);
+
 static OpCode bin_op_to_float_op(BinOp bin_op);
 static OpCode bin_op_to_int_op(BinOp bin_op);
 
@@ -405,9 +410,18 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
     // allocates above it is a temporary and is reclaimed here.
     unsigned int saved = state->next_reg;
 
-    unsigned int r1 = codegen_expr(state, ast->initializer);
-
     unsigned int slot = codegen_slot_of(state, ast->symbol);
+
+    // Generated straight into the variable's slot where the shape allows it.
+    // An owned initialiser is excluded: the ownership bookkeeping below reads
+    // the value's own register to decide what this slot takes over.
+    if (!is_ref && !type_is_owned(ast->symbol->var.type) &&
+        codegen_expr_into(state, ast->initializer, slot)) {
+        codegen_release_registers(state, saved);
+        return;
+    }
+
+    unsigned int r1 = codegen_expr(state, ast->initializer);
 
     codegen_copy_slots(state, slot, r1, type_slot_count(ast->symbol->var.type));
 
@@ -420,6 +434,43 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
     }
 
     codegen_release_registers(state, saved);
+}
+
+// Generates 'value' so that it lands in 'dest', rather than wherever it would
+// naturally go with a copy afterwards. Returns false when the shape has no
+// such form and the caller must fall back to generating and copying.
+//
+// Only single-slot scalars qualify: a struct is copied as a run, and the
+// ownership bookkeeping around an owned pointer wants the value in hand.
+static bool codegen_expr_into(CodegenState *state, ASTExpr *value, unsigned int dest) {
+    if (type_slot_count(value->type) != 1 || type_is_owned(value->type)) {
+        return false;
+    }
+
+    switch (value->kind) {
+    case EXPR_LITERAL: {
+        unsigned int index = constpool_add(state->chunk->const_pool, value_from_literal(value->lit));
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_LOAD_CONST, dest, index));
+        return true;
+    }
+    case EXPR_VARIABLE:
+        codegen_copy_slots(state, dest, codegen_slot_of(state, value->symbol), 1);
+        return true;
+
+    // A binary op already has a form that computes into a destination. The
+    // logical pair is excluded because they short-circuit through a jump and
+    // own the register they land in.
+    case EXPR_BIN_OP:
+        if (value->bin_op.op == BIN_OP_AND || value->bin_op.op == BIN_OP_OR) {
+            return false;
+        }
+
+        codegen_bin_op_into(state, value, dest);
+        return true;
+    default:
+        return false;
+    }
 }
 
 static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
@@ -484,12 +535,9 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
 
     unsigned int rd = codegen_expr(state, ast->target);
 
-    // A binary op computes straight into the target instead of into a temporary
-    // this would then have to copy down. The logical ops are excluded because
-    // they short-circuit through a jump and own their result register.
-    if (ast->value->kind == EXPR_BIN_OP && ast->value->bin_op.op != BIN_OP_AND &&
-        ast->value->bin_op.op != BIN_OP_OR) {
-        codegen_bin_op_into(state, ast->value, rd);
+    // Computed straight into the target where the shape allows it, instead of
+    // into a temporary this would then have to copy down.
+    if (!type_is_owned(ast->target->type) && codegen_expr_into(state, ast->value, rd)) {
         return;
     }
 
