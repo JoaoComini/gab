@@ -1,11 +1,10 @@
-// What the comparison opcodes actually compute. The codegen tests already
-// check which opcode each operator emits, and the lexer tests check that the
-// tokens scan; neither notices if an opcode's VM case runs the wrong helper.
-// That gap let '>=' dispatch to the '<=' helper on both int and float.
+// What the comparison opcodes compute, as distinct from which opcode an
+// operator emits: the two are separate claims, and only this one is what a
+// program observes.
 //
-// Every operator is checked on both sides of its boundary and on equality,
-// because an inverted comparison agrees with the correct one on one of those
-// three and only disagrees on the others.
+// Every operator is checked below its boundary, above it, and on equality. An
+// inverted comparison still agrees with the correct one on one of those three,
+// so fewer points would let a swapped operator pass.
 #include "support/run.h"
 #include "value.h"
 #include "vm/vm.h"
@@ -57,8 +56,6 @@ static void test_int_less_equal() {
     assert(cmp_int(4, "<=", 4));
 }
 
-// The regression: this dispatched to the '<=' helper, so it answered the
-// opposite of the truth on both of the first two cases.
 static void test_int_greater_equal() {
     assert(cmp_int(5, ">=", 3));
     assert(!cmp_int(3, ">=", 5));
@@ -93,7 +90,6 @@ static void test_float_less_equal() {
     assert(cmp_float(4.0, "<=", 4.0));
 }
 
-// The float half of the same regression.
 static void test_float_greater_equal() {
     assert(cmp_float(5.0, ">=", 3.0));
     assert(!cmp_float(3.0, ">=", 5.0));

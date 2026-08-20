@@ -1,7 +1,6 @@
 // What 'if' requires of its condition, and that it branches on it correctly.
-// The parser tests already cover the syntax; this covers the rule that the
-// condition must be a bool, which nothing checked -- 'if p' on a pointer
-// compiled and ran.
+// The parser tests cover the syntax; the rule that the condition must be a
+// bool is a resolver rule, and lives here.
 #include "support/run.h"
 #include "vm/vm.h"
 
@@ -28,9 +27,6 @@ static void test_a_comparison_is_a_valid_condition() {
     assert(test_compiles("func f(): int { if true && false { return 1; } return 0; }\n"));
 }
 
-// The regression: every one of these has a non-bool condition and used to
-// compile. The condition was visited so its own errors were caught, but its
-// type was never checked against anything.
 static void test_a_non_bool_condition_is_rejected() {
     assert(!test_compiles("func f(): int { let x: int = 1; if x { return 1; } return 0; }\n"));
 

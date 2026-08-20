@@ -1,7 +1,6 @@
-// What the arithmetic opcodes actually compute. The codegen tests check which
-// opcode each operator emits and the comparison tests cover the CMP family;
-// this covers the other half, which nothing asserted on -- the same gap that
-// let OP_CMP_GE dispatch to the wrong helper for both int and float.
+// What the arithmetic opcodes compute, as distinct from which opcode an
+// operator emits: emitting the right instruction and running it correctly are
+// separate claims, and only this one is what a program observes.
 //
 // Operands are locals rather than literals wherever the value must reach a
 // register, since a literal right operand takes the immediate encoding
@@ -111,10 +110,9 @@ static void test_precedence_and_associativity() {
                         "let r: int = f();\n") == 10);
 }
 
-// Integer division by zero would be undefined behaviour and did in fact take
-// the host process down with SIGFPE. An embedded VM must not let a script kill
-// its host, so it fails the run instead -- the same way a dangling weak deref
-// already did.
+// Integer division by zero is undefined in C and traps with SIGFPE. An
+// embedded VM must not let a script kill its host, so it fails the run
+// instead, the way a dangling weak deref does.
 static void test_int_divide_by_zero_traps() {
     assert(test_run_status("func f(): int { let a: int = 1; let b: int = 0; return a / b; }\n"
                            "let r: int = f();\n") == VM_RUN_ERR_DIVIDE_BY_ZERO);
@@ -127,10 +125,10 @@ static void test_int_divide_overflow_traps() {
                            "let r: int = f();\n") == VM_RUN_ERR_DIVIDE_OVERFLOW);
 }
 
-// Only the divisor being -1 is a problem, and only for that one dividend:
-// neighbouring values must still divide normally rather than being swept up by
-// an over-broad guard.
-static void test_neighbouring_divisions_still_work() {
+// The trap is narrow: only INT32_MIN paired with -1. Neighbouring values on
+// both operands divide normally, which is what an over-broad guard would
+// break.
+static void test_divisions_near_the_trap_are_unaffected() {
     assert(test_run_int("func f(): int { let a: int = -2147483647; let b: int = -1; return a / b; }\n"
                         "let r: int = f();\n") == 2147483647);
 
@@ -165,7 +163,7 @@ int main() {
 
     test_int_divide_by_zero_traps();
     test_int_divide_overflow_traps();
-    test_neighbouring_divisions_still_work();
+    test_divisions_near_the_trap_are_unaffected();
     test_float_divide_by_zero_is_not_a_trap();
 
     printf("arithmetic_test: all tests passed\n");

@@ -1,15 +1,13 @@
 // What codegen emits, as opposed to what the emitted code computes.
 //
-// The distinction decides what belongs here. A test asserting "'a + b' emits
-// OP_ADDI" is checking a detail no program can observe -- and it passed
-// happily while OP_CMP_GE dispatched to the wrong helper, because emitting the
-// right opcode and running it correctly are different claims. Those tests are
-// gone; arithmetic_test.c and compare_test.c check the behaviour instead.
+// Only claims that behaviour cannot make belong here: the optimizations. A
+// folded constant, a reclaimed register, a copy that stays one instruction --
+// the program computes the same answer either way, so the instructions are the
+// only place the optimization is visible.
 //
-// What is left is the claims behaviour genuinely cannot make: the
-// optimizations. A folded constant, a reclaimed register, a copy that stays
-// one instruction -- the program computes the same answer either way, so only
-// the instructions show whether the optimization still happens.
+// Which opcode an operator emits is not such a claim. That is a detail no
+// program observes, and the behaviour tests in arithmetic_test.c and
+// compare_test.c cover what it is meant to achieve.
 //
 // Registers are asserted relationally, never by number. Which register the
 // allocator picks is its business; that one instruction reads what another
