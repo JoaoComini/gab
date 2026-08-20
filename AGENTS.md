@@ -56,6 +56,23 @@ Register a new test file in `test/CMakeLists.txt`.
 Tests are named for the behaviour they check, not the file they cover, because
 most run source text through the whole pipeline.
 
+**One test states one language rule.** Not a scenario that exercises several.
+A program needing three struct types and a call chain to make its point is
+usually restating rules that already have tests, and the composition is not
+itself a rule — so it fails for whatever the rules already cover and adds
+nothing when they hold.
+
+Write the smallest program that can distinguish the rule being true from it
+being false. If a rule genuinely has no test, add one for that rule rather than
+a scenario that happens to reach it.
+
+Two things this rules out. A test built around a domain — a scene graph, an
+inventory, an entity and its projectiles — is describing an application, and
+its shape will drift from the rule it meant to pin. And a test kept from an
+exercise that has since concluded, such as a sample written to measure how
+often some construct is needed: once the question is answered the file is not
+a suite, and what it leaves behind duplicates whatever it was measuring.
+
 Assert on behaviour by default. Assert on emitted instructions only for claims
 behaviour cannot make — a folded constant, a reclaimed register, a multi-slot
 copy that stays one instruction. Those belong in `test/vm/codegen_test.c`.

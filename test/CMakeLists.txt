@@ -19,8 +19,7 @@ set(
     vm/pointer_test.c
     vm/method_test.c
     vm/heap_test.c
-    vm/ref_test.c
-    vm/ownership_shape_test.c
+    vm/ownership_test.c
     vm/neg_test.c
     vm/compare_test.c
     vm/if_test.c

@@ -404,6 +404,43 @@ static void test_a_pointer_receiver_is_dereferenced() {
                         "let r: int = main();") == 9);
 }
 
+// A borrowed receiver reaches the same object its owner names, so a method
+// called on one is ordinary and reads what the owner holds.
+static void test_a_method_on_a_ref_receiver() {
+    assert(test_run_int("struct Box { n: int }\n"
+                        "func (b: ref Box) get(): int { return b.n; }\n"
+                        "func main(): int {\n"
+                        "    let owner: *Box = new Box;\n"
+                        "    owner.n = 6;\n"
+                        "    let borrowed: ref Box = owner;\n"
+                        "    return borrowed.get();\n"
+                        "}\n"
+                        "let r: int = main();") == 6);
+}
+
+// Writing through a borrowed receiver reaches the same object too: a borrow is
+// the same address, so the mutation is visible to the owner.
+static void test_a_method_through_a_ref_mutates_the_owned_object() {
+    assert(test_run_int("struct Box { n: int }\n"
+                        "func (b: ref Box) bump(): int { b.n = b.n + 1; return b.n; }\n"
+                        "func main(): int {\n"
+                        "    let owner: *Box = new Box;\n"
+                        "    owner.n = 4;\n"
+                        "    let borrowed: ref Box = owner;\n"
+                        "    borrowed.bump();\n"
+                        "    return owner.n;\n"
+                        "}\n"
+                        "let r: int = main();") == 5);
+}
+
+// A method never owns its receiver, so declaring one '*T' spells an ownership
+// it cannot have -- and would let one method be written two ways that behave
+// identically. 'ref T' is the one form, and 'T' by value the other.
+static void test_an_owning_receiver_is_refused() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "func (b: *Box) peek(): int { return b.n; }\n"));
+}
+
 // A method on a temporary that takes a pointer receiver has no address to take,
 // and the rewrite must not invent one.
 static void test_a_pointer_method_on_a_temporary_is_refused() {
@@ -438,6 +475,9 @@ int main(void) {
     test_a_matching_receiver_needs_no_adjustment();
     test_a_value_receiver_has_its_address_taken();
     test_a_pointer_receiver_is_dereferenced();
+    test_a_method_on_a_ref_receiver();
+    test_a_method_through_a_ref_mutates_the_owned_object();
+    test_an_owning_receiver_is_refused();
     test_a_pointer_method_on_a_temporary_is_refused();
     test_arity_errors_exclude_the_receiver();
     test_an_unknown_method_is_refused();

@@ -95,6 +95,61 @@ static void test_pointer_is_a_word() {
     test_context_free(&ctx);
 }
 
+// 'ref T' and '*T' are different types, so that freeing an object can tell from
+// a field's type alone whether it owns what the field names.
+static void test_ref_is_a_distinct_type() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
+    ASTScript *script = ast_script_create();
+
+    bool ok = test_resolve(&ctx, scope, script,
+                           "struct Node { n: int }\n"
+                           "let o: *Node;\n"
+                           "let b: ref Node;\n");
+    assert(ok);
+
+    Symbol *owning = scope_symbol_lookup(scope, string_from_cstr(&ctx.strings, "o"));
+    Symbol *borrow = scope_symbol_lookup(scope, string_from_cstr(&ctx.strings, "b"));
+
+    assert(owning && borrow);
+    assert(owning->var.type != borrow->var.type);
+    assert(!owning->var.type->is_ref);
+    assert(borrow->var.type->is_ref);
+
+    // Same pointee, and both are still ordinary pointers: a borrow is the same
+    // address, differing only in who frees the pointee.
+    assert(owning->var.type->pointee == borrow->var.type->pointee);
+    assert(borrow->var.type->size == sizeof(void *));
+
+    ast_script_destroy(script);
+    test_context_free(&ctx);
+}
+
+// Interned like every other type, so two mentions of 'ref Node' are one Type.
+static void test_ref_pointers_are_interned() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
+    ASTScript *script = ast_script_create();
+
+    bool ok = test_resolve(&ctx, scope, script,
+                           "struct Node { n: int }\n"
+                           "let a: ref Node;\n"
+                           "let b: ref Node;\n");
+    assert(ok);
+
+    Symbol *a = scope_symbol_lookup(scope, string_from_cstr(&ctx.strings, "a"));
+    Symbol *b = scope_symbol_lookup(scope, string_from_cstr(&ctx.strings, "b"));
+
+    assert(a->var.type == b->var.type);
+
+    ast_script_destroy(script);
+    test_context_free(&ctx);
+}
+
 // The address is a real address into the stack, so writing through it must be
 // visible to the variable itself.
 static void test_scalar_read_and_write_through_a_pointer() {
@@ -229,6 +284,8 @@ int main() {
     test_pointer_types_are_interned();
     test_pointer_depth_nests();
     test_pointer_is_a_word();
+    test_ref_is_a_distinct_type();
+    test_ref_pointers_are_interned();
     test_scalar_read_and_write_through_a_pointer();
     test_field_write_through_a_pointer();
     test_pointer_to_a_struct_field();

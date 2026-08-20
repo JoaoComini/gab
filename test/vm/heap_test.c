@@ -1,3 +1,4 @@
+#include "diagnostics.h"
 #include "support/run.h"
 #include "vm/vm.h"
 
@@ -127,6 +128,30 @@ static void test_a_bare_new_does_not_leak() {
                         "let r: int = main();") == 4);
 }
 
+// A failure unwinds past every free codegen emitted, so the frames drop what
+// they own on the way out.
+static void test_an_abnormal_unwind_frees_what_it_held() {
+    VM *vm = vm_create();
+
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+
+    CompiledScript script;
+    assert(vm_compile(vm,
+                      "struct Node { n: int }\n"
+                      "func deep(n: int): int { return deep(n + 1); }\n"
+                      "func main(): int { let p: *Node = new Node; return deep(0); }\n"
+                      "let r: int = main();",
+                      &script, &diagnostics));
+
+    diagnostics_free(&diagnostics);
+
+    assert(vm_run(vm, &script) == VM_RUN_ERR_CALL_DEPTH);
+
+    vm_compiled_script_free(&script);
+    vm_free(vm);
+}
+
 // A strong field owns what it names, so it may only be given something nothing
 // else owns. 'i' is owned by its own slot, and storing it would leave the object
 // with two owners — the field and the slot — each releasing it independently.
@@ -171,6 +196,43 @@ static void test_storing_a_call_result_into_a_field_is_allowed() {
                         "    return o.child.n;\n"
                         "}\n"
                         "let r: int = main();") == 6);
+}
+
+// An owned value passed straight into a call belongs to nobody once the call
+// returns: a parameter borrows, so the callee does not free it, and the argument
+// was never bound to a slot that would. The call site frees it.
+//
+// Correctness is that it runs clean under LeakSanitizer; the returned value only
+// proves the call happened.
+static void test_an_owned_argument_is_freed_by_the_call_site() {
+    assert(test_run_int("struct Box { n: int }\n"
+                        "func take(b: ref Box): int { return b.n + 1; }\n"
+                        "func main(): int { return take(new Box); }\n"
+                        "let r: int = main();") == 1);
+}
+
+// The receiver is parameter zero, so an owned one arrives the same way and is
+// nobody's afterwards either.
+static void test_an_owned_receiver_is_freed_by_the_call_site() {
+    assert(test_run_int("struct Box { n: int }\n"
+                        "func (b: ref Box) get(): int { return b.n + 2; }\n"
+                        "func main(): int { return (new Box).get(); }\n"
+                        "let r: int = main();") == 2);
+}
+
+// A borrowed argument is left alone: its own slot still owns it, and freeing at
+// the call site would free it out from under the variable that goes on naming
+// it.
+static void test_a_borrowed_argument_is_not_freed_by_the_call_site() {
+    assert(test_run_int("struct Box { n: int }\n"
+                        "func take(b: ref Box): int { return b.n; }\n"
+                        "func main(): int {\n"
+                        "    let b: *Box = new Box;\n"
+                        "    b.n = 5;\n"
+                        "    take(b);\n"
+                        "    return b.n;\n"
+                        "}\n"
+                        "let r: int = main();") == 5);
 }
 
 // Overwriting a field that already holds a reference drops the old one, or the
@@ -254,10 +316,14 @@ int main(void) {
     test_storing_a_borrowed_reference_into_a_field_is_refused();
     test_storing_a_parameter_into_a_field_is_refused();
     test_storing_a_call_result_into_a_field_is_allowed();
+    test_an_owned_argument_is_freed_by_the_call_site();
+    test_an_owned_receiver_is_freed_by_the_call_site();
+    test_a_borrowed_argument_is_not_freed_by_the_call_site();
     test_an_alias_is_borrowed_not_owned();
     test_released_at_the_end_of_its_block();
     test_a_reused_slot_is_not_released_twice();
     test_a_bare_new_does_not_leak();
+    test_an_abnormal_unwind_frees_what_it_held();
     test_new_zeroes_the_payload();
     test_a_heap_pointer_may_be_returned();
     test_two_objects_are_distinct();
