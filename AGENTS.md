@@ -107,17 +107,24 @@ rather than pre-existing noise.
 
 ### Commits
 
-One line, imperative, no body, no trailers. State what the change makes true
-rather than what you did:
+One line, no body, no trailers, no prefix. Start with a capital letter. State
+what the change makes true rather than what you did:
 
 ```
-feat: '-x' negates, and a negated literal costs no instruction
-fix: 'a >= b' answers what it asks, on ints and floats alike
-test: a wide copy is one instruction, and a narrow one is not widened
+'-x' negates, and a negated literal costs no instruction
+'a >= b' answers what it asks, on ints and floats alike
+A wide copy is one instruction, and a narrow one is not widened
+A script that divides by zero fails its run instead of killing the host
 ```
 
-Prefixes in use: `feat`, `fix`, `refactor`, `test`, `perf`, `api`, `docs`, `build`,
-`chore`, `style`.
+No `feat:` / `fix:` / `chore:` tags. Nothing here consumes them — there is no
+changelog generation and no release tooling — and a sentence that says what
+changed already says what kind of change it is. The prefix would only spend the
+first word, the one that survives truncation in `git log --oneline`, repeating
+what the rest of the line makes obvious.
+
+A line starting with a quoted token keeps its lowercase quote: `'-x' negates`,
+not `'-X' negates`.
 
 Amend rather than stacking commits while iterating on the same change. Several
 commits doing one job should be one commit.
