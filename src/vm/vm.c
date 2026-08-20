@@ -14,8 +14,10 @@
 #include "vm/opcode.h"
 
 #include <assert.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -232,6 +234,39 @@ int32_t vm_muli(int32_t a, int32_t b) { return a * b; }
 int32_t vm_divi(int32_t a, int32_t b) { return a / b; }
 
 int32_t vm_modi(int32_t a, int32_t b) { return a % b; }
+
+// Truncates a float to an int, clamping whatever does not fit to the nearest
+// end of the range.
+//
+// A float outside the int range has no truncation to give, and the plain cast
+// is undefined there -- a license the optimizer may act on, not merely a value
+// the hardware picks. Clamping gives every operand a defined answer, and one
+// that reads as what it is: a value pinned at the limit, rather than a wrapped
+// number small enough to pass for real data.
+//
+// The bounds are the two powers of two, which a float holds exactly: -2^31 is
+// INT32_MIN itself, and 2^31 is the first float above the range. Writing the
+// upper one as (float)INT32_MAX would name the same float -- 2^31 is what
+// INT32_MAX rounds to -- but says something untrue about which values are in
+// range, so the power of two is written directly.
+static int32_t vm_ftoi(float value) {
+    if (value >= 2147483648.0f) {
+        return INT32_MAX;
+    }
+
+    if (value <= -2147483648.0f) {
+        return INT32_MIN;
+    }
+
+    // NaN reaches here, having failed both comparisons: it is not outside the
+    // range in either direction, so neither limit is the nearer one. Zero is
+    // the answer by convention rather than by derivation.
+    if (isnan(value)) {
+        return 0;
+    }
+
+    return (int32_t)value;
+}
 
 void vm_arithmetici(VM *vm, Instruction instruction, int32_t (*func)(int32_t, int32_t)) {
     size_t rd = VM_DECODE_R_RD(instruction);
@@ -593,6 +628,20 @@ static void vm_run_loop(VM *vm) {
             }
 
             vm_arithmetici(vm, instruction, vm_divi);
+            break;
+        }
+        case OP_ITOF: {
+            size_t rd = VM_DECODE_R_RD(instruction);
+            size_t r1 = VM_DECODE_R_R1(instruction);
+
+            vm_reg(vm, rd)->as_float = (float)vm_reg(vm, r1)->as_int;
+            break;
+        }
+        case OP_FTOI: {
+            size_t rd = VM_DECODE_R_RD(instruction);
+            size_t r1 = VM_DECODE_R_R1(instruction);
+
+            vm_reg(vm, rd)->as_int = vm_ftoi(vm_reg(vm, r1)->as_float);
             break;
         }
         case OP_MODI: {

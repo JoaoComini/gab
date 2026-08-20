@@ -26,6 +26,7 @@ typedef enum {
     EXPR_DEREF,
     EXPR_NEG,
     EXPR_NOT,
+    EXPR_CAST,
     EXPR_NEW,
 } ExprKind;
 
@@ -95,6 +96,13 @@ typedef struct ASTExpr {
             ASTExpr *target;
         } unary;
 
+        // 'int(x)' — a numeric conversion, parsed as a call whose target names
+        // a type rather than a function. The resolver rewrites it into this,
+        // so codegen never sees a call it would have to tell apart.
+        struct {
+            ASTExpr *operand;
+        } cast;
+
         // 'new T' — a heap allocation yielding an owned '*T'. Names a type
         // rather than taking an operand, so it carries a TypeSpec the way a
         // declaration does rather than an expression.
@@ -122,6 +130,7 @@ ASTExpr *ast_addr_of_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_deref_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_neg_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_not_expr_create(Span span, ASTExpr *target);
+ASTExpr *ast_cast_expr_create(Span span, ASTExpr *operand);
 ASTExpr *ast_new_expr_create(Span span, TypeSpec *type_spec);
 void ast_expr_free(ASTExpr *node);
 

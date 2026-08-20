@@ -192,6 +192,42 @@ static void test_reports_a_mismatched_compound_assignment() {
     test_context_free(&ctx);
 }
 
+// A conversion the language does not have names both types, so the message
+// says what was asked for rather than that a call went wrong.
+static void test_reports_an_illegal_conversion() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "func test(): int { let a: bool = true; return int(a); }");
+
+    assert(diagnostics_count(diagnostics) >= 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_TYPE);
+    assert(strcmp(diagnostic->message, "cannot convert bool to int") == 0);
+
+    test_context_free(&ctx);
+}
+
+// A conversion reports as a conversion, not as a call with the wrong number of
+// arguments: 'int' never named a function.
+static void test_reports_a_conversion_with_the_wrong_operand_count() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "func test(): int { return int(); }");
+
+    assert(diagnostics_count(diagnostics) >= 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_TYPE);
+    assert(strcmp(diagnostic->message, "a conversion to int takes one operand") == 0);
+
+    test_context_free(&ctx);
+}
+
 static void test_reports_unknown_type() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -649,6 +685,8 @@ int main(void) {
     test_reports_a_bad_binary_operand();
     test_reports_a_bad_compound_assignment_operand();
     test_reports_a_mismatched_compound_assignment();
+    test_reports_an_illegal_conversion();
+    test_reports_a_conversion_with_the_wrong_operand_count();
     test_reports_unknown_type();
     test_reports_duplicate_declaration();
 

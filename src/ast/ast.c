@@ -643,6 +643,72 @@ static bool bin_op_yields_bool(BinOp op) {
     }
 }
 
+// 'int(x)' and 'float(x)': a call whose target names a type is a conversion.
+// Returns false when the target names no type, leaving the node alone for the
+// call path to resolve.
+//
+// The node is rewritten in place from EXPR_CALL to EXPR_CAST. Both live in the
+// same union, so the operand is lifted out and the argument list freed before
+// anything is written back over them.
+static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
+    Type *target =
+        scope_type_lookup(state->current_scope, resolver_intern(state, expr->call.target->var.name));
+
+    if (!target) {
+        return false;
+    }
+
+    // Everything below reports against a conversion rather than a call, so the
+    // node becomes one here even where the conversion turns out to be illegal.
+    ASTExprList args = expr->call.args;
+    ASTExpr *callee = expr->call.target;
+    ASTExpr *operand = args.size == 1 ? args.data[0] : NULL;
+
+    for (size_t i = 0; i < args.size; i++) {
+        if (args.data[i] != operand) {
+            ast_expr_free(args.data[i]);
+        }
+    }
+
+    ast_expr_list_free(&args);
+    ast_expr_free(callee);
+
+    expr->kind = EXPR_CAST;
+    expr->cast.operand = operand;
+    expr->symbol = NULL;
+
+    if (!operand) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "a conversion to %s takes one operand",
+                   type_name(state, target));
+        expr->type = resolver_error_type(state);
+        return true;
+    }
+
+    ast_script_expr_visit(state, operand);
+
+    Type *from = operand->type;
+
+    if (is_error_type(from)) {
+        expr->type = resolver_error_type(state);
+        return true;
+    }
+
+    // Only the two numeric types convert. Bool is deliberately absent: a
+    // 'bool(1)' would be an int used as a truth value, which nothing else in
+    // the language permits.
+    if (!is_numeric_type(target) || !is_numeric_type(from)) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot convert %s to %s",
+                   type_name(state, from), type_name(state, target));
+        expr->type = resolver_error_type(state);
+        return true;
+    }
+
+    // The result is a fresh value, so it deliberately inherits no symbol:
+    // 'int(x)' is a temporary and must not be assignable or addressable.
+    expr->type = target;
+    return true;
+}
+
 void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
     if (!expr) {
         return;
@@ -703,6 +769,15 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         // takes over before anything walks it.
         if (expr->call.target && expr->call.target->kind == EXPR_FIELD) {
             resolve_method_call(state, expr);
+            break;
+        }
+
+        // 'int(x)' is a conversion, not a call. Types and symbols live in
+        // separate namespaces, so a bare name in call position that names a
+        // type cannot also name a function, and checking here costs nothing.
+        // Left as an EXPR_CALL it would report "undeclared variable 'int'",
+        // since the symbol table is the only place the call path looks.
+        if (expr->call.target && expr->call.target->kind == EXPR_VARIABLE && resolve_cast(state, expr)) {
             break;
         }
 

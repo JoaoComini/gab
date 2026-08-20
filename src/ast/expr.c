@@ -77,6 +77,13 @@ ASTExpr *ast_not_expr_create(Span span, ASTExpr *target) {
     return node;
 }
 
+ASTExpr *ast_cast_expr_create(Span span, ASTExpr *operand) {
+    ASTExpr *node = ast_expr_create(span);
+    node->kind = EXPR_CAST;
+    node->cast.operand = operand;
+    return node;
+}
+
 ASTExpr *ast_new_expr_create(Span span, TypeSpec *type_spec) {
     ASTExpr *node = ast_expr_create(span);
     node->kind = EXPR_NEW;
@@ -111,6 +118,9 @@ void ast_expr_free(ASTExpr *expr) {
     case EXPR_NEG:
     case EXPR_NOT:
         ast_expr_free(expr->unary.target);
+        break;
+    case EXPR_CAST:
+        ast_expr_free(expr->cast.operand);
         break;
     case EXPR_NEW:
         type_spec_destroy(expr->new_expr.type_spec);

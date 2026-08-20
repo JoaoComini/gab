@@ -24,6 +24,7 @@ set(
     vm/not_test.c
     vm/modulo_test.c
     vm/compound_assign_test.c
+    vm/cast_test.c
     vm/compare_test.c
     vm/if_test.c
     vm/loop_test.c

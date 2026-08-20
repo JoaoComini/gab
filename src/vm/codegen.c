@@ -170,6 +170,7 @@ static unsigned int codegen_addr_of_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_deref_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_neg_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_not_expr(CodegenState *state, ASTExpr *node);
+static unsigned int codegen_cast_expr(CodegenState *state, ASTExpr *node);
 static void codegen_store_deref(CodegenState *state, ASTExpr *node, unsigned int src);
 static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned int src, unsigned int count);
 
@@ -787,6 +788,8 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
         return codegen_neg_expr(state, ast);
     case EXPR_NOT:
         return codegen_not_expr(state, ast);
+    case EXPR_CAST:
+        return codegen_cast_expr(state, ast);
     case EXPR_NEW:
         return codegen_new_expr(state, ast);
     }
@@ -1305,6 +1308,26 @@ static unsigned int codegen_not_expr(CodegenState *state, ASTExpr *node) {
     unsigned int rd = codegen_alloc_register(state, node->span);
 
     chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_CMP_EQI, rd, operand, zero));
+
+    return rd;
+}
+
+// 'int(x)' and 'float(x)'. A conversion between the two numeric types is one
+// instruction; a conversion to the type the operand already has is none, and
+// the operand's register is handed straight back.
+static unsigned int codegen_cast_expr(CodegenState *state, ASTExpr *node) {
+    ASTExpr *operand = node->cast.operand;
+
+    unsigned int src = codegen_expr(state, operand);
+
+    if (node->type->kind == operand->type->kind) {
+        return src;
+    }
+
+    unsigned int rd = codegen_alloc_register(state, node->span);
+    OpCode op = node->type->kind == TYPE_FLOAT ? OP_ITOF : OP_FTOI;
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(op, rd, src, 0));
 
     return rd;
 }

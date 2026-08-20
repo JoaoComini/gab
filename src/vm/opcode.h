@@ -25,6 +25,11 @@ typedef enum {
     // fmodf rather than a hardware instruction. Shares OP_DIVI's two undefined
     // operand pairs, since it is computed by the same instruction.
     OP_MODI,
+
+    // Numeric conversion. Neither can fail: OP_FTOI clamps a float that does not
+    // fit to the nearest end of the int range, so every operand has an answer.
+    OP_ITOF,
+    OP_FTOI,
     OP_CMP_LTI,
     OP_CMP_GTI,
     OP_CMP_EQI,
