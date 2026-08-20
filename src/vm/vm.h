@@ -4,9 +4,9 @@
 #include "arena.h"
 #include "diagnostics.h"
 #include "scope.h"
+#include "slot.h"
 #include "string/string_pool.h"
 #include "util/list.h"
-#include "slot.h"
 #include "vm/chunk.h"
 
 #include <stdint.h>
@@ -46,6 +46,16 @@
 // a register as before, so the range is a codegen decision and never a limit on
 // what a program can say.
 #define VM_MAX_IMMEDIATE 0xFF
+
+// The r2 field read as a signed jump offset, for OP_FOR_LOOP. Sign-extended by
+// the shift pair rather than by a cast, since the field is not a whole type's
+// width -- the same reason VM_DECODE_I_SIMM is written this way.
+#define VM_DECODE_R_SIMM(instr) ((int32_t)((uint32_t)(instr) << 23) >> 24)
+
+// How far the fused loop reaches back. A body longer than this keeps the
+// general compare-and-jump form, so the range bounds an optimisation rather
+// than a program.
+#define VM_MAX_LOOP_OFFSET 127
 
 /*
     Encodes I-type instructions in a 32-bit integer

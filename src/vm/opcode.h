@@ -99,6 +99,15 @@ typedef enum {
     // count rides in the third operand, so a whole struct moves in one step.
     OP_LOAD_PTR_N,
     OP_STORE_PTR_N,
+
+    // One iteration of a counting loop: step rd, and if it is still below r1,
+    // jump back by the signed offset in r2. Replaces the compare, the
+    // conditional jump, the increment and the jump back that a general loop
+    // needs -- four dispatches per iteration rather than one.
+    //
+    // The step is fixed at one and the comparison at '<', because that is the
+    // shape codegen recognises; anything else keeps the general form.
+    OP_FOR_LOOP,
 } OpCode;
 
 #endif

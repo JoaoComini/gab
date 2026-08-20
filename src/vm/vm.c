@@ -835,6 +835,17 @@ static void vm_run_loop(VM *vm) {
             memcpy(vm_read_ptr(vm, base), vm_reg_at(vm, r1), slots * VM_SLOT_SIZE);
             break;
         }
+        case OP_FOR_LOOP: {
+            int32_t next = vm_read_i32(vm, VM_DECODE_R_RD(instruction)) + 1;
+
+            vm_write_i32(vm, VM_DECODE_R_RD(instruction), next);
+
+            if (next < vm_read_i32(vm, VM_DECODE_R_R1(instruction))) {
+                vm->instruction_pointer += VM_DECODE_R_SIMM(instruction);
+            }
+
+            break;
+        }
         case OP_JMP: {
             vm->instruction_pointer += VM_DECODE_I_SIMM(instruction);
             break;

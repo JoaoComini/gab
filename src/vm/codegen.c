@@ -625,6 +625,111 @@ static void codegen_emit_loop(CodegenState *state, size_t target) {
     chunk_patch_instruction(state->chunk, position, VM_ENCODE_I(OP_JMP, 0, offset));
 }
 
+// Whether a statement can write to 'symbol', looking through every nested
+// statement. Conservative in the one direction that matters: an unrecognised
+// shape answers yes, so a loop is only fused when nothing in it could have
+// touched the counter or the bound.
+static bool stmt_may_assign(const ASTStmt *stmt, const Symbol *symbol) {
+    if (!stmt) {
+        return false;
+    }
+
+    switch (stmt->kind) {
+    case STMT_ASSIGN:
+        return stmt->assign.target->symbol == symbol;
+    case STMT_COMPOUND_ASSIGN:
+        return stmt->compound_assign.target->symbol == symbol;
+    case STMT_VAR_DECL:
+        return stmt->var_decl.symbol == symbol;
+    case STMT_BLOCK:
+        for (size_t i = 0; i < stmt->block.list.size; i++) {
+            if (stmt_may_assign(stmt->block.list.data[i], symbol)) {
+                return true;
+            }
+        }
+
+        return false;
+    case STMT_IF:
+        return stmt_may_assign(stmt->ifstmt.then_block, symbol) ||
+               stmt_may_assign(stmt->ifstmt.else_block, symbol);
+    case STMT_FOR:
+        return stmt_may_assign(stmt->forstmt.init, symbol) || stmt_may_assign(stmt->forstmt.post, symbol) ||
+               stmt_may_assign(stmt->forstmt.body, symbol);
+    case STMT_EXPR:
+    case STMT_FUNC_DECL:
+    case STMT_STRUCT_DECL:
+    case STMT_JUMP:
+    case STMT_RETURN:
+        return false;
+    }
+
+    return true;
+}
+
+// A loop OP_FOR_LOOP can stand for: an int counter compared '<' against
+// something, stepped by one, with neither changed anywhere in the body.
+//
+// Everything here is a fact codegen can check locally. The counter and the
+// bound are plain variables, so 'may assign' is a search for their symbol
+// rather than an aliasing question -- taking a pointer to either would make
+// this unsound, which is why an addressed counter is refused too.
+static bool for_is_countable(const ASTForStmt *ast, const Symbol **counter, const Symbol **bound) {
+    if (!ast->condition || !ast->post || !ast->body) {
+        return false;
+    }
+
+    // 'i < bound', both plain int variables.
+    if (ast->condition->kind != EXPR_BIN_OP || ast->condition->bin_op.op != BIN_OP_LESS) {
+        return false;
+    }
+
+    const ASTExpr *left = ast->condition->bin_op.left;
+    const ASTExpr *right = ast->condition->bin_op.right;
+
+    if (left->kind != EXPR_VARIABLE || right->kind != EXPR_VARIABLE) {
+        return false;
+    }
+
+    if (!left->type || left->type->kind != TYPE_INT || !right->type || right->type->kind != TYPE_INT) {
+        return false;
+    }
+
+    // 'i += 1' on the same variable the condition tests.
+    if (ast->post->kind != STMT_COMPOUND_ASSIGN || ast->post->compound_assign.op != BIN_OP_ADD) {
+        return false;
+    }
+
+    const ASTCompoundAssignStmt *step = &ast->post->compound_assign;
+
+    if (step->target->kind != EXPR_VARIABLE || step->target->symbol != left->symbol) {
+        return false;
+    }
+
+    if (step->value->kind != EXPR_LITERAL || step->value->lit.kind != TYPE_INT ||
+        step->value->lit.as_int != 1) {
+        return false;
+    }
+
+    // A pinned variable has had its address taken, so a store through a
+    // pointer could change it without naming it, and the search below would
+    // not see that.
+    if (left->symbol->pinned || right->symbol->pinned) {
+        return false;
+    }
+
+    // Refused rather than merely reasoned about: the fused instruction still
+    // reads both operands afresh, so a body writing to either would run
+    // correctly, but it would no longer be the loop this shape describes.
+    if (stmt_may_assign(ast->body, left->symbol) || stmt_may_assign(ast->body, right->symbol)) {
+        return false;
+    }
+
+    *counter = left->symbol;
+    *bound = right->symbol;
+
+    return true;
+}
+
 static void codegen_for_stmt(CodegenState *state, ASTForStmt *ast) {
     // The initializer's own scope, holding it for the whole loop: it is
     // declared once, outlives every iteration, and dies when the loop does.
@@ -645,6 +750,58 @@ static void codegen_for_stmt(CodegenState *state, ASTForStmt *ast) {
         .depth = state->depth,
     };
     state->loop = &loop;
+
+    // A counting loop ends in one instruction that steps, tests and jumps back.
+    // The entry test stays a separate compare, since it runs once: it is the
+    // per-iteration cost the fused form is for.
+    const Symbol *counter = NULL;
+    const Symbol *bound = NULL;
+
+    if (for_is_countable(ast, &counter, &bound)) {
+        unsigned int counter_reg = codegen_slot_of(state, (Symbol *)counter);
+        unsigned int bound_reg = codegen_slot_of(state, (Symbol *)bound);
+
+        unsigned int entry_saved = state->next_reg;
+        unsigned int entry = codegen_alloc_register(state, ast->condition->span);
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_CMP_LTI, entry, counter_reg, bound_reg));
+
+        CodegenLabel entry_label = codegen_create_label(state);
+        codegen_release_registers(state, entry_saved);
+
+        size_t body_start = state->chunk->instructions.size;
+
+        codegen_stmt(state, ast->body);
+
+        for (size_t i = 0; i < loop.continues.size; i++) {
+            codegen_patch_jump(state, loop.continues.data[i], OP_JMP, 0);
+        }
+
+        ptrdiff_t back = (ptrdiff_t)body_start - (ptrdiff_t)(state->chunk->instructions.size + 1);
+
+        // Too long a body to reach back in eight signed bits. Nothing is
+        // emitted yet that assumes otherwise, so the general form still works.
+        if (back >= -VM_MAX_LOOP_OFFSET) {
+            chunk_add_instruction(state->chunk,
+                                  VM_ENCODE_R(OP_FOR_LOOP, counter_reg, bound_reg, (unsigned int)back));
+
+            codegen_patch_jump(state, entry_label, OP_JMP_IF_FALSE, entry);
+
+            for (size_t i = 0; i < loop.breaks.size; i++) {
+                codegen_patch_jump(state, loop.breaks.data[i], OP_JMP, 0);
+            }
+
+            state->loop = enclosing_loop;
+            codegen_label_list_free(&loop.breaks);
+            codegen_label_list_free(&loop.continues);
+
+            codegen_release_owned(state, enclosing_depth, VM_INVALID_REGISTER);
+
+            state->depth = enclosing_depth;
+            codegen_release_registers(state, saved);
+            return;
+        }
+    }
 
     size_t condition_target = state->chunk->instructions.size;
 
