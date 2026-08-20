@@ -63,8 +63,8 @@ static void test_sub_word_fields_do_not_clobber() {
     assert(test_run_int(source) == 1);
 }
 
-// The padding case from step 3, now exercised at runtime: 'value' sits on the
-// next slot boundary, not immediately after the bool.
+// A field wider than the one before it starts on the next boundary: 'value'
+// sits there, not immediately after the bool.
 static void test_mixed_widths() {
     assert(test_run_int("struct M { flag: bool, value: int }\n"
                         "func f(): bool { let v: M; v.flag = true; v.value = 77; return v.flag; }\n"

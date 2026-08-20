@@ -37,8 +37,8 @@ static void test_compile_once_run_many(void) {
     gab_vm_free(vm);
 }
 
-// The commit-1 regression: a type registered by the first compile must still
-// be readable after a second compile has reused the compile arena.
+// A type registered by the first compile must stay readable after a second
+// compile has reused the compile arena.
 static void test_type_survives_a_later_compile(void) {
     GabVM *vm = gab_vm_new();
 
@@ -50,8 +50,7 @@ static void test_type_survives_a_later_compile(void) {
     bool second = gab_load(vm, "<second>", "func noop() { }\n", &err);
     assert(second);
 
-    // Reading the first module's type back after the second compile is what
-    // used to read reset arena memory.
+    // The type's storage must outlive the arena the compile reset.
     const GabType *player = gab_find_type(vm, NULL, "Player");
     assert(player);
     assert(gab_type_size(player) > 0);
@@ -427,9 +426,8 @@ static void test_rejected_setter_does_not_supply_an_argument(void) {
 }
 
 // Two entity scripts, each with its own on_update — the case an engine hits
-// first, and a hard compile error before modules existed. Asking one unit for
-// the name must give that unit's function: the module handle used to be
-// accepted and ignored, so this returned whichever was compiled first.
+// first. Asking one unit for the name must give that unit's function, so the
+// module handle has to select between them rather than being ignored.
 static void test_two_modules_can_share_a_function_name(void) {
     GabVM *vm = gab_vm_new();
 

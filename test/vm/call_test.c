@@ -141,10 +141,10 @@ static void test_signature_names_a_struct_declared_below() {
 }
 
 // A prototype index rides in OP_CALL's 17-bit field, not in a register-sized
-// one. While it was 8 bits a single VM could hold only 255 functions across
-// every module it loaded, which is far too few for a real project: this builds
-// past that and calls the last one, so a regression to an 8-bit field fails
-// here rather than in someone's game.
+// one. An 8-bit field would cap a single VM at 255 functions across every
+// module it loads, far too few for a real project: this builds past that and
+// calls the last one, so narrowing the field fails here rather than in
+// someone's game.
 static void test_more_functions_than_an_8_bit_index_holds() {
     // 300 trivial functions, then one that calls the last of them.
     char source[64 * 1024];

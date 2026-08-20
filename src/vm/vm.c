@@ -614,9 +614,8 @@ static void vm_run_loop(VM *vm) {
 
             const Type *type = vm->heap_types.data[type_index];
 
-            // DEFAULT_ALLOCATOR until GabConfig's realloc_fn lands in step 8;
-            // this is the one place a heap object is created, so that is the
-            // only line that has to change.
+            // The one place a heap object is created, so a host-supplied
+            // allocator would replace this single call.
             void *object = gab_refcounted_alloc(DEFAULT_ALLOCATOR, type);
 
             if (!object) {

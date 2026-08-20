@@ -218,7 +218,8 @@ Lexer lexer_create(const char *source, Diagnostics *diagnostics) {
     };
 }
 
-// An invalid token used to reach the parser silently; report it here instead.
+// An invalid character is reported here rather than passed on, so the parser
+// never has to reason about a token that means nothing.
 static Token lexer_invalid(Lexer *lexer, char ch) {
     Token token = token_create(lexer, TOKEN_INVALID);
 

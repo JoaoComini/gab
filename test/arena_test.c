@@ -51,8 +51,8 @@ static void test_allocation_larger_than_a_block() {
 
 // Reset rewinds the arena without releasing its blocks, so a second round of
 // the same allocations reuses them instead of allocating more. Growing after a
-// reset used to overwrite current_block->next, orphaning every block already
-// chained past it — a leak that only appears on the second round.
+// reset must keep current_block->next intact: overwriting it orphans every
+// block chained past it, a leak that only shows on the second round.
 static void test_reset_reuses_blocks_instead_of_leaking_them() {
     Arena *arena = arena_create(TEST_BLOCK_SIZE);
 

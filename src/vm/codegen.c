@@ -169,8 +169,8 @@ static unsigned int type_slot_count(const Type *type) {
     return (unsigned int)((type->size + sizeof(Value) - 1) / sizeof(Value));
 }
 
-// Slot alignment a value of this type needs. Nothing wants more than one slot
-// today; step 6's 8-byte pointer is the first case that will.
+// Slot alignment a value of this type needs. A scalar wants one; an 8-byte
+// pointer wants two, so that it lands on its natural alignment.
 static unsigned int type_align_slots(const Type *type) {
     if (!type || type->alignment <= sizeof(Value)) {
         return 1;

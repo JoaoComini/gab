@@ -20,8 +20,7 @@ static void test_stack_base_is_aligned_at_creation() {
 
 // The stack is reserved once and never reallocated, because an address into it
 // must stay valid for as long as what it points at. A recursion deep enough to
-// have forced growth under the old scheme must leave the buffer exactly where
-// it was.
+// have forced a reallocation must leave the buffer exactly where it was.
 static void test_stack_does_not_move_under_deep_recursion() {
     VM *vm = vm_create();
 

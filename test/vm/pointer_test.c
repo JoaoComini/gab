@@ -189,7 +189,7 @@ static void test_a_pointer_survives_a_stack_growth() {
 }
 
 // 'p.health' where p is a '*Player' reaches through the pointer, the way Go
-// and C's '->' do, so a '*T' receiver will read naturally in step 5.
+// and C's '->' do. A '*T' method receiver relies on this to read naturally.
 static void test_field_access_auto_derefs() {
     assert(test_run_int("struct Player { health: int, mana: int }\n"
                         "func f(): int { let p: Player; p.health = 1; p.mana = 2;\n"
@@ -223,7 +223,6 @@ static void test_address_of_a_field_through_a_pointer() {
                         "return p.health * 100 + p.mana; }\n"
                         "let r: int = f();") == 902);
 }
-
 
 int main() {
     test_pointer_types_are_interned();

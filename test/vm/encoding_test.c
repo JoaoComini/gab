@@ -64,8 +64,8 @@ static void test_i_type_fields_do_not_bleed() {
     assert(VM_DECODE_OPCODE(kx) == 0 && VM_DECODE_I_RD(kx) == 0);
 }
 
-// The failure that cost a day in step 4: an out-of-range operand smearing into
-// the opcode field. Masking must confine it to its own field instead.
+// Every field is masked, so an out-of-range operand is truncated to its own
+// field rather than smearing into the opcode's.
 static void test_out_of_range_operands_stay_in_their_field() {
     Instruction instr = VM_ENCODE_R(OP_MOVE, VM_MAX_REGISTERS + 1, VM_MAX_REGISTERS + 3, 0);
 

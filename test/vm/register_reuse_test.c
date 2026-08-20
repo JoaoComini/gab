@@ -97,9 +97,9 @@ static void test_block_locals_are_reclaimed() {
     assert(compile_max_registers(two_inner, 0) == 7);
 }
 
-// A long function used to exhaust the 127-slot frame at roughly three slots per
-// statement. It must simply compile now.
-static void test_many_statements_still_compile() {
+// Statements reclaim the slots they used, so a function long enough to spend
+// the whole 127-slot frame at three slots a statement still fits.
+static void test_a_long_function_fits_in_the_frame() {
     assert(test_run_int("func f(n: int): int {\n"
                         "let s01 = n + 1; let s02 = n + 1; let s03 = n + 1; let s04 = n + 1;\n"
                         "let s05 = n + 1; let s06 = n + 1; let s07 = n + 1; let s08 = n + 1;\n"
@@ -191,7 +191,7 @@ int main() {
     test_frame_capacity();
     test_frame_size_is_flat_in_statement_count();
     test_block_locals_are_reclaimed();
-    test_many_statements_still_compile();
+    test_a_long_function_fits_in_the_frame();
     test_expression_statements_reuse_slots();
     test_call_result_survives_in_larger_expression();
     test_nested_call_results_survive();
