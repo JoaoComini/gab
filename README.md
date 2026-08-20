@@ -187,6 +187,7 @@ Not yet implemented:
 | | |
 | --- | --- |
 | Strings | No string type or literals |
+| Arrays | No array type or indexing |
 | Operators | `%`, compound assignment (`+=`), bitwise |
 | Literals | No struct literals (`V{x: 1}`) |
 | Conversion | `int` and `float` do not mix; no cast syntax |
