@@ -88,7 +88,7 @@ struct GabCall {
     // before there is a frame to write into, and an abandoned call then leaves
     // nothing behind. Indexed by slot, and slot 0 is the return slot, so this
     // holds arg_slots + 1 of them.
-    Value *args;
+    uint8_t *args;
 
     // Which parameters have ever been given a value. Staged arguments persist
     // across calls on purpose — that is what makes a per-frame call
@@ -398,7 +398,7 @@ static unsigned int gab_type_slots(const Type *type) {
         return 1;
     }
 
-    return (unsigned int)((type->size + sizeof(Value) - 1) / sizeof(Value));
+    return (unsigned int)((type->size + VM_SLOT_SIZE - 1) / VM_SLOT_SIZE);
 }
 
 GabFunc *gab_lookup(GabVM *handle, const char *module, const char *name, GabError *err) {
@@ -567,7 +567,7 @@ static bool gab_call_stage(GabCall *call, GabError *err) {
     // Slot 0 is the return slot, so the buffer holds one more than the
     // arguments do.
     size_t slots = (size_t)fn->arg_slots + 1;
-    size_t bytes = slots * sizeof(Value) + fn->sig_param_count * sizeof(bool);
+    size_t bytes = slots * VM_SLOT_SIZE + fn->sig_param_count * sizeof(bool);
 
     if (bytes > call->capacity) {
         void *block = calloc(1, bytes);
@@ -586,8 +586,8 @@ static bool gab_call_stage(GabCall *call, GabError *err) {
     // flags even when the total still fits what was already allocated.
     memset(call->block, 0, call->capacity);
 
-    call->args = (Value *)call->block;
-    call->arg_set = (bool *)((char *)call->block + slots * sizeof(Value));
+    call->args = (uint8_t *)call->block;
+    call->arg_set = (bool *)((char *)call->block + slots * VM_SLOT_SIZE);
 
     call->generation = fn->generation;
     call->args_pending = fn->sig_param_count;
@@ -652,7 +652,7 @@ void gab_call_free(GabCall *call) {
 
 // Validates an argument index and that the parameter has the expected kind,
 // returning where to write it or NULL if it may not be written.
-static Value *gab_arg_slot(GabCall *call, int index, TypeKind expected) {
+static uint8_t *gab_arg_slot(GabCall *call, int index, TypeKind expected) {
     if (!call) {
         return NULL;
     }
@@ -683,38 +683,40 @@ static Value *gab_arg_slot(GabCall *call, int index, TypeKind expected) {
         call->args_pending--;
     }
 
-    return &call->args[fn->param_slot[index]];
+    return call->args + (size_t)fn->param_slot[index] * VM_SLOT_SIZE;
 }
 
 bool gab_arg_int(GabCall *call, int index, int32_t value) {
-    Value *slot = gab_arg_slot(call, index, TYPE_INT);
+    uint8_t *slot = gab_arg_slot(call, index, TYPE_INT);
     if (!slot) {
         return false;
     }
 
-    slot->as_int = value;
+    memcpy(slot, &value, sizeof(value));
 
     return true;
 }
 
 bool gab_arg_float(GabCall *call, int index, float value) {
-    Value *slot = gab_arg_slot(call, index, TYPE_FLOAT);
+    uint8_t *slot = gab_arg_slot(call, index, TYPE_FLOAT);
     if (!slot) {
         return false;
     }
 
-    slot->as_float = value;
+    memcpy(slot, &value, sizeof(value));
 
     return true;
 }
 
 bool gab_arg_bool(GabCall *call, int index, bool value) {
-    Value *slot = gab_arg_slot(call, index, TYPE_BOOL);
+    uint8_t *slot = gab_arg_slot(call, index, TYPE_BOOL);
     if (!slot) {
         return false;
     }
 
-    slot->as_int = value ? 1 : 0;
+    int32_t as_word = value ? 1 : 0;
+
+    memcpy(slot, &as_word, sizeof(as_word));
 
     return true;
 }
@@ -732,7 +734,7 @@ bool gab_arg_struct(GabCall *call, int index, const void *data, size_t size) {
         }
     }
 
-    Value *slot = gab_arg_slot(call, index, TYPE_STRUCT);
+    uint8_t *slot = gab_arg_slot(call, index, TYPE_STRUCT);
     if (!slot) {
         return false;
     }
@@ -754,13 +756,13 @@ bool gab_arg_pointer(GabCall *call, int index, void *pointer, const GabType *poi
         }
     }
 
-    Value *slot = gab_arg_slot(call, index, TYPE_POINTER);
+    uint8_t *slot = gab_arg_slot(call, index, TYPE_POINTER);
     if (!slot) {
         return false;
     }
 
-    // Written through memcpy rather than a Value field: a slot is four bytes
-    // with no pointer member, and a pointer tiles over two of them.
+    // A pointer tiles over two slots, which is the only reason this moves more
+    // than the others do.
     memcpy(slot, &pointer, sizeof(pointer));
 
     return true;
@@ -839,7 +841,7 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
     // The call block goes above anything a module run left in frame zero, so a
     // host call never overwrites top-level state it might want to read after.
     size_t base_slot = vm->stack_capacity / 2;
-    size_t base = base_slot * sizeof(Value);
+    size_t base = base_slot * VM_SLOT_SIZE;
 
     // Frame zero is not on the stack during a host call; the callee's frame is
     // the only one, and it returns into its own slot 0.
@@ -848,7 +850,7 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
 
     // Arguments start at slot 1 of the block, matching where the callee's
     // frame — based here — expects its parameters.
-    memcpy(vm->stack + base + sizeof(Value), &call->args[1], fn->arg_slots * sizeof(Value));
+    memcpy(vm->stack + base + VM_SLOT_SIZE, call->args + VM_SLOT_SIZE, fn->arg_slots * VM_SLOT_SIZE);
 
     if (vm_run_frame(vm, proto, base, 0) != VM_RUN_OK) {
         gab_error_set(err, 0, 0, vm->error.message);

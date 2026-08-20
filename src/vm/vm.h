@@ -6,10 +6,11 @@
 #include "scope.h"
 #include "string/string_pool.h"
 #include "util/list.h"
-#include "value.h"
+#include "slot.h"
 #include "vm/chunk.h"
 
 #include <stdint.h>
+#include <string.h>
 
 /*
     Encodes R-type instructions in a 32-bit integer
@@ -120,7 +121,7 @@
 
 // A pointer is a raw address, so it spans two slots and wants an even slot
 // index to sit at its natural alignment.
-#define VM_POINTER_SLOTS ((unsigned int)(sizeof(void *) / sizeof(Value)))
+#define VM_POINTER_SLOTS ((unsigned int)(sizeof(void *) / VM_SLOT_SIZE))
 
 // Sentinel value for registers
 #define VM_INVALID_REGISTER VM_MAX_REGISTERS + 1
@@ -293,7 +294,7 @@ typedef struct {
 
     // The stack is byte-addressed and 8-byte aligned at the base, so a value
     // wider than a slot can sit at its natural alignment. Capacity is still
-    // counted in slots; a slot is sizeof(Value).
+    // counted in slots; a slot is VM_SLOT_SIZE bytes.
     uint8_t *stack;
     size_t stack_capacity;
 
@@ -312,15 +313,51 @@ typedef struct {
     VmError error;
 } VM;
 
-// Register r of the current frame. A union member read gives well-defined type
-// punning, which a cast from the raw byte pointer would not.
-static inline Value *vm_reg(const VM *vm, size_t r) {
-    return (Value *)(void *)(vm->registers + r * sizeof(Value));
+// Where register r of the current frame begins, and where slot i of the stack
+// begins. Bytes, because a slot is a size rather than a type: what lives there
+// is whatever the static types said, and only the accessors below name a width.
+static inline uint8_t *vm_reg_at(const VM *vm, size_t r) { return vm->registers + r * VM_SLOT_SIZE; }
+
+static inline uint8_t *vm_slot_at(const VM *vm, size_t i) { return vm->stack + i * VM_SLOT_SIZE; }
+
+// Scalar reads and writes. Every one goes through memcpy, which is the only
+// way to move bytes into a typed object without assuming the alignment or the
+// effective type of what they came from -- and which every compiler folds into
+// the single load or store it describes.
+//
+// The pointer pair is the same operation over two slots, and sits here rather
+// than apart so that every access to a slot reads alike.
+static inline int32_t vm_read_i32(const VM *vm, size_t r) {
+    int32_t value;
+    memcpy(&value, vm_reg_at(vm, r), sizeof(value));
+
+    return value;
 }
 
-// Slot i counted from the base of the stack, independent of any frame.
-static inline Value *vm_slot(const VM *vm, size_t i) {
-    return (Value *)(void *)(vm->stack + i * sizeof(Value));
+static inline float vm_read_f32(const VM *vm, size_t r) {
+    float value;
+    memcpy(&value, vm_reg_at(vm, r), sizeof(value));
+
+    return value;
+}
+
+static inline void vm_write_i32(VM *vm, size_t r, int32_t value) {
+    memcpy(vm_reg_at(vm, r), &value, sizeof(value));
+}
+
+static inline void vm_write_f32(VM *vm, size_t r, float value) {
+    memcpy(vm_reg_at(vm, r), &value, sizeof(value));
+}
+
+static inline uint8_t *vm_read_ptr(const VM *vm, size_t r) {
+    uint8_t *address;
+    memcpy(&address, vm_reg_at(vm, r), sizeof(address));
+
+    return address;
+}
+
+static inline void vm_write_ptr(VM *vm, size_t r, uint8_t *address) {
+    memcpy(vm_reg_at(vm, r), &address, sizeof(address));
 }
 
 VM *vm_create();

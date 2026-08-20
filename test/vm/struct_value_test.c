@@ -207,10 +207,10 @@ static void test_struct_round_trip_through_recursion() {
 // the return slot, so a single struct local starts at slot 1; searching rather
 // than hard-coding keeps the test from pinning the allocator's exact choices.
 static bool slots_match(VM *vm, const void *expected, size_t size) {
-    size_t slots = (size + sizeof(Value) - 1) / sizeof(Value);
+    size_t slots = (size + VM_SLOT_SIZE - 1) / VM_SLOT_SIZE;
 
     for (size_t base = 0; base + slots <= vm->stack_capacity; base++) {
-        if (memcmp(vm_slot(vm, base), expected, size) == 0) {
+        if (memcmp(vm_slot_at(vm, base), expected, size) == 0) {
             return true;
         }
     }
@@ -222,7 +222,7 @@ static void assert_slots_match(VM *vm, const void *expected, size_t size) {
     assert(slots_match(vm, expected, size) && "no run of slots matches the equivalent C struct");
 }
 
-// The whole point of untagging Value: a struct spread over consecutive slots is
+// The whole point of untagged slots: a struct spread over consecutive slots is
 // byte-identical to what C lays out, so gab_struct_data can hand a host a
 // pointer into the stack with no marshalling at all.
 static void test_layout_agrees_with_c() {

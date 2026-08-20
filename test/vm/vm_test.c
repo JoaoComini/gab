@@ -173,7 +173,10 @@ static void test_compile_once_run_many() {
         vm_run(vm, &script);
 
         assert(vm->frame_count == 0);
-        assert(vm_slot(vm, 0)->as_int == 7);
+        int32_t returned;
+        memcpy(&returned, vm_slot_at(vm, 0), sizeof(returned));
+
+        assert(returned == 7);
     }
 
     vm_compiled_script_free(&script);

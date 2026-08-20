@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 // Heap pointers need 8-byte alignment. A 4-byte-aligned base
 // would put half the even slots on a 4-byte boundary, so the guarantee is on
@@ -56,18 +57,21 @@ static void test_deep_recursion_preserves_live_frames() {
                    "let r: int = down(200);\n");
 
     // 200 + 199 + ... + 1: every frame's 'keep' is still there.
-    assert(vm_slot(vm, 0)->as_int == 20100);
+    int32_t result;
+    memcpy(&result, vm_slot_at(vm, 0), sizeof(result));
+
+    assert(result == 20100);
 
     vm_free(vm);
 }
 
-// A register is a slot index scaled by sizeof(Value), so consecutive registers
+// A register is a slot index scaled by VM_SLOT_SIZE, so consecutive registers
 // are exactly one slot apart in bytes.
 static void test_registers_are_slot_granular() {
     VM *vm = vm_create();
 
-    assert((uint8_t *)vm_reg(vm, 1) - (uint8_t *)vm_reg(vm, 0) == sizeof(Value));
-    assert((uint8_t *)vm_slot(vm, 4) - vm->stack == 4 * sizeof(Value));
+    assert(vm_reg_at(vm, 1) - vm_reg_at(vm, 0) == VM_SLOT_SIZE);
+    assert(vm_slot_at(vm, 4) - vm->stack == 4 * VM_SLOT_SIZE);
 
     vm_free(vm);
 }

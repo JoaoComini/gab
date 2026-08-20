@@ -14,38 +14,55 @@
 #include "parser.h"
 #include "scope.h"
 #include "support/test_context.h"
-#include "value.h"
+#include "slot.h"
 #include "vm/chunk.h"
 #include "vm/opcode.h"
 #include "vm/vm.h"
 
 #include <assert.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
 
-// Runs a script and returns the slot the top-level result lands in.
+// Runs a script and copies the top-level result out of slot 0, as wide as the
+// caller says it is. The width is the caller's because a slot carries no tag:
+// only the test knows what type the script it wrote ends on.
 //
 // The frame-count assertion is the shared correctness check: a script that
 // returned normally has unwound every frame, so a non-zero count means the run
 // went wrong in a way the returned value alone would not show.
-static inline Value test_run(const char *source) {
+static inline void test_run(const char *source, void *out, size_t width) {
     VM *vm = vm_create();
 
     vm_execute(vm, source);
 
     assert(vm->frame_count == 0);
 
-    Value result = (*vm_slot(vm, 0));
+    memcpy(out, vm_slot_at(vm, 0), width);
 
     vm_free(vm);
+}
+
+static inline int test_run_int(const char *source) {
+    int32_t result;
+    test_run(source, &result, sizeof(result));
 
     return result;
 }
 
-static inline int test_run_int(const char *source) { return test_run(source).as_int; }
+static inline float test_run_float(const char *source) {
+    float result;
+    test_run(source, &result, sizeof(result));
 
-static inline float test_run_float(const char *source) { return test_run(source).as_float; }
+    return result;
+}
 
-static inline bool test_run_bool(const char *source) { return test_run(source).as_int != 0; }
+static inline bool test_run_bool(const char *source) {
+    int32_t result;
+    test_run(source, &result, sizeof(result));
+
+    return result != 0;
+}
 
 // Compiles as far as resolution and leaves the results in the caller's scope
 // and script, so a test can inspect the symbols and types the front end

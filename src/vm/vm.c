@@ -63,7 +63,7 @@ VM *vm_create() {
     vm->compile_generation = 0;
 
     vm->stack_capacity = VM_STACK_SIZE;
-    vm->stack = calloc(vm->stack_capacity, sizeof(Value));
+    vm->stack = calloc(vm->stack_capacity, VM_SLOT_SIZE);
     vm->registers = vm->stack;
     vm->frame_count = 0;
     vm->error = (VmError){.status = VM_RUN_OK, .message = NULL};
@@ -71,7 +71,7 @@ VM *vm_create() {
     return vm;
 }
 
-// Registers sit at base + r * sizeof(Value), so the stack must hold every
+// Registers sit at base + r * VM_SLOT_SIZE, so the stack must hold every
 // register the frame can address before it starts executing. 'needed' counts
 // slots. The buffer is never resized, so this only reports whether the frame
 // fits: a pointer into the stack must stay valid for as long as its pointee
@@ -85,7 +85,7 @@ static bool vm_push_frame(VM *vm, const FuncPrototype *proto, size_t base, ptrdi
     }
 
     // base is a byte offset; the reservation is in slots.
-    if (!vm_reserve_stack(vm, base / sizeof(Value) + proto->max_registers)) {
+    if (!vm_reserve_stack(vm, base / VM_SLOT_SIZE + proto->max_registers)) {
         return false;
     }
 
@@ -109,7 +109,7 @@ static void vm_pop_frame(VM *vm);
 static void vm_clear_pointer(VM *vm, size_t reg) {
     void *null_pointer = NULL;
 
-    memcpy(vm->registers + reg * sizeof(Value), &null_pointer, sizeof(null_pointer));
+    memcpy(vm->registers + reg * VM_SLOT_SIZE, &null_pointer, sizeof(null_pointer));
 }
 
 // Frees every object a frame still owns. Only ever called while unwinding from
@@ -127,13 +127,13 @@ static void vm_release_frame_refs(VM *vm, const CallFrame *frame) {
         FrameRef ref = refs->data[i];
 
         void *object;
-        memcpy(&object, vm->stack + frame->base + ref.slot * sizeof(Value), sizeof(object));
+        memcpy(&object, vm->stack + frame->base + ref.slot * VM_SLOT_SIZE, sizeof(object));
 
         if (!object) {
             continue;
         }
 
-        memcpy(vm->stack + frame->base + ref.slot * sizeof(Value), &(void *){NULL}, sizeof(object));
+        memcpy(vm->stack + frame->base + ref.slot * VM_SLOT_SIZE, &(void *){NULL}, sizeof(object));
 
         gab_object_free(DEFAULT_ALLOCATOR, object);
     }
@@ -195,13 +195,13 @@ void vm_free(VM *vm) {
     free(vm);
 }
 
-float vm_addf(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_float + vm_reg(vm, r2)->as_float; }
+float vm_addf(VM *vm, size_t r1, size_t r2) { return vm_read_f32(vm, r1) + vm_read_f32(vm, r2); }
 
-float vm_subf(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_float - vm_reg(vm, r2)->as_float; }
+float vm_subf(VM *vm, size_t r1, size_t r2) { return vm_read_f32(vm, r1) - vm_read_f32(vm, r2); }
 
-float vm_mulf(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_float * vm_reg(vm, r2)->as_float; }
+float vm_mulf(VM *vm, size_t r1, size_t r2) { return vm_read_f32(vm, r1) * vm_read_f32(vm, r2); }
 
-float vm_divf(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_float / vm_reg(vm, r2)->as_float; }
+float vm_divf(VM *vm, size_t r1, size_t r2) { return vm_read_f32(vm, r1) / vm_read_f32(vm, r2); }
 
 // The second operand, which the k bit makes either a register to read or a
 // small immediate encoded in the instruction itself.
@@ -212,7 +212,7 @@ float vm_divf(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_float / 
 static inline int32_t vm_operand2i(const VM *vm, Instruction instruction) {
     size_t r2 = VM_DECODE_R_R2(instruction);
 
-    return VM_DECODE_R_K(instruction) ? (int32_t)r2 : vm_reg(vm, r2)->as_int;
+    return VM_DECODE_R_K(instruction) ? (int32_t)r2 : vm_read_i32(vm, r2);
 }
 
 void vm_arithmeticf(VM *vm, Instruction instruction, float (*func)(VM *, size_t, size_t)) {
@@ -220,7 +220,7 @@ void vm_arithmeticf(VM *vm, Instruction instruction, float (*func)(VM *, size_t,
     size_t r1 = VM_DECODE_R_R1(instruction);
     size_t r2 = VM_DECODE_R_R2(instruction);
 
-    vm_reg(vm, rd)->as_float = func(vm, r1, r2);
+    vm_write_f32(vm, rd, func(vm, r1, r2));
 }
 
 // The integer operations take values rather than register indices, so the same
@@ -272,30 +272,20 @@ void vm_arithmetici(VM *vm, Instruction instruction, int32_t (*func)(int32_t, in
     size_t rd = VM_DECODE_R_RD(instruction);
     size_t r1 = VM_DECODE_R_R1(instruction);
 
-    vm_reg(vm, rd)->as_int = func(vm_reg(vm, r1)->as_int, vm_operand2i(vm, instruction));
+    vm_write_i32(vm, rd, func(vm_read_i32(vm, r1), vm_operand2i(vm, instruction)));
 }
 
-bool vm_less_thanf(VM *vm, size_t r1, size_t r2) {
-    return vm_reg(vm, r1)->as_float < vm_reg(vm, r2)->as_float;
-}
+bool vm_less_thanf(VM *vm, size_t r1, size_t r2) { return vm_read_f32(vm, r1) < vm_read_f32(vm, r2); }
 
-bool vm_greater_thanf(VM *vm, size_t r1, size_t r2) {
-    return vm_reg(vm, r1)->as_float > vm_reg(vm, r2)->as_float;
-}
+bool vm_greater_thanf(VM *vm, size_t r1, size_t r2) { return vm_read_f32(vm, r1) > vm_read_f32(vm, r2); }
 
-bool vm_equalf(VM *vm, size_t r1, size_t r2) { return vm_reg(vm, r1)->as_float == vm_reg(vm, r2)->as_float; }
+bool vm_equalf(VM *vm, size_t r1, size_t r2) { return vm_read_f32(vm, r1) == vm_read_f32(vm, r2); }
 
-bool vm_not_equalf(VM *vm, size_t r1, size_t r2) {
-    return vm_reg(vm, r1)->as_float != vm_reg(vm, r2)->as_float;
-}
+bool vm_not_equalf(VM *vm, size_t r1, size_t r2) { return vm_read_f32(vm, r1) != vm_read_f32(vm, r2); }
 
-bool vm_less_equalf(VM *vm, size_t r1, size_t r2) {
-    return vm_reg(vm, r1)->as_float <= vm_reg(vm, r2)->as_float;
-}
+bool vm_less_equalf(VM *vm, size_t r1, size_t r2) { return vm_read_f32(vm, r1) <= vm_read_f32(vm, r2); }
 
-bool vm_greater_equalf(VM *vm, size_t r1, size_t r2) {
-    return vm_reg(vm, r1)->as_float >= vm_reg(vm, r2)->as_float;
-}
+bool vm_greater_equalf(VM *vm, size_t r1, size_t r2) { return vm_read_f32(vm, r1) >= vm_read_f32(vm, r2); }
 
 // As the integer arithmetic, these take values so an immediate second operand
 // costs nothing extra.
@@ -315,7 +305,7 @@ void vm_conditionali(VM *vm, Instruction instruction, bool (*func)(int32_t, int3
     size_t rd = VM_DECODE_R_RD(instruction);
     size_t r1 = VM_DECODE_R_R1(instruction);
 
-    vm_reg(vm, rd)->as_int = func(vm_reg(vm, r1)->as_int, vm_operand2i(vm, instruction));
+    vm_write_i32(vm, rd, func(vm_read_i32(vm, r1), vm_operand2i(vm, instruction)));
 }
 
 void vm_conditional(VM *vm, Instruction instruction, bool (*func)(VM *, size_t, size_t)) {
@@ -323,7 +313,7 @@ void vm_conditional(VM *vm, Instruction instruction, bool (*func)(VM *, size_t, 
     size_t r1 = VM_DECODE_R_R1(instruction);
     size_t r2 = VM_DECODE_R_R2(instruction);
 
-    vm_reg(vm, rd)->as_int = func(vm, r1, r2);
+    vm_write_i32(vm, rd, func(vm, r1, r2));
 }
 
 static void vm_load_field(VM *vm, Instruction instruction, size_t width) {
@@ -331,12 +321,12 @@ static void vm_load_field(VM *vm, Instruction instruction, size_t width) {
     size_t base = VM_DECODE_R_R1(instruction);
     size_t offset = VM_DECODE_R_R2(instruction);
 
-    const uint8_t *source = vm->registers + base * sizeof(Value) + offset;
+    const uint8_t *source = vm->registers + base * VM_SLOT_SIZE + offset;
 
     // The destination is a whole slot, so a narrow field is widened rather
     // than left beside stale bytes.
-    vm_reg(vm, rd)->as_int = 0;
-    memcpy(vm_reg(vm, rd), source, width);
+    vm_write_i32(vm, rd, 0);
+    memcpy(vm_reg_at(vm, rd), source, width);
 }
 
 static void vm_store_field(VM *vm, Instruction instruction, size_t width) {
@@ -344,35 +334,24 @@ static void vm_store_field(VM *vm, Instruction instruction, size_t width) {
     size_t r1 = VM_DECODE_R_R1(instruction);
     size_t offset = VM_DECODE_R_R2(instruction);
 
-    uint8_t *dest = vm->registers + base * sizeof(Value) + offset;
+    uint8_t *dest = vm->registers + base * VM_SLOT_SIZE + offset;
 
     // Only the field's own bytes are written; anything sharing the slot keeps
     // its value.
-    memcpy(dest, vm_reg(vm, r1), width);
+    memcpy(dest, vm_reg_at(vm, r1), width);
 }
 
 // The address a 2-slot pointer register holds. The slot pair is placed at an
 // even index and the stack base is 8-byte aligned, so this is a natural read.
-static uint8_t *vm_read_pointer(const VM *vm, size_t reg) {
-    uint8_t *address;
-    memcpy(&address, vm->registers + reg * sizeof(Value), sizeof(address));
-
-    return address;
-}
-
-static void vm_write_pointer(VM *vm, size_t reg, uint8_t *address) {
-    memcpy(vm->registers + reg * sizeof(Value), &address, sizeof(address));
-}
-
 static void vm_load_field_ptr(VM *vm, Instruction instruction, size_t width) {
     size_t rd = VM_DECODE_R_RD(instruction);
     size_t base = VM_DECODE_R_R1(instruction);
     size_t offset = VM_DECODE_R_R2(instruction);
 
-    const uint8_t *source = vm_read_pointer(vm, base) + offset;
+    const uint8_t *source = vm_read_ptr(vm, base) + offset;
 
-    vm_reg(vm, rd)->as_int = 0;
-    memcpy(vm_reg(vm, rd), source, width);
+    vm_write_i32(vm, rd, 0);
+    memcpy(vm_reg_at(vm, rd), source, width);
 }
 
 static void vm_store_field_ptr(VM *vm, Instruction instruction, size_t width) {
@@ -380,9 +359,9 @@ static void vm_store_field_ptr(VM *vm, Instruction instruction, size_t width) {
     size_t r1 = VM_DECODE_R_R1(instruction);
     size_t offset = VM_DECODE_R_R2(instruction);
 
-    uint8_t *dest = vm_read_pointer(vm, base) + offset;
+    uint8_t *dest = vm_read_ptr(vm, base) + offset;
 
-    memcpy(dest, vm_reg(vm, r1), width);
+    memcpy(dest, vm_reg_at(vm, r1), width);
 }
 
 // The scope a module's declarations live in, created on first mention. A
@@ -498,7 +477,7 @@ static void vm_fail(VM *vm, VmRunStatus status, const char *message) {
 static bool vm_check_divisor(VM *vm, Instruction instruction, const char *zero_message,
                              const char *overflow_message) {
     int32_t divisor = vm_operand2i(vm, instruction);
-    int32_t dividend = vm_reg(vm, VM_DECODE_R_R1(instruction))->as_int;
+    int32_t dividend = vm_read_i32(vm, VM_DECODE_R_R1(instruction));
 
     if (divisor == 0) {
         vm_fail(vm, VM_RUN_ERR_DIVIDE_BY_ZERO, zero_message);
@@ -537,24 +516,26 @@ static void vm_run_loop(VM *vm) {
         case OP_LOAD_CONST: {
             size_t reg = VM_DECODE_I_RD(instruction);
             size_t const_index = VM_DECODE_I_KX(instruction);
-            (*vm_reg(vm, reg)) = constpool_get(chunk->const_pool, const_index);
+            Constant constant = constpool_get(chunk->const_pool, const_index);
+
+            memcpy(vm_reg_at(vm, reg), &constant, VM_SLOT_SIZE);
             break;
         }
         case OP_LOAD_TRUE: {
             size_t reg = VM_DECODE_I_RD(instruction);
-            vm_reg(vm, reg)->as_int = 1;
+            vm_write_i32(vm, reg, 1);
             break;
         }
         case OP_LOAD_FALSE: {
             size_t reg = VM_DECODE_I_RD(instruction);
-            vm_reg(vm, reg)->as_int = 0;
+            vm_write_i32(vm, reg, 0);
             break;
         }
         case OP_MOVE: {
             int rd = VM_DECODE_R_RD(instruction);
             int r1 = VM_DECODE_R_R1(instruction);
 
-            (*vm_reg(vm, rd)) = (*vm_reg(vm, r1));
+            memcpy(vm_reg_at(vm, rd), vm_reg_at(vm, r1), VM_SLOT_SIZE);
             break;
         }
         case OP_MOVE_N: {
@@ -566,7 +547,7 @@ static void vm_run_loop(VM *vm) {
             // fields, or an argument marshalled into the slots just above its
             // source, gives overlapping ranges. OP_LOAD_PTR_N can use memcpy
             // because its source is a heap payload and cannot overlap a frame.
-            memmove(vm_reg(vm, rd), vm_reg(vm, r1), slots * sizeof(Value));
+            memmove(vm_reg_at(vm, rd), vm_reg_at(vm, r1), slots * VM_SLOT_SIZE);
             break;
         }
         case OP_ADDF: {
@@ -634,14 +615,14 @@ static void vm_run_loop(VM *vm) {
             size_t rd = VM_DECODE_R_RD(instruction);
             size_t r1 = VM_DECODE_R_R1(instruction);
 
-            vm_reg(vm, rd)->as_float = (float)vm_reg(vm, r1)->as_int;
+            vm_write_f32(vm, rd, (float)vm_read_i32(vm, r1));
             break;
         }
         case OP_FTOI: {
             size_t rd = VM_DECODE_R_RD(instruction);
             size_t r1 = VM_DECODE_R_R1(instruction);
 
-            vm_reg(vm, rd)->as_int = vm_ftoi(vm_reg(vm, r1)->as_float);
+            vm_write_i32(vm, rd, vm_ftoi(vm_read_f32(vm, r1)));
             break;
         }
         case OP_MODI: {
@@ -697,14 +678,14 @@ static void vm_run_loop(VM *vm) {
 
             // A pointer spans two slots at an even index, which codegen has
             // already arranged for rd.
-            memcpy(vm->registers + rd * sizeof(Value), &object, sizeof(object));
+            memcpy(vm->registers + rd * VM_SLOT_SIZE, &object, sizeof(object));
             break;
         }
         case OP_RELEASE: {
             unsigned int rd = VM_DECODE_R_RD(instruction);
 
             void *object;
-            memcpy(&object, vm->registers + rd * sizeof(Value), sizeof(object));
+            memcpy(&object, vm->registers + rd * VM_SLOT_SIZE, sizeof(object));
 
             // Cleared as well as released, so the slot holds NULL rather than a
             // pointer to something freed. An abnormal unwind walks every slot
@@ -728,7 +709,7 @@ static void vm_run_loop(VM *vm) {
             // The callee's r0 is its return slot and its parameters are
             // r1..arity, so basing it at dest lines its parameters up with the
             // arguments the caller already placed above dest.
-            size_t base = frame->base + dest * sizeof(Value);
+            size_t base = frame->base + dest * VM_SLOT_SIZE;
 
             if (!vm_push_frame(vm, proto, base, vm->instruction_pointer + 1, dest)) {
                 // Unwinding here is what makes the failure safe; the reason is
@@ -750,8 +731,8 @@ static void vm_run_loop(VM *vm) {
             // The result is copied down to the frame's r0 before unwinding.
             // Source and destination never overlap: the callee builds its
             // result in temporaries above its parameters.
-            Value result[VM_MAX_RETURN_SLOTS];
-            memcpy(result, vm_reg(vm, r1), slots * sizeof(Value));
+            uint8_t result[VM_MAX_RETURN_SLOTS * VM_SLOT_SIZE];
+            memcpy(result, vm_reg_at(vm, r1), slots * VM_SLOT_SIZE);
 
             unsigned int dest = frame->dest;
             size_t frame_base = frame->base;
@@ -763,11 +744,11 @@ static void vm_run_loop(VM *vm) {
                 // for frame zero, and the call block's base for a host call —
                 // which is why it is written relative to the frame, not the
                 // stack.
-                memcpy(vm->stack + frame_base, result, slots * sizeof(Value));
+                memcpy(vm->stack + frame_base, result, slots * VM_SLOT_SIZE);
                 continue;
             }
 
-            memcpy(vm_reg(vm, dest), result, slots * sizeof(Value));
+            memcpy(vm_reg_at(vm, dest), result, slots * VM_SLOT_SIZE);
             continue;
         }
         case OP_LOAD_FIELD_1: {
@@ -803,7 +784,7 @@ static void vm_run_loop(VM *vm) {
             // outlive the frame the address was taken in, and a caller reading
             // through the pointer has a different base. The byte offset reaches
             // a field within the slots, so '&v.y' names the field, not v.
-            vm_write_pointer(vm, rd, vm->registers + base * sizeof(Value) + offset);
+            vm_write_ptr(vm, rd, vm->registers + base * VM_SLOT_SIZE + offset);
             break;
         }
         case OP_LOAD_FIELD_PTR_1: {
@@ -835,7 +816,7 @@ static void vm_run_loop(VM *vm) {
             size_t base = VM_DECODE_R_R1(instruction);
             size_t offset = VM_DECODE_R_R2(instruction);
 
-            vm_write_pointer(vm, rd, vm_read_pointer(vm, base) + offset);
+            vm_write_ptr(vm, rd, vm_read_ptr(vm, base) + offset);
             break;
         }
         case OP_LOAD_PTR_N: {
@@ -843,7 +824,7 @@ static void vm_run_loop(VM *vm) {
             size_t base = VM_DECODE_R_R1(instruction);
             size_t slots = VM_DECODE_R_R2(instruction);
 
-            memcpy(vm_reg(vm, rd), vm_read_pointer(vm, base), slots * sizeof(Value));
+            memcpy(vm_reg_at(vm, rd), vm_read_ptr(vm, base), slots * VM_SLOT_SIZE);
             break;
         }
         case OP_STORE_PTR_N: {
@@ -851,7 +832,7 @@ static void vm_run_loop(VM *vm) {
             size_t r1 = VM_DECODE_R_R1(instruction);
             size_t slots = VM_DECODE_R_R2(instruction);
 
-            memcpy(vm_read_pointer(vm, base), vm_reg(vm, r1), slots * sizeof(Value));
+            memcpy(vm_read_ptr(vm, base), vm_reg_at(vm, r1), slots * VM_SLOT_SIZE);
             break;
         }
         case OP_JMP: {
@@ -861,7 +842,7 @@ static void vm_run_loop(VM *vm) {
         case OP_JMP_IF_FALSE: {
             size_t reg = VM_DECODE_I_RD(instruction);
 
-            bool cond = vm_reg(vm, reg)->as_int;
+            bool cond = vm_read_i32(vm, reg);
             if (!cond) {
                 vm->instruction_pointer += VM_DECODE_I_SIMM(instruction);
             }
@@ -871,7 +852,7 @@ static void vm_run_loop(VM *vm) {
         case OP_JMP_IF_TRUE: {
             size_t reg = VM_DECODE_I_RD(instruction);
 
-            bool cond = vm_reg(vm, reg)->as_int;
+            bool cond = vm_read_i32(vm, reg);
             if (cond) {
                 vm->instruction_pointer += VM_DECODE_I_SIMM(instruction);
             }

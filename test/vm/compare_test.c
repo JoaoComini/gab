@@ -6,7 +6,7 @@
 // inverted comparison still agrees with the correct one on one of those three,
 // so fewer points would let a swapped operator pass.
 #include "support/run.h"
-#include "value.h"
+#include "slot.h"
 #include "vm/vm.h"
 
 #include <assert.h>

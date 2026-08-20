@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 // The frame size codegen settled on for the given function, which is the number
 // register reuse is supposed to hold flat as a function grows.
@@ -161,7 +162,10 @@ static int compile_sequential_lets(unsigned int count) {
     VM *vm = vm_create();
     vm_execute(vm, source);
 
-    int result = (*vm_slot(vm, 0)).as_int == 7 ? vm->global_funcs.data[0].max_registers : -1;
+    int32_t returned;
+    memcpy(&returned, vm_slot_at(vm, 0), sizeof(returned));
+
+    int result = returned == 7 ? vm->global_funcs.data[0].max_registers : -1;
 
     vm_free(vm);
     free(source);

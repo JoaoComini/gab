@@ -3,7 +3,7 @@
 
 // The only header a host includes. Everything here is opaque on purpose: a
 // host embedding Gab should never need to know what a Type, a Symbol, or a
-// Value is, and nothing in this file drags those definitions in.
+// stack slot is, and nothing in this file drags those definitions in.
 
 #include <stdbool.h>
 #include <stddef.h>

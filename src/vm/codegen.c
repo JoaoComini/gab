@@ -181,17 +181,17 @@ static unsigned int type_slot_count(const Type *type) {
         return 1;
     }
 
-    return (unsigned int)((type->size + sizeof(Value) - 1) / sizeof(Value));
+    return (unsigned int)((type->size + VM_SLOT_SIZE - 1) / VM_SLOT_SIZE);
 }
 
 // Slot alignment a value of this type needs. A scalar wants one; an 8-byte
 // pointer wants two, so that it lands on its natural alignment.
 static unsigned int type_align_slots(const Type *type) {
-    if (!type || type->alignment <= sizeof(Value)) {
+    if (!type || type->alignment <= VM_SLOT_SIZE) {
         return 1;
     }
 
-    return (unsigned int)(type->alignment / sizeof(Value));
+    return (unsigned int)(type->alignment / VM_SLOT_SIZE);
 }
 
 static bool type_is_struct(const Type *type) { return type && type->kind == TYPE_STRUCT; }
@@ -798,14 +798,14 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
     abort();
 }
 
-static Value value_from_literal(Literal lit) {
+static Constant value_from_literal(Literal lit) {
     switch (lit.kind) {
     case TYPE_INT:
-        return (Value){.as_int = lit.as_int};
+        return (Constant){.as_int = lit.as_int};
     case TYPE_FLOAT:
-        return (Value){.as_float = lit.as_float};
+        return (Constant){.as_float = lit.as_float};
     case TYPE_BOOL:
-        return (Value){.as_int = lit.as_int};
+        return (Constant){.as_int = lit.as_int};
     default:
         break;
     }
@@ -1057,9 +1057,9 @@ static bool codegen_field_access_fits(CodegenState *state, ASTExpr *node, bool o
 // target: through a pointer there is no slot to name.
 static unsigned int codegen_field_slots(FieldTarget target) {
     assert(!target.indirect && "an indirect struct field has no slot of its own");
-    assert(target.offset % sizeof(Value) == 0 && "a struct field is always slot-aligned");
+    assert(target.offset % VM_SLOT_SIZE == 0 && "a struct field is always slot-aligned");
 
-    return target.base + (unsigned int)(target.offset / sizeof(Value));
+    return target.base + (unsigned int)(target.offset / VM_SLOT_SIZE);
 }
 
 // Copies a struct out of the address a pointer holds into fresh slots, so the
@@ -1262,7 +1262,7 @@ static unsigned int codegen_neg_expr(CodegenState *state, ASTExpr *node) {
 
     bool is_float = node->type->kind == TYPE_FLOAT;
 
-    Value zero_value = is_float ? (Value){.as_float = 0.0f} : (Value){.as_int = 0};
+    Constant zero_value = is_float ? (Constant){.as_float = 0.0f} : (Constant){.as_int = 0};
     unsigned int zero_index = constpool_add(state->chunk->const_pool, zero_value);
 
     unsigned int zero = codegen_alloc_register(state, node->span);
@@ -1299,7 +1299,7 @@ static unsigned int codegen_not_expr(CodegenState *state, ASTExpr *node) {
         return rd;
     }
 
-    unsigned int false_index = constpool_add(state->chunk->const_pool, (Value){.as_int = 0});
+    unsigned int false_index = constpool_add(state->chunk->const_pool, (Constant){.as_int = 0});
 
     unsigned int zero = codegen_alloc_register(state, node->span);
     chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_LOAD_CONST, zero, false_index));

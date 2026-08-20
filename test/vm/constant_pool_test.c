@@ -1,4 +1,4 @@
-#include "value.h"
+#include "slot.h"
 #include "vm/constant_pool.h"
 #include <assert.h>
 
@@ -14,8 +14,8 @@ static void test_create_and_free() {
 
 static void test_basic_add_and_get() {
     ConstantPool *pool = constpool_create(10);
-    Value v1 = {.as_float = 3.14f};
-    Value v2 = {.as_int = 2};
+    Constant v1 = {.as_float = 3.14f};
+    Constant v2 = {.as_int = 2};
 
     int index1 = constpool_add(pool, v1);
     assert(index1 == 0);
@@ -25,7 +25,7 @@ static void test_basic_add_and_get() {
     assert(index2 == 1);
     assert(pool->count == 2);
 
-    Value retrieved = constpool_get(pool, 0);
+    Constant retrieved = constpool_get(pool, 0);
     assert(retrieved.as_float == 3.14f);
 
     retrieved = constpool_get(pool, 1);
@@ -38,7 +38,7 @@ static void test_auto_resize() {
     ConstantPool *pool = constpool_create(100);
 
     // Fill initial capacity
-    Value v = {.as_float = 1.0f};
+    Constant v = {.as_float = 1.0f};
     for (size_t i = 0; i < 4; i++) {
         constpool_add(pool, v);
     }

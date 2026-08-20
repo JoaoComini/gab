@@ -3,6 +3,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 
 // Every field at its maximum at once. If any field bleeds into a neighbour it
 // shows up here rather than as an instruction that matches no case at runtime.
@@ -99,7 +100,10 @@ static void test_emit_site_rejects_an_over_large_frame() {
     vm_execute(vm, source);
 
     // The program never ran, so the result slot keeps its zeroed value.
-    assert((*vm_slot(vm, 0)).as_int == 0);
+    int32_t returned;
+    memcpy(&returned, vm_slot_at(vm, 0), sizeof(returned));
+
+    assert(returned == 0);
 
     vm_free(vm);
 }
