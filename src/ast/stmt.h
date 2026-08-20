@@ -34,6 +34,7 @@ typedef enum {
     STMT_FUNC_DECL,
     STMT_STRUCT_DECL,
     STMT_ASSIGN,
+    STMT_COMPOUND_ASSIGN,
     STMT_BLOCK,
     STMT_IF,
     STMT_FOR,
@@ -93,6 +94,16 @@ typedef struct {
     ASTExpr *value;
 } ASTAssignStmt;
 
+// 'a += b'. Distinct from ASTAssignStmt rather than a flag on it: the target
+// is arithmetic, so none of the ownership and lifetime rules a plain
+// assignment carries apply, and a separate node leaves them out by shape
+// instead of by a condition each site has to remember.
+typedef struct {
+    ASTExpr *target;
+    ASTExpr *value;
+    BinOp op;
+} ASTCompoundAssignStmt;
+
 typedef struct {
     ASTExpr *condition;
     struct ASTStmt *then_block;
@@ -133,6 +144,7 @@ typedef struct ASTStmt {
         ASTFuncDecl func_decl;
         ASTStructDecl struct_decl;
         ASTAssignStmt assign;
+        ASTCompoundAssignStmt compound_assign;
         ASTIfStmt ifstmt;
         ASTForStmt forstmt;
         ASTJumpStmt jump;
@@ -149,6 +161,7 @@ ASTStmt *ast_func_decl_stmt_create(Span span, StringRef name, ASTField *receiver
                                    ASTFieldList params, ASTStmt *body);
 ASTStmt *ast_struct_decl_stmt_create(Span span, StringRef name, ASTFieldList fields);
 ASTStmt *ast_assign_stmt_create(Span span, ASTExpr *target, ASTExpr *value);
+ASTStmt *ast_compound_assign_stmt_create(Span span, ASTExpr *target, BinOp op, ASTExpr *value);
 ASTStmt *ast_if_stmt_create(Span span, ASTExpr *condition, ASTStmt *then_block, ASTStmt *else_block);
 ASTStmt *ast_for_stmt_create(Span span, ASTStmt *init, ASTExpr *condition, ASTStmt *post, ASTStmt *body);
 ASTStmt *ast_jump_stmt_create(Span span, bool is_break);

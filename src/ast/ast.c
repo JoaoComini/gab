@@ -557,6 +557,92 @@ bool is_comparable_type(Type *t) { return is_numeric_type(t) || is_boolean_type(
 
 Type *ast_script_resolve_type(ResolverState *state, TypeSpec *spec, Span span);
 
+// Whether a binary operator accepts operands of this type, reporting why not
+// when it does not. Both operands are already known to share the type.
+//
+// Shared with compound assignment, which applies the same operator to its
+// target and its value: 'a %= b' is accepted exactly where 'a % b' is, and
+// keeping one copy of the rules is what makes that true rather than intended.
+static bool bin_op_accepts(ResolverState *state, BinOp op, Type *type, Span span) {
+    const char *op_name = bin_op_name(op);
+
+    switch (op) {
+    case BIN_OP_ADD:
+    case BIN_OP_SUB:
+    case BIN_OP_MUL:
+    case BIN_OP_DIV:
+        if (!is_numeric_type(type)) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' requires a numeric type, found %s",
+                       op_name, type_name(state, type));
+            return false;
+        }
+
+        return true;
+
+    // Alone among the arithmetic operators, '%' takes ints and not floats: a
+    // float remainder is a libc call rather than an instruction, and is a
+    // different feature than this one.
+    case BIN_OP_MOD:
+        if (!is_integer_type(type)) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' requires an integer type, found %s",
+                       op_name, type_name(state, type));
+            return false;
+        }
+
+        return true;
+    case BIN_OP_EQUAL:
+    case BIN_OP_NEQUAL:
+        if (!is_comparable_type(type)) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' is not supported for %s", op_name,
+                       type_name(state, type));
+            return false;
+        }
+
+        return true;
+    case BIN_OP_LESS:
+    case BIN_OP_GREATER:
+    case BIN_OP_LEQUAL:
+    case BIN_OP_GEQUAL:
+        if (!is_ordered_type(type)) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' requires an ordered type, found %s",
+                       op_name, type_name(state, type));
+            return false;
+        }
+
+        return true;
+    case BIN_OP_AND:
+    case BIN_OP_OR:
+        if (!is_boolean_type(type)) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' requires a boolean type, found %s",
+                       op_name, type_name(state, type));
+            return false;
+        }
+
+        return true;
+    }
+
+    return true;
+}
+
+// Whether a binary operator yields the type of its operands or a bool. The
+// comparisons answer a question about their operands; everything else computes
+// another value of the same type.
+static bool bin_op_yields_bool(BinOp op) {
+    switch (op) {
+    case BIN_OP_EQUAL:
+    case BIN_OP_NEQUAL:
+    case BIN_OP_LESS:
+    case BIN_OP_GREATER:
+    case BIN_OP_LEQUAL:
+    case BIN_OP_GEQUAL:
+    case BIN_OP_AND:
+    case BIN_OP_OR:
+        return true;
+    default:
+        return false;
+    }
+}
+
 void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
     if (!expr) {
         return;
@@ -584,66 +670,14 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
             break;
         }
 
-        switch (expr->bin_op.op) {
-        case BIN_OP_ADD:
-        case BIN_OP_SUB:
-        case BIN_OP_MUL:
-        case BIN_OP_DIV:
-            if (!is_numeric_type(left_type)) {
-                diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                           "'%s' requires a numeric type, found %s", op_name, type_name(state, left_type));
-                expr->type = resolver_error_type(state);
-                return;
-            }
-
-            expr->type = left_type;
-            return;
-
-        // Alone among the arithmetic operators, '%' takes ints and not floats:
-        // a float remainder is a libc call rather than an instruction, and is
-        // a different feature than this one.
-        case BIN_OP_MOD:
-            if (!is_integer_type(left_type)) {
-                diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                           "'%s' requires an integer type, found %s", op_name, type_name(state, left_type));
-                expr->type = resolver_error_type(state);
-                return;
-            }
-
-            expr->type = left_type;
-            return;
-        case BIN_OP_EQUAL:
-        case BIN_OP_NEQUAL:
-            if (!is_comparable_type(left_type)) {
-                diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "'%s' is not supported for %s",
-                           op_name, type_name(state, left_type));
-                expr->type = resolver_error_type(state);
-                return;
-            }
-            break;
-        case BIN_OP_LESS:
-        case BIN_OP_GREATER:
-        case BIN_OP_LEQUAL:
-        case BIN_OP_GEQUAL:
-            if (!is_ordered_type(left_type)) {
-                diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                           "'%s' requires an ordered type, found %s", op_name, type_name(state, left_type));
-                expr->type = resolver_error_type(state);
-                return;
-            }
-            break;
-        case BIN_OP_AND:
-        case BIN_OP_OR:
-            if (!is_boolean_type(left_type)) {
-                diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                           "'%s' requires a boolean type, found %s", op_name, type_name(state, left_type));
-                expr->type = resolver_error_type(state);
-                return;
-            }
+        if (!bin_op_accepts(state, expr->bin_op.op, left_type, expr->span)) {
+            expr->type = resolver_error_type(state);
             break;
         }
 
-        expr->type = type_registry_get_builtin(state->current_scope->type_registry, TYPE_BOOL);
+        expr->type = bin_op_yields_bool(expr->bin_op.op)
+                         ? type_registry_get_builtin(state->current_scope->type_registry, TYPE_BOOL)
+                         : left_type;
         break;
     }
     case EXPR_VARIABLE: {
@@ -1360,6 +1394,42 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
             // The variable now points at whatever was just stored in it.
             target->var.pointee_depth = pointee_depth(stmt->assign.value);
         }
+        break;
+    }
+    case STMT_COMPOUND_ASSIGN: {
+        ast_script_expr_visit(state, stmt->compound_assign.target);
+        ast_script_expr_visit(state, stmt->compound_assign.value);
+
+        Type *target_type = stmt->compound_assign.target->type;
+        Type *value_type = stmt->compound_assign.value->type;
+
+        if (is_error_type(target_type) || is_error_type(value_type)) {
+            break;
+        }
+
+        const char *op_name = bin_op_name(stmt->compound_assign.op);
+
+        if (target_type != value_type) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span, "cannot apply '%s=' to %s and %s",
+                       op_name, type_name(state, target_type), type_name(state, value_type));
+            break;
+        }
+
+        // The same rule the bare operator answers to, so 'a %= b' is accepted
+        // exactly where 'a % b' is.
+        if (!bin_op_accepts(state, stmt->compound_assign.op, target_type, stmt->span)) {
+            break;
+        }
+
+        // A comparison yields a bool, which is not what the target holds. No
+        // token spells one of these, so this guards the enum rather than a
+        // program anyone can write.
+        assert(!bin_op_yields_bool(stmt->compound_assign.op) &&
+               "a compound assignment must yield its target's type");
+
+        // Nothing here tracks pointee depth or ownership the way plain
+        // assignment does: the operators this node carries are arithmetic, so
+        // the target is an int or a float and never names an object.
         break;
     }
     case STMT_IF: {

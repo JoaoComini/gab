@@ -54,13 +54,18 @@ static void test_dot_is_field_access_unless_a_digit_follows() {
 }
 
 static void test_operators() {
-    Lexer lexer = test_lexer("+ - * / % = ! < > == != <= >= && ||");
+    Lexer lexer = test_lexer("+ - * / % = += -= *= /= %= ! < > == != <= >= && ||");
     assert_token(&lexer, TOKEN_PLUS);
     assert_token(&lexer, TOKEN_MINUS);
     assert_token(&lexer, TOKEN_MUL);
     assert_token(&lexer, TOKEN_DIV);
     assert_token(&lexer, TOKEN_MOD);
     assert_token(&lexer, TOKEN_ASSIGN);
+    assert_token(&lexer, TOKEN_PLUS_EQ);
+    assert_token(&lexer, TOKEN_MINUS_EQ);
+    assert_token(&lexer, TOKEN_MUL_EQ);
+    assert_token(&lexer, TOKEN_DIV_EQ);
+    assert_token(&lexer, TOKEN_MOD_EQ);
     assert_token(&lexer, TOKEN_NOT);
     assert_token(&lexer, TOKEN_LESS);
     assert_token(&lexer, TOKEN_GREATER);

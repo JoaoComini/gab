@@ -178,6 +178,7 @@ more or less, and a second spelling would say nothing the first does not.
 | Functions | Parameters and returns of any type, structs by value, methods with a receiver, recursion, forward references |
 | Control flow | `if` / `else`, `for` in three forms, `break`, `continue`, `return`, nested blocks with shadowing |
 | Operators | `+` `-` `*` `/` `%`, unary `-` `!`, `==` `!=` `<` `>` `<=` `>=`, `&&` `||`, `&` and `*`, field access |
+| Assignment | `=`, and compound `+=` `-=` `*=` `/=` `%=` on any assignable target |
 | Memory | Unique ownership, `new`, `ref` borrows, scope-based free |
 | Modules | `module` namespaces, resolved per unit with a root fallback |
 | Comments | `// line` and `/* block */`, which do not nest |
@@ -188,7 +189,7 @@ Not yet implemented:
 | --- | --- |
 | Strings | No string type or literals |
 | Arrays | No array type or indexing |
-| Operators | `%`, compound assignment (`+=`), bitwise |
+| Operators | Bitwise |
 | Literals | No struct literals (`V{x: 1}`) |
 | Conversion | `int` and `float` do not mix; no cast syntax |
 

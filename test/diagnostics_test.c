@@ -139,6 +139,59 @@ static void test_reports_type_mismatch() {
     test_context_free(&ctx);
 }
 
+// A binary operator names itself and the type it was given, so the message
+// says which rule was broken rather than that something was wrong.
+static void test_reports_a_bad_binary_operand() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "func test(): int { let a: bool = true; let b: bool = false; return a - b; }");
+
+    assert(diagnostics_count(diagnostics) >= 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_TYPE);
+    assert(strcmp(diagnostic->message, "'-' requires a numeric type, found bool") == 0);
+
+    test_context_free(&ctx);
+}
+
+// A compound assignment reports against the bare operator, which is the rule
+// it actually inherits: '%=' is refused because '%' is int-only.
+static void test_reports_a_bad_compound_assignment_operand() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "func test(): float { let a: float = 1.0; a %= 2.0; return a; }");
+
+    assert(diagnostics_count(diagnostics) >= 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_TYPE);
+    assert(strcmp(diagnostic->message, "'%' requires an integer type, found float") == 0);
+
+    test_context_free(&ctx);
+}
+
+// Mismatched sides name the compound spelling, since that is what was written.
+static void test_reports_a_mismatched_compound_assignment() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "func test(): int { let a: int = 1; a += 2.0; return a; }");
+
+    assert(diagnostics_count(diagnostics) >= 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_TYPE);
+    assert(strcmp(diagnostic->message, "cannot apply '+=' to int and float") == 0);
+
+    test_context_free(&ctx);
+}
+
 static void test_reports_unknown_type() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -593,6 +646,9 @@ int main(void) {
     test_poison_suppresses_cascades();
     test_reports_multiple_semantic_errors();
     test_reports_type_mismatch();
+    test_reports_a_bad_binary_operand();
+    test_reports_a_bad_compound_assignment_operand();
+    test_reports_a_mismatched_compound_assignment();
     test_reports_unknown_type();
     test_reports_duplicate_declaration();
 

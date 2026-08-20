@@ -56,6 +56,16 @@ const char *token_description(TokenType type) {
         return "'%'";
     case TOKEN_ASSIGN:
         return "'='";
+    case TOKEN_PLUS_EQ:
+        return "'+='";
+    case TOKEN_MINUS_EQ:
+        return "'-='";
+    case TOKEN_MUL_EQ:
+        return "'*='";
+    case TOKEN_DIV_EQ:
+        return "'/='";
+    case TOKEN_MOD_EQ:
+        return "'%='";
     case TOKEN_NOT:
         return "'!'";
     case TOKEN_LESS:
@@ -360,15 +370,15 @@ Token lexer_next(Lexer *lexer) {
 
     switch (ch) {
     case '+':
-        return token_create(lexer, TOKEN_PLUS);
+        return lexer_handle_eq(lexer, TOKEN_PLUS, TOKEN_PLUS_EQ);
     case '-':
-        return token_create(lexer, TOKEN_MINUS);
+        return lexer_handle_eq(lexer, TOKEN_MINUS, TOKEN_MINUS_EQ);
     case '*':
-        return token_create(lexer, TOKEN_MUL);
+        return lexer_handle_eq(lexer, TOKEN_MUL, TOKEN_MUL_EQ);
     case '/':
-        return token_create(lexer, TOKEN_DIV);
+        return lexer_handle_eq(lexer, TOKEN_DIV, TOKEN_DIV_EQ);
     case '%':
-        return token_create(lexer, TOKEN_MOD);
+        return lexer_handle_eq(lexer, TOKEN_MOD, TOKEN_MOD_EQ);
     case '(':
         return token_create(lexer, TOKEN_LPAREN);
     case ')':

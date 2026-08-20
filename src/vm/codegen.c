@@ -139,6 +139,7 @@ static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast);
 static void codegen_return_stmt(CodegenState *state, ASTReturnStmt *ast);
 static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast);
 static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast);
+static void codegen_compound_assign_stmt(CodegenState *state, ASTCompoundAssignStmt *ast);
 static void codegen_block_stmt(CodegenState *state, ASTBlockStmt *ast);
 static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast);
 static void codegen_for_stmt(CodegenState *state, ASTForStmt *ast);
@@ -311,6 +312,10 @@ static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
     }
     case STMT_ASSIGN: {
         codegen_assign_stmt(state, &ast->assign);
+        break;
+    }
+    case STMT_COMPOUND_ASSIGN: {
+        codegen_compound_assign_stmt(state, &ast->compound_assign);
         break;
     }
     case STMT_BLOCK: {
@@ -1357,6 +1362,67 @@ static void codegen_store_deref(CodegenState *state, ASTExpr *node, unsigned int
     }
 
     chunk_add_instruction(state->chunk, VM_ENCODE_R(op, target.base, src, 0));
+}
+
+// 'a += b': read what the target holds, apply the operator, write the result
+// back where it came from.
+//
+// The target expression is walked exactly once, and everything after works
+// from what that walk produced -- a slot for a variable, a FieldTarget for a
+// field or a deref. That is what makes '*f() += 1' call f once: expanding this
+// to 'a = a + b' in the parser would name the target twice and call it twice.
+static void codegen_compound_assign_stmt(CodegenState *state, ASTCompoundAssignStmt *ast) {
+    // Only arithmetic reaches here, so the target is an int or a float in a
+    // single slot. The struct and pointer paths a plain assignment needs have
+    // nothing to do here.
+    assert(type_slot_count(ast->target->type) == 1 && "a compound assignment target is a single slot");
+
+    OpCode op_code =
+        ast->target->type->kind == TYPE_FLOAT ? bin_op_to_float_op(ast->op) : bin_op_to_int_op(ast->op);
+
+    if (ast->target->kind == EXPR_VARIABLE) {
+        unsigned int rd = codegen_expr(state, ast->target);
+        unsigned int rhs = codegen_expr(state, ast->value);
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(op_code, rd, rd, rhs));
+        return;
+    }
+
+    // One walk of the target, reused by both the load and the store below.
+    FieldTarget target = ast->target->kind == EXPR_FIELD
+                             ? codegen_field_base(state, ast->target, true)
+                             : (FieldTarget){
+                                   .base = codegen_expr(state, ast->target->unary.target),
+                                   .offset = 0,
+                                   .indirect = true,
+                               };
+
+    size_t size = ast->target->type->size;
+
+    bool load_ok;
+    OpCode load_op = field_opcode_for(size, true, target.indirect, &load_ok);
+
+    if (!codegen_field_access_fits(state, ast->target, load_ok, target.offset)) {
+        return;
+    }
+
+    unsigned int value = codegen_alloc_register(state, ast->target->span);
+    chunk_add_instruction(state->chunk,
+                          VM_ENCODE_R(load_op, value, target.base, (unsigned int)target.offset));
+
+    unsigned int rhs = codegen_expr(state, ast->value);
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(op_code, value, value, rhs));
+
+    bool store_ok;
+    OpCode store_op = field_opcode_for(size, false, target.indirect, &store_ok);
+
+    if (!codegen_field_access_fits(state, ast->target, store_ok, target.offset)) {
+        return;
+    }
+
+    chunk_add_instruction(state->chunk,
+                          VM_ENCODE_R(store_op, target.base, value, (unsigned int)target.offset));
 }
 
 static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned int src, unsigned int count) {

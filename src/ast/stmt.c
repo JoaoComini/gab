@@ -57,6 +57,15 @@ ASTStmt *ast_assign_stmt_create(Span span, ASTExpr *target, ASTExpr *value) {
     return stmt;
 }
 
+ASTStmt *ast_compound_assign_stmt_create(Span span, ASTExpr *target, BinOp op, ASTExpr *value) {
+    ASTStmt *stmt = ast_stmt_create(span);
+    stmt->kind = STMT_COMPOUND_ASSIGN;
+    stmt->compound_assign.target = target;
+    stmt->compound_assign.value = value;
+    stmt->compound_assign.op = op;
+    return stmt;
+}
+
 ASTStmt *ast_if_stmt_create(Span span, ASTExpr *condition, ASTStmt *then_block, ASTStmt *else_block) {
     ASTStmt *stmt = ast_stmt_create(span);
     stmt->kind = STMT_IF;
@@ -125,6 +134,10 @@ void ast_stmt_destroy(ASTStmt *stmt) {
     case STMT_ASSIGN:
         ast_expr_free(stmt->assign.target);
         ast_expr_free(stmt->assign.value);
+        break;
+    case STMT_COMPOUND_ASSIGN:
+        ast_expr_free(stmt->compound_assign.target);
+        ast_expr_free(stmt->compound_assign.value);
         break;
     case STMT_IF:
         ast_expr_free(stmt->ifstmt.condition);

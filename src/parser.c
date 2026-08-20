@@ -770,6 +770,38 @@ static ASTStmt *parse_return_stmt(Parser *parser) {
     return ast_return_stmt_create(span, result);
 }
 
+// Whether a token is a compound assignment operator, and which binary
+// operation it assigns the result of. 'op' may be NULL to ask only the former.
+static bool compound_assign_op(TokenType type, BinOp *op) {
+    BinOp found;
+
+    switch (type) {
+    case TOKEN_PLUS_EQ:
+        found = BIN_OP_ADD;
+        break;
+    case TOKEN_MINUS_EQ:
+        found = BIN_OP_SUB;
+        break;
+    case TOKEN_MUL_EQ:
+        found = BIN_OP_MUL;
+        break;
+    case TOKEN_DIV_EQ:
+        found = BIN_OP_DIV;
+        break;
+    case TOKEN_MOD_EQ:
+        found = BIN_OP_MOD;
+        break;
+    default:
+        return false;
+    }
+
+    if (op) {
+        *op = found;
+    }
+
+    return true;
+}
+
 static ASTStmt *parse_expr_stmt(Parser *parser) {
     Span span = parser_span(parser);
 
@@ -778,7 +810,9 @@ static ASTStmt *parse_expr_stmt(Parser *parser) {
         return NULL;
     }
 
-    if (parser->current.type != TOKEN_ASSIGN) {
+    bool compound = compound_assign_op(parser->current.type, NULL);
+
+    if (parser->current.type != TOKEN_ASSIGN && !compound) {
         return ast_expr_stmt_create(span, expr);
     }
 
@@ -788,12 +822,22 @@ static ASTStmt *parse_expr_stmt(Parser *parser) {
         return NULL;
     }
 
-    parser_next_token(parser); // eat '='
+    BinOp op = BIN_OP_ADD;
+    compound_assign_op(parser->current.type, &op);
+
+    parser_next_token(parser); // eat '=' or a compound assignment operator
 
     ASTExpr *value = parse_expression(parser);
     if (!value) {
         ast_expr_free(expr);
         return NULL;
+    }
+
+    // The target is kept as one expression rather than copied onto both sides
+    // of an expansion, so that whatever it names -- a call included -- is
+    // evaluated once. Codegen is what reads it and writes it back.
+    if (compound) {
+        return ast_compound_assign_stmt_create(span, expr, op, value);
     }
 
     return ast_assign_stmt_create(span, expr, value);

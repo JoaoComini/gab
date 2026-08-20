@@ -16,6 +16,11 @@ typedef enum {
     TOKEN_DIV,         // '/'
     TOKEN_MOD,         // '%'
     TOKEN_ASSIGN,      // '='
+    TOKEN_PLUS_EQ,     // "+="
+    TOKEN_MINUS_EQ,    // "-="
+    TOKEN_MUL_EQ,      // "*="
+    TOKEN_DIV_EQ,      // "/="
+    TOKEN_MOD_EQ,      // "%="
     TOKEN_NOT,         // '!'
     TOKEN_LESS,        // "<"
     TOKEN_GREATER,     // ">"
