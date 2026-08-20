@@ -180,6 +180,7 @@ more or less, and a second spelling would say nothing the first does not.
 | Operators | `+` `-` `*` `/`, unary `-`, `==` `!=` `<` `>` `<=` `>=`, `&&` `||`, `&` and `*`, field access |
 | Memory | Unique ownership, `new`, `ref` borrows, scope-based free |
 | Modules | `module` namespaces, resolved per unit with a root fallback |
+| Comments | `// line` and `/* block */`, which do not nest |
 
 Not yet implemented:
 
@@ -187,7 +188,6 @@ Not yet implemented:
 | --- | --- |
 | Strings | No string type or literals |
 | Arrays | No array type or indexing |
-| Comments | Not recognised by the lexer |
 | Operators | `!`, `%`, compound assignment (`+=`), bitwise |
 | Literals | No struct literals (`V{x: 1}`) |
 | Conversion | `int` and `float` do not mix; no cast syntax |

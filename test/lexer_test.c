@@ -178,6 +178,70 @@ static void test_no_errors_on_valid_source() {
     assert(!diagnostics_has_errors(&diagnostics));
 }
 
+// A '//' comment runs to the end of the line, and the newline that ends it
+// still counts for the line of the next token.
+static void test_line_comment_spans_to_end_of_line() {
+    Lexer lexer = test_lexer("let // x = 9\ny");
+    assert_token(&lexer, TOKEN_LET);
+
+    Token token = lexer_next(&lexer);
+    assert(token.type == TOKEN_IDENT);
+    assert(token.line == 2);
+    assert_token(&lexer, TOKEN_EOF);
+
+    assert(!diagnostics_has_errors(&diagnostics));
+}
+
+// A line comment may end the source, with no newline to terminate it.
+static void test_line_comment_may_end_the_source() {
+    Lexer lexer = test_lexer("x // trailing");
+    assert_identifier(&lexer, "x");
+    assert_token(&lexer, TOKEN_EOF);
+}
+
+// A block comment separates the tokens around it, and spans lines.
+static void test_block_comment_spans_lines() {
+    Lexer lexer = test_lexer("a /* one\ntwo */ b");
+    assert_identifier(&lexer, "a");
+
+    Token token = lexer_next(&lexer);
+    assert(token.type == TOKEN_IDENT);
+    assert(token.line == 2);
+    assert_token(&lexer, TOKEN_EOF);
+}
+
+// Block comments do not nest: the first '*/' closes the comment.
+static void test_block_comment_does_not_nest() {
+    Lexer lexer = test_lexer("/* /* */ x");
+    assert_identifier(&lexer, "x");
+    assert_token(&lexer, TOKEN_EOF);
+}
+
+// An unterminated block comment is reported rather than silently consuming the
+// rest of the file.
+static void test_unterminated_block_comment_is_an_error() {
+    Lexer lexer = test_lexer("x /* open");
+    assert_identifier(&lexer, "x");
+    assert_token(&lexer, TOKEN_EOF);
+
+    assert(diagnostics_count(&diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(&diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_SYNTAX);
+    assert(strcmp(diagnostic->message, "unterminated block comment") == 0);
+    assert(diagnostic->span.line == 1);
+    assert(diagnostic->span.column == 3);
+}
+
+// A lone '/' is still division.
+static void test_slash_is_division() {
+    Lexer lexer = test_lexer("a / b");
+    assert_identifier(&lexer, "a");
+    assert_token(&lexer, TOKEN_DIV);
+    assert_identifier(&lexer, "b");
+    assert_token(&lexer, TOKEN_EOF);
+}
+
 int main(void) {
     arena = arena_create(TEST_ARENA_BLOCK_SIZE);
     diagnostics_init(&diagnostics, arena, "<test>");
@@ -194,6 +258,12 @@ int main(void) {
     test_keywords();
     test_errors();
     test_no_errors_on_valid_source();
+    test_line_comment_spans_to_end_of_line();
+    test_line_comment_may_end_the_source();
+    test_block_comment_spans_lines();
+    test_block_comment_does_not_nest();
+    test_unterminated_block_comment_is_an_error();
+    test_slash_is_division();
 
     diagnostics_free(&diagnostics);
     arena_destroy(arena);

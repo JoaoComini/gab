@@ -280,10 +280,58 @@ Token lexer_handle_op_eq(Lexer *lexer, TokenType base_tok, TokenType eq_tok, cha
     return token_create(lexer, base_tok);
 }
 
-Token lexer_next(Lexer *lexer) {
-    while (isspace(lexer_peek(lexer))) {
-        lexer_eat(lexer);
+// Comments are trivia: they are skipped alongside whitespace so that a comment
+// between two tokens separates them and is otherwise invisible to the parser.
+static void lexer_skip_trivia(Lexer *lexer) {
+    for (;;) {
+        while (isspace(lexer_peek(lexer))) {
+            lexer_eat(lexer);
+        }
+
+        if (lexer_peek(lexer) != '/') {
+            return;
+        }
+
+        char next = lexer->source[lexer->pos + 1];
+
+        if (next == '/') {
+            while (lexer_peek(lexer) != '\n' && lexer_peek(lexer) != '\0') {
+                lexer_eat(lexer);
+            }
+            continue;
+        }
+
+        if (next == '*') {
+            // The opening delimiter is where an unterminated comment is
+            // reported, so the span points at the comment rather than at EOF.
+            int line = lexer->line;
+            int column = lexer->column;
+
+            lexer_eat(lexer);
+            lexer_eat(lexer);
+
+            // Nesting is not supported: the first '*/' closes the comment.
+            while (!(lexer_peek(lexer) == '*' && lexer->source[lexer->pos + 1] == '/')) {
+                if (lexer_peek(lexer) == '\0') {
+                    diag_error(lexer->diagnostics, GAB_ERR_SYNTAX, (Span){.line = line, .column = column},
+                               "unterminated block comment");
+                    return;
+                }
+
+                lexer_eat(lexer);
+            }
+
+            lexer_eat(lexer);
+            lexer_eat(lexer);
+            continue;
+        }
+
+        return;
     }
+}
+
+Token lexer_next(Lexer *lexer) {
+    lexer_skip_trivia(lexer);
 
     lexer->start_line = lexer->line;
     lexer->start_column = lexer->column;
