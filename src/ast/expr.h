@@ -25,6 +25,7 @@ typedef enum {
     EXPR_ADDR_OF,
     EXPR_DEREF,
     EXPR_NEG,
+    EXPR_NOT,
     EXPR_NEW,
 } ExprKind;
 
@@ -87,8 +88,8 @@ typedef struct ASTExpr {
             const TypeField *field;
         } field;
 
-        // '&target', '*target' and '-target'. All are prefix forms over a
-        // single operand, so they share a shape.
+        // '&target', '*target', '-target' and '!target'. All are prefix forms
+        // over a single operand, so they share a shape.
         struct {
             ASTExpr *target;
         } unary;
@@ -119,6 +120,7 @@ ASTExpr *ast_field_expr_create(Span span, ASTExpr *target, StringRef name);
 ASTExpr *ast_addr_of_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_deref_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_neg_expr_create(Span span, ASTExpr *target);
+ASTExpr *ast_not_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_new_expr_create(Span span, TypeSpec *type_spec);
 void ast_expr_free(ASTExpr *node);
 

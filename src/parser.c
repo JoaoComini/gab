@@ -944,15 +944,15 @@ static ASTExpr *parse_unary(Parser *parser) {
         return ast_new_expr_create(span, spec);
     }
 
-    // Each of these shares its token with a binary operator -- '*' with
+    // Most of these share a token with a binary operator -- '*' with
     // multiplication, '-' with subtraction -- and only its position tells the
     // two apart. Recursing into parse_unary is what makes them stack, so
     // '--x' and '-*p' both parse.
     if (parser->current.type == TOKEN_AMP || parser->current.type == TOKEN_MUL ||
-        parser->current.type == TOKEN_MINUS) {
+        parser->current.type == TOKEN_MINUS || parser->current.type == TOKEN_NOT) {
         TokenType prefix = parser->current.type;
 
-        parser_next_token(parser); // eat '&', '*' or '-'
+        parser_next_token(parser); // eat '&', '*', '-' or '!'
 
         ASTExpr *target = parse_unary(parser);
         if (!target) {
@@ -964,6 +964,8 @@ static ASTExpr *parse_unary(Parser *parser) {
             return ast_addr_of_expr_create(span, target);
         case TOKEN_MUL:
             return ast_deref_expr_create(span, target);
+        case TOKEN_NOT:
+            return ast_not_expr_create(span, target);
         default:
             return ast_neg_expr_create(span, target);
         }

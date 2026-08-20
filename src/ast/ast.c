@@ -828,6 +828,31 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         expr->type = target_type;
         break;
     }
+    case EXPR_NOT: {
+        ast_script_expr_visit(state, expr->unary.target);
+
+        Type *target_type = expr->unary.target->type;
+
+        if (is_error_type(target_type)) {
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        // Nothing else converts to bool, so an int is not a truth value here
+        // the way it is in C.
+        if (!is_boolean_type(target_type)) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "unary '!' requires bool, found %s",
+                       type_name(state, target_type));
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        // As with '-x', the result is a fresh value and deliberately inherits
+        // no symbol: '!b' is a temporary and must not be assignable or
+        // addressable.
+        expr->type = target_type;
+        break;
+    }
     case EXPR_NEW: {
         Type *type = ast_script_resolve_type(state, expr->new_expr.type_spec, expr->span);
 

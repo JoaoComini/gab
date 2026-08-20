@@ -168,6 +168,7 @@ static void codegen_store_field(CodegenState *state, ASTExpr *node, unsigned int
 static unsigned int codegen_addr_of_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_deref_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_neg_expr(CodegenState *state, ASTExpr *node);
+static unsigned int codegen_not_expr(CodegenState *state, ASTExpr *node);
 static void codegen_store_deref(CodegenState *state, ASTExpr *node, unsigned int src);
 static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned int src, unsigned int count);
 
@@ -779,6 +780,8 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
         return codegen_deref_expr(state, ast);
     case EXPR_NEG:
         return codegen_neg_expr(state, ast);
+    case EXPR_NOT:
+        return codegen_not_expr(state, ast);
     case EXPR_NEW:
         return codegen_new_expr(state, ast);
     }
@@ -1261,6 +1264,42 @@ static unsigned int codegen_neg_expr(CodegenState *state, ASTExpr *node) {
     unsigned int rd = codegen_alloc_register(state, node->span);
 
     chunk_add_instruction(state->chunk, VM_ENCODE_R(is_float ? OP_SUBF : OP_SUBI, rd, zero, operand));
+
+    return rd;
+}
+
+// Logical not lowers to a comparison against false rather than earning an
+// opcode: a bool is an int slot holding 0 or 1, so '!b' is exactly 'b == 0',
+// and the comparison already produces the 0 or 1 the result must be.
+//
+// The false has to live in a register: a comparison reads both its operands as
+// registers, so there is nowhere for the constant to ride along.
+static unsigned int codegen_not_expr(CodegenState *state, ASTExpr *node) {
+    ASTExpr *inner = node->unary.target;
+
+    // '!true' is a constant, so it folds rather than emitting a load and a
+    // comparison.
+    if (inner->kind == EXPR_LITERAL) {
+        Literal folded = inner->lit;
+        folded.as_int = !folded.as_int;
+
+        unsigned int const_index = constpool_add(state->chunk->const_pool, value_from_literal(folded));
+        unsigned int rd = codegen_alloc_register(state, node->span);
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_LOAD_CONST, rd, const_index));
+
+        return rd;
+    }
+
+    unsigned int false_index = constpool_add(state->chunk->const_pool, (Value){.as_int = 0});
+
+    unsigned int zero = codegen_alloc_register(state, node->span);
+    chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_LOAD_CONST, zero, false_index));
+
+    unsigned int operand = codegen_expr(state, inner);
+    unsigned int rd = codegen_alloc_register(state, node->span);
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_CMP_EQI, rd, operand, zero));
 
     return rd;
 }
