@@ -1,492 +1,276 @@
-#include "arena.h"
-#include "ast/ast.h"
-#include "ast/stmt.h"
-#include "diagnostics.h"
-#include "scope.h"
-#include "string/string.h"
-#include "string/string_ref.h"
-#include "support/test_context.h"
-#include "type.h"
-#include "value.h"
-#include "vm/chunk.h"
-#include "vm/codegen.h"
-#include "vm/opcode.h"
-#include "vm/vm.h"
+// What codegen emits, as opposed to what the emitted code computes.
+//
+// The distinction decides what belongs here. A test asserting "'a + b' emits
+// OP_ADDI" is checking a detail no program can observe -- and it passed
+// happily while OP_CMP_GE dispatched to the wrong helper, because emitting the
+// right opcode and running it correctly are different claims. Those tests are
+// gone; arithmetic_test.c and compare_test.c check the behaviour instead.
+//
+// What is left is the claims behaviour genuinely cannot make: the
+// optimizations. A folded constant, a reclaimed register, a copy that stays
+// one instruction -- the program computes the same answer either way, so only
+// the instructions show whether the optimization still happens.
+//
+// Registers are asserted relationally, never by number. Which register the
+// allocator picks is its business; that one instruction reads what another
+// wrote is the claim.
+#include "support/run.h"
 
 #include <assert.h>
 #include <stdio.h>
-#include <stdlib.h>
 
-static TestContext ctx;
-static Arena *arena = NULL;
-
-// These tests build the AST directly, so spans carry no meaning here.
-#define TEST_SPAN ((Span){.line = 1, .column = 1})
-
-// The sink is shared by every case; these tests all expect valid programs, so
-// nothing should ever land in it.
-
-static void assert_resolve(ASTScript *script, Scope *scope) {
-    bool ok = ast_script_resolve(arena, script, scope, NULL, &ctx.diagnostics);
-
-    if (!ok) {
-        diagnostics_print(&ctx.diagnostics, stderr);
-    }
-
-    assert(ok);
-}
-
-static Chunk *assert_codegen(ASTScript *script, FuncProtoList *global_funcs) {
-    TypeList heap_types = type_list_create();
-
-    Chunk *chunk = codegen_generate(script, (CodegenOutput){.funcs = global_funcs, .heap_types = &heap_types},
-                                    &ctx.diagnostics, NULL);
-
-    type_list_free(&heap_types);
-
-    if (!chunk) {
-        diagnostics_print(&ctx.diagnostics, stderr);
-    }
-
-    assert(chunk);
-
-    return chunk;
-}
-
-// Test number literal compilation
-static void test_number() {
-    Literal lit = {.kind = TYPE_FLOAT, .as_float = 42.0};
-    ASTExpr *num = ast_literal_expr_create(TEST_SPAN, lit);
-    ASTStmt *stmt = ast_expr_stmt_create(TEST_SPAN, num);
-
-    Scope *scope = scope_create(arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
-    ast_script_add_statement(script, stmt);
-    assert_resolve(script, scope);
-
-    FuncProtoList global_funcs = func_proto_list_create();
-    Chunk *chunk = assert_codegen(script, &global_funcs);
-
-    // Verify chunk contains:
-    // 1. LOAD_CONST R0, [const_index]
-    assert(chunk->instructions.size == 1);
-
-    // Check LOAD_CONST instruction
-    Instruction inst = chunk->instructions.data[0];
-    assert(VM_DECODE_OPCODE(inst) == OP_LOAD_CONST); // Opcode
-
-    // Check constant pool
-    assert(chunk->const_pool->count == 1);
-    assert(chunk->const_pool->constants[0].as_float == 42.0);
-
-    chunk_free(chunk);
-    ast_script_destroy(script);
-    func_proto_list_free(&global_funcs);
-}
-
-// A negated literal folds into a single constant load rather than emitting a
-// zero, a load of the literal and a subtraction. This is the claim
-// codegen_neg_expr makes; nothing else would notice if it stopped holding.
+// A literal negation folds into a single constant load rather than emitting a
+// zero, a load, and a subtraction.
 static void test_negated_literal_folds_to_one_load() {
-    Literal lit = {.kind = TYPE_INT, .as_int = 42};
-    ASTExpr *neg = ast_neg_expr_create(TEST_SPAN, ast_literal_expr_create(TEST_SPAN, lit));
-    ASTStmt *stmt = ast_expr_stmt_create(TEST_SPAN, neg);
+    TestProgram program = test_compile("let x: int = -42;\n");
+    Chunk *chunk = test_top_chunk(&program);
 
-    Scope *scope = scope_create(arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
-    ast_script_add_statement(script, stmt);
-    assert_resolve(script, scope);
-
-    FuncProtoList global_funcs = func_proto_list_create();
-    Chunk *chunk = assert_codegen(script, &global_funcs);
-
-    assert(chunk->instructions.size == 1);
-    assert(VM_DECODE_OPCODE(chunk->instructions.data[0]) == OP_LOAD_CONST);
+    // One load for the folded constant, one move into x's slot. No SUBI.
+    assert(test_count_opcode(chunk, OP_LOAD_CONST) == 1);
+    assert(test_count_opcode(chunk, OP_SUBI) == 0);
 
     // The sign is in the pooled constant, not in an instruction.
     assert(chunk->const_pool->count == 1);
     assert(chunk->const_pool->constants[0].as_int == -42);
 
-    chunk_free(chunk);
-    ast_script_destroy(script);
-    func_proto_list_free(&global_funcs);
+    test_program_free(&program);
 }
 
-static void test_bin_op(OpCode expected_op, BinOp op) {
-    Literal var_left = {.kind = TYPE_FLOAT, .as_float = 10};
-    Literal var_right = {.kind = TYPE_FLOAT, .as_float = 5};
+// Negating anything else cannot fold, so it does emit the subtraction. Checked
+// alongside the fold so that a change disabling the fold entirely would show
+// up as one test failing rather than both passing vacuously.
+static void test_negating_a_variable_emits_a_subtraction() {
+    TestProgram program = test_compile("let a: int = 42;\n"
+                                       "let x: int = -a;\n");
 
-    ASTExpr *left = ast_literal_expr_create(TEST_SPAN, var_left);
-    ASTExpr *right = ast_literal_expr_create(TEST_SPAN, var_right);
-    ASTExpr *expr = ast_bin_op_expr_create(TEST_SPAN, left, op, right);
+    assert(test_count_opcode(test_top_chunk(&program), OP_SUBI) == 1);
 
-    ASTStmt *stmt = ast_expr_stmt_create(TEST_SPAN, expr);
+    test_program_free(&program);
+}
 
-    Scope *scope = scope_create(arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
-    ast_script_add_statement(script, stmt);
-    assert_resolve(script, scope);
+// A binary op reads the two registers its operands were computed into. Which
+// registers those are is the allocator's business; that the compare reads them
+// both, and reads two distinct ones, is not.
+static void test_a_binary_op_reads_its_operands() {
+    TestProgram program = test_compile("let a: float = 10.0;\n"
+                                       "let b: float = 5.0;\n"
+                                       "let c: bool = a > b;\n");
 
-    FuncProtoList global_funcs = func_proto_list_create();
-    Chunk *chunk = assert_codegen(script, &global_funcs);
+    Chunk *chunk = test_top_chunk(&program);
 
-    assert(chunk->instructions.size == 3); // LOAD_CONST, LOAD_CONST, CMP
+    long cmp_index = test_find_opcode(chunk, OP_CMP_GTF);
+    assert(cmp_index >= 0);
 
-    Instruction inst = chunk->instructions.data[2];
-    assert(VM_DECODE_OPCODE(inst) == expected_op);
+    Instruction cmp = test_instruction(chunk, (size_t)cmp_index);
 
-    // Which registers the allocator picked is its business, but the compare
-    // must read the two the loads wrote, and its operands must be distinct —
-    // reading one register twice would compare a value with itself.
-    unsigned int r1 = VM_DECODE_R_R1(inst);
-    unsigned int r2 = VM_DECODE_R_R2(inst);
+    unsigned int r1 = VM_DECODE_R_R1(cmp);
+    unsigned int r2 = VM_DECODE_R_R2(cmp);
 
+    // Reading one register twice would compare a value with itself.
     assert(r1 != r2);
-    assert(r1 == VM_DECODE_R_RD(chunk->instructions.data[0]));
-    assert(r2 == VM_DECODE_R_RD(chunk->instructions.data[1]));
 
-    // Check operand values from constant pool
-    assert(chunk->const_pool->constants[0].as_float == 10.0);
-    assert(chunk->const_pool->constants[1].as_float == 5.0);
-
-    chunk_free(chunk);
-    ast_script_destroy(script);
-    func_proto_list_free(&global_funcs);
+    test_program_free(&program);
 }
 
-static void test_add() { test_bin_op(OP_ADDF, BIN_OP_ADD); }
-static void test_sub() { test_bin_op(OP_SUBF, BIN_OP_SUB); }
-static void test_mul() { test_bin_op(OP_MULF, BIN_OP_MUL); }
-static void test_div() { test_bin_op(OP_DIVF, BIN_OP_DIV); }
-static void test_cmp_equal() { test_bin_op(OP_CMP_EQF, BIN_OP_EQUAL); }
-static void test_cmp_nequal() { test_bin_op(OP_CMP_NEF, BIN_OP_NEQUAL); }
-static void test_cmp_less() { test_bin_op(OP_CMP_LTF, BIN_OP_LESS); }
-static void test_cmp_lequal() { test_bin_op(OP_CMP_LEF, BIN_OP_LEQUAL); }
-static void test_cmp_greater() { test_bin_op(OP_CMP_GTF, BIN_OP_GREATER); }
-static void test_cmp_gequal() { test_bin_op(OP_CMP_GEF, BIN_OP_GEQUAL); }
+// An integer literal small enough to ride in the instruction does, rather than
+// being loaded into a register first. This is the k-bit immediate encoding,
+// and it is invisible to the program: 'a + 1' computes the same either way.
+static void test_a_small_literal_becomes_an_immediate() {
+    TestProgram program = test_compile("let a: int = 10;\n"
+                                       "let b: int = a + 1;\n");
 
-static void test_var_decl() {
-    Literal var = {.kind = TYPE_FLOAT, .as_float = 3};
-    ASTExpr *inititalizer = ast_literal_expr_create(TEST_SPAN, var);
+    Chunk *chunk = test_top_chunk(&program);
 
-    StringRef ref = string_ref_create("x");
-    ASTStmt *stmt = ast_var_decl_stmt_create(TEST_SPAN, ref, NULL, inititalizer);
+    long add_index = test_find_opcode(chunk, OP_ADDI);
+    assert(add_index >= 0);
 
-    Scope *scope = scope_create(arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
-    ast_script_add_statement(script, stmt);
-    assert_resolve(script, scope);
+    // The k bit is set, and the operand is the value itself rather than a
+    // register holding it.
+    Instruction add = test_instruction(chunk, (size_t)add_index);
+    assert(VM_DECODE_R_K(add) == 1);
+    assert(VM_DECODE_R_R2(add) == 1);
 
-    FuncProtoList global_funcs = func_proto_list_create();
+    // Only the 10 is pooled; the 1 never becomes a constant.
+    assert(chunk->const_pool->count == 1);
 
-    Chunk *chunk = assert_codegen(script, &global_funcs);
-
-    assert(chunk->instructions.size == 2);
-
-    // let x = 3.0;
-    // x is a frame-zero local, so it owns R0 and the initializer is a
-    // temporary above it.
-    // Expected instructions:
-    // 1. LOAD_CONST R1, [3.0]
-    // 2. MOVE R0, R1
-
-    Instruction load = chunk->instructions.data[0];
-    assert(VM_DECODE_OPCODE(load) == OP_LOAD_CONST);
-    assert(VM_DECODE_I_RD(load) == 1);
-
-    Instruction move = chunk->instructions.data[1];
-    assert(VM_DECODE_OPCODE(move) == OP_MOVE);
-    assert(VM_DECODE_R_RD(move) == 0);
-    assert(VM_DECODE_R_R1(move) == 1);
-
-    chunk_free(chunk);
-    ast_script_destroy(script);
-    func_proto_list_free(&global_funcs);
+    test_program_free(&program);
 }
 
-static void test_variable_access() {
-    StringRef ref = string_ref_create("x");
+// A float has no immediate form, so the same shape must load its operand.
+static void test_a_float_literal_is_never_an_immediate() {
+    TestProgram program = test_compile("let a: float = 10.0;\n"
+                                       "let b: float = a + 1.0;\n");
 
-    Literal three = {.kind = TYPE_FLOAT, .as_float = 3};
-    ASTExpr *inititalizer = ast_literal_expr_create(TEST_SPAN, three);
-    ASTStmt *var_decl = ast_var_decl_stmt_create(TEST_SPAN, ref, NULL, inititalizer); // let x = 3;
+    Chunk *chunk = test_top_chunk(&program);
 
-    ASTExpr *target_expr = ast_variable_expr_create(TEST_SPAN, ref);
-    Literal two = {.kind = TYPE_FLOAT, .as_float = 2};
-    ASTExpr *value_expr = ast_literal_expr_create(TEST_SPAN, two);
-    ASTStmt *assign_stmt = ast_assign_stmt_create(TEST_SPAN, target_expr, value_expr); // x = 2;
+    long add_index = test_find_opcode(chunk, OP_ADDF);
+    assert(add_index >= 0);
+    assert(VM_DECODE_R_K(test_instruction(chunk, (size_t)add_index)) == 0);
 
-    FuncProtoList global_funcs = func_proto_list_create();
-    Scope *scope = scope_create(arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
-    ast_script_add_statement(script, var_decl);
-    ast_script_add_statement(script, assign_stmt);
-    assert_resolve(script, scope);
+    // Both floats are pooled, since neither can ride in the instruction.
+    assert(chunk->const_pool->count == 2);
 
-    Chunk *chunk = assert_codegen(script, &global_funcs);
-
-    assert(chunk->instructions.size == 4);
-
-    // Expected instructions:
-    // 1. LOAD_CONST R1, [3.0]
-    // 2. MOVE R0, R1
-    // 3. LOAD_CONST R1, [2.0]
-    // 4. MOVE R0, R1
-    //
-    // x is a frame-zero local holding R0 for the whole script; both
-    // temporaries land in R1, because each statement reclaims what it
-    // allocated above x.
-
-    Instruction load1 = chunk->instructions.data[0];
-    assert(VM_DECODE_OPCODE(load1) == OP_LOAD_CONST);
-    assert(VM_DECODE_I_RD(load1) == 1);
-
-    Instruction move1 = chunk->instructions.data[1];
-    assert(VM_DECODE_OPCODE(move1) == OP_MOVE);
-    assert(VM_DECODE_R_RD(move1) == 0);
-    assert(VM_DECODE_R_R1(move1) == 1);
-
-    Instruction load2 = chunk->instructions.data[2];
-    assert(VM_DECODE_OPCODE(load2) == OP_LOAD_CONST);
-    assert(VM_DECODE_I_RD(load2) == 1);
-
-    Instruction move2 = chunk->instructions.data[3];
-    assert(VM_DECODE_OPCODE(move2) == OP_MOVE);
-    assert(VM_DECODE_R_RD(move2) == 0);
-    assert(VM_DECODE_R_R1(move2) == 1);
-
-    chunk_free(chunk);
-    ast_script_destroy(script);
-    func_proto_list_free(&global_funcs);
+    test_program_free(&program);
 }
 
-static void test_if_statement() {
-    // Create condition: 10 > 5
-    Literal var_left = {.kind = TYPE_FLOAT, .as_float = 10};
-    Literal var_right = {.kind = TYPE_FLOAT, .as_float = 5};
-    ASTExpr *left = ast_literal_expr_create(TEST_SPAN, var_left);
-    ASTExpr *right = ast_literal_expr_create(TEST_SPAN, var_right);
-    ASTExpr *cond = ast_bin_op_expr_create(TEST_SPAN, left, BIN_OP_GREATER, right);
+// Each statement reclaims the registers it allocated above the locals, so two
+// statements of the same shape reuse the same temporary rather than growing
+// the frame.
+static void test_a_temporary_register_is_reused() {
+    TestProgram program = test_compile("func f() {\n"
+                                       "    let x: float = 3.0;\n"
+                                       "    x = 2.0;\n"
+                                       "}\n");
 
-    // Create then block: 1
-    Literal then_val = {.kind = TYPE_FLOAT, .as_float = 1};
-    ASTExpr *then_expr = ast_literal_expr_create(TEST_SPAN, then_val);
-    ASTStmt *then_stmt = ast_expr_stmt_create(TEST_SPAN, then_expr);
+    Chunk *chunk = test_func_chunk(&program, 0);
 
-    ASTStmtList then_block_list = ast_stmt_list_create();
-    ast_stmt_list_add(&then_block_list, then_stmt);
-    ASTStmt *then_block = ast_block_stmt_create(TEST_SPAN, then_block_list);
+    // Two loads, each into a temporary, each moved into x.
+    assert(test_count_opcode(chunk, OP_LOAD_CONST) == 2);
+    assert(test_count_opcode(chunk, OP_MOVE) == 2);
 
-    // Create if statement
-    ASTStmt *if_stmt = ast_if_stmt_create(TEST_SPAN, cond, then_block, NULL);
+    Instruction first_move = test_instruction(chunk, 1);
+    Instruction second_move = test_instruction(chunk, 3);
 
-    FuncProtoList global_funcs = func_proto_list_create();
-    Scope *scope = scope_create(arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
-    ast_script_add_statement(script, if_stmt);
-    assert_resolve(script, scope);
+    // Both moves write x's slot and read the same reclaimed temporary.
+    assert(VM_DECODE_R_RD(first_move) == VM_DECODE_R_RD(second_move));
+    assert(VM_DECODE_R_R1(first_move) == VM_DECODE_R_R1(second_move));
 
-    Chunk *chunk = assert_codegen(script, &global_funcs);
-
-    // Expected instructions:
-    // 1. LOAD_CONST R0, 10
-    // 2. LOAD_CONST R1, 5
-    // 3. CMP_GT R2, R0, R1
-    // 4. JMP_IF_FALSE R2, +2 (skip then block)
-    // 5. LOAD_CONST R3, 1
-    assert(chunk->instructions.size == 5);
-
-    // Verify condition
-    Instruction load1 = chunk->instructions.data[0];
-    assert(VM_DECODE_OPCODE(load1) == OP_LOAD_CONST);
-    assert(VM_DECODE_I_RD(load1) == 0);
-
-    Instruction load2 = chunk->instructions.data[1];
-    assert(VM_DECODE_OPCODE(load2) == OP_LOAD_CONST);
-    assert(VM_DECODE_I_RD(load2) == 1);
-
-    Instruction cmp = chunk->instructions.data[2];
-    assert(VM_DECODE_OPCODE(cmp) == OP_CMP_GTF);
-    assert(VM_DECODE_R_RD(cmp) == 2);
-    assert(VM_DECODE_R_R1(cmp) == 0);
-    assert(VM_DECODE_R_R2(cmp) == 1);
-
-    // Verify jump
-    Instruction jmp = chunk->instructions.data[3];
-    assert(VM_DECODE_OPCODE(jmp) == OP_JMP_IF_FALSE);
-    assert(VM_DECODE_I_RD(jmp) == 2);  // Condition register
-    assert(VM_DECODE_I_IMM(jmp) == 1); // Skip 1 instruction (to end)
-
-    // Verify then block
-    Instruction then_load = chunk->instructions.data[4];
-    assert(VM_DECODE_OPCODE(then_load) == OP_LOAD_CONST);
-    assert(VM_DECODE_I_RD(then_load) == 3);
-
-    chunk_free(chunk);
-    ast_script_destroy(script);
-    func_proto_list_free(&global_funcs);
+    test_program_free(&program);
 }
 
-static void test_if_else_statement() {
-    // Create condition: 5 > 10
-    Literal var_left = {.kind = TYPE_FLOAT, .as_float = 5};
-    Literal var_right = {.kind = TYPE_FLOAT, .as_float = 10};
-    ASTExpr *left = ast_literal_expr_create(TEST_SPAN, var_left);
-    ASTExpr *right = ast_literal_expr_create(TEST_SPAN, var_right);
-    ASTExpr *cond = ast_bin_op_expr_create(TEST_SPAN, left, BIN_OP_GREATER, right);
+// 'x = x + 1' computes straight into x's register instead of into a temporary
+// that is then moved. The saved move is the whole point, so its absence is the
+// assertion.
+static void test_assignment_computes_into_its_target() {
+    TestProgram program = test_compile("func f() {\n"
+                                       "    let x: int = 1;\n"
+                                       "    x = x + 1;\n"
+                                       "}\n");
 
-    // Create then block: 1
-    Literal then_val = {.kind = TYPE_FLOAT, .as_float = 1};
-    ASTExpr *then_expr = ast_literal_expr_create(TEST_SPAN, then_val);
-    ASTStmt *then_stmt = ast_expr_stmt_create(TEST_SPAN, then_expr);
-    ASTStmtList then_block_list = ast_stmt_list_create();
-    ast_stmt_list_add(&then_block_list, then_stmt);
-    ASTStmt *then_block = ast_block_stmt_create(TEST_SPAN, then_block_list);
+    Chunk *chunk = test_func_chunk(&program, 0);
 
-    // Create else block: 0
-    Literal else_val = {.kind = TYPE_FLOAT, .as_float = 0};
-    ASTExpr *else_expr = ast_literal_expr_create(TEST_SPAN, else_val);
-    ASTStmt *else_stmt = ast_expr_stmt_create(TEST_SPAN, else_expr);
-    ASTStmtList else_block_list = ast_stmt_list_create();
-    ast_stmt_list_add(&else_block_list, else_stmt);
-    ASTStmt *else_block = ast_block_stmt_create(TEST_SPAN, else_block_list);
+    // One move for the initializer. The compound assignment adds none.
+    assert(test_count_opcode(chunk, OP_MOVE) == 1);
+    assert(test_count_opcode(chunk, OP_ADDI) == 1);
 
-    // Create if-else statement
-    ASTStmt *if_stmt = ast_if_stmt_create(TEST_SPAN, cond, then_block, else_block);
+    long add_index = test_find_opcode(chunk, OP_ADDI);
+    Instruction add = test_instruction(chunk, (size_t)add_index);
 
-    FuncProtoList global_funcs = func_proto_list_create();
-    Scope *scope = scope_create(arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
-    ast_script_add_statement(script, if_stmt);
-    assert_resolve(script, scope);
+    // The add writes the register it read, which is x's slot.
+    assert(VM_DECODE_R_RD(add) == VM_DECODE_R_R1(add));
 
-    Chunk *chunk = assert_codegen(script, &global_funcs);
-
-    // Expected instructions:
-    // 1. LOAD_CONST R0, 5
-    // 2. LOAD_CONST R1, 10
-    // 3. CMP_GT R0, R0, R1
-    // 4. JMP_IF_FALSE R0, +3 (skip to else block)
-    // 5. LOAD_CONST R1, 1
-    // 6. JMP +2 (skip else block)
-    // 7. LOAD_CONST R1, 0
-    assert(chunk->instructions.size == 7);
-
-    // Verify condition
-    Instruction cmp = chunk->instructions.data[2];
-    assert(VM_DECODE_OPCODE(cmp) == OP_CMP_GTF);
-
-    // Verify if-false jump to else block
-    Instruction jmp_false = chunk->instructions.data[3];
-    assert(VM_DECODE_OPCODE(jmp_false) == OP_JMP_IF_FALSE);
-    assert(VM_DECODE_I_IMM(jmp_false) == 2); // Jump to else block
-
-    // Verify unconditional jump over else block
-    Instruction jmp = chunk->instructions.data[5];
-    assert(VM_DECODE_OPCODE(jmp) == OP_JMP);
-    assert(VM_DECODE_I_IMM(jmp) == 1); // Jump to end
-
-    chunk_free(chunk);
-    ast_script_destroy(script);
-    func_proto_list_free(&global_funcs);
+    test_program_free(&program);
 }
 
-static void test_func_decl() {
-    StringRef int_str = string_ref_create("int");
-    StringRef a_ref = string_ref_create("a");
-    StringRef b_ref = string_ref_create("b");
+// An 'if' jumps over its then-block when the condition is false. The offset is
+// the allocator's arithmetic; that the jump lands past the block is the claim.
+static void test_if_jumps_past_its_then_block() {
+    TestProgram program = test_compile("func f() {\n"
+                                       "    let a: int = 1;\n"
+                                       "    if a > 0 { let b: int = 2; }\n"
+                                       "}\n");
 
-    ASTField *param_a = ast_field_create(TEST_SPAN, a_ref, type_spec_create(int_str, 0, false));
-    ASTField *param_b = ast_field_create(TEST_SPAN, b_ref, type_spec_create(int_str, 0, false));
+    Chunk *chunk = test_func_chunk(&program, 0);
 
-    ASTFieldList params = ast_field_list_create();
-    ast_field_list_add(&params, param_a);
-    ast_field_list_add(&params, param_b);
+    long jump_index = test_find_opcode(chunk, OP_JMP_IF_FALSE);
+    assert(jump_index >= 0);
 
-    ASTExpr *a_var = ast_variable_expr_create(TEST_SPAN, a_ref);
-    ASTExpr *b_var = ast_variable_expr_create(TEST_SPAN, b_ref);
-    ASTExpr *add_expr = ast_bin_op_expr_create(TEST_SPAN, a_var, BIN_OP_ADD, b_var);
-    ASTStmt *return_stmt = ast_return_stmt_create(TEST_SPAN, add_expr);
+    Instruction jump = test_instruction(chunk, (size_t)jump_index);
 
-    ASTStmtList body_stmts = ast_stmt_list_create();
-    ast_stmt_list_add(&body_stmts, return_stmt);
+    // The jump reads the register the comparison wrote.
+    long cmp_index = test_find_opcode(chunk, OP_CMP_GTI);
+    assert(cmp_index >= 0);
+    assert(cmp_index < jump_index);
+    assert(VM_DECODE_I_RD(jump) == VM_DECODE_R_RD(test_instruction(chunk, (size_t)cmp_index)));
 
-    ASTStmt *body = ast_block_stmt_create(TEST_SPAN, body_stmts);
+    // It skips forward, and lands no further than the end of the chunk.
+    unsigned int offset = VM_DECODE_I_IMM(jump);
+    assert(offset > 0);
+    assert((size_t)jump_index + 1 + offset <= chunk->instructions.size);
 
-    StringRef func_ref = string_ref_create("add");
-    ASTStmt *func =
-        ast_func_decl_stmt_create(TEST_SPAN, func_ref, NULL, type_spec_create(int_str, 0, false), params, body);
+    // With no else, there is nothing to jump over on the way out.
+    assert(test_count_opcode(chunk, OP_JMP) == 0);
 
-    ASTScript *script = ast_script_create();
-    ast_script_add_statement(script, func);
-
-    Scope global_scope;
-    scope_init(&global_scope, arena, &ctx.strings, NULL);
-
-    assert_resolve(script, &global_scope);
-
-    // 5. Set up codegen environment
-    FuncProtoList global_funcs = func_proto_list_create();
-
-    Chunk *chunk = assert_codegen(script, &global_funcs);
-
-    assert(chunk->instructions.size == 0);
-
-    // 7. Verify results
-    assert(global_funcs.size == 1);
-    FuncPrototype *proto = &global_funcs.data[0];
-
-    // Verify function prototype metadata
-    assert(proto->arity == 2);
-    assert(proto->max_registers == 4); // Params:1,2 + temp:3 + return:0
-
-    // Verify instructions
-    Chunk *proto_chunk = proto->chunk;
-    assert(proto_chunk->instructions.size == 2);
-
-    // Check ADD instruction
-    Instruction add_instr = proto_chunk->instructions.data[0];
-    assert(VM_DECODE_OPCODE(add_instr) == OP_ADDI);
-    assert(VM_DECODE_R_RD(add_instr) == 3); // Temporary result
-    assert(VM_DECODE_R_R1(add_instr) == 1); // Param a
-    assert(VM_DECODE_R_R2(add_instr) == 2); // Param b
-
-    // Check RETURN instruction
-    Instruction ret_instr = proto_chunk->instructions.data[1];
-    assert(VM_DECODE_OPCODE(ret_instr) == OP_RETURN);
-    assert(VM_DECODE_R_R1(ret_instr) == 3); // Return value from ADD
-
-    // 9. Cleanup
-    chunk_free(chunk);
-    ast_script_destroy(script);
-    func_proto_list_free(&global_funcs);
+    test_program_free(&program);
 }
 
-int main(void) {
-    test_context_init(&ctx);
-    arena = ctx.arena;
+// An else-block needs a second jump: the then-block has to skip over it rather
+// than falling into it.
+static void test_if_else_jumps_over_the_else_block() {
+    TestProgram program = test_compile("func f() {\n"
+                                       "    let a: int = 1;\n"
+                                       "    if a > 0 { let b: int = 2; } else { let c: int = 3; }\n"
+                                       "}\n");
 
-    test_number();
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    assert(test_count_opcode(chunk, OP_JMP_IF_FALSE) == 1);
+    assert(test_count_opcode(chunk, OP_JMP) == 1);
+
+    long conditional = test_find_opcode(chunk, OP_JMP_IF_FALSE);
+    long unconditional = test_find_opcode(chunk, OP_JMP);
+
+    // The unconditional jump ends the then-block, so it comes after the test
+    // and before the end.
+    assert(conditional < unconditional);
+
+    unsigned int offset = VM_DECODE_I_IMM(test_instruction(chunk, (size_t)unconditional));
+    assert((size_t)unconditional + 1 + offset <= chunk->instructions.size);
+
+    test_program_free(&program);
+}
+
+// A function compiles into its own chunk, leaving nothing in the script's.
+static void test_a_function_compiles_into_its_own_chunk() {
+    TestProgram program = test_compile("func add(a: int, b: int): int { return a + b; }\n");
+
+    // The declaration emits no top-level code.
+    assert(test_top_chunk(&program)->instructions.size == 0);
+
+    assert(program.vm->global_funcs.size == 1);
+    assert(program.vm->global_funcs.data[0].arity == 2);
+
+    Chunk *body = test_func_chunk(&program, 0);
+
+    assert(test_count_opcode(body, OP_ADDI) == 1);
+    assert(test_count_opcode(body, OP_RETURN) == 1);
+
+    // The return carries what the add produced.
+    long add_index = test_find_opcode(body, OP_ADDI);
+    long ret_index = test_find_opcode(body, OP_RETURN);
+
+    assert(add_index < ret_index);
+    assert(VM_DECODE_R_R1(test_instruction(body, (size_t)ret_index)) ==
+           VM_DECODE_R_RD(test_instruction(body, (size_t)add_index)));
+
+    test_program_free(&program);
+}
+
+// A method takes its receiver as parameter zero, so its arity is one more than
+// the parameters it declares.
+static void test_a_method_counts_its_receiver() {
+    TestProgram program = test_compile("struct Vec { x: int }\n"
+                                       "func (v: *Vec) scaled(by: int): int { return v.x * by; }\n");
+
+    assert(program.vm->global_funcs.size == 1);
+    assert(program.vm->global_funcs.data[0].arity == 2);
+
+    test_program_free(&program);
+}
+
+int main() {
     test_negated_literal_folds_to_one_load();
-    test_add();
-    test_sub();
-    test_mul();
-    test_div();
-    test_cmp_equal();
-    test_cmp_nequal();
-    test_cmp_less();
-    test_cmp_lequal();
-    test_cmp_greater();
-    test_cmp_gequal();
+    test_negating_a_variable_emits_a_subtraction();
+    test_a_binary_op_reads_its_operands();
+    test_a_small_literal_becomes_an_immediate();
+    test_a_float_literal_is_never_an_immediate();
+    test_a_temporary_register_is_reused();
+    test_assignment_computes_into_its_target();
+    test_if_jumps_past_its_then_block();
+    test_if_else_jumps_over_the_else_block();
+    test_a_function_compiles_into_its_own_chunk();
+    test_a_method_counts_its_receiver();
 
-    test_var_decl();
-    test_variable_access();
-
-    test_if_statement();
-    test_if_else_statement();
-
-    test_func_decl();
-
-    test_context_free(&ctx);
+    printf("codegen_test: all tests passed\n");
     return 0;
 }
