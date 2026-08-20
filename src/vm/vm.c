@@ -527,18 +527,12 @@ static bool vm_check_divisor(VM *vm, Instruction instruction, const char *zero_m
 // exit label rather than falling out of a loop.
 #define VM_DISPATCH()                                                                                        \
     do {                                                                                                     \
-        if (vm->frame_count == 0 || vm->instruction_pointer < 0) {                                           \
+        if (vm->frame_count == 0 || vm->instruction_pointer < 0 ||                                           \
+            vm->instruction_pointer >= (ptrdiff_t)code_size) {                                               \
             goto vm_done;                                                                                    \
         }                                                                                                    \
                                                                                                              \
-        frame = &vm->frames[vm->frame_count - 1];                                                            \
-        chunk = frame->proto->chunk;                                                                         \
-                                                                                                             \
-        if (vm->instruction_pointer >= (ptrdiff_t)chunk->instructions.size) {                                \
-            goto vm_done;                                                                                    \
-        }                                                                                                    \
-                                                                                                             \
-        instruction = instruction_list_get(&chunk->instructions, (size_t)vm->instruction_pointer);           \
+        instruction = code[vm->instruction_pointer];                                                         \
         op = VM_DECODE_OPCODE(instruction);                                                                  \
                                                                                                              \
         goto *vm_dispatch_table[op];                                                                         \
@@ -553,11 +547,39 @@ static bool vm_check_divisor(VM *vm, Instruction instruction, const char *zero_m
 
 // A handler that has already placed the instruction pointer itself: a call, a
 // return, or a failure that unwound.
-#define VM_RETRY() VM_DISPATCH()
+// Reloads what the running frame's bytecode is, for the handlers that change
+// which frame that is: a call, a return, or an unwind. The guard is the one
+// VM_DISPATCH makes anyway, hoisted here so the common path never repeats it.
+#define VM_RELOAD()                                                                                          \
+    do {                                                                                                     \
+        if (vm->frame_count > 0) {                                                                           \
+            frame = &vm->frames[vm->frame_count - 1];                                                        \
+            chunk = frame->proto->chunk;                                                                     \
+            code = chunk->instructions.data;                                                                 \
+            code_size = chunk->instructions.size;                                                            \
+        }                                                                                                    \
+    } while (0)
+
+#define VM_RETRY()                                                                                           \
+    do {                                                                                                     \
+        VM_RELOAD();                                                                                         \
+        VM_DISPATCH();                                                                                       \
+    } while (0)
 
 #else
 
 #define VM_CASE(name) case name
+
+#define VM_RELOAD()                                                                                          \
+    do {                                                                                                     \
+        if (vm->frame_count > 0) {                                                                           \
+            frame = &vm->frames[vm->frame_count - 1];                                                        \
+            chunk = frame->proto->chunk;                                                                     \
+            code = chunk->instructions.data;                                                                 \
+            code_size = chunk->instructions.size;                                                            \
+        }                                                                                                    \
+    } while (0)
+
 #define VM_NEXT()                                                                                            \
     do {                                                                                                     \
         goto vm_next;                                                                                        \
@@ -636,21 +658,25 @@ static void vm_run_loop(VM *vm) {
     Chunk *chunk;
     Instruction instruction;
     OpCode op;
+    const Instruction *code = NULL;
+    size_t code_size = 0;
 
 #if VM_COMPUTED_GOTO
+    VM_RELOAD();
     VM_DISPATCH();
 #else
     // The switch form spells the same bounds as VM_DISPATCH does: the pointer
     // is signed, so a jump that went too far back is negative here rather than
     // a huge index that would read as a normal end of function.
 vm_retry:
-    while (vm->frame_count > 0 && vm->instruction_pointer >= 0 &&
-           vm->instruction_pointer <
-               (ptrdiff_t)vm->frames[vm->frame_count - 1].proto->chunk->instructions.size) {
-        frame = &vm->frames[vm->frame_count - 1];
-        chunk = frame->proto->chunk;
+    VM_RELOAD();
 
-        instruction = instruction_list_get(&chunk->instructions, (size_t)vm->instruction_pointer);
+    // The same bounds VM_DISPATCH spells: the pointer is signed, so a jump
+    // that went too far back is negative here rather than a huge index that
+    // would read as a normal end of function.
+    while (vm->frame_count > 0 && vm->instruction_pointer >= 0 &&
+           vm->instruction_pointer < (ptrdiff_t)code_size) {
+        instruction = code[vm->instruction_pointer];
         op = VM_DECODE_OPCODE(instruction);
 
         switch (op) {
