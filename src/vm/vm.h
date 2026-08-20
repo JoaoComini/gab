@@ -63,10 +63,21 @@
 #define VM_DECODE_I_KX(instr) ((instr) & 0x1FFFF)      // 17-bit constant/index
 #define VM_DECODE_I_IMM(instr) ((instr) & 0x1FFFF)     // 17-bit immediate value
 
+// The same 17 bits read as a signed jump offset. A jump is the one I-type
+// operand with a direction: an index into the constant or prototype table
+// counts from zero and never backwards, while a jump target may lie either side
+// of the jump itself. Sign-extended by the shift pair rather than by a cast,
+// since the field is not a whole type's width.
+#define VM_DECODE_I_SIMM(instr) ((int32_t)((uint32_t)(instr) << 15) >> 15)
+
 #define VM_DECODE_OPCODE(instr) ((instr) >> 25) // Get OpCode (default to all types)
 
 // Maximum constants supported by 17-bit index
 #define VM_MAX_CONSTANTS ((1 << 17) - 1)
+
+// How far one jump reaches. The offset spends a bit on its sign, so it spans
+// half what an index of the same width does, in either direction.
+#define VM_MAX_JUMP ((1 << 16) - 1)
 
 // Maximum registers supported with 8-bit
 #define VM_MAX_REGISTERS ((1 << 8) - 1)
@@ -148,7 +159,7 @@ typedef struct {
 typedef struct {
     const FuncPrototype *proto;
 
-    size_t return_ip;
+    ptrdiff_t return_ip;
 
     // Byte offset into the stack, not a slot index.
     size_t base;
@@ -292,7 +303,10 @@ typedef struct {
     CallFrame frames[VM_MAX_CALL_DEPTH];
     size_t frame_count;
 
-    size_t instruction_pointer;
+    // Signed, because a jump offset is: an index that went negative wraps to a
+    // huge unsigned value, which reads as 'past the end' and would end the run
+    // quietly instead of tripping a bound.
+    ptrdiff_t instruction_pointer;
 
     // Why the last run stopped. Cleared at the start of every run.
     VmError error;

@@ -66,6 +66,23 @@ ASTStmt *ast_if_stmt_create(Span span, ASTExpr *condition, ASTStmt *then_block, 
     return stmt;
 }
 
+ASTStmt *ast_for_stmt_create(Span span, ASTStmt *init, ASTExpr *condition, ASTStmt *post, ASTStmt *body) {
+    ASTStmt *stmt = ast_stmt_create(span);
+    stmt->kind = STMT_FOR;
+    stmt->forstmt.init = init;
+    stmt->forstmt.condition = condition;
+    stmt->forstmt.post = post;
+    stmt->forstmt.body = body;
+    return stmt;
+}
+
+ASTStmt *ast_jump_stmt_create(Span span, bool is_break) {
+    ASTStmt *stmt = ast_stmt_create(span);
+    stmt->kind = STMT_JUMP;
+    stmt->jump.is_break = is_break;
+    return stmt;
+}
+
 ASTStmt *ast_block_stmt_create(Span span, ASTStmtList list) {
     ASTStmt *stmt = ast_stmt_create(span);
     stmt->kind = STMT_BLOCK;
@@ -113,6 +130,14 @@ void ast_stmt_destroy(ASTStmt *stmt) {
         ast_expr_free(stmt->ifstmt.condition);
         ast_stmt_destroy(stmt->ifstmt.then_block);
         ast_stmt_destroy(stmt->ifstmt.else_block);
+        break;
+    case STMT_FOR:
+        ast_stmt_destroy(stmt->forstmt.init);
+        ast_expr_free(stmt->forstmt.condition);
+        ast_stmt_destroy(stmt->forstmt.post);
+        ast_stmt_destroy(stmt->forstmt.body);
+        break;
+    case STMT_JUMP:
         break;
     case STMT_BLOCK:
         ast_stmt_list_free(&stmt->block.list);

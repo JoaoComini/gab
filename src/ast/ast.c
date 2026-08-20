@@ -32,6 +32,11 @@ void ast_script_add_statement(ASTScript *script, ASTStmt *stmt) {
 
 typedef struct {
     Type *return_type;
+
+    // Enclosing loops, so 'break' and 'continue' can tell that they have one.
+    // It sits here rather than on the resolver because a function body starts a
+    // fresh count: a loop outside a declaration is not one the body can leave.
+    unsigned int loop_depth;
 } FuncContext;
 
 typedef struct {
@@ -1330,6 +1335,42 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
 
         ast_script_stmt_visit(state, stmt->ifstmt.then_block);
         ast_script_stmt_visit(state, stmt->ifstmt.else_block);
+        break;
+    }
+    case STMT_FOR: {
+        // The initializer's scope encloses the condition, the post clause, and
+        // the body, so 'for let i = 0; i < n; i = i + 1' scopes i to the loop.
+        resolver_enter_scope(state);
+
+        ast_script_stmt_visit(state, stmt->forstmt.init);
+
+        if (stmt->forstmt.condition) {
+            ast_script_expr_visit(state, stmt->forstmt.condition);
+
+            Type *condition_type = stmt->forstmt.condition->type;
+
+            if (condition_type && !is_error_type(condition_type) && !is_boolean_type(condition_type)) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->forstmt.condition->span,
+                           "'for' requires a boolean condition, found %s", type_name(state, condition_type));
+            }
+        }
+
+        state->func_context.loop_depth++;
+        ast_script_stmt_visit(state, stmt->forstmt.body);
+        state->func_context.loop_depth--;
+
+        // Visited after the body, matching when it runs, though it is the
+        // initializer's scope either way.
+        ast_script_stmt_visit(state, stmt->forstmt.post);
+
+        resolver_exit_scope(state);
+        break;
+    }
+    case STMT_JUMP: {
+        if (state->func_context.loop_depth == 0) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span, "'%s' is only valid inside a loop",
+                       stmt->jump.is_break ? "break" : "continue");
+        }
         break;
     }
     case STMT_BLOCK: {

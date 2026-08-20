@@ -110,6 +110,12 @@ const char *token_description(TokenType type) {
         return "'if'";
     case TOKEN_ELSE:
         return "'else'";
+    case TOKEN_FOR:
+        return "'for'";
+    case TOKEN_BREAK:
+        return "'break'";
+    case TOKEN_CONTINUE:
+        return "'continue'";
     case TOKEN_TRUE:
         return "'true'";
     case TOKEN_FALSE:
@@ -169,6 +175,18 @@ static Token lexer_identifier(Lexer *lexer) {
 
     if (string_ref_equals_cstr(ref, "else")) {
         return token_create_ref(lexer, TOKEN_ELSE, ref);
+    }
+
+    if (string_ref_equals_cstr(ref, "for")) {
+        return token_create_ref(lexer, TOKEN_FOR, ref);
+    }
+
+    if (string_ref_equals_cstr(ref, "break")) {
+        return token_create_ref(lexer, TOKEN_BREAK, ref);
+    }
+
+    if (string_ref_equals_cstr(ref, "continue")) {
+        return token_create_ref(lexer, TOKEN_CONTINUE, ref);
     }
 
     if (string_ref_equals_cstr(ref, "func")) {

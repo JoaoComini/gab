@@ -155,6 +155,20 @@ per-function summary. What is not caught is a borrow that outlives its pointee
 without ever being moved: holding a `ref` while the object's owner frees it is
 undefined, as holding a C++ reference across the owner's destruction is.
 
+`for` is the only loop keyword, and spells all three shapes:
+
+```
+for { ... }                  // forever, until a 'break'
+for ready { ... }            // while the condition holds
+for let i: int = 0; i < n; i = i + 1 { ... }
+```
+
+The three-clause form scopes its initializer to the loop, and each of its
+clauses may be omitted. `break` leaves the loop and `continue` starts the next
+iteration — from the post clause, so the counting form still advances. There is
+no `while` and no separate infinite-loop keyword: both are `for` with one clause
+more or less, and a second spelling would say nothing the first does not.
+
 ## Features
 
 | | |
@@ -162,7 +176,7 @@ undefined, as holding a C++ reference across the owner's destruction is.
 | Types | `int` (32-bit), `float` (32-bit), `bool`, structs, pointers `*T`, borrows `ref T` |
 | Declarations | `let` with inferred or annotated type, `func`, `struct`, `module` |
 | Functions | Parameters and returns of any type, structs by value, methods with a receiver, recursion, forward references |
-| Control flow | `if` / `else`, `return`, nested blocks with shadowing |
+| Control flow | `if` / `else`, `for` in three forms, `break`, `continue`, `return`, nested blocks with shadowing |
 | Operators | `+` `-` `*` `/`, unary `-`, `==` `!=` `<` `>` `<=` `>=`, `&&` `||`, `&` and `*`, field access |
 | Memory | Unique ownership, `new`, `ref` borrows, scope-based free |
 | Modules | `module` namespaces, resolved per unit with a root fallback |
@@ -171,15 +185,12 @@ Not yet implemented:
 
 | | |
 | --- | --- |
-| Loops | No `while` or `for`; recursion is the only iteration |
 | Strings | No string type or literals |
 | Arrays | No array type or indexing |
 | Comments | Not recognised by the lexer |
 | Operators | `!`, `%`, compound assignment (`+=`), bitwise |
 | Literals | No struct literals (`V{x: 1}`) |
 | Conversion | `int` and `float` do not mix; no cast syntax |
-
-Loops are the largest gap.
 
 ## Building
 

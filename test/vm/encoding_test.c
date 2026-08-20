@@ -112,11 +112,29 @@ static void test_every_opcode_fits_the_field() {
     assert(VM_DECODE_OPCODE(instr) == OP_STORE_FIELD_4);
 }
 
+// A jump offset is the one I-type operand that carries a sign, so the same 17
+// bits read one way as an index and another as a displacement.
+static void test_a_jump_offset_round_trips_in_both_directions() {
+    assert(VM_DECODE_I_SIMM(VM_ENCODE_I(OP_JMP, 0, 1)) == 1);
+    assert(VM_DECODE_I_SIMM(VM_ENCODE_I(OP_JMP, 0, -1)) == -1);
+    assert(VM_DECODE_I_SIMM(VM_ENCODE_I(OP_JMP, 0, 0)) == 0);
+
+    assert(VM_DECODE_I_SIMM(VM_ENCODE_I(OP_JMP, 0, VM_MAX_JUMP)) == VM_MAX_JUMP);
+    assert(VM_DECODE_I_SIMM(VM_ENCODE_I(OP_JMP, 0, -VM_MAX_JUMP)) == -VM_MAX_JUMP);
+
+    // A negative offset fills the field's high bits, which must stay out of the
+    // register and opcode fields above it.
+    Instruction back = VM_ENCODE_I(OP_JMP, VM_MAX_REGISTERS, -1);
+    assert(VM_DECODE_OPCODE(back) == OP_JMP);
+    assert(VM_DECODE_I_RD(back) == VM_MAX_REGISTERS);
+}
+
 int main() {
     test_r_type_round_trips_at_maximum();
     test_r_type_fields_do_not_bleed();
     test_i_type_round_trips_at_maximum();
     test_i_type_fields_do_not_bleed();
+    test_a_jump_offset_round_trips_in_both_directions();
     test_out_of_range_operands_stay_in_their_field();
     test_emit_site_rejects_an_over_large_frame();
     test_every_opcode_fits_the_field();

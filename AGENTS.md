@@ -163,6 +163,7 @@ output. A stale binary reports success for code that no longer builds.
 Do the work asked. If you find an adjacent problem, say so and let the user
 decide whether to widen the scope.
 
-Two things the language does not have, which are easy to assume: **loops**
-(no `while` or `for`) and **comments** (the lexer does not recognise them).
-See the README's feature table before assuming a construct exists.
+One thing the language does not have, which is easy to assume: **comments**
+(the lexer does not recognise them). Loops are spelled `for` and only `for` --
+there is no `while` and no `loop`. See the README's feature table before
+assuming a construct exists.

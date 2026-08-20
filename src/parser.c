@@ -18,6 +18,8 @@ static ASTStmt *parse_struct_decl_stmt(Parser *parser);
 static ASTField *parse_field(Parser *parser, const char *name_message);
 static TypeSpec *parse_type_spec(Parser *parser);
 static ASTStmt *parse_if_stmt(Parser *parser);
+static ASTStmt *parse_for_stmt(Parser *parser);
+static ASTStmt *parse_jump_stmt(Parser *parser);
 static ASTStmt *parse_block_stmt(Parser *parser);
 static ASTStmt *parse_return_stmt(Parser *parser);
 static ASTStmt *parse_expr_stmt(Parser *parser);
@@ -172,6 +174,9 @@ static void parser_synchronize(Parser *parser) {
         case TOKEN_STRUCT:
         case TOKEN_MODULE:
         case TOKEN_IF:
+        case TOKEN_FOR:
+        case TOKEN_BREAK:
+        case TOKEN_CONTINUE:
         case TOKEN_RETURN:
             return;
         default:
@@ -250,6 +255,15 @@ static ASTStmt *parse_statement(Parser *parser) {
     }
     case TOKEN_IF: {
         stmt = parse_if_stmt(parser);
+        break;
+    }
+    case TOKEN_FOR: {
+        stmt = parse_for_stmt(parser);
+        break;
+    }
+    case TOKEN_BREAK:
+    case TOKEN_CONTINUE: {
+        stmt = parse_jump_stmt(parser);
         break;
     }
     case TOKEN_LBRACE: {
@@ -365,6 +379,120 @@ static ASTStmt *parse_if_stmt(Parser *parser) {
     }
 
     return ast_if_stmt_create(span, condition, then_block, else_block);
+}
+
+// Parses one clause of the three-clause form: a 'let' or an assignment, never
+// a declaration that would escape the loop header. The clause is optional in
+// every position, so an immediate terminator yields no statement and no error.
+static ASTStmt *parse_for_clause(Parser *parser, TokenType terminator) {
+    if (parser->current.type == terminator) {
+        return NULL;
+    }
+
+    if (parser->current.type == TOKEN_LET) {
+        return parse_var_decl_stmt(parser);
+    }
+
+    return parse_expr_stmt(parser);
+}
+
+// 'for' spells all three loop forms, told apart by what follows the keyword:
+// '{' is the infinite loop, a single expression before '{' is the condition
+// form, and anything followed by ';' is the three-clause form. An absent
+// condition means the same in each form -- loop forever -- so the node holds
+// NULL rather than a synthesized 'true'.
+//
+// A '{' after the condition can only open the body, since the language has no
+// struct literal for it to begin instead.
+static ASTStmt *parse_for_stmt(Parser *parser) {
+    Span span = parser_span(parser);
+
+    parser_next_token(parser); // eat "for"
+
+    if (parser->current.type == TOKEN_LBRACE) {
+        ASTStmt *body = parse_block_stmt(parser);
+        if (!body) {
+            return NULL;
+        }
+
+        return ast_for_stmt_create(span, NULL, NULL, NULL, body);
+    }
+
+    ASTStmt *init = NULL;
+    ASTExpr *condition = NULL;
+    ASTStmt *post = NULL;
+
+    // The condition form and the clause form share this first clause: it is a
+    // condition until a ';' proves it was the initializer.
+    ASTStmt *first = parse_for_clause(parser, TOKEN_SEMICOLON);
+
+    if (parser->current.type != TOKEN_SEMICOLON) {
+        if (!first) {
+            parser_error_found(parser, "expected a loop condition or '{'");
+            return NULL;
+        }
+
+        if (first->kind != STMT_EXPR) {
+            parser_error(parser, "a loop condition must be an expression");
+            ast_stmt_destroy(first);
+            return NULL;
+        }
+
+        // Unwrapped from its statement: the condition form has no initializer,
+        // and what was parsed as one is really the condition.
+        condition = first->expr.value;
+        first->expr.value = NULL;
+        ast_stmt_destroy(first);
+
+        ASTStmt *body = parse_block_stmt(parser);
+        if (!body) {
+            ast_expr_free(condition);
+            return NULL;
+        }
+
+        return ast_for_stmt_create(span, NULL, condition, NULL, body);
+    }
+
+    init = first;
+
+    parser_next_token(parser); // eat ';'
+
+    if (parser->current.type != TOKEN_SEMICOLON) {
+        condition = parse_expression(parser);
+        if (!condition) {
+            ast_stmt_destroy(init);
+            return NULL;
+        }
+    }
+
+    if (!parser_expect(parser, TOKEN_SEMICOLON, "expected ';' after the loop condition")) {
+        ast_stmt_destroy(init);
+        ast_expr_free(condition);
+        return NULL;
+    }
+
+    parser_next_token(parser); // eat ';'
+
+    post = parse_for_clause(parser, TOKEN_LBRACE);
+
+    ASTStmt *body = parse_block_stmt(parser);
+    if (!body) {
+        ast_stmt_destroy(init);
+        ast_expr_free(condition);
+        ast_stmt_destroy(post);
+        return NULL;
+    }
+
+    return ast_for_stmt_create(span, init, condition, post, body);
+}
+
+static ASTStmt *parse_jump_stmt(Parser *parser) {
+    Span span = parser_span(parser);
+    bool is_break = parser->current.type == TOKEN_BREAK;
+
+    parser_next_token(parser); // eat "break" or "continue"
+
+    return ast_jump_stmt_create(span, is_break);
 }
 
 static ASTStmt *parse_block_stmt(Parser *parser) {
@@ -674,6 +802,7 @@ static ASTStmt *parse_expr_stmt(Parser *parser) {
 static bool stmt_needs_terminator(ASTStmt *stmt) {
     switch (stmt->kind) {
     case STMT_IF:
+    case STMT_FOR:
     case STMT_BLOCK:
     case STMT_FUNC_DECL:
     case STMT_STRUCT_DECL:

@@ -76,7 +76,7 @@ VM *vm_create() {
 // does, which a moving buffer cannot promise.
 static bool vm_reserve_stack(const VM *vm, size_t needed) { return needed <= vm->stack_capacity; }
 
-static bool vm_push_frame(VM *vm, const FuncPrototype *proto, size_t base, size_t return_ip,
+static bool vm_push_frame(VM *vm, const FuncPrototype *proto, size_t base, ptrdiff_t return_ip,
                           unsigned int dest) {
     if (vm->frame_count == VM_MAX_CALL_DEPTH) {
         return false;
@@ -453,12 +453,16 @@ static void vm_fail(VM *vm, VmRunStatus status, const char *message) {
 // share it: vm_run pushes frame zero, and a host call pushes one frame for the
 // function it is invoking, so there is exactly one interpreter either way.
 static void vm_run_loop(VM *vm) {
-    while (vm->frame_count > 0 &&
-           vm->instruction_pointer < vm->frames[vm->frame_count - 1].proto->chunk->instructions.size) {
+    // Bounded on both ends: the pointer is signed, so a jump that went backwards
+    // too far is negative here rather than a huge index that would read as a
+    // normal end of function.
+    while (vm->frame_count > 0 && vm->instruction_pointer >= 0 &&
+           vm->instruction_pointer <
+               (ptrdiff_t)vm->frames[vm->frame_count - 1].proto->chunk->instructions.size) {
         CallFrame *frame = &vm->frames[vm->frame_count - 1];
         Chunk *chunk = frame->proto->chunk;
 
-        Instruction instruction = instruction_list_get(&chunk->instructions, vm->instruction_pointer);
+        Instruction instruction = instruction_list_get(&chunk->instructions, (size_t)vm->instruction_pointer);
 
         OpCode op = VM_DECODE_OPCODE(instruction);
         switch (op) {
@@ -781,7 +785,7 @@ static void vm_run_loop(VM *vm) {
             break;
         }
         case OP_JMP: {
-            vm->instruction_pointer += VM_DECODE_I_IMM(instruction);
+            vm->instruction_pointer += VM_DECODE_I_SIMM(instruction);
             break;
         }
         case OP_JMP_IF_FALSE: {
@@ -789,8 +793,7 @@ static void vm_run_loop(VM *vm) {
 
             bool cond = vm_reg(vm, reg)->as_int;
             if (!cond) {
-                size_t offset = VM_DECODE_I_IMM(instruction);
-                vm->instruction_pointer += offset;
+                vm->instruction_pointer += VM_DECODE_I_SIMM(instruction);
             }
 
             break;
@@ -800,8 +803,7 @@ static void vm_run_loop(VM *vm) {
 
             bool cond = vm_reg(vm, reg)->as_int;
             if (cond) {
-                size_t offset = VM_DECODE_I_IMM(instruction);
-                vm->instruction_pointer += offset;
+                vm->instruction_pointer += VM_DECODE_I_SIMM(instruction);
             }
 
             break;

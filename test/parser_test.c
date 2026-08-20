@@ -522,6 +522,72 @@ static void test_function_cannot_be_declared_inside_a_method() {
                        "a function cannot be declared inside another; declare it at module level");
 }
 
+// 'for' with no clauses is the infinite form, and holds only a body.
+static void test_for_infinite() {
+    ASTScript *script = assert_parse(func_wrap("for { 10; }"));
+
+    ASTStmt *stmt = func_unwrap(script).data[0];
+    assert(stmt->kind == STMT_FOR);
+
+    assert(!stmt->forstmt.init);
+    assert(!stmt->forstmt.condition);
+    assert(!stmt->forstmt.post);
+    assert(stmt->forstmt.body->kind == STMT_BLOCK);
+
+    ast_script_destroy(script);
+}
+
+// A single expression before the body is the condition, not an initializer.
+static void test_for_condition() {
+    ASTScript *script = assert_parse(func_wrap("for 2 < 1 { 10; }"));
+
+    ASTStmt *stmt = func_unwrap(script).data[0];
+    assert(stmt->kind == STMT_FOR);
+
+    assert(!stmt->forstmt.init);
+    assert(stmt->forstmt.condition->kind == EXPR_BIN_OP);
+    assert(!stmt->forstmt.post);
+
+    ast_script_destroy(script);
+}
+
+// The three-clause form fills all three, and each is optional.
+static void test_for_clauses() {
+    ASTScript *script = assert_parse(func_wrap("for let i: int = 0; i < 3; i = i + 1 { 10; }"));
+
+    ASTStmt *stmt = func_unwrap(script).data[0];
+    assert(stmt->kind == STMT_FOR);
+
+    assert(stmt->forstmt.init->kind == STMT_VAR_DECL);
+    assert(stmt->forstmt.condition->kind == EXPR_BIN_OP);
+    assert(stmt->forstmt.post->kind == STMT_ASSIGN);
+
+    ast_script_destroy(script);
+
+    script = assert_parse(func_wrap("for ; ; { 10; }"));
+    stmt = func_unwrap(script).data[0];
+
+    assert(!stmt->forstmt.init);
+    assert(!stmt->forstmt.condition);
+    assert(!stmt->forstmt.post);
+
+    ast_script_destroy(script);
+}
+
+static void test_break_and_continue() {
+    ASTScript *script = assert_parse(func_wrap("for { break; continue; }"));
+
+    ASTStmtList body = func_unwrap(script).data[0]->forstmt.body->block.list;
+
+    assert(body.data[0]->kind == STMT_JUMP);
+    assert(body.data[0]->jump.is_break);
+
+    assert(body.data[1]->kind == STMT_JUMP);
+    assert(!body.data[1]->jump.is_break);
+
+    ast_script_destroy(script);
+}
+
 int main() {
 
     test_function_cannot_be_declared_inside_another();
@@ -564,6 +630,10 @@ int main() {
     test_assignment();
     test_block();
     test_if();
+    test_for_infinite();
+    test_for_condition();
+    test_for_clauses();
+    test_break_and_continue();
     test_return();
 
     return 0;

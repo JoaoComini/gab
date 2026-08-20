@@ -36,6 +36,8 @@ typedef enum {
     STMT_ASSIGN,
     STMT_BLOCK,
     STMT_IF,
+    STMT_FOR,
+    STMT_JUMP,
     STMT_RETURN,
 } StmtKind;
 
@@ -97,6 +99,23 @@ typedef struct {
     struct ASTStmt *else_block;
 } ASTIfStmt;
 
+// Every loop form is this one node. 'for { }' leaves all three clauses NULL,
+// 'for cond { }' fills only the condition, and the three-clause form fills what
+// it was given -- so an omitted condition means the same thing in each: loop
+// forever.
+typedef struct {
+    struct ASTStmt *init;
+    ASTExpr *condition;
+    struct ASTStmt *post;
+    struct ASTStmt *body;
+} ASTForStmt;
+
+// 'break' and 'continue'. They differ only in which end of the loop they jump
+// to, so they share a node rather than duplicating one.
+typedef struct {
+    bool is_break;
+} ASTJumpStmt;
+
 typedef struct {
     ASTStmtList list;
 } ASTBlockStmt;
@@ -115,6 +134,8 @@ typedef struct ASTStmt {
         ASTStructDecl struct_decl;
         ASTAssignStmt assign;
         ASTIfStmt ifstmt;
+        ASTForStmt forstmt;
+        ASTJumpStmt jump;
         ASTBlockStmt block;
         ASTReturnStmt ret;
     };
@@ -129,6 +150,8 @@ ASTStmt *ast_func_decl_stmt_create(Span span, StringRef name, ASTField *receiver
 ASTStmt *ast_struct_decl_stmt_create(Span span, StringRef name, ASTFieldList fields);
 ASTStmt *ast_assign_stmt_create(Span span, ASTExpr *target, ASTExpr *value);
 ASTStmt *ast_if_stmt_create(Span span, ASTExpr *condition, ASTStmt *then_block, ASTStmt *else_block);
+ASTStmt *ast_for_stmt_create(Span span, ASTStmt *init, ASTExpr *condition, ASTStmt *post, ASTStmt *body);
+ASTStmt *ast_jump_stmt_create(Span span, bool is_break);
 ASTStmt *ast_block_stmt_create(Span span, ASTStmtList list);
 ASTStmt *ast_return_stmt_create(Span span, ASTExpr *result);
 

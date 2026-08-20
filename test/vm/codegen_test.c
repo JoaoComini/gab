@@ -367,6 +367,25 @@ static void test_a_struct_write_through_a_pointer_is_one_instruction() {
     test_program_free(&program);
 }
 
+// A 'break' leaves the loop body without running the block's ordinary close, so
+// it has to free what that block owns on the way out. The leak is invisible to
+// a returned value, which is why the claim is made against the instructions.
+static void test_break_releases_what_the_body_owns() {
+    TestProgram program = test_compile("struct Node { n: int }\n"
+                                       "func f(): int {\n"
+                                       "    for { let p: *Node = new Node; break; }\n"
+                                       "    return 0;\n"
+                                       "}\n");
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    // One for the break's own exit, one for the close of the body block on the
+    // path that falls through to it.
+    assert(test_count_opcode(chunk, OP_NEW) == 1);
+    assert(test_count_opcode(chunk, OP_RELEASE) == 2);
+
+    test_program_free(&program);
+}
+
 int main() {
     test_negated_literal_folds_to_one_load();
     test_negating_a_variable_emits_a_subtraction();
@@ -379,6 +398,7 @@ int main() {
     test_if_else_jumps_over_the_else_block();
     test_a_function_compiles_into_its_own_chunk();
     test_a_method_counts_its_receiver();
+    test_break_releases_what_the_body_owns();
 
     test_a_struct_copy_is_one_instruction();
     test_a_scalar_copy_stays_a_single_move();

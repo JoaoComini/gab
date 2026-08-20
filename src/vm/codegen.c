@@ -42,6 +42,26 @@ typedef struct {
 GAB_LIST(OwnedList, owned_list, OwnedSlot)
 
 typedef struct {
+    size_t position;
+    unsigned int cond_reg;
+} CodegenLabel;
+
+#define codegen_label_list_item_free(item) ((void)(item))
+GAB_LIST(CodegenLabelList, codegen_label_list, CodegenLabel)
+
+// The loop a 'break' or a 'continue' belongs to. Both jump forward to a place
+// not yet emitted, so each records a label the loop patches once it knows where
+// its two ends landed.
+typedef struct LoopContext {
+    CodegenLabelList breaks;
+    CodegenLabelList continues;
+
+    // Block depth just inside the loop, so a jump knows which owned slots it is
+    // leaving behind and has to release.
+    unsigned int depth;
+} LoopContext;
+
+typedef struct {
     Chunk *chunk;
     unsigned int next_reg;
 
@@ -70,6 +90,10 @@ typedef struct {
     // How deep the block nesting is, so a close knows which owned slots were
     // declared by the block it is closing.
     unsigned int depth;
+
+    // The innermost enclosing loop, or NULL outside one. A function body starts
+    // from NULL: the resolver has already refused a jump that would leave one.
+    LoopContext *loop;
 
     Diagnostics *diagnostics;
     bool failed;
@@ -117,6 +141,8 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast);
 static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast);
 static void codegen_block_stmt(CodegenState *state, ASTBlockStmt *ast);
 static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast);
+static void codegen_for_stmt(CodegenState *state, ASTForStmt *ast);
+static void codegen_jump_stmt(CodegenState *state, ASTStmt *ast);
 static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast);
 
 static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast);
@@ -201,11 +227,6 @@ static OpCode field_opcode_for(size_t size, bool load, bool indirect, bool *ok) 
     *ok = false;
     return load ? OP_LOAD_FIELD_4 : OP_STORE_FIELD_4;
 }
-
-typedef struct {
-    size_t position;
-    unsigned int cond_reg;
-} CodegenLabel;
 
 CodegenLabel codegen_create_label(CodegenState *state);
 void codegen_patch_jump(CodegenState *state, CodegenLabel label, OpCode op, unsigned int reg);
@@ -293,6 +314,14 @@ static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
     }
     case STMT_BLOCK: {
         codegen_block_stmt(state, &ast->block);
+        break;
+    }
+    case STMT_FOR: {
+        codegen_for_stmt(state, &ast->forstmt);
+        break;
+    }
+    case STMT_JUMP: {
+        codegen_jump_stmt(state, ast);
         break;
     }
     case STMT_IF: {
@@ -511,6 +540,120 @@ static void codegen_block_stmt(CodegenState *state, ASTBlockStmt *ast) {
 
     state->depth = enclosing_depth;
     codegen_release_registers(state, saved);
+}
+
+// Emits a release for every owned slot deeper than keep_depth without dropping
+// the entries, for a jump that leaves those blocks early. The blocks it jumped
+// out of still close normally on the path that falls through, and that close is
+// what pops them.
+static void codegen_emit_releases_below(CodegenState *state, unsigned int keep_depth) {
+    for (size_t i = state->owned.size; i > 0; i--) {
+        OwnedSlot owned = state->owned.data[i - 1];
+
+        if (owned.depth <= keep_depth) {
+            break;
+        }
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE, owned.slot, 0, 0));
+    }
+}
+
+// Jumps back to an instruction index already emitted. The offset is negative,
+// which an ordinary OP_JMP carries: it is measured from the instruction after
+// this one, the point the interpreter has reached by the time it jumps.
+static void codegen_emit_loop(CodegenState *state, size_t target) {
+    size_t position = chunk_add_instruction(state->chunk, 0);
+    ptrdiff_t offset = (ptrdiff_t)target - (ptrdiff_t)(position + 1);
+
+    chunk_patch_instruction(state->chunk, position, VM_ENCODE_I(OP_JMP, 0, offset));
+}
+
+static void codegen_for_stmt(CodegenState *state, ASTForStmt *ast) {
+    // The initializer's own scope, holding it for the whole loop: it is
+    // declared once, outlives every iteration, and dies when the loop does.
+    unsigned int saved = state->next_reg;
+    unsigned int enclosing_depth = state->depth++;
+
+    if (ast->init) {
+        codegen_stmt(state, ast->init);
+    }
+
+    LoopContext *enclosing_loop = state->loop;
+    LoopContext loop = {
+        .breaks = codegen_label_list_create(),
+        .continues = codegen_label_list_create(),
+
+        // Slots declared inside the loop are released by a jump that leaves
+        // them; the initializer's are not, since it outlives the body.
+        .depth = state->depth,
+    };
+    state->loop = &loop;
+
+    size_t condition_target = state->chunk->instructions.size;
+
+    CodegenLabel exit_label = {0};
+    unsigned int exit_reg = 0;
+    unsigned int condition_saved = state->next_reg;
+
+    if (ast->condition) {
+        exit_reg = codegen_expr(state, ast->condition);
+        exit_label = codegen_create_label(state);
+
+        // Reclaimed before the body so each iteration reuses the slot rather
+        // than the frame growing per loop.
+        codegen_release_registers(state, condition_saved);
+    }
+
+    codegen_stmt(state, ast->body);
+
+    // 'continue' lands on the post clause, so the three-clause form advances
+    // before it tests again.
+    for (size_t i = 0; i < loop.continues.size; i++) {
+        codegen_patch_jump(state, loop.continues.data[i], OP_JMP, 0);
+    }
+
+    if (ast->post) {
+        codegen_stmt(state, ast->post);
+    }
+
+    codegen_emit_loop(state, condition_target);
+
+    // Patched only now: a forward jump's offset is measured to the end of the
+    // chunk as it stands, which is this point for both the failed condition and
+    // every 'break'.
+    if (ast->condition) {
+        codegen_patch_jump(state, exit_label, OP_JMP_IF_FALSE, exit_reg);
+    }
+
+    for (size_t i = 0; i < loop.breaks.size; i++) {
+        codegen_patch_jump(state, loop.breaks.data[i], OP_JMP, 0);
+    }
+
+    state->loop = enclosing_loop;
+    codegen_label_list_free(&loop.breaks);
+    codegen_label_list_free(&loop.continues);
+
+    codegen_release_owned(state, enclosing_depth, VM_INVALID_REGISTER);
+
+    state->depth = enclosing_depth;
+    codegen_release_registers(state, saved);
+}
+
+static void codegen_jump_stmt(CodegenState *state, ASTStmt *ast) {
+    assert(state->loop && "'break' outside a loop reached codegen");
+
+    // What the jump skips past still has to be freed, and the ordinary close of
+    // those blocks is on the path this jump avoids.
+    codegen_emit_releases_below(state, state->loop->depth);
+
+    CodegenLabel label = codegen_create_label(state);
+
+    if (ast->jump.is_break) {
+        codegen_label_list_add(&state->loop->breaks, label);
+        return;
+    }
+
+    codegen_label_list_add(&state->loop->continues, label);
 }
 
 static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast) {

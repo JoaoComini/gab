@@ -139,11 +139,14 @@ static void test_identifiers() {
 }
 
 static void test_keywords() {
-    Lexer lexer = test_lexer("let return if else func true false struct module");
+    Lexer lexer = test_lexer("let return if else for break continue func true false struct module");
     assert_token(&lexer, TOKEN_LET);
     assert_token(&lexer, TOKEN_RETURN);
     assert_token(&lexer, TOKEN_IF);
     assert_token(&lexer, TOKEN_ELSE);
+    assert_token(&lexer, TOKEN_FOR);
+    assert_token(&lexer, TOKEN_BREAK);
+    assert_token(&lexer, TOKEN_CONTINUE);
     assert_token(&lexer, TOKEN_FUNC);
     assert_token(&lexer, TOKEN_TRUE);
     assert_token(&lexer, TOKEN_FALSE);
