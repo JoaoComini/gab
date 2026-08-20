@@ -258,6 +258,136 @@ static void test_a_method_counts_its_receiver() {
     test_program_free(&program);
 }
 
+// A multi-slot value copies in one instruction. The interpreter's real cost is
+// the dispatch, not the four bytes a slot move writes, so a struct of N slots
+// must not become N moves.
+static void test_a_struct_copy_is_one_instruction() {
+    TestProgram program = test_compile("struct Vec { x: int, y: int, z: int }\n"
+                                       "func f() {\n"
+                                       "    let a: Vec;\n"
+                                       "    let b: Vec = a;\n"
+                                       "}\n");
+
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    // One batched copy, and no per-slot moves standing in for it.
+    assert(test_count_opcode(chunk, OP_MOVE_N) == 1);
+    assert(test_count_opcode(chunk, OP_MOVE) == 0);
+
+    // The count operand carries the whole run: three ints, one slot each.
+    long copy = test_find_opcode(chunk, OP_MOVE_N);
+    assert(VM_DECODE_R_R2(test_instruction(chunk, (size_t)copy)) == 3);
+
+    test_program_free(&program);
+}
+
+// The property the batching must not cost: a one-slot copy stays OP_MOVE.
+// OP_MOVE_N decodes a third operand and calls memmove, which is more work than
+// the single assignment a scalar needs -- widening every move would slow the
+// common case to speed the rare one.
+static void test_a_scalar_copy_stays_a_single_move() {
+    TestProgram program = test_compile("func f(): int {\n"
+                                       "    let x: int = 1;\n"
+                                       "    let y: int = x;\n"
+                                       "    return y;\n"
+                                       "}\n");
+
+    // Nothing in a function of only int locals is wide enough to batch.
+    assert(test_count_opcode(test_func_chunk(&program, 0), OP_MOVE_N) == 0);
+
+    test_program_free(&program);
+}
+
+// A pointer is two slots on a 64-bit host, so copying one batches for the same
+// reason a struct does. Written in terms of VM_POINTER_SLOTS rather than 2, so
+// the claim still reads correctly on a host where a pointer is one slot.
+static void test_a_pointer_copy_batches_when_it_is_wide() {
+    TestProgram program = test_compile("func f(): int {\n"
+                                       "    let x: int = 1;\n"
+                                       "    let p: *int = &x;\n"
+                                       "    return *p;\n"
+                                       "}\n");
+
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    // '&x' lands in a temporary and is then copied into p's slot.
+    long addr = test_find_opcode(chunk, OP_ADDR_OF);
+    assert(addr >= 0);
+
+    Instruction copy = test_instruction(chunk, (size_t)addr + 1);
+
+    if (VM_POINTER_SLOTS > 1) {
+        assert(VM_DECODE_OPCODE(copy) == OP_MOVE_N);
+        assert(VM_DECODE_R_R2(copy) == VM_POINTER_SLOTS);
+    } else {
+        assert(VM_DECODE_OPCODE(copy) == OP_MOVE);
+    }
+
+    // An 8-byte pointer needs an even slot index to sit at its natural
+    // alignment. The odd leading scalar is what would push it off.
+    assert(VM_DECODE_R_RD(copy) % VM_POINTER_SLOTS == 0);
+
+    test_program_free(&program);
+}
+
+// Copying a slot onto itself emits nothing at all: the guard is what keeps
+// 'x = x' from spending an instruction to achieve nothing.
+static void test_a_self_copy_emits_nothing() {
+    TestProgram self = test_compile("struct Vec { x: int, y: int }\n"
+                                    "func f() {\n"
+                                    "    let a: Vec;\n"
+                                    "    a = a;\n"
+                                    "}\n");
+
+    Chunk *chunk = test_func_chunk(&self, 0);
+
+    assert(test_count_opcode(chunk, OP_MOVE_N) == 0);
+    assert(test_count_opcode(chunk, OP_MOVE) == 0);
+
+    test_program_free(&self);
+}
+
+// Reading a whole struct through a pointer is the indirect counterpart, and
+// batches on the same argument: one OP_LOAD_PTR_N carrying the slot count
+// rather than a load per slot.
+static void test_a_struct_read_through_a_pointer_is_one_instruction() {
+    TestProgram program = test_compile("struct Vec { x: int, y: int, z: int }\n"
+                                       "func f() {\n"
+                                       "    let a: Vec;\n"
+                                       "    let p: *Vec = &a;\n"
+                                       "    let b: Vec = *p;\n"
+                                       "}\n");
+
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    assert(test_count_opcode(chunk, OP_LOAD_PTR_N) == 1);
+
+    long load = test_find_opcode(chunk, OP_LOAD_PTR_N);
+    assert(VM_DECODE_R_R2(test_instruction(chunk, (size_t)load)) == 3);
+
+    test_program_free(&program);
+}
+
+// And writing one back, which is the store side of the same encoding.
+static void test_a_struct_write_through_a_pointer_is_one_instruction() {
+    TestProgram program = test_compile("struct Vec { x: int, y: int, z: int }\n"
+                                       "func f() {\n"
+                                       "    let a: Vec;\n"
+                                       "    let b: Vec;\n"
+                                       "    let p: *Vec = &a;\n"
+                                       "    *p = b;\n"
+                                       "}\n");
+
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    assert(test_count_opcode(chunk, OP_STORE_PTR_N) == 1);
+
+    long store = test_find_opcode(chunk, OP_STORE_PTR_N);
+    assert(VM_DECODE_R_R2(test_instruction(chunk, (size_t)store)) == 3);
+
+    test_program_free(&program);
+}
+
 int main() {
     test_negated_literal_folds_to_one_load();
     test_negating_a_variable_emits_a_subtraction();
@@ -270,6 +400,13 @@ int main() {
     test_if_else_jumps_over_the_else_block();
     test_a_function_compiles_into_its_own_chunk();
     test_a_method_counts_its_receiver();
+
+    test_a_struct_copy_is_one_instruction();
+    test_a_scalar_copy_stays_a_single_move();
+    test_a_pointer_copy_batches_when_it_is_wide();
+    test_a_self_copy_emits_nothing();
+    test_a_struct_read_through_a_pointer_is_one_instruction();
+    test_a_struct_write_through_a_pointer_is_one_instruction();
 
     printf("codegen_test: all tests passed\n");
     return 0;

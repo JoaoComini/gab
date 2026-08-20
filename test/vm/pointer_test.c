@@ -7,9 +7,6 @@
 #include "support/test_context.h"
 #include "type.h"
 #include "type_registry.h"
-#include "vm/chunk.h"
-#include "vm/codegen.h"
-#include "vm/opcode.h"
 #include "vm/vm.h"
 
 #include <assert.h>
@@ -227,102 +224,6 @@ static void test_address_of_a_field_through_a_pointer() {
                         "let r: int = f();") == 902);
 }
 
-// An 8-byte pointer needs an even slot index to sit at its natural alignment.
-static void test_a_pointer_local_is_slot_aligned() {
-    TestContext ctx;
-    test_context_init(&ctx);
-
-    Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
-
-    // The odd number of leading scalars is the point: without alignment the
-    // pointer would land on an odd slot.
-    bool ok = test_resolve(&ctx, scope, script,
-                           "func f(): int {\n"
-                           "let a: bool = true;\n"
-                           "let x: int = 1;\n"
-                           "let p: *int = &x;\n"
-                           "return *p;\n"
-                           "}\n");
-    assert(ok);
-
-    FuncProtoList global_funcs = func_proto_list_create();
-    TypeList heap_types = type_list_create();
-    Chunk *chunk = codegen_generate(
-        script, (CodegenOutput){.funcs = &global_funcs, .heap_types = &heap_types}, &ctx.diagnostics, NULL);
-    assert(chunk);
-
-    // Read off the emitted code rather than the symbol: a frame slot belongs to
-    // the compile that assigned it, so codegen keeps it in its own table and
-    // what it produced is the only place the choice is still visible.
-    //
-    // 'let p: *int = &x' emits the OP_ADDR_OF into a temporary and then copies
-    // it into p's slot, so the copy's destination is the slot under test. A
-    // pointer is two slots, so that copy is a single OP_MOVE_N rather than one
-    // OP_MOVE per slot.
-    const Chunk *body = global_funcs.data[0].chunk;
-    bool checked = false;
-
-    for (size_t i = 0; i + 1 < body->instructions.size; i++) {
-        if (VM_DECODE_OPCODE(body->instructions.data[i]) != OP_ADDR_OF) {
-            continue;
-        }
-
-        Instruction copy = body->instructions.data[i + 1];
-
-        assert(VM_DECODE_OPCODE(copy) == OP_MOVE_N);
-        assert(VM_DECODE_R_R2(copy) == VM_POINTER_SLOTS);
-        assert(VM_DECODE_R_RD(copy) % VM_POINTER_SLOTS == 0);
-        checked = true;
-    }
-
-    assert(checked);
-
-    chunk_free(chunk);
-    func_proto_list_free(&global_funcs);
-    type_list_free(&heap_types);
-    ast_script_destroy(script);
-    test_context_free(&ctx);
-}
-
-// A scalar copy stays a plain OP_MOVE. This is the property the batching must
-// not cost: OP_MOVE_N decodes a third operand and calls memmove, which is more
-// work than the single assignment a one-slot copy needs, so widening every move
-// would make the common case slower to speed the rare one.
-static void test_a_scalar_copy_stays_a_single_move() {
-    TestContext ctx;
-    test_context_init(&ctx);
-
-    Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
-
-    bool ok = test_resolve(&ctx, scope, script,
-                           "func f(): int {\n"
-                           "let x: int = 1;\n"
-                           "let y: int = x;\n"
-                           "return y;\n"
-                           "}\n");
-    assert(ok);
-
-    FuncProtoList global_funcs = func_proto_list_create();
-    TypeList heap_types = type_list_create();
-    Chunk *chunk = codegen_generate(
-        script, (CodegenOutput){.funcs = &global_funcs, .heap_types = &heap_types}, &ctx.diagnostics, NULL);
-    assert(chunk);
-
-    // Nothing in a function of only int locals is wide enough to batch.
-    const Chunk *body = global_funcs.data[0].chunk;
-
-    for (size_t i = 0; i < body->instructions.size; i++) {
-        assert(VM_DECODE_OPCODE(body->instructions.data[i]) != OP_MOVE_N);
-    }
-
-    chunk_free(chunk);
-    func_proto_list_free(&global_funcs);
-    type_list_free(&heap_types);
-    ast_script_destroy(script);
-    test_context_free(&ctx);
-}
 
 int main() {
     test_pointer_types_are_interned();
@@ -338,8 +239,6 @@ int main() {
     test_field_access_auto_derefs();
     test_auto_deref_reaches_a_nested_field();
     test_address_of_a_field_through_a_pointer();
-    test_a_pointer_local_is_slot_aligned();
-    test_a_scalar_copy_stays_a_single_move();
 
     printf("pointer_test: all tests passed\n");
     return 0;
