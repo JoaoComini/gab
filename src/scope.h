@@ -70,13 +70,13 @@ Type *scope_type_lookup(Scope *scope, String *name);
 // an outer name is allowed and redeclaring one of this scope's own is not.
 Type *scope_type_lookup_local(Scope *scope, String *name);
 
-// As the _local pair, but also through a staging scope to the module scope it
-// stands in for, so the two are searched together. Stops before the root, whose
-// builtins a unit may still shadow.
+// What a declaration of this name would clash with. Both search this scope and,
+// through a staging scope, the module scope it stands in for -- so a name an
+// earlier unit declared is an error where this unit writes it, rather than one
+// reported without a span after the whole unit has compiled.
 //
-// This is what makes a collision with an earlier unit's declaration an error
-// where it is written, rather than one reported without a span after the whole
-// unit has compiled.
+// They differ at the root. A type also clashes with a builtin, which no syntax
+// can name past a shadow; a symbol does not, so a local may be called 'int'.
 Type *scope_type_lookup_declaring(Scope *scope, String *name);
 Symbol *scope_symbol_lookup_declaring(Scope *scope, String *name);
 

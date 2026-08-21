@@ -360,8 +360,9 @@ static void test_reports_duplicate_struct_name() {
     test_context_free(&ctx);
 }
 
-// Declaring a struct named after a builtin would shadow it for every later
-// resolution, so it is rejected by the same duplicate check.
+// A builtin is reachable from every module, and nothing can name it past a
+// shadow, so declaring a struct over one is refused rather than allowed to hide
+// it for the rest of the unit.
 static void test_rejects_shadowing_a_builtin() {
     TestContext ctx;
     test_context_init(&ctx);

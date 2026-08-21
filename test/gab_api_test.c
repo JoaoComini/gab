@@ -1206,6 +1206,29 @@ static void test_a_new_object_is_zeroed() {
     gab_vm_free(vm);
 }
 
+// A builtin type is declared in the root, above every module, and there is no
+// syntax that reaches past a shadow. A unit naming a struct after one would put
+// it out of reach for the rest of the module -- including in a signature the
+// host resolves through gab_find_type -- so it is refused where it is written.
+static void test_a_builtin_type_may_not_be_redeclared(void) {
+    GabVM *vm = gab_vm_new();
+    GabError err;
+
+    assert(!gab_load(vm, "a.gab", "module A;\nstruct int { x: float }\n", &err));
+    assert(strstr(err.message, "int"));
+    assert(err.line == 2);
+
+    assert(!gab_load(vm, "b.gab", "module B;\nstruct bool { x: float }\n", &err));
+    assert(strstr(err.message, "bool"));
+
+    // A name of a module's own is not a builtin, so two modules may each
+    // declare it: what one module holds is not reachable from another.
+    assert(gab_load(vm, "c.gab", "module C;\nstruct Config { a: int }\n", &err));
+    assert(gab_load(vm, "d.gab", "module D;\nstruct Config { b: int }\n", &err));
+
+    gab_vm_free(vm);
+}
+
 int main(void) {
     test_a_host_pointer_reaches_a_script();
     test_a_pointer_argument_checks_its_pointee();
@@ -1227,6 +1250,7 @@ int main(void) {
     test_a_failed_load_leaves_what_is_loaded();
     test_a_method_is_not_reachable_from_a_host();
     test_a_name_may_only_be_declared_once();
+    test_a_builtin_type_may_not_be_redeclared();
     test_compile_error_is_reported_not_printed();
     test_runtime_error_is_reported();
     test_runtime_error_in_a_top_level_fails_the_load();

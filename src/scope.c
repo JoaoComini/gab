@@ -123,21 +123,12 @@ Type *scope_type_lookup_local(Scope *scope, String *name) {
     return entry ? entry->type : NULL;
 }
 
-// A declaration clashes with this scope, and with the module scope a staging
-// scope stands in for. Stops before the root, whose builtins may be shadowed.
-Type *scope_type_lookup_declaring(Scope *scope, String *name) {
-    for (Scope *s = scope;; s = s->parent) {
-        TypeBinding *entry = type_map_lookup(s->types, name);
-
-        if (entry) {
-            return entry->type;
-        }
-
-        if (!s->declares_module || !s->parent || !s->parent->declares_module) {
-            return NULL;
-        }
-    }
-}
+// A type declaration clashes with this scope, with the module scope a staging
+// scope stands in for, and with the root -- so a unit may not name a struct
+// 'int'. A builtin is reachable from every module and there is no qualified
+// syntax to reach past a shadow, so shadowing one would put it out of reach for
+// the rest of the module, including in a signature a host resolves through.
+Type *scope_type_lookup_declaring(Scope *scope, String *name) { return scope_type_lookup(scope, name); }
 
 Symbol *scope_symbol_lookup_declaring(Scope *scope, String *name) {
     for (Scope *s = scope;; s = s->parent) {
