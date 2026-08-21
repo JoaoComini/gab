@@ -18,7 +18,7 @@ static ASTScript *assert_parse(const char *code) {
     Diagnostics *diagnostics = &ctx.diagnostics;
 
     ASTScript *script = ast_script_create();
-    Lexer lexer = lexer_create(test_in_a_module(code), diagnostics);
+    Lexer lexer = lexer_create(test_in_a_module(code), ctx.arena, &ctx.strings, diagnostics);
     Parser parser = parser_create(&lexer, diagnostics);
     bool ok = parser_parse(&parser, script);
     assert(ok);
@@ -35,7 +35,7 @@ static void assert_parse_error(const char *code, const char *expected_error) {
     Diagnostics *diagnostics = &ctx.diagnostics;
 
     ASTScript *script = ast_script_create();
-    Lexer lexer = lexer_create(test_in_a_module(code), diagnostics);
+    Lexer lexer = lexer_create(test_in_a_module(code), ctx.arena, &ctx.strings, diagnostics);
     Parser parser = parser_create(&lexer, diagnostics);
     bool ok = parser_parse(&parser, script);
     assert(!ok);
@@ -464,7 +464,7 @@ static void test_a_unit_must_name_its_module() {
     test_context_init(&ctx);
 
     ASTScript *script = ast_script_create();
-    Lexer lexer = lexer_create("func f(): int { return 1; }\n", &ctx.diagnostics);
+    Lexer lexer = lexer_create("func f(): int { return 1; }\n", ctx.arena, &ctx.strings, &ctx.diagnostics);
     Parser parser = parser_create(&lexer, &ctx.diagnostics);
 
     assert(!parser_parse(&parser, script));

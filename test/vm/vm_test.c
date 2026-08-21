@@ -290,7 +290,7 @@ static void test_checking_a_unit_installs_nothing() {
     Lexer lexer = lexer_create("module dry;\n"
                                "struct Only { a: int }\n"
                                "func second(): int { let p: *Only = new Only; return p.a; }\n",
-                               &diagnostics);
+                               vm->env.compile_arena, &vm->env.strings, &diagnostics);
     Parser parser = parser_create(&lexer, &diagnostics);
     ASTScript *script = ast_script_create();
 

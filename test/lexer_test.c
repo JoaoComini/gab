@@ -3,10 +3,12 @@
 #include <diagnostics.h>
 #include <lexer.h>
 #include <string.h>
+#include <string/string_pool.h>
 
 #define TEST_ARENA_BLOCK_SIZE 2048
 
 static Arena *arena = NULL;
+static StringPool strings;
 static Diagnostics diagnostics;
 
 // Every case lexes into a fresh sink, so a test can assert on exactly what its
@@ -15,7 +17,7 @@ static Lexer test_lexer(const char *source) {
     diagnostics_free(&diagnostics);
     diagnostics_init(&diagnostics, arena, "<test>");
 
-    return lexer_create(source, &diagnostics);
+    return lexer_create(source, arena, &strings, &diagnostics);
 }
 
 static void assert_token(Lexer *lexer, TokenType expected_type) {
@@ -289,6 +291,42 @@ static void test_a_newline_does_not_continue_a_string() {
     assert(strcmp(diagnostics_get(&diagnostics, 0)->message, "unterminated string literal") == 0);
 }
 
+// The token carries the characters the literal denotes, not the source between
+// the quotes: an escape is two characters in the source and one in the string.
+static void test_a_string_literal_carries_decoded_characters() {
+    Lexer lexer = test_lexer("\"a\\nb\\\"c\"");
+    Token token = lexer_next(&lexer);
+
+    assert(token.type == TOKEN_STRING);
+    assert(token.lexeme.length == 5);
+    assert(memcmp(token.lexeme.data, "a\nb\"c", 5) == 0);
+}
+
+// A '\0' escape is a character like any other, so it neither ends the string
+// nor shortens it.
+static void test_a_null_escape_is_a_character() {
+    Lexer lexer = test_lexer("\"a\\0b\"");
+    Token token = lexer_next(&lexer);
+
+    assert(token.type == TOKEN_STRING);
+    assert(token.lexeme.length == 3);
+    assert(memcmp(token.lexeme.data, "a\0b", 3) == 0);
+}
+
+// An escape the language does not define is refused rather than standing for
+// the character it names, so a Windows path is a mistake rather than a string
+// nobody meant.
+static void test_an_unknown_escape_is_an_error() {
+    Lexer lexer = test_lexer("\"C:\\path\"");
+    assert_token(&lexer, TOKEN_INVALID);
+
+    assert(diagnostics_count(&diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(&diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_SYNTAX);
+    assert(strcmp(diagnostic->message, "unknown escape sequence '\\p'") == 0);
+}
+
 // A lone '/' is still division.
 static void test_slash_is_division() {
     Lexer lexer = test_lexer("a / b");
@@ -300,6 +338,7 @@ static void test_slash_is_division() {
 
 int main(void) {
     arena = arena_create(TEST_ARENA_BLOCK_SIZE);
+    string_pool_init(&strings, arena);
     diagnostics_init(&diagnostics, arena, "<test>");
 
     test_numbers();
@@ -323,9 +362,13 @@ int main(void) {
     test_an_empty_string_literal_lexes();
     test_an_unterminated_string_is_an_error();
     test_a_newline_does_not_continue_a_string();
+    test_a_string_literal_carries_decoded_characters();
+    test_a_null_escape_is_a_character();
+    test_an_unknown_escape_is_an_error();
     test_slash_is_division();
 
     diagnostics_free(&diagnostics);
+    string_pool_free(&strings);
     arena_destroy(arena);
     return 0;
 }

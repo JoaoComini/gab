@@ -75,7 +75,7 @@ bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *d
     // until the next compile begins.
     arena_reset(vm->env.compile_arena);
 
-    Lexer lexer = lexer_create(source, diagnostics);
+    Lexer lexer = lexer_create(source, vm->env.compile_arena, &vm->env.strings, diagnostics);
     Parser parser = parser_create(&lexer, diagnostics);
     ASTScript *script = ast_script_create();
 

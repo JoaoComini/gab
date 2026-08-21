@@ -168,17 +168,63 @@ static Token lexer_number(Lexer *lexer) {
 
     return token_create_ref(lexer, type, ref);
 }
+// Grows the scratch buffer to hold at least 'needed' bytes. The buffer is
+// reused across literals, so it settles at the longest one in the file.
+static bool lexer_reserve(Lexer *lexer, size_t needed) {
+    if (needed <= lexer->scratch_capacity) {
+        return true;
+    }
 
-// The lexeme is the text between the quotes, still escaped: decoding needs
-// somewhere to put the decoded bytes, and the lexer has no arena to put them
-// in. A backslash escapes the character after it, so that a '\"' inside a
-// literal does not close it.
+    size_t capacity = lexer->scratch_capacity ? lexer->scratch_capacity : 32;
+
+    while (capacity < needed) {
+        capacity *= 2;
+    }
+
+    char *grown = arena_alloc(lexer->arena, capacity);
+
+    if (!grown) {
+        return false;
+    }
+
+    // The old buffer is left to the arena: what it held has already been
+    // interned, so nothing points at it.
+    memcpy(grown, lexer->scratch, lexer->scratch_capacity);
+
+    lexer->scratch = grown;
+    lexer->scratch_capacity = capacity;
+
+    return true;
+}
+
+// The character an escape denotes, or -1 if the language defines none for it.
+static int escape_value(char ch) {
+    switch (ch) {
+    case 'n':
+        return '\n';
+    case 't':
+        return '\t';
+    case '0':
+        return '\0';
+    case '\\':
+        return '\\';
+    case '"':
+        return '"';
+    default:
+        return -1;
+    }
+}
+
+// A literal's characters, decoded and interned. The lexeme is what the string
+// denotes rather than the source between the quotes, so an escape has already
+// become the one character it stands for and a '\0' escape is a character like
+// any other -- which is why the length travels with it.
 static Token lexer_string(Lexer *lexer) {
     Span opened = {.line = lexer->start_line, .column = lexer->start_column};
 
     lexer_eat(lexer); // the opening quote
 
-    const char *begin = lexer->source + lexer->pos;
+    size_t length = 0;
 
     while (lexer_peek(lexer) != '"') {
         char ch = lexer_peek(lexer);
@@ -191,18 +237,38 @@ static Token lexer_string(Lexer *lexer) {
             return token_create(lexer, TOKEN_INVALID);
         }
 
-        if (ch == '\\' && lexer->source[lexer->pos + 1] != '\0') {
+        if (ch == '\\') {
+            Span at = {.line = lexer->line, .column = lexer->column};
+
             lexer_eat(lexer);
+
+            int value = escape_value(lexer_peek(lexer));
+
+            if (value < 0) {
+                diag_error(lexer->diagnostics, GAB_ERR_SYNTAX, at, "unknown escape sequence '\\%c'",
+                           lexer_peek(lexer));
+
+                return token_create(lexer, TOKEN_INVALID);
+            }
+
+            ch = (char)value;
         }
 
+        if (!lexer_reserve(lexer, length + 1)) {
+            diag_error(lexer->diagnostics, GAB_ERR_SYNTAX, opened, "string literal is too long");
+
+            return token_create(lexer, TOKEN_INVALID);
+        }
+
+        lexer->scratch[length++] = ch;
         lexer_eat(lexer);
     }
 
-    size_t length = (size_t)(lexer->source + lexer->pos - begin);
-
     lexer_eat(lexer); // the closing quote
 
-    return token_create_ref(lexer, TOKEN_STRING, (StringRef){.data = begin, .length = length});
+    String *text = string_from_ref(lexer->strings, (StringRef){.data = lexer->scratch, .length = length});
+
+    return token_create_ref(lexer, TOKEN_STRING, (StringRef){.data = text->data, .length = text->length});
 }
 
 static bool is_ident_char(char ch) { return isalnum(ch) || ch == '_'; }
@@ -286,7 +352,7 @@ static Token lexer_identifier(Lexer *lexer) {
     return token_create_ref(lexer, TOKEN_IDENT, ref);
 }
 
-Lexer lexer_create(const char *source, Diagnostics *diagnostics) {
+Lexer lexer_create(const char *source, Arena *arena, StringPool *strings, Diagnostics *diagnostics) {
     return (Lexer){
         .source = source,
         .pos = 0,
@@ -295,6 +361,8 @@ Lexer lexer_create(const char *source, Diagnostics *diagnostics) {
         .start_line = 1,
         .start_column = 1,
         .diagnostics = diagnostics,
+        .arena = arena,
+        .strings = strings,
     };
 }
 

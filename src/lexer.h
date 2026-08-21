@@ -1,7 +1,9 @@
 #ifndef LEXER_H
 #define LEXER_H
 
+#include "arena.h"
 #include "diagnostics.h"
+#include "string/string_pool.h"
 #include "string/string_ref.h"
 
 typedef enum {
@@ -82,9 +84,20 @@ typedef struct {
     int start_column;
 
     Diagnostics *diagnostics; // invalid tokens are reported here
+
+    // Where a string literal's characters end up. A literal is decoded into
+    // the scratch buffer and then interned, so only the interned copy lasts and
+    // equal literals are one String *.
+    Arena *arena;
+    StringPool *strings;
+
+    // Reused by every literal rather than allocated per token: decoding needs
+    // somewhere to put bytes only until the interning copies them out.
+    char *scratch;
+    size_t scratch_capacity;
 } Lexer;
 
-Lexer lexer_create(const char *source, Diagnostics *diagnostics);
+Lexer lexer_create(const char *source, Arena *arena, StringPool *strings, Diagnostics *diagnostics);
 Token lexer_next(Lexer *lexer);
 
 Span token_span(Token token);

@@ -1157,48 +1157,10 @@ static Constant value_from_literal(Literal lit) {
     abort();
 }
 
-// Decodes a literal's escapes into the arena and interns the result, so that
-// equal text is one String * and the header can borrow characters that outlive
-// every frame.
-//
-// The decoded text is never longer than the source slice, since every escape is
-// two characters becoming one.
-static String *codegen_intern_literal(CodegenState *state, StringRef text) {
-    char *decoded = arena_alloc(state->arena, text.length + 1);
-    size_t length = 0;
-
-    for (size_t i = 0; i < text.length; i++) {
-        if (text.data[i] != '\\' || i + 1 == text.length) {
-            decoded[length++] = text.data[i];
-            continue;
-        }
-
-        // An unknown escape stands for the character it names, so '\q' is 'q'.
-        // The lexer has already refused the one case that would matter, a
-        // backslash at the end of an unterminated literal.
-        switch (text.data[++i]) {
-        case 'n':
-            decoded[length++] = '\n';
-            break;
-        case 't':
-            decoded[length++] = '\t';
-            break;
-        case '0':
-            decoded[length++] = '\0';
-            break;
-        default:
-            decoded[length++] = text.data[i];
-            break;
-        }
-    }
-
-    decoded[length] = '\0';
-
-    return string_from_ref(state->strings, (StringRef){.data = decoded, .length = length});
-}
-
 static unsigned int codegen_string_literal(CodegenState *state, ASTExpr *node) {
-    String *text = codegen_intern_literal(state, node->lit.as_string);
+    // Already decoded and interned by the lexer, so this is a lookup that finds
+    // the String * the token's characters were given.
+    String *text = string_from_ref(state->strings, node->lit.as_string);
 
     unsigned int rd = codegen_alloc_slots(state, VM_STRING_SLOTS, VM_POINTER_SLOTS, node->span);
 

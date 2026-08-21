@@ -93,7 +93,7 @@ static inline bool test_run_bool(const char *source) {
 // and script, so a test can inspect the symbols and types the front end
 // settled on. The caller owns both, since what is worth inspecting differs.
 static inline bool test_resolve(TestContext *ctx, Scope *scope, ASTScript *script, const char *source) {
-    Lexer lexer = lexer_create(test_in_a_module(source), &ctx->diagnostics);
+    Lexer lexer = lexer_create(test_in_a_module(source), ctx->arena, &ctx->strings, &ctx->diagnostics);
     Parser parser = parser_create(&lexer, &ctx->diagnostics);
 
     if (!parser_parse(&parser, script)) {
