@@ -209,9 +209,11 @@ static bool lexer_reserve(Lexer *lexer, size_t needed) {
         return false;
     }
 
-    // The old buffer is left to the arena: what it held has already been
-    // interned, so nothing points at it.
-    memcpy(grown, lexer->scratch, lexer->scratch_capacity);
+    // Only when there is something to carry over: the first growth has no
+    // buffer yet, and memcpy may not be handed a null even for zero bytes.
+    if (lexer->scratch) {
+        memcpy(grown, lexer->scratch, lexer->scratch_capacity);
+    }
 
     lexer->scratch = grown;
     lexer->scratch_capacity = capacity;

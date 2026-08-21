@@ -67,6 +67,17 @@ typedef enum {
     OP_DIVFK,
     OP_CMP_LTF,
     OP_CMP_GTF,
+
+    // String equality: rd becomes whether the strings in r1 and r2 spell the
+    // same characters. Not a slot comparison -- two headers may name different
+    // addresses and still be equal -- so it reads the lengths and then the
+    // characters.
+    //
+    // Interning makes equal literals one address, which the comparison takes as
+    // its fast path rather than as its definition: a string built at runtime
+    // would never be interned, so identity alone would answer wrongly.
+    OP_CMP_EQS,
+    OP_CMP_NES,
     OP_CMP_EQF,
     OP_CMP_NEF,
     OP_CMP_LEF,

@@ -13,7 +13,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
 
 // Registers sit at base + r * VM_SLOT_SIZE, so the stack must hold every
@@ -235,6 +234,30 @@ void vm_conditionali(VM *vm, Instruction instruction, bool (*func)(int32_t, int3
 
     vm_write_i32(vm, rd, func(vm_read_i32(vm, r1), vm_operand2i(vm, instruction)));
 }
+
+// Whether two string headers name the same characters. Length first, since it
+// settles most pairs without reading any of them, and identical addresses
+// second: interning makes equal literals one address, but a string built at
+// runtime is never interned, so identity is a fast path and never the answer.
+bool vm_equals(VM *vm, size_t r1, size_t r2) {
+    GabStringValue a;
+    GabStringValue b;
+
+    memcpy(&a, vm->registers + r1 * VM_SLOT_SIZE, sizeof(a));
+    memcpy(&b, vm->registers + r2 * VM_SLOT_SIZE, sizeof(b));
+
+    if (a.length != b.length) {
+        return false;
+    }
+
+    if (a.data == b.data) {
+        return true;
+    }
+
+    return memcmp(a.data, b.data, (size_t)a.length) == 0;
+}
+
+bool vm_not_equals(VM *vm, size_t r1, size_t r2) { return !vm_equals(vm, r1, r2); }
 
 void vm_conditional(VM *vm, Instruction instruction, bool (*func)(VM *, size_t, size_t)) {
     size_t rd = VM_DECODE_R_RD(instruction);
@@ -460,6 +483,14 @@ static void vm_run_loop(VM *vm) {
             }
             VM_CASE(OP_CMP_GTF) {
                 vm_conditional(vm, instruction, vm_greater_thanf);
+                VM_NEXT();
+            }
+            VM_CASE(OP_CMP_EQS) {
+                vm_conditional(vm, instruction, vm_equals);
+                VM_NEXT();
+            }
+            VM_CASE(OP_CMP_NES) {
+                vm_conditional(vm, instruction, vm_not_equals);
                 VM_NEXT();
             }
             VM_CASE(OP_CMP_EQF) {

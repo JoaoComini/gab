@@ -232,11 +232,25 @@ static inline void test_program_free(TestProgram *program) {
 
 static inline Chunk *test_top_chunk(TestProgram *program) { return program->script.chunk; }
 
-// The chunk of a declared function, by declaration order.
+// The chunk of a declared function, by declaration order. Counted from the
+// first prototype a unit contributed: the builtin types' methods are registered
+// before any load, and they carry a host body rather than a chunk.
 static inline Chunk *test_func_chunk(TestProgram *program, size_t index) {
+    index += program->vm->program.builtin_proto_count;
+
     assert(index < program->vm->program.prototypes.size);
 
     return program->vm->program.prototypes.data[index]->chunk;
+}
+
+// The prototype of a declared function, and how many the loaded units
+// contributed. Counted the same way test_func_chunk counts.
+static inline FuncPrototype *test_func_proto(TestProgram *program, size_t index) {
+    return program->vm->program.prototypes.data[program->vm->program.builtin_proto_count + index];
+}
+
+static inline size_t test_func_count(TestProgram *program) {
+    return program->vm->program.prototypes.size - program->vm->program.builtin_proto_count;
 }
 
 // How many times an opcode appears. Most claims about emitted code are really

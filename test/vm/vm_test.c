@@ -14,6 +14,17 @@
 #include <assert.h>
 #include <string.h>
 
+// How many prototypes the loaded units contributed, and the nth of them. The
+// builtin types' methods are registered before any load, so a script's first
+// function is not the list's first entry.
+static size_t loaded_protos(const VM *vm) {
+    return vm->program.prototypes.size - vm->program.builtin_proto_count;
+}
+
+static FuncPrototype *loaded_proto(const VM *vm, size_t index) {
+    return vm->program.prototypes.data[vm->program.builtin_proto_count + index];
+}
+
 static void test_vm_execute() {
     VM *vm = vm_create();
 
@@ -76,9 +87,9 @@ static void test_empty_function_body() {
     compile_and_run(vm, "module test;\n"
                         "func main() { }");
 
-    assert(vm->program.prototypes.size == 1);
+    assert(loaded_protos(vm) == 1);
 
-    FuncPrototype *proto = vm->program.prototypes.data[0];
+    FuncPrototype *proto = loaded_proto(vm, 0);
     assert(proto->chunk->instructions.size == 1);
     assert(VM_DECODE_OPCODE(instruction_list_get(&proto->chunk->instructions, 0)) == OP_RETURN);
 
@@ -94,7 +105,7 @@ static void test_struct_typed_local() {
                         "struct Vec3 { x: float, y: float, z: float }\n"
                         "func main() { let v: Vec3; }");
 
-    assert(vm->program.prototypes.size == 1);
+    assert(loaded_protos(vm) == 1);
 
     vm_free(vm);
 }
@@ -186,9 +197,9 @@ static void test_prototypes_survive_a_later_compile() {
     compile_and_run(vm, "module test;\n"
                         "func seven(): int { return 7; }\n");
 
-    assert(vm->program.prototypes.size == 1);
+    assert(loaded_protos(vm) == 1);
 
-    const FuncPrototype *seven = vm->program.prototypes.data[0];
+    const FuncPrototype *seven = loaded_proto(vm, 0);
     const Chunk *chunk = seven->chunk;
     int arity = seven->arity;
 
@@ -203,8 +214,8 @@ static void test_prototypes_survive_a_later_compile() {
                         "func g(x: int): int { return x; }\n"
                         "func h(x: int): int { return x; }\n");
 
-    assert(vm->program.prototypes.size > 1);
-    assert(vm->program.prototypes.data[0] == seven);
+    assert(loaded_protos(vm) > 1);
+    assert(loaded_proto(vm, 0) == seven);
     assert(seven->chunk == chunk);
     assert(seven->arity == arity);
 
@@ -247,7 +258,7 @@ static void test_a_unit_that_fails_to_link_installs_nothing() {
     compile_and_run(vm, "module test;\n"
                         "func first(): int { return 1; }\n");
 
-    size_t protos = vm->program.prototypes.size;
+    size_t protos = loaded_protos(vm);
     size_t types = vm->program.heap_types.size;
 
     Diagnostics diagnostics;
@@ -266,7 +277,7 @@ static void test_a_unit_that_fails_to_link_installs_nothing() {
     assert(diagnostics_has_errors(&diagnostics));
     diagnostics_free(&diagnostics);
 
-    assert(vm->program.prototypes.size == protos);
+    assert(loaded_protos(vm) == protos);
     assert(vm->program.heap_types.size == types);
 
     vm_free(vm);
@@ -281,7 +292,7 @@ static void test_checking_a_unit_installs_nothing() {
     compile_and_run(vm, "module test;\n"
                         "func first(): int { return 1; }\n");
 
-    size_t protos = vm->program.prototypes.size;
+    size_t protos = loaded_protos(vm);
     size_t types = vm->program.heap_types.size;
 
     Diagnostics diagnostics;
@@ -308,7 +319,7 @@ static void test_checking_a_unit_installs_nothing() {
     // Accepts, and having accepted has still changed nothing.
     assert(link_check(&vm->program, unit, &diagnostics));
 
-    assert(vm->program.prototypes.size == protos);
+    assert(loaded_protos(vm) == protos);
     assert(vm->program.heap_types.size == types);
     assert(!scope_symbol_lookup(environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "dry")),
                                 string_from_cstr(&vm->env.strings, "second")));

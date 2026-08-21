@@ -1525,6 +1525,7 @@ static unsigned int codegen_cast_expr(CodegenState *state, ASTExpr *node) {
 // The type travels by index because a Type * is 8 bytes and cannot ride in an
 // instruction; the list is interned by pointer identity, which the type system
 // already guarantees.
+
 static unsigned int codegen_new_expr(CodegenState *state, ASTExpr *node) {
     unsigned int rd = codegen_alloc_slots(state, VM_POINTER_SLOTS, VM_POINTER_SLOTS, node->span);
 
@@ -1842,6 +1843,12 @@ static unsigned int codegen_rhs(CodegenState *state, ASTExpr *rhs, const Type *l
 // takes the constant-pool form, and anything else the register or immediate
 // form the k bit already distinguished.
 static OpCode bin_op_opcode_for(BinOp op, const Type *left_type, RhsKind kind) {
+    // A string is compared by its characters rather than its slots, so the
+    // opcode is chosen by the operand type before the numeric families.
+    if (left_type->kind == TYPE_STRING) {
+        return op == BIN_OP_EQUAL ? OP_CMP_EQS : OP_CMP_NES;
+    }
+
     if (kind != RHS_CONSTANT) {
         return left_type->kind == TYPE_FLOAT ? bin_op_to_float_op(op) : bin_op_to_int_op(op);
     }
@@ -2227,7 +2234,11 @@ static bool type_is_struct(const Type *type) { return type && type->kind == TYPE
 // field opcode. A struct is, because its slots are laid out inline — and so is
 // a pointer, which is 8 bytes and has no 8-wide opcode. Before heap objects
 // existed no struct could hold a pointer, so the two cases only meet now.
-static bool type_moves_as_slots(const Type *type) { return type_is_struct(type) || type_is_pointer(type); }
+// A string is a header of several slots, so it moves as one run like a struct
+// rather than as a single slot.
+static bool type_moves_as_slots(const Type *type) {
+    return type_is_struct(type) || type_is_pointer(type) || (type && type->kind == TYPE_STRING);
+}
 
 // The field's width is known at compile time, so it picks the opcode instead
 // of spending operand bits. 'load' selects the load or store family.

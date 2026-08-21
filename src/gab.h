@@ -105,6 +105,13 @@ bool gab_arg_get_struct(GabArgs *args, int index, void *out, size_t size);
 // The address a pointer argument holds, for a '*T' or 'ref T' parameter. The
 // object belongs to the caller for the duration of the call: an extern reads
 // and writes through it and frees nothing.
+
+// A string argument's characters and their count. Borrowed for the call: the
+// characters belong to whoever allocated them -- the unit's arena for a
+// literal -- so an extern reads them and frees nothing. Not NUL-terminated in
+// general, since a '\0' is an ordinary character, so the length is what says
+// where the string ends.
+const char *gab_arg_get_string(GabArgs *args, int index, int32_t *out_length);
 void *gab_arg_get_pointer(GabArgs *args, int index);
 
 // Writing an extern's result. A function declaring no return type calls none

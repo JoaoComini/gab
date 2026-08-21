@@ -185,6 +185,12 @@ typedef struct {
     // run.
     FuncProtoList prototypes;
 
+    // Where the prototypes a unit loaded begin. The VM registers the builtin
+    // types' methods below this, once, before any unit loads -- so a loaded
+    // function's index is its position in the list, not its position among the
+    // functions its own module declared.
+    size_t builtin_proto_count;
+
     // The types OP_NEW allocates, indexed from the instruction. A Type * is 8
     // bytes and the constant pool holds 4-byte Values, so an allocation names
     // its type by index the same way a call names its prototype. Interning is

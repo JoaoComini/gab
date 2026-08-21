@@ -183,6 +183,8 @@
         [OP_DIVFK] = &&OP_DIVFK_label,                                                                       \
         [OP_CMP_LTF] = &&OP_CMP_LTF_label,                                                                   \
         [OP_CMP_GTF] = &&OP_CMP_GTF_label,                                                                   \
+        [OP_CMP_EQS] = &&OP_CMP_EQS_label,                                                                   \
+        [OP_CMP_NES] = &&OP_CMP_NES_label,                                                                   \
         [OP_CMP_EQF] = &&OP_CMP_EQF_label,                                                                   \
         [OP_CMP_NEF] = &&OP_CMP_NEF_label,                                                                   \
         [OP_CMP_LEF] = &&OP_CMP_LEF_label,                                                                   \

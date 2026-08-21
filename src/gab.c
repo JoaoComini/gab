@@ -286,6 +286,24 @@ bool gab_arg_get_struct(GabArgs *args, int index, void *out, size_t size) {
     return true;
 }
 
+const char *gab_arg_get_string(GabArgs *args, int index, int32_t *out_length) {
+    const Type *type = NULL;
+    const uint8_t *at = gab_arg_address(args, index, &type);
+
+    if (!at || !type || type->kind != TYPE_STRING) {
+        return NULL;
+    }
+
+    GabStringValue value;
+    memcpy(&value, at, sizeof(value));
+
+    if (out_length) {
+        *out_length = value.length;
+    }
+
+    return value.data;
+}
+
 void *gab_arg_get_pointer(GabArgs *args, int index) {
     const Type *type = NULL;
     const uint8_t *at = gab_arg_address(args, index, &type);

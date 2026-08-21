@@ -314,15 +314,17 @@ static bool is_addressable(const ASTExpr *expr) {
     }
 }
 
-// The struct a receiver type names, looking through one level of pointer, or
-// NULL if it does not name one. '*Player' and 'Player' share a method set, so
-// both land on the same Type.
+// The type a receiver names, looking through one level of pointer. '*Player' and
+// 'Player' share a method set, so both land on the same Type.
+//
+// A builtin qualifies: methods hang on the Type, and nothing about the map
+// requires the type to be one a script declared.
 static Type *receiver_base_type(Type *type) {
     if (type_is_pointer(type)) {
         type = type->pointee;
     }
 
-    return (type && type->kind == TYPE_STRUCT) ? type : NULL;
+    return type;
 }
 
 // Checks each argument against the parameter type in the same position. Shared
@@ -514,22 +516,17 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     }
 
     // '*Player' and 'Player' share one method set, so the lookup and every
-    // message below name the struct rather than what was written.
+    // message below name the type itself rather than what was written.
     Type *base = receiver_base_type(receiver_type);
-
-    if (!base) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "%s is not a struct, so it has no methods",
-                   type_name(state, receiver_type));
-        expr->type = resolver_error_type(state);
-        return;
-    }
 
     String *method_name = resolver_intern(state, name);
     Symbol *method = type_find_method(base, method_name);
 
     if (!method) {
-        diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "'%s' has no method '%s'", base->name->data,
-                   method_name->data);
+        // type_name rather than the name field: a pointer type has none, and a
+        // receiver that is one reaches here.
+        diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "%s has no method '%s'",
+                   type_name(state, base), method_name->data);
         expr->type = resolver_error_type(state);
         return;
     }
@@ -587,7 +584,11 @@ bool is_boolean_type(Type *t) { return t->kind == TYPE_BOOL; }
 
 bool is_ordered_type(Type *t) { return is_numeric_type(t) || is_boolean_type(t); }
 
-bool is_comparable_type(Type *t) { return is_numeric_type(t) || is_boolean_type(t); }
+bool is_string_type(Type *t) { return t->kind == TYPE_STRING; }
+
+// Ordering is left out: '<' on text asks which comes first, and no order is
+// defined for it. Equality asks only whether two strings spell the same thing.
+bool is_comparable_type(Type *t) { return is_numeric_type(t) || is_boolean_type(t) || is_string_type(t); }
 
 Type *ast_script_resolve_type(ResolverState *state, TypeSpec *spec, Span span);
 
@@ -1234,10 +1235,12 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
     if (is_error_type(receiver_type)) {
         return;
     }
-
     Type *base = receiver_base_type(receiver_type);
 
-    if (!base) {
+    // A script declares methods on its own structs only. A builtin carries the
+    // ones the VM registered, and a second set declared over them would have no
+    // module to belong to and no way to be told apart from the first.
+    if (!base || base->kind != TYPE_STRUCT) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, receiver->span,
                    "a method's receiver must be a struct or a pointer to one, found %s",
                    type_name(state, receiver_type));
