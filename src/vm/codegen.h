@@ -13,6 +13,12 @@
 typedef struct {
     FuncProtoList *funcs;
     TypeList *heap_types;
+
+    // Read rather than appended to: the host bodies registered before this
+    // compile, which an 'extern' declaration resolves against as its prototype
+    // is created. Binding there rather than in a pass afterwards is what keeps
+    // a prototype from ever existing unbound.
+    const ExternBindingList *externs;
 } CodegenOutput;
 
 // Returns NULL if code generation failed; see the diagnostics sink.

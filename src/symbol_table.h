@@ -58,6 +58,16 @@ typedef struct Symbol {
             // resolves a handle through, long after the compile that made it.
             // SYMBOL_FUNC_NO_PROTO until codegen emits a body.
             size_t proto_index;
+
+            // Declared 'extern': the body lives in the host, and the prototype
+            // codegen reserves carries a C function pointer instead of a chunk.
+            bool is_extern;
+
+            // What the host binds a body to. Only an extern carries these: a
+            // symbol is otherwise found by the name it is stored under, and
+            // nothing needs to ask a symbol what it is called.
+            String *name;
+            String *module;
         } func;
     };
 } Symbol;

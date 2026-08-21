@@ -33,6 +33,7 @@ set(
     vm/stack_test.c
     vm/vm_test.c
     gab_api_test.c
+    extern_test.c
 )
 
 function(add_gab_test TEST_NAME TEST_SOURCE)

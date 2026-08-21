@@ -75,6 +75,71 @@ void gab_vm_free(GabVM *vm);
 // never the other's.
 bool gab_load(GabVM *vm, const char *name, const char *src, GabError *err);
 
+// --- Extern functions ------------------------------------------------------
+
+// A function the host defines and a script calls. The script declares its
+// signature with 'extern func f(x: int): int;' and states the types once; the
+// host supplies only the body, which is bound to that declaration by name.
+//
+// The body receives the frame it was called with. Arguments are read by index
+// through the gab_arg_get_* accessors and the result is written with one of the
+// gab_return_* ones, both addressing the frame's slots in place — the same
+// zero-marshalling layout a struct crossing the other way already uses.
+typedef struct GabArgs GabArgs;
+typedef void (*GabExternFn)(GabArgs *args);
+
+// Binds a host body to the name a script declares 'extern'. 'module' is the
+// namespace, exactly as for gab_lookup; NULL is the root.
+//
+// Registration must happen before the script that declares the name is loaded:
+// binding is resolved at load, so that an extern nothing supplies is a load
+// failure naming the function rather than a trap the first time that branch
+// runs. Returns false and fills 'err' if the VM or name is missing, or the same
+// name is already bound in that module.
+//
+// The binding outlives any one load and is not disturbed by a reload, so a host
+// registers its externs once at startup and reloads scripts against them.
+bool gab_extern(GabVM *vm, const char *module, const char *name, GabExternFn fn, GabError *err);
+
+// Reading an extern's arguments. The index counts declared parameters from
+// zero, and a receiver is parameter zero for a method.
+//
+// The type must be the one the script declared: a slot carries no tag, so
+// reading an int as a float reinterprets the bytes rather than converting them.
+// That is the same contract gab_arg_int and friends answer to from the other
+// side, checked there against the signature and here against nothing — an
+// extern is trusted about its own declaration.
+int32_t gab_arg_get_int(GabArgs *args, int index);
+float gab_arg_get_float(GabArgs *args, int index);
+bool gab_arg_get_bool(GabArgs *args, int index);
+
+// Copies a struct argument out into the host's own storage. 'size' is what the
+// host expects; nothing is copied if it does not match what the parameter
+// occupies, which is the one place an extern's ABI can be got wrong.
+bool gab_arg_get_struct(GabArgs *args, int index, void *out, size_t size);
+
+// The address a pointer argument holds, for a '*T' or 'ref T' parameter. The
+// object belongs to the caller for the duration of the call: an extern reads
+// and writes through it and frees nothing.
+void *gab_arg_get_pointer(GabArgs *args, int index);
+
+// Writing an extern's result. A function declaring no return type calls none
+// of these; calling one anyway writes a slot the caller will not read.
+void gab_return_int(GabArgs *args, int32_t value);
+void gab_return_float(GabArgs *args, float value);
+void gab_return_bool(GabArgs *args, bool value);
+bool gab_return_struct(GabArgs *args, const void *data, size_t size);
+void gab_return_pointer(GabArgs *args, void *pointer);
+
+// Fails the run from inside an extern. The message is copied, and reaches the
+// host that started the run as a GAB_ERR_RUNTIME with this text.
+//
+// The extern still returns normally: unwinding happens at the boundary, once
+// the body is done, because a C function cannot jump out of the interpreter
+// without leaving the frames it crossed unreleased. Nothing the body writes
+// after this call is read.
+void gab_error(GabArgs *args, const char *message);
+
 // --- Types and layout ------------------------------------------------------
 
 // A script struct's layout is the C layout, which is the whole zero-

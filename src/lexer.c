@@ -108,6 +108,8 @@ const char *token_description(TokenType type) {
         return "'let'";
     case TOKEN_FUNC:
         return "'func'";
+    case TOKEN_EXTERN:
+        return "'extern'";
     case TOKEN_STRUCT:
         return "'struct'";
     case TOKEN_NEW:
@@ -207,6 +209,10 @@ static Token lexer_identifier(Lexer *lexer) {
 
     if (string_ref_equals_cstr(ref, "struct")) {
         return token_create_ref(lexer, TOKEN_STRUCT, ref);
+    }
+
+    if (string_ref_equals_cstr(ref, "extern")) {
+        return token_create_ref(lexer, TOKEN_EXTERN, ref);
     }
 
     if (string_ref_equals_cstr(ref, "new")) {

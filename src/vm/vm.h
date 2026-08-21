@@ -148,8 +148,26 @@ typedef struct {
 #define frame_ref_list_item_free(item) ((void)(item))
 GAB_LIST(FrameRefList, frame_ref_list, FrameRef)
 
+// An 'extern' function's host body. Takes the frame it was called with, so it
+// reads its arguments and writes its result through the slots already in
+// place — the same layout a script function's frame has, which is what keeps
+// the boundary free of marshalling.
+typedef struct GabArgs GabArgs;
+typedef void (*GabExternFn)(GabArgs *args);
+
 typedef struct {
+    // NULL for an extern, whose body is 'native' instead. Exactly one of the
+    // two is set, and OP_CALL branches on which.
     Chunk *chunk;
+
+    GabExternFn native;
+
+    // The declaration an extern was bound to, for resolving a parameter index
+    // to its slot. Set only for an extern: a script function's frame is
+    // addressed by the code codegen emitted, which needs no signature at run
+    // time. Points into the VM's arena, so it outlives every compile.
+    const struct Symbol *extern_symbol;
+
     int arity;
     int max_registers;
 
@@ -228,6 +246,18 @@ GAB_LIST(LoadedScriptList, loaded_script_list, LoadedScript)
 #define func_handle_list_item_free(item) ((void)(item))
 GAB_LIST(FuncHandleList, func_handle_list, void *)
 
+// A host body bound to a name, waiting for a script to declare it 'extern'.
+// Registrations outlive every load, so a reload binds against the same set the
+// first load did.
+typedef struct {
+    String *module;
+    String *name;
+    GabExternFn fn;
+} ExternBinding;
+
+#define extern_binding_list_item_free(item) ((void)(item))
+GAB_LIST(ExternBindingList, extern_binding_list, ExternBinding)
+
 // Why a run stopped. A run that completed normally leaves VM_RUN_OK; anything
 // else means the interpreter unwound early, and the frames are already gone.
 typedef enum {
@@ -237,6 +267,10 @@ typedef enum {
     VM_RUN_ERR_OUT_OF_MEMORY,
     VM_RUN_ERR_DIVIDE_BY_ZERO,
     VM_RUN_ERR_DIVIDE_OVERFLOW,
+
+    // An 'extern' function reported failure, or none was ever bound to the
+    // prototype a call named.
+    VM_RUN_ERR_EXTERN,
 } VmRunStatus;
 
 // The interpreter's failure channel. A run cannot report through a return value
@@ -302,6 +336,10 @@ typedef struct {
     // Every unit loaded into this VM, by name. See LoadedScript.
     LoadedScriptList scripts;
 
+    // Host bodies bound by name, resolved against a unit's 'extern'
+    // declarations as it loads. See ExternBinding.
+    ExternBindingList externs;
+
     // The stack is byte-addressed and 8-byte aligned at the base, so a value
     // wider than a slot can sit at its natural alignment. Capacity is still
     // counted in slots; a slot is VM_SLOT_SIZE bytes.
@@ -321,7 +359,31 @@ typedef struct {
 
     // Why the last run stopped. Cleared at the start of every run.
     VmError error;
+
+    // An extern's failure message, copied because the host's string need not
+    // outlive the call that gave it. VmError::message is otherwise a static
+    // string and points here only for this one status.
+    char extern_message[256];
 } VM;
+
+// One extern call's view of the frame it was called with. Opaque to a host,
+// which reaches its arguments through the gab_arg_get_* accessors.
+struct GabArgs {
+    VM *vm;
+
+    // The declaration this call was made against, which is what turns a
+    // parameter index into a slot and says how wide the return value is.
+    const struct Symbol *symbol;
+
+    // Byte offset of the frame's slot 0, which is where the return value goes;
+    // the arguments follow it, laid out exactly as a script callee's would be.
+    size_t base;
+
+    // Set when the extern reported failure, which unwinds the run once it
+    // returns. A C function cannot longjmp out of the interpreter safely, so
+    // the failure is recorded and acted on at the boundary.
+    bool failed;
+};
 
 // Where register r of the current frame begins, and where slot i of the stack
 // begins. Bytes, because a slot is a size rather than a type: what lives there
@@ -396,6 +458,11 @@ VmRunStatus vm_run(VM *vm, const CompiledScript *script);
 // calls in through this; base is a byte offset into the stack, and the caller
 // must already have placed the arguments in the parameter slots above it.
 VmRunStatus vm_run_frame(VM *vm, const FuncPrototype *proto, size_t base, unsigned int dest);
+
+// Runs an extern's host body against the block at 'base', for a host calling
+// one directly. No frame is pushed and no bytecode runs: an extern has none,
+// and its arguments are already laid out where a callee's would be.
+VmRunStatus vm_run_extern(VM *vm, const FuncPrototype *proto, size_t base);
 
 // Compile, run, and discard, reporting any diagnostics to stderr. The
 // convenience path for a caller with nothing to say about failure.

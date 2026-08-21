@@ -171,6 +171,7 @@ static void parser_synchronize(Parser *parser) {
         switch (parser->current.type) {
         case TOKEN_LET:
         case TOKEN_FUNC:
+        case TOKEN_EXTERN:
         case TOKEN_STRUCT:
         case TOKEN_MODULE:
         case TOKEN_IF:
@@ -194,7 +195,8 @@ static ASTStmt *parse_decl_statement(Parser *parser) {
         stmt = parse_var_decl_stmt(parser);
         break;
     }
-    case TOKEN_FUNC: {
+    case TOKEN_FUNC:
+    case TOKEN_EXTERN: {
         stmt = parse_func_decl_stmt(parser);
         break;
     }
@@ -203,7 +205,7 @@ static ASTStmt *parse_decl_statement(Parser *parser) {
         break;
     }
     default: {
-        parser_error_found(parser, "expected a declaration ('let', 'func', or 'struct')");
+        parser_error_found(parser, "expected a declaration ('let', 'func', 'extern', or 'struct')");
         return NULL;
     }
     }
@@ -664,8 +666,21 @@ static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
     return ast_struct_decl_stmt_create(span, name, fields);
 }
 
+// 'extern func f(x: int): int;' declares a signature whose body the host
+// supplies. The keyword is what makes a missing body a declaration rather than
+// an error, so the two spellings never have to be told apart by guessing.
 static ASTStmt *parse_func_decl_stmt(Parser *parser) {
     Span span = parser_span(parser);
+
+    bool is_extern = parser->current.type == TOKEN_EXTERN;
+
+    if (is_extern) {
+        parser_next_token(parser); // eat "extern"
+
+        if (!parser_expect(parser, TOKEN_FUNC, "expected 'func' after 'extern'")) {
+            return NULL;
+        }
+    }
 
     parser_next_token(parser); // eat "func"
 
@@ -740,6 +755,23 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
             ast_field_list_free(&func_params);
             return NULL;
         }
+    }
+
+    // An extern states a signature and stops there; the ';' is consumed by
+    // parse_decl_statement, which stmt_needs_terminator sends it to.
+    if (is_extern) {
+        if (parser->current.type == TOKEN_LBRACE) {
+            parser_error(parser, "an 'extern' function is defined by the host and cannot have a body");
+
+            ast_field_destroy(receiver);
+            type_spec_destroy(func_type);
+            ast_field_list_free(&func_params);
+            ast_stmt_destroy(parse_block_stmt(parser));
+
+            return NULL;
+        }
+
+        return ast_func_decl_stmt_create(span, func_name, receiver, func_type, func_params, NULL);
     }
 
     ASTStmt *func_body = parse_block_stmt(parser);
@@ -848,9 +880,12 @@ static bool stmt_needs_terminator(ASTStmt *stmt) {
     case STMT_IF:
     case STMT_FOR:
     case STMT_BLOCK:
-    case STMT_FUNC_DECL:
     case STMT_STRUCT_DECL:
         return false;
+    // A body closes itself with '}'. An extern has none, so it ends the way
+    // every other bodyless declaration does.
+    case STMT_FUNC_DECL:
+        return stmt->func_decl.body == NULL;
     default:
         return true;
     }

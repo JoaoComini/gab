@@ -1,0 +1,332 @@
+// An 'extern' function: declared in a script, defined by the host. Written
+// against gab.h alone, because binding one is something a host does.
+#include "gab.h"
+
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+typedef struct {
+    int32_t health;
+    int32_t mana;
+} Player;
+
+static int32_t last_logged = 0;
+
+static void host_log(GabArgs *args) { last_logged = gab_arg_get_int(args, 0); }
+
+static void twice(GabArgs *args) { gab_return_int(args, gab_arg_get_int(args, 0) * 2); }
+
+static void scale(GabArgs *args) { gab_return_float(args, gab_arg_get_float(args, 0) * 2.0f); }
+
+static void negate(GabArgs *args) { gab_return_bool(args, !gab_arg_get_bool(args, 0)); }
+
+// A struct crosses by value in both directions, reading and writing the
+// frame's slots in place.
+static void heal(GabArgs *args) {
+    Player p;
+    gab_arg_get_struct(args, 0, &p, sizeof p);
+
+    p.health += 10;
+
+    gab_return_struct(args, &p, sizeof p);
+}
+
+// A 'ref T' parameter is the caller's object, so a write through it is visible
+// after the call returns.
+static void boost(GabArgs *args) {
+    Player *p = gab_arg_get_pointer(args, 0);
+
+    p->mana += 5;
+}
+
+static void refuse(GabArgs *args) { gab_error(args, "the host refused"); }
+
+// The value a host computes comes back to the script that called it.
+static void test_an_extern_returns_to_its_caller(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, NULL, "twice", twice, &err));
+
+    assert(gab_load(vm, "<m>",
+                    "extern func twice(x: int): int;\n"
+                    "func run(): int { return twice(21); }\n",
+                    &err));
+
+    GabFunc *fn = gab_lookup(vm, NULL, "run", &err);
+    assert(fn);
+
+    GabCall *call = gab_call_init(fn, &err);
+    int32_t out = 0;
+    assert(gab_call(vm, call, &out, &err) == GAB_OK);
+    assert(out == 42);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
+// An extern returning nothing still runs, and what it did is visible to the
+// host that bound it.
+static void test_an_extern_may_return_nothing(void) {
+    GabVM *vm = gab_vm_new();
+
+    last_logged = 0;
+
+    GabError err;
+    assert(gab_extern(vm, NULL, "log", host_log, &err));
+
+    assert(gab_load(vm, "<m>",
+                    "extern func log(amount: int);\n"
+                    "func run() { log(7); }\n",
+                    &err));
+
+    GabFunc *fn = gab_lookup(vm, NULL, "run", &err);
+    GabCall *call = gab_call_init(fn, &err);
+
+    assert(gab_call(vm, call, NULL, &err) == GAB_OK);
+    assert(last_logged == 7);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
+// Each scalar type survives the round trip with its own width.
+static void test_scalars_cross_the_boundary(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, NULL, "scale", scale, &err));
+    assert(gab_extern(vm, NULL, "negate", negate, &err));
+
+    assert(gab_load(vm, "<m>",
+                    "extern func scale(x: float): float;\n"
+                    "extern func negate(b: bool): bool;\n"
+                    "func f(): float { return scale(1.5); }\n"
+                    "func b(): bool { return negate(true); }\n",
+                    &err));
+
+    GabCall *fcall = gab_call_init(gab_lookup(vm, NULL, "f", &err), &err);
+    float f = 0.0f;
+    assert(gab_call(vm, fcall, &f, &err) == GAB_OK);
+    assert(f == 3.0f);
+
+    GabCall *bcall = gab_call_init(gab_lookup(vm, NULL, "b", &err), &err);
+    bool b = true;
+    assert(gab_call(vm, bcall, &b, &err) == GAB_OK);
+    assert(b == false);
+
+    gab_call_free(fcall);
+    gab_call_free(bcall);
+    gab_vm_free(vm);
+}
+
+// A struct argument and a struct return are the script's own layout, read and
+// written in place.
+static void test_a_struct_crosses_by_value(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, NULL, "heal", heal, &err));
+
+    assert(gab_load(vm, "<m>",
+                    "struct Player { health: int, mana: int }\n"
+                    "extern func heal(p: Player): Player;\n"
+                    "func run(p: Player): Player { return heal(p); }\n",
+                    &err));
+
+    GabFunc *fn = gab_lookup(vm, NULL, "run", &err);
+    GabCall *call = gab_call_init(fn, &err);
+
+    Player in = {.health = 30, .mana = 4};
+    assert(gab_arg_struct(call, 0, &in, sizeof in));
+
+    Player out = {0};
+    assert(gab_call(vm, call, &out, &err) == GAB_OK);
+    assert(out.health == 40);
+    assert(out.mana == 4);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
+// A 'ref T' parameter borrows, so the host writes through it to the object the
+// caller still owns.
+static void test_a_borrow_is_written_through(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, NULL, "boost", boost, &err));
+
+    assert(gab_load(vm, "<m>",
+                    "struct Player { health: int, mana: int }\n"
+                    "extern func boost(p: ref Player);\n"
+                    "func run(p: ref Player) { boost(p); }\n",
+                    &err));
+
+    const GabType *type = gab_find_type(vm, NULL, "Player");
+    assert(type);
+
+    GabFunc *fn = gab_lookup(vm, NULL, "run", &err);
+    GabCall *call = gab_call_init(fn, &err);
+
+    Player p = {.health = 1, .mana = 2};
+    assert(gab_arg_pointer(call, 0, &p, type));
+
+    assert(gab_call(vm, call, NULL, &err) == GAB_OK);
+    assert(p.mana == 7);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
+// A script naming an extern nothing registered does not load, and the message
+// says which name is missing.
+static void test_an_unbound_extern_fails_the_load(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(!gab_load(vm, "<m>",
+                     "func first(): int { return 1; }\n"
+                     "extern func missing(x: int): int;\n",
+                     &err));
+
+    // The declaration is what failed, so the message names it and points at the
+    // line it was written on.
+    assert(strstr(err.message, "missing"));
+    assert(err.line == 2);
+
+    gab_vm_free(vm);
+}
+
+// Binding happens before the script that declares the name is loaded, so a
+// registration afterwards is too late to rescue it.
+static void test_an_extern_must_be_registered_before_the_load(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(!gab_load(vm, "<m>", "extern func twice(x: int): int;\n", &err));
+
+    assert(gab_extern(vm, NULL, "twice", twice, &err));
+    assert(gab_load(vm, "<m>",
+                    "extern func twice(x: int): int;\n"
+                    "func run(): int { return twice(2); }\n",
+                    &err));
+
+    GabCall *call = gab_call_init(gab_lookup(vm, NULL, "run", &err), &err);
+    int32_t out = 0;
+    assert(gab_call(vm, call, &out, &err) == GAB_OK);
+    assert(out == 4);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
+// An extern is callable from a host exactly as a script function is: the
+// prototype it binds to is a prototype like any other.
+static void test_a_host_may_call_an_extern_directly(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, NULL, "twice", twice, &err));
+    assert(gab_load(vm, "<m>", "extern func twice(x: int): int;\n", &err));
+
+    GabFunc *fn = gab_lookup(vm, NULL, "twice", &err);
+    assert(fn);
+
+    GabCall *call = gab_call_init(fn, &err);
+    assert(gab_arg_int(call, 0, 8));
+
+    int32_t out = 0;
+    assert(gab_call(vm, call, &out, &err) == GAB_OK);
+    assert(out == 16);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
+// An extern that reports an error unwinds the run rather than returning, and
+// the host sees the message it gave.
+static void test_an_extern_may_fail_the_run(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, NULL, "refuse", refuse, &err));
+
+    assert(gab_load(vm, "<m>",
+                    "extern func refuse(): int;\n"
+                    "func run(): int { return refuse(); }\n",
+                    &err));
+
+    GabCall *call = gab_call_init(gab_lookup(vm, NULL, "run", &err), &err);
+
+    int32_t out = 0;
+    assert(gab_call(vm, call, &out, &err) == GAB_ERR_RUNTIME);
+    assert(strstr(err.message, "the host refused"));
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
+// An extern declared with a body is not an extern: the two spellings state
+// different things about where the code lives.
+static void test_an_extern_may_not_have_a_body(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, NULL, "twice", twice, &err));
+    assert(!gab_load(vm, "<m>", "extern func twice(x: int): int { return x; }\n", &err));
+
+    gab_vm_free(vm);
+}
+
+// A plain 'func' still requires one, so the body is what the keyword governs
+// rather than something newly optional everywhere.
+static void test_a_plain_func_still_needs_a_body(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(!gab_load(vm, "<m>", "func twice(x: int): int;\n", &err));
+
+    gab_vm_free(vm);
+}
+
+// An extern belongs to the module that declared it, exactly as a function
+// does.
+static void test_an_extern_lives_in_its_module(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, "game", "twice", twice, &err));
+
+    assert(gab_load(vm, "<m>",
+                    "module game;\n"
+                    "extern func twice(x: int): int;\n",
+                    &err));
+
+    assert(gab_lookup(vm, "game", "twice", &err));
+    assert(!gab_lookup(vm, NULL, "twice", &err));
+
+    gab_vm_free(vm);
+}
+
+int main(void) {
+    test_an_extern_returns_to_its_caller();
+    test_an_extern_may_return_nothing();
+    test_scalars_cross_the_boundary();
+    test_a_struct_crosses_by_value();
+    test_a_borrow_is_written_through();
+    test_an_unbound_extern_fails_the_load();
+    test_an_extern_must_be_registered_before_the_load();
+    test_a_host_may_call_an_extern_directly();
+    test_an_extern_may_fail_the_run();
+    test_an_extern_may_not_have_a_body();
+    test_a_plain_func_still_needs_a_body();
+    test_an_extern_lives_in_its_module();
+
+    printf("extern_test: all tests passed\n");
+
+    return 0;
+}

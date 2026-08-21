@@ -81,6 +81,11 @@ Four properties are worth knowing before you build against it:
 - **Layout is checked, not trusted.** `gab_type_size`, `gab_type_align`, and
   `gab_field_offset` exist so a host can assert the script's layout against its
   own `sizeof` and `offsetof`.
+- **Externs are bound at load.** A script declares `extern func f(x: int):
+  int;` and the host supplies the body with `gab_extern`. The binding is
+  resolved while the unit loads, so an extern nothing supplies is a load
+  failure naming the function rather than a trap the first time that branch
+  runs. Registrations outlive a reload.
 - **Objects have one owner.** `gab_new` hands the host the only reference to an
   object, and `gab_free` gives it back. A pointer staged with
   `gab_arg_pointer` is borrowed for the call, so the host goes on owning it; a
@@ -182,6 +187,7 @@ more or less, and a second spelling would say nothing the first does not.
 | Assignment | `=`, and compound `+=` `-=` `*=` `/=` `%=` on any assignable target |
 | Memory | Unique ownership, `new`, `ref` borrows, scope-based free |
 | Modules | `module` namespaces, resolved per unit with a root fallback |
+| Externs | `extern func` declares a host body, bound by name at load |
 | Comments | `// line` and `/* block */`, which do not nest |
 
 Not yet implemented:

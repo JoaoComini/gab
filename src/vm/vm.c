@@ -48,6 +48,7 @@ VM *vm_create() {
     vm->heap_types = type_list_create();
     vm->func_handles = func_handle_list_create();
     vm->scripts = loaded_script_list_create();
+    vm->externs = extern_binding_list_create();
 
     vm->arena = arena_create(ARENA_BLOCK_SIZE);
     vm->compile_arena = arena_create(ARENA_BLOCK_SIZE);
@@ -177,6 +178,8 @@ void vm_free(VM *vm) {
     // The handles themselves are gab.c's to free, and gab_vm_free has done so
     // by now; this releases only the array that tracked them.
     func_handle_list_free(&vm->func_handles);
+
+    extern_binding_list_free(&vm->externs);
 
     // Frees each loaded unit's top-level chunk through the item_free hook.
     loaded_script_list_free(&vm->scripts);
@@ -440,9 +443,11 @@ bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *di
         scope_set_generation(scope, vm->compile_generation);
 
         if (ast_script_resolve(vm->compile_arena, script, scope, vm->module_scopes, diagnostics)) {
-            chunk = codegen_generate(
-                script, (CodegenOutput){.funcs = &vm->global_funcs, .heap_types = &vm->heap_types},
-                diagnostics, &frame_info);
+            chunk = codegen_generate(script,
+                                     (CodegenOutput){.funcs = &vm->global_funcs,
+                                                     .heap_types = &vm->heap_types,
+                                                     .externs = &vm->externs},
+                                     diagnostics, &frame_info);
         }
     }
 
@@ -481,6 +486,28 @@ static void vm_fail(VM *vm, VmRunStatus status, const char *message) {
 
     vm->error.status = status;
     vm->error.message = message;
+}
+
+// Runs an extern's host body against the frame at 'base'. Returns false when
+// the run must unwind: either nothing was ever bound, or the body reported
+// failure.
+//
+// No frame is pushed. The body reads and writes slots directly, so there is
+// nothing for a frame to track — and a C function that cannot be interpreted
+// has no instruction pointer to return to.
+static bool vm_call_extern(VM *vm, const FuncPrototype *proto, size_t base) {
+    GabArgs args = {.vm = vm, .symbol = proto->extern_symbol, .base = base, .failed = false};
+
+    proto->native(&args);
+
+    if (args.failed) {
+        // The message was copied into the VM on the way through, so it stays
+        // readable after the host's own string has gone.
+        vm_fail(vm, VM_RUN_ERR_EXTERN, vm->extern_message);
+        return false;
+    }
+
+    return true;
 }
 
 // Whether an int division or remainder may go ahead, failing the run when it
@@ -745,6 +772,17 @@ static void vm_run_loop(VM *vm) {
                 // arguments the caller already placed above dest.
                 size_t base = frame->base + dest * VM_SLOT_SIZE;
 
+                // An extern runs in the caller's frame rather than pushing one:
+                // there is no bytecode to interpret, and its arguments are
+                // already where a callee's would be.
+                if (proto->native) {
+                    if (!vm_call_extern(vm, proto, base)) {
+                        vm_unwind(vm);
+                    }
+
+                    VM_NEXT();
+                }
+
                 if (!vm_push_frame(vm, proto, base, vm->instruction_pointer + 1, dest)) {
                     // Unwinding here is what makes the failure safe; the reason is
                     // left on the VM because the loop has no caller to return to.
@@ -931,6 +969,16 @@ VmRunStatus vm_run_frame(VM *vm, const FuncPrototype *proto, size_t base, unsign
     }
 
     vm_run_loop(vm);
+
+    return vm->error.status;
+}
+
+VmRunStatus vm_run_extern(VM *vm, const FuncPrototype *proto, size_t base) {
+    vm->error = (VmError){.status = VM_RUN_OK, .message = NULL};
+
+    // Nothing to unwind on failure: no frame was pushed, and an extern owns
+    // none of the caller's slots.
+    vm_call_extern(vm, proto, base);
 
     return vm->error.status;
 }

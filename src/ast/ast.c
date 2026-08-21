@@ -49,6 +49,11 @@ typedef struct {
 
     ModuleScopeMap *module_scopes;
 
+    // The module this unit declares into, or NULL for the root namespace. Only
+    // an extern records it, so that a host binds a body to the same module the
+    // declaration lives in.
+    String *module_name;
+
     FuncContext func_context;
 
     Diagnostics *diagnostics;
@@ -1302,6 +1307,15 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
 
     stmt->func_decl.symbol = func;
 
+    if (func) {
+        func->func.is_extern = stmt->func_decl.body == NULL;
+
+        if (func->func.is_extern) {
+            func->func.name = resolver_intern(state, func_name);
+            func->func.module = state->module_name;
+        }
+    }
+
     size_t param_count = stmt->func_decl.params.size;
 
     if (func && param_count > 0) {
@@ -1425,7 +1439,11 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
             declare_func(state, stmt);
         }
 
-        resolve_func_body(state, stmt);
+        // An extern declares a signature and nothing else: there is no body to
+        // walk, and its parameters name no slots any code here will read.
+        if (stmt->func_decl.body) {
+            resolve_func_body(state, stmt);
+        }
         break;
     }
     case STMT_STRUCT_DECL: {
@@ -1608,6 +1626,8 @@ bool ast_script_resolve(Arena *compile_arena, ASTScript *script, Scope *global_s
         .global_scope = global_scope,
         .current_scope = global_scope,
         .module_scopes = module_scopes,
+        .module_name =
+            script->module_name.data ? string_from_ref(global_scope->strings, script->module_name) : NULL,
         .func_context =
             {
                 .return_type = NULL,

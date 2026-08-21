@@ -118,6 +118,9 @@ static void gab_func_bind(GabFunc *fn);
 // slots, plus slot 0 for the return value.
 static unsigned int gab_signature_slots(const Symbol *symbol);
 
+// How many slots a value of this type occupies.
+static unsigned int gab_type_slots(const Type *type);
+
 // The handle's per-parameter arrays, in one allocation separate from the
 // struct. Separate because the host holds the handle's address: a reload that
 // widens a signature has to grow these, and the struct itself must not move
@@ -232,6 +235,196 @@ static LoadedScript *gab_find_script(VM *vm, const char *name) {
     }
 
     return NULL;
+}
+
+// --- Extern functions ------------------------------------------------------
+
+// Where a parameter's slots begin, counting from the frame's slot 0 — which
+// holds the return value, exactly as it does for a script callee. A multi-slot
+// parameter occupies consecutive slots, so each index is found by walking the
+// widths ahead of it rather than by indexing a table.
+//
+// Returns NULL when the index names no parameter, which is what every accessor
+// checks before touching a slot.
+static uint8_t *gab_arg_address(GabArgs *args, int index, const Type **out_type) {
+    if (!args || index < 0) {
+        return NULL;
+    }
+
+    const Symbol *symbol = args->symbol;
+
+    if ((size_t)index >= symbol->func.param_count) {
+        return NULL;
+    }
+
+    unsigned int slot = 1;
+
+    for (int i = 0; i < index; i++) {
+        slot += gab_type_slots(symbol->func.params[i]);
+    }
+
+    if (out_type) {
+        *out_type = symbol->func.params[index];
+    }
+
+    return args->vm->stack + args->base + (size_t)slot * VM_SLOT_SIZE;
+}
+
+int32_t gab_arg_get_int(GabArgs *args, int index) {
+    const uint8_t *at = gab_arg_address(args, index, NULL);
+
+    if (!at) {
+        return 0;
+    }
+
+    int32_t value;
+    memcpy(&value, at, sizeof(value));
+
+    return value;
+}
+
+float gab_arg_get_float(GabArgs *args, int index) {
+    const uint8_t *at = gab_arg_address(args, index, NULL);
+
+    if (!at) {
+        return 0.0f;
+    }
+
+    float value;
+    memcpy(&value, at, sizeof(value));
+
+    return value;
+}
+
+bool gab_arg_get_bool(GabArgs *args, int index) {
+    const uint8_t *at = gab_arg_address(args, index, NULL);
+
+    if (!at) {
+        return false;
+    }
+
+    int32_t value;
+    memcpy(&value, at, sizeof(value));
+
+    return value != 0;
+}
+
+bool gab_arg_get_struct(GabArgs *args, int index, void *out, size_t size) {
+    const Type *type = NULL;
+    const uint8_t *at = gab_arg_address(args, index, &type);
+
+    if (!at || !out || !type || type->size != size) {
+        return false;
+    }
+
+    memcpy(out, at, size);
+
+    return true;
+}
+
+void *gab_arg_get_pointer(GabArgs *args, int index) {
+    const Type *type = NULL;
+    const uint8_t *at = gab_arg_address(args, index, &type);
+
+    if (!at || !type || type->kind != TYPE_POINTER) {
+        return NULL;
+    }
+
+    void *pointer;
+    memcpy(&pointer, at, sizeof(pointer));
+
+    return pointer;
+}
+
+// The frame's slot 0, which is where a callee leaves its result.
+static uint8_t *gab_return_address(GabArgs *args) { return args->vm->stack + args->base; }
+
+void gab_return_int(GabArgs *args, int32_t value) {
+    if (args) {
+        memcpy(gab_return_address(args), &value, sizeof(value));
+    }
+}
+
+void gab_return_float(GabArgs *args, float value) {
+    if (args) {
+        memcpy(gab_return_address(args), &value, sizeof(value));
+    }
+}
+
+void gab_return_bool(GabArgs *args, bool value) {
+    if (args) {
+        int32_t widened = value ? 1 : 0;
+
+        memcpy(gab_return_address(args), &widened, sizeof(widened));
+    }
+}
+
+bool gab_return_struct(GabArgs *args, const void *data, size_t size) {
+    if (!args || !data) {
+        return false;
+    }
+
+    const Type *return_type = args->symbol->func.return_type;
+
+    if (!return_type || return_type->size != size) {
+        return false;
+    }
+
+    memcpy(gab_return_address(args), data, size);
+
+    return true;
+}
+
+void gab_return_pointer(GabArgs *args, void *pointer) {
+    if (args) {
+        memcpy(gab_return_address(args), &pointer, sizeof(pointer));
+    }
+}
+
+void gab_error(GabArgs *args, const char *message) {
+    if (!args) {
+        return;
+    }
+
+    snprintf(args->vm->extern_message, sizeof(args->vm->extern_message), "%s",
+             message ? message : "the extern function failed");
+
+    args->failed = true;
+}
+
+bool gab_extern(GabVM *handle, const char *module, const char *name, GabExternFn fn, GabError *err) {
+    gab_error_clear(err);
+
+    if (!handle || !name || !fn) {
+        gab_error_set(err, 0, 0, "gab_extern requires a VM, a name, and a function");
+        return false;
+    }
+
+    VM *vm = (VM *)handle;
+
+    // Interned rather than copied: the binding is matched against a declared
+    // name, which is interned in the same pool, so identity is the comparison.
+    String *interned_name = string_from_cstr(&vm->strings, name);
+    String *interned_module = (module && module[0] != '\0') ? string_from_cstr(&vm->strings, module) : NULL;
+
+    if (!interned_name || (module && module[0] != '\0' && !interned_module)) {
+        gab_error_set(err, 0, 0, "out of memory");
+        return false;
+    }
+
+    for (size_t i = 0; i < vm->externs.size; i++) {
+        const ExternBinding *binding = &vm->externs.data[i];
+
+        if (binding->name == interned_name && binding->module == interned_module) {
+            gab_error_set(err, 0, 0, "an extern of this name is already bound in this module");
+            return false;
+        }
+    }
+
+    extern_binding_list_add(&vm->externs,
+                            (ExternBinding){.module = interned_module, .name = interned_name, .fn = fn});
+
+    return true;
 }
 
 bool gab_load(GabVM *handle, const char *name, const char *src, GabError *err) {
@@ -833,7 +1026,9 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
 
     const FuncPrototype *proto = &vm->global_funcs.data[proto_index];
 
-    if (!proto->chunk) {
+    // An extern is bound rather than compiled, so a missing body means a
+    // missing chunk for one and a missing binding for the other.
+    if (!proto->chunk && !proto->native) {
         gab_error_set(err, 0, 0, "this function has no compiled body");
         return GAB_ERR_RUNTIME;
     }
@@ -852,7 +1047,9 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
     // frame — based here — expects its parameters.
     memcpy(vm->stack + base + VM_SLOT_SIZE, call->args + VM_SLOT_SIZE, fn->arg_slots * VM_SLOT_SIZE);
 
-    if (vm_run_frame(vm, proto, base, 0) != VM_RUN_OK) {
+    VmRunStatus status = proto->native ? vm_run_extern(vm, proto, base) : vm_run_frame(vm, proto, base, 0);
+
+    if (status != VM_RUN_OK) {
         gab_error_set(err, 0, 0, vm->error.message);
         return GAB_ERR_RUNTIME;
     }

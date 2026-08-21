@@ -134,7 +134,7 @@ static void codegen_for_stmt(CodegenState *state, ASTForStmt *ast);
 static void codegen_jump_stmt(CodegenState *state, ASTStmt *ast);
 static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast);
 static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast);
-static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast);
+static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt);
 
 // Expressions, in the order codegen_expr dispatches them.
 static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast);
@@ -331,7 +331,7 @@ static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
         break;
     }
     case STMT_FUNC_DECL:
-        codegen_func_decl_stmt(state, &ast->func_decl);
+        codegen_func_decl_stmt(state, ast);
         break;
     case STMT_STRUCT_DECL:
         // Types are resolved at compile time and emit no code.
@@ -935,14 +935,69 @@ static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast) {
     ast->symbol->func.proto_index = state->output.funcs->size - 1;
 }
 
-static void codegen_func_decl_stmt(CodegenState *state, ASTFuncDecl *ast) {
-    Chunk *func_chunk = chunk_create();
+// The host body registered for an extern's module and name, or NULL if none is.
+// Both are interned, so identity is the comparison.
+static GabExternFn codegen_find_extern(CodegenState *state, const Symbol *symbol) {
+    const ExternBindingList *externs = state->output.externs;
+
+    if (!externs) {
+        return NULL;
+    }
+
+    for (size_t i = 0; i < externs->size; i++) {
+        const ExternBinding *binding = &externs->data[i];
+
+        if (binding->name == symbol->func.name && binding->module == symbol->func.module) {
+            return binding->fn;
+        }
+    }
+
+    return NULL;
+}
+
+static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
+    ASTFuncDecl *ast = &stmt->func_decl;
 
     // Reserved by the pre-pass for a top-level function; a nested one, which no
     // pre-pass saw, reserves its own here.
     codegen_reserve_proto(state, ast);
 
+    if (!ast->symbol) {
+        return;
+    }
+
     size_t proto_index = ast->symbol->func.proto_index;
+
+    // An extern emits no code. Its host body is resolved here, as the prototype
+    // is created, so a prototype never exists in a state where a call could
+    // reach it without one.
+    if (ast->symbol->func.is_extern) {
+        GabExternFn native = codegen_find_extern(state, ast->symbol);
+
+        if (!native) {
+            if (!state->failed) {
+                diag_error(state->diagnostics, GAB_ERR_CODEGEN, stmt->span,
+                           "extern function '%s' was never registered", ast->symbol->func.name->data);
+            }
+
+            state->failed = true;
+
+            return;
+        }
+
+        func_proto_list_emplace(state->output.funcs, proto_index,
+                                (FuncPrototype){
+                                    .extern_symbol = ast->symbol,
+                                    .native = native,
+                                    .arity = (int)ast->params.size,
+                                    .max_registers = 0,
+                                    .refs = frame_ref_list_create(),
+                                });
+
+        return;
+    }
+
+    Chunk *func_chunk = chunk_create();
 
     unsigned int func_next_reg = 1;
 
