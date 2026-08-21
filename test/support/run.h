@@ -10,12 +10,14 @@
 // separate executables with no shared translation unit to link against.
 
 #include "ast/ast.h"
+#include "compile.h"
 #include "lexer.h"
 #include "parser.h"
 #include "scope.h"
-#include "support/test_context.h"
 #include "slot.h"
+#include "support/test_context.h"
 #include "vm/chunk.h"
+#include "vm/interp.h"
 #include "vm/opcode.h"
 #include "vm/vm.h"
 
@@ -34,7 +36,7 @@
 static inline void test_run(const char *source, void *out, size_t width) {
     VM *vm = vm_create();
 
-    vm_execute(vm, test_in_a_module(source));
+    compile_and_run(vm, test_in_a_module(source));
 
     assert(vm->frame_count == 0);
 
@@ -102,15 +104,15 @@ static inline bool test_codegens(const char *source) {
     VM *vm = vm_create();
 
     Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+    diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
 
-    CompiledScript script;
-    bool ok = vm_compile(vm, test_in_a_module(source), &script, &diagnostics);
+    FuncPrototype script;
+    bool ok = compile_unit(vm, test_in_a_module(source), &script, &diagnostics);
 
     diagnostics_free(&diagnostics);
 
     if (ok) {
-        vm_compiled_script_free(&script);
+        func_proto_free(&script);
     }
 
     vm_free(vm);
@@ -125,22 +127,22 @@ static inline VmRunStatus test_run_status(const char *source) {
     VM *vm = vm_create();
 
     Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+    diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
 
-    CompiledScript script;
-    bool compiled = vm_compile(vm, test_in_a_module(source), &script, &diagnostics);
+    FuncPrototype script;
+    bool compiled = compile_unit(vm, test_in_a_module(source), &script, &diagnostics);
 
     diagnostics_free(&diagnostics);
     assert(compiled);
 
-    VmRunStatus status = vm_run(vm, &script);
+    VmRunStatus status = interp_run_top_level(vm, &script);
 
     // The status is reported both ways round, and a failure always carries a
     // message for the host to show.
     assert(vm->error.status == status);
-    assert(status == VM_RUN_OK || vm->error.message);
+    assert(status == VM_RUN_OK || vm->error.message[0] != '\0');
 
-    vm_compiled_script_free(&script);
+    func_proto_free(&script);
     vm_free(vm);
 
     return status;
@@ -155,16 +157,16 @@ static inline VmRunStatus test_run_status(const char *source) {
 // free to change.
 typedef struct {
     VM *vm;
-    CompiledScript script;
+    FuncPrototype script;
 } TestProgram;
 
 static inline TestProgram test_compile(const char *source) {
     TestProgram program = {.vm = vm_create()};
 
     Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, program.vm->compile_arena, "<test>");
+    diagnostics_init(&diagnostics, program.vm->env.compile_arena, "<test>");
 
-    bool ok = vm_compile(program.vm, test_in_a_module(source), &program.script, &diagnostics);
+    bool ok = compile_unit(program.vm, test_in_a_module(source), &program.script, &diagnostics);
 
     diagnostics_free(&diagnostics);
     assert(ok);
@@ -176,12 +178,12 @@ static inline TestProgram test_compile(const char *source) {
 // it. For the claims that need two units: an index a second unit encodes means
 // nothing unless the first has already taken the ones below it.
 static inline void test_compile_next(TestProgram *program, const char *source) {
-    vm_compiled_script_free(&program->script);
+    func_proto_free(&program->script);
 
     Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, program->vm->compile_arena, "<test>");
+    diagnostics_init(&diagnostics, program->vm->env.compile_arena, "<test>");
 
-    bool ok = vm_compile(program->vm, test_in_a_module(source), &program->script, &diagnostics);
+    bool ok = compile_unit(program->vm, test_in_a_module(source), &program->script, &diagnostics);
 
     diagnostics_free(&diagnostics);
     assert(ok);
@@ -190,8 +192,8 @@ static inline void test_compile_next(TestProgram *program, const char *source) {
 // Where a type sits in the VM's list, which is what OP_NEW encodes. -1 if the
 // VM has never been asked to allocate it.
 static inline long test_heap_type_index(TestProgram *program, const char *name) {
-    for (size_t i = 0; i < program->vm->heap_types.size; i++) {
-        if (strcmp(program->vm->heap_types.data[i]->name->data, name) == 0) {
+    for (size_t i = 0; i < program->vm->program.heap_types.size; i++) {
+        if (strcmp(program->vm->program.heap_types.data[i]->name->data, name) == 0) {
             return (long)i;
         }
     }
@@ -201,7 +203,7 @@ static inline long test_heap_type_index(TestProgram *program, const char *name) 
 
 static inline void test_program_free(TestProgram *program) {
 
-    vm_compiled_script_free(&program->script);
+    func_proto_free(&program->script);
     vm_free(program->vm);
 }
 
@@ -209,9 +211,9 @@ static inline Chunk *test_top_chunk(TestProgram *program) { return program->scri
 
 // The chunk of a declared function, by declaration order.
 static inline Chunk *test_func_chunk(TestProgram *program, size_t index) {
-    assert(index < program->vm->prototypes.size);
+    assert(index < program->vm->program.prototypes.size);
 
-    return program->vm->prototypes.data[index]->chunk;
+    return program->vm->program.prototypes.data[index]->chunk;
 }
 
 // How many times an opcode appears. Most claims about emitted code are really

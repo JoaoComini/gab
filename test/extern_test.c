@@ -332,6 +332,68 @@ static void test_an_extern_lives_in_its_module(void) {
     gab_vm_free(vm);
 }
 
+// A host that reports failure without a message still fails, and the run says
+// so: the reason reaches the host either way.
+static void refuse_silently(GabArgs *args) { gab_error(args, NULL); }
+
+static void test_an_extern_may_fail_without_a_message(void) {
+    GabVM *vm = gab_vm_new();
+    GabError err;
+
+    assert(gab_extern(vm, "test", "refuse", refuse_silently, &err));
+
+    assert(gab_load(vm, "<m>",
+                    "module test;\n"
+                    "extern func refuse(): int;\n"
+                    "func run(): int { return refuse(); }\n",
+                    &err));
+
+    GabCall *call = gab_call_init(gab_lookup(vm, "test", "run", &err), &err);
+
+    int32_t out = 0;
+    assert(gab_call(vm, call, &out, &err) == GAB_ERR_RUNTIME);
+    assert(err.message[0] != '\0');
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
+// A message longer than the buffer is truncated rather than overrunning it, and
+// what fits still reaches the host.
+static void refuse_at_length(GabArgs *args) {
+    char message[512];
+
+    memset(message, 'x', sizeof(message) - 1);
+    message[sizeof(message) - 1] = '\0';
+    memcpy(message, "far too long", strlen("far too long"));
+
+    gab_error(args, message);
+}
+
+static void test_a_long_extern_message_is_truncated(void) {
+    GabVM *vm = gab_vm_new();
+    GabError err;
+
+    assert(gab_extern(vm, "test", "refuse", refuse_at_length, &err));
+
+    assert(gab_load(vm, "<m>",
+                    "module test;\n"
+                    "extern func refuse(): int;\n"
+                    "func run(): int { return refuse(); }\n",
+                    &err));
+
+    GabCall *call = gab_call_init(gab_lookup(vm, "test", "run", &err), &err);
+
+    int32_t out = 0;
+    assert(gab_call(vm, call, &out, &err) == GAB_ERR_RUNTIME);
+
+    assert(strncmp(err.message, "far too long", strlen("far too long")) == 0);
+    assert(strlen(err.message) < sizeof(err.message));
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
 int main(void) {
     test_an_extern_returns_to_its_caller();
     test_an_extern_may_return_nothing();
@@ -342,6 +404,8 @@ int main(void) {
     test_an_extern_must_be_registered_before_the_load();
     test_a_host_may_call_an_extern_directly();
     test_an_extern_may_fail_the_run();
+    test_an_extern_may_fail_without_a_message();
+    test_a_long_extern_message_is_truncated();
     test_an_extern_may_not_have_a_body();
     test_a_plain_func_still_needs_a_body();
     test_an_extern_lives_in_its_module();

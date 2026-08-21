@@ -8,180 +8,11 @@
 #include "string/string_pool.h"
 #include "util/list.h"
 #include "vm/chunk.h"
+#include "vm/link.h"
+#include "vm/opcode.h"
 
 #include <stdint.h>
 #include <string.h>
-
-/*
-    Encodes R-type instructions in a 32-bit integer
-    op: OpCode (7-bit)
-    rd: Destination register (8-bit)
-    r1: Register 1 (8-bit)
-    r2: Register 2 (8-bit)
-    k:  when set, r2 is a small unsigned immediate rather than a register
-
-    The k bit is Lua's register-or-constant operand trick: 'x + 1' would
-    otherwise need a LOAD_CONST into a register the arithmetic then reads once
-    and never again, and small literals are most of what arithmetic operates on.
-    Only the second operand can be immediate, which is enough because the
-    commutative ops are emitted with the constant on the right.
-*/
-#define VM_ENCODE_R(op, rd, r1, r2) VM_ENCODE_RK(op, rd, r1, r2, 0)
-
-/*
-    As VM_ENCODE_R, plus the spare k bit. Every field is masked: an
-    out-of-range value would otherwise smear into its neighbours — including
-    the opcode — and produce an instruction that matches no case.
-*/
-#define VM_ENCODE_RK(op, rd, r1, r2, k)                                                                      \
-    ((((op) & 0x7F) << 25) | (((rd) & 0xFF) << 17) | (((r1) & 0xFF) << 9) | (((r2) & 0xFF) << 1) |           \
-     ((k) & 0x1))
-
-#define VM_DECODE_R_RD(instr) (((instr) >> 17) & 0xFF) // Destination register
-#define VM_DECODE_R_R1(instr) (((instr) >> 9) & 0xFF)  // First source register
-#define VM_DECODE_R_R2(instr) (((instr) >> 1) & 0xFF)  // Second source register
-#define VM_DECODE_R_K(instr) ((instr) & 0x1)           // r2 is an immediate, not a register
-
-// The widest immediate the r2 field holds. A literal above this is loaded into
-// a register as before, so the range is a codegen decision and never a limit on
-// what a program can say.
-#define VM_MAX_IMMEDIATE 0xFF
-
-// The r2 field read as a signed jump offset, for OP_FOR_LOOP. Sign-extended by
-// the shift pair rather than by a cast, since the field is not a whole type's
-// width -- the same reason VM_DECODE_I_SIMM is written this way.
-#define VM_DECODE_R_SIMM(instr) ((int32_t)((uint32_t)(instr) << 23) >> 24)
-
-// How far the fused loop reaches back. A body longer than this keeps the
-// general compare-and-jump form, so the range bounds an optimisation rather
-// than a program.
-#define VM_MAX_LOOP_OFFSET 127
-
-/*
-    Encodes I-type instructions in a 32-bit integer
-    op: OpCode (7-bit)
-    rd: Destination register (8-bit)
-    kx | imm: Constant index (17 bit) or immediate value
-
-    The form for an instruction naming one register plus something that is not
-    a register, where 8 bits would be too narrow: a constant index, or a
-    prototype index. R-type's three 8-bit fields suit an instruction whose
-    operands are all register indices; this suits the rest.
-*/
-#define VM_ENCODE_I(op, rd, kx) ((((op) & 0x7F) << 25) | (((rd) & 0xFF) << 17) | ((kx) & 0x1FFFF))
-
-#define VM_DECODE_I_RD(instr) (((instr) >> 17) & 0xFF) // Destination register
-#define VM_DECODE_I_KX(instr) ((instr) & 0x1FFFF)      // 17-bit constant/index
-#define VM_DECODE_I_IMM(instr) ((instr) & 0x1FFFF)     // 17-bit immediate value
-
-// The same 17 bits read as a signed jump offset. A jump is the one I-type
-// operand with a direction: an index into the constant or prototype table
-// counts from zero and never backwards, while a jump target may lie either side
-// of the jump itself. Sign-extended by the shift pair rather than by a cast,
-// since the field is not a whole type's width.
-#define VM_DECODE_I_SIMM(instr) ((int32_t)((uint32_t)(instr) << 15) >> 15)
-
-#define VM_DECODE_OPCODE(instr) ((instr) >> 25) // Get OpCode (default to all types)
-
-// Maximum constants supported by 17-bit index
-#define VM_MAX_CONSTANTS ((1 << 17) - 1)
-
-// How far one jump reaches. The offset spends a bit on its sign, so it spans
-// half what an index of the same width does, in either direction.
-#define VM_MAX_JUMP ((1 << 16) - 1)
-
-// Maximum registers supported with 8-bit
-#define VM_MAX_REGISTERS ((1 << 8) - 1)
-
-/*
-    The limits below are named for what they bound rather than sharing one
-    constant, because they are different quantities that mostly coincide at
-    255 — the width of an 8-bit operand field. Widening one instruction's
-    field must not silently move the others.
-
-    VM_MAX_PROTOTYPES is why this matters. It was 255 while a prototype index
-    rode in OP_CALL's 8-bit register field, which capped a whole VM at 255
-    functions across every module it loaded — far too few for a real project,
-    and an arbitrary limit besides, since a prototype index is not a register
-    and only sat in a register-sized field by accident.
-*/
-
-// A prototype index rides in OP_CALL's 17-bit I-type field, so it is bounded
-// like a constant index rather than like a register.
-#define VM_MAX_PROTOTYPES VM_MAX_CONSTANTS
-
-// A type index rides in OP_NEW's 17-bit I-type field, for the same reason.
-#define VM_MAX_HEAP_TYPES VM_MAX_CONSTANTS
-
-// The slots one frame addresses, which is what a register operand indexes.
-#define VM_MAX_FRAME_SLOTS ((1 << 8) - 1)
-
-// A field's byte offset within a struct rides in an 8-bit operand.
-#define VM_MAX_FIELD_OFFSET ((1 << 8) - 1)
-
-// A struct's width in slots, carried in an 8-bit operand by the opcodes that
-// move a whole struct at once.
-#define VM_MAX_STRUCT_SLOTS ((1 << 8) - 1)
-
-// OP_RETURN_N carries its slot count in the 8-bit r2 field.
-#define VM_MAX_RETURN_SLOTS ((1 << 8) - 1)
-
-// Widest run OP_MOVE_N can carry, bounded by its 8-bit count field.
-#define VM_MAX_MOVE_SLOTS ((1 << 8) - 1)
-
-// A pointer is a raw address, so it spans two slots and wants an even slot
-// index to sit at its natural alignment.
-#define VM_POINTER_SLOTS ((unsigned int)(sizeof(void *) / VM_SLOT_SIZE))
-
-// Sentinel value for registers
-#define VM_INVALID_REGISTER VM_MAX_REGISTERS + 1
-
-// A slot a frame owns an object in. Used only when a run fails: an abnormal
-// unwind jumps past every free codegen emitted, so the frames have to be told
-// what to drop.
-//
-// A 'ref T' slot is never listed: it borrows, so there is nothing to free.
-typedef struct {
-    unsigned int slot;
-} FrameRef;
-
-#define frame_ref_list_item_free(item) ((void)(item))
-GAB_LIST(FrameRefList, frame_ref_list, FrameRef)
-
-// An 'extern' function's host body. Takes the frame it was called with, so it
-// reads its arguments and writes its result through the slots already in
-// place — the same layout a script function's frame has, which is what keeps
-// the boundary free of marshalling.
-typedef struct GabArgs GabArgs;
-typedef void (*GabExternFn)(GabArgs *args);
-
-typedef struct {
-    // NULL for an extern, whose body is 'native' instead. Exactly one of the
-    // two is set, and OP_CALL branches on which.
-    Chunk *chunk;
-
-    GabExternFn native;
-
-    // The declaration an extern was bound to, for resolving a parameter index
-    // to its slot. Set only for an extern: a script function's frame is
-    // addressed by the code codegen emitted, which needs no signature at run
-    // time. Points into the VM's arena, so it outlives every compile.
-    const struct Symbol *extern_symbol;
-
-    int arity;
-    int max_registers;
-
-    // Every slot this function ever owns a reference in. Walked only on an
-    // abnormal unwind, where the ordinary releases are skipped — so it costs
-    // nothing on the path that matters, and the alternative is leaking whatever
-    // the stack held when the run failed.
-    //
-    // A slot may appear here and hold something else by the time a failure
-    // happens, since sibling blocks reuse slots. That is why the runtime clears
-    // a slot when it releases it: a slot listed here either holds a live
-    // reference or holds NULL, and NULL is what both release paths tolerate.
-    FrameRefList refs;
-} FuncPrototype;
 
 #define VM_MAX_CALL_DEPTH 256
 
@@ -194,122 +25,6 @@ typedef struct {
     size_t base;
     unsigned int dest;
 } CallFrame;
-
-// What a compile produces: the top-level chunk plus the frame size it needs.
-// The two travel together because running the chunk means building a prototype
-// from it, and only codegen knows how many registers that takes.
-typedef struct {
-    Chunk *chunk;
-    unsigned int max_registers;
-
-    // As FuncPrototype::refs, for the top-level frame. Top-level code owns
-    // references like any other, and a failure there unwinds the same way.
-    FrameRefList refs;
-
-    // The module the unit declared, interned in the VM's pool, or NULL for the
-    // default module. Carried out because the AST that held it is destroyed
-    // inside vm_compile.
-    String *module_name;
-} CompiledScript;
-
-void func_proto_free(FuncPrototype *proto);
-
-// Prototypes are held by pointer, not by value: a frame addresses its prototype
-// for as long as it runs, and this list grows whenever a unit loads. Each
-// prototype comes from the VM arena, so the list frees what a prototype owns
-// and not the prototype itself.
-#define func_proto_list_item_free(item) func_proto_free(item)
-GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype *)
-
-// The types OP_NEW can allocate. Types are owned by the scope arena and
-// outlive every compile, so the list holds borrowed pointers and frees none.
-#define type_list_item_free(item) ((void)(item))
-GAB_LIST(TypeList, type_list, const Type *)
-
-// One operand a unit must rewrite once linking tells it where its indices
-// landed. A unit numbers what it declares from zero, so an operand it encoded
-// means nothing until the unit's base is added to it.
-//
-// A reference to something an earlier unit declared is already absolute and is
-// never recorded here: only what this unit numbered itself gets rebased.
-typedef struct {
-    Chunk *chunk;
-    size_t offset;
-} Relocation;
-
-#define relocation_list_item_free(item) ((void)(item))
-GAB_LIST(RelocationList, relocation_list, Relocation)
-
-// A prototype this unit declared, and the symbol to stamp with its index once
-// linking makes that index absolute. Stamping at link rather than during
-// codegen is what keeps a compile that fails from leaving a symbol pointing at
-// a prototype nothing installed.
-typedef struct {
-    struct Symbol *symbol;
-    size_t local_index;
-} ProtoBinding;
-
-#define proto_binding_list_item_free(item) ((void)(item))
-GAB_LIST(ProtoBindingList, proto_binding_list, ProtoBinding)
-
-// An 'extern' declaration awaiting a host body. Resolved at link, so a unit
-// that names a body nothing supplied installs nothing rather than leaving a
-// prototype behind that a call could reach unbound.
-typedef struct {
-    size_t local_index;
-    const struct Symbol *symbol;
-    Span span;
-} ExternRequest;
-
-#define extern_request_list_item_free(item) ((void)(item))
-GAB_LIST(ExternRequestList, extern_request_list, ExternRequest)
-
-// What a compile produces, before any of it belongs to a VM.
-//
-// Everything here is numbered from zero and owned by the unit, so a compile
-// that fails is discarded by freeing this and nothing else. Linking appends the
-// unit's prototypes and types to the VM's, rebases every operand the unit
-// recorded, resolves its externs, and only then stamps the symbols -- so the VM
-// either gains the whole unit or is untouched by it.
-typedef struct {
-    Chunk *chunk;
-    unsigned int max_registers;
-    FrameRefList refs;
-    String *module_name;
-
-    FuncProtoList prototypes;
-    TypeList types;
-
-    RelocationList proto_relocations;
-    RelocationList type_relocations;
-
-    ProtoBindingList bindings;
-    ExternRequestList externs;
-
-    // The arena the unit allocates from, held so that anything the link needs
-    // can be allocated after codegen has finished.
-    Arena *arena;
-
-    // Where each of the unit's types landed in the VM's list, filled in by the
-    // link check so that installing has nothing left that can fail.
-    size_t *type_map;
-} CompilationUnit;
-
-void compilation_unit_free(CompilationUnit *unit);
-
-void vm_compiled_script_free(CompiledScript *script);
-
-// A unit the VM has loaded, kept so its top-level chunk can be freed with the
-// VM and replaced when the same name is loaded again. The name is the one the
-// host passed to gab_load, copied because the host's string need not outlive
-// the call.
-typedef struct {
-    char name[128];
-    CompiledScript script;
-} LoadedScript;
-
-#define loaded_script_list_item_free(item) vm_compiled_script_free(&(item).script)
-GAB_LIST(LoadedScriptList, loaded_script_list, LoadedScript)
 
 // Every GabFunc this VM has handed out. A handle points into the VM's arena, so
 // it cannot outlive the VM in any case; owning them here makes that the actual
@@ -337,18 +52,6 @@ GAB_LIST(ModuleImportList, module_import_list, ModuleImport)
 #define string_list_item_free(item) ((void)(item))
 GAB_LIST(StringList, string_list, String *)
 
-// A host body bound to a name, waiting for a script to declare it 'extern'.
-// Registrations outlive every load, so a reload binds against the same set the
-// first load did.
-typedef struct {
-    String *module;
-    String *name;
-    GabExternFn fn;
-} ExternBinding;
-
-#define extern_binding_list_item_free(item) ((void)(item))
-GAB_LIST(ExternBindingList, extern_binding_list, ExternBinding)
-
 // Why a run stopped. A run that completed normally leaves VM_RUN_OK; anything
 // else means the interpreter unwound early, and the frames are already gone.
 typedef enum {
@@ -366,10 +69,16 @@ typedef enum {
 
 // The interpreter's failure channel. A run cannot report through a return value
 // because it unwinds from inside the loop, so the reason is left here for
-// whoever started the run to read. 'message' is a static string, not owned.
+// whoever started the run to read.
+//
+// The message is copied rather than pointed at. Most are literals, but an
+// extern's comes from the host and may be a local of the call that reported it,
+// so one rule for all of them beats a pointer whose lifetime depends on which
+// status it carries. Sized to match GabError::message, which is where a host
+// eventually reads it.
 typedef struct {
     VmRunStatus status;
-    const char *message;
+    char message[256];
 } VmError;
 
 // Arenas are named for what owns them, and the rule that follows from that is
@@ -382,13 +91,18 @@ typedef struct {
 // exist yet because every compile shares one global scope and type registry,
 // so a module's types are reachable from the next module and freeing them
 // would dangle. It becomes real alongside per-module scopes.
+//
+// The compile-time world a unit resolves against: every name that exists, the
+// scopes they live in, and which module may see which. A run never reads any of
+// it -- what a run needs, codegen has already turned into an index.
 typedef struct {
     // Lives until vm_free: interned strings, global symbols, and every Type.
+    // Also backs the prototypes in Program, which is why neither outlives this.
     Arena *arena;
 
     // Reset at the start of every compile: the AST, diagnostics, and the scopes
-    // of blocks, none of which anything holds once codegen is done. Kept on the
-    // VM rather than created per compile so its blocks are recycled instead of
+    // of blocks, none of which anything holds once codegen is done. Kept here
+    // rather than created per compile so its blocks are recycled instead of
     // returned to malloc between compiles.
     Arena *compile_arena;
 
@@ -404,29 +118,21 @@ typedef struct {
     // naming the same module compiles against the scope the first one filled.
     ModuleScopeMap *module_scopes;
 
-    // Function prototypes are VM-wide because a prototype index is baked into
-    // OP_CALL operands. Top-level variables are not here: they are frame-zero
-    // locals on the stack, so top-level state lives and dies with a run.
-    FuncProtoList prototypes;
+    // Which module imports which. See ModuleImport.
+    ModuleImportList module_imports;
+} Environment;
 
-    // The types OP_NEW allocates, indexed from the instruction. A Type * is 8
-    // bytes and the constant pool holds 4-byte Values, so an allocation names
-    // its type by index the same way a call names its prototype. Interning is
-    // by pointer identity, which the type system already guarantees.
-    TypeList heap_types;
+// The machine: a stack, a frame array, and where in the bytecode it is. Holds
+// the Environment and Program by value for now, because one arena backs all
+// three and vm_free is the single lifetime -- but the interpreter reads only
+// 'program', so what it takes to run is already separable from what it took to
+// compile.
+typedef struct VM {
+    Environment env;
+    Program program;
 
     // The handles this VM has handed out. See FuncHandleList.
     FuncHandleList func_handles;
-
-    // Every unit loaded into this VM, by name. See LoadedScript.
-    LoadedScriptList scripts;
-
-    // Host bodies bound by name, resolved against a unit's 'extern'
-    // declarations as it loads. See ExternBinding.
-    ExternBindingList externs;
-
-    // Which module imports which. See ModuleImport.
-    ModuleImportList module_imports;
 
     // The stack is byte-addressed and 8-byte aligned at the base, so a value
     // wider than a slot can sit at its natural alignment. Capacity is still
@@ -447,11 +153,6 @@ typedef struct {
 
     // Why the last run stopped. Cleared at the start of every run.
     VmError error;
-
-    // An extern's failure message, copied because the host's string need not
-    // outlive the call that gave it. VmError::message is otherwise a static
-    // string and points here only for this one status.
-    char extern_message[256];
 } VM;
 
 // One extern call's view of the frame it was called with. Opaque to a host,
@@ -523,46 +224,8 @@ static inline void vm_write_ptr(VM *vm, size_t r, uint8_t *address) {
 VM *vm_create();
 void vm_free(VM *vm);
 
-// Compiles without running, so a script can be compiled once and run many
-// times. Returns false and leaves 'out' untouched if any stage failed; the
-// diagnostics say why. On success the caller owns out->chunk and must pass it
-// to vm_compiled_script_free.
-//
-// Diagnostics are allocated from the VM's compile arena, which the next compile
-// reclaims — so they stay readable until then, but not past it.
-// Whether this unit could be installed. Reports through the diagnostics sink if
-// an index would not fit its operand field once rebased, or an "extern" names a
-// body nothing registered. Touches nothing on the VM, so a caller may ask and
-// then discard the unit.
-bool vm_link_check(VM *vm, CompilationUnit *unit, Diagnostics *diagnostics);
-
-// Installs a unit that vm_link_check has accepted. Cannot fail.
-void vm_link_install(VM *vm, CompilationUnit *unit);
-
-bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *diagnostics);
-
 // The scope holding a module's declarations, created on first mention and
 // living as long as the VM. NULL names the default module.
-Scope *vm_module_scope(VM *vm, String *name);
-
-// Runs a compiled script as frame zero, leaving its result in slot 0. Returns
-// why the run stopped; vm->error carries the same status plus a message.
-// Nothing is printed — reporting belongs to the caller.
-VmRunStatus vm_run(VM *vm, const CompiledScript *script);
-
-// Pushes one frame and runs the interpreter until it unwinds. The result is
-// left at the frame's own r0, which is the slot at base. The embedding API
-// calls in through this; base is a byte offset into the stack, and the caller
-// must already have placed the arguments in the parameter slots above it.
-VmRunStatus vm_run_frame(VM *vm, const FuncPrototype *proto, size_t base, unsigned int dest);
-
-// Runs an extern's host body against the block at 'base', for a host calling
-// one directly. No frame is pushed and no bytecode runs: an extern has none,
-// and its arguments are already laid out where a callee's would be.
-VmRunStatus vm_run_extern(VM *vm, const FuncPrototype *proto, size_t base);
-
-// Compile, run, and discard, reporting any diagnostics to stderr. The
-// convenience path for a caller with nothing to say about failure.
-void vm_execute(VM *vm, const char *source);
+Scope *environment_module_scope(Environment *env, String *name);
 
 #endif

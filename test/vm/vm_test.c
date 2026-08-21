@@ -1,4 +1,7 @@
+#include "compile.h"
+#include "gab.h"
 #include "vm/codegen.h"
+#include "vm/interp.h"
 #include "vm/vm.h"
 
 #include "lexer.h"
@@ -14,21 +17,21 @@
 static void test_vm_execute() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "module test;\n"
-                   "func execute(): bool {\n"
-                   "let a = 2;\n"
-                   "let b = 3;\n"
-                   "let c = a + b * 5;\n"
-                   "let d = (c - a) * ((b + 4) / (a + 1));\n"
-                   "let e = d + (c * (a - b) + (b / (a + 2)));\n"
-                   "let f = e - ((d + c) * (b - a));\n"
-                   "let g = ((f + e) * (d - c)) / ((a + b) - (e / (d + 1)));\n"
-                   "let h = g + f - e * (d + c - (b * a));\n"
-                   "let i = (h / g) + (f - (e * (d / (c + (b - a)))));\n"
-                   "let result : int = ((i + h) * (g - f) + (e / d)) - ((c + b) * (a - 1));\n"
-                   "let compare = result == 13120;\n"
-                   "if compare { let a = 10; let b = 2; return a * b == 20; } else { return false; }\n"
-                   "}");
+    compile_and_run(vm, "module test;\n"
+                        "func execute(): bool {\n"
+                        "let a = 2;\n"
+                        "let b = 3;\n"
+                        "let c = a + b * 5;\n"
+                        "let d = (c - a) * ((b + 4) / (a + 1));\n"
+                        "let e = d + (c * (a - b) + (b / (a + 2)));\n"
+                        "let f = e - ((d + c) * (b - a));\n"
+                        "let g = ((f + e) * (d - c)) / ((a + b) - (e / (d + 1)));\n"
+                        "let h = g + f - e * (d + c - (b * a));\n"
+                        "let i = (h / g) + (f - (e * (d / (c + (b - a)))));\n"
+                        "let result : int = ((i + h) * (g - f) + (e / d)) - ((c + b) * (a - 1));\n"
+                        "let compare = result == 13120;\n"
+                        "if compare { let a = 10; let b = 2; return a * b == 20; } else { return false; }\n"
+                        "}");
 
     vm_free(vm);
 }
@@ -41,15 +44,15 @@ static void test_two_vms_are_independent() {
     VM *second = vm_create();
 
     // Each VM interns its own copy of the same identifiers and type names.
-    vm_execute(first, "module test;\n"
-                      "func run(): int { let value : int = 1; return value; }");
-    vm_execute(second, "module test;\n"
-                       "func run(): int { let value : int = 2; return value; }");
+    compile_and_run(first, "module test;\n"
+                           "func run(): int { let value : int = 1; return value; }");
+    compile_and_run(second, "module test;\n"
+                            "func run(): int { let value : int = 2; return value; }");
 
-    assert(&first->strings != &second->strings);
+    assert(&first->env.strings != &second->env.strings);
 
-    Type *first_int = type_registry_get_builtin(first->global_scope.type_registry, TYPE_INT);
-    Type *second_int = type_registry_get_builtin(second->global_scope.type_registry, TYPE_INT);
+    Type *first_int = type_registry_get_builtin(first->env.global_scope.type_registry, TYPE_INT);
+    Type *second_int = type_registry_get_builtin(second->env.global_scope.type_registry, TYPE_INT);
 
     // Same name, different pools: distinct objects that must not be shared.
     assert(first_int->name != second_int->name);
@@ -59,8 +62,8 @@ static void test_two_vms_are_independent() {
 
     assert(strcmp(second_int->name->data, "int") == 0);
 
-    vm_execute(second, "module test;\n"
-                       "func again(): int { return 3; }");
+    compile_and_run(second, "module test;\n"
+                            "func again(): int { return 3; }");
 
     vm_free(second);
 }
@@ -70,12 +73,12 @@ static void test_two_vms_are_independent() {
 static void test_empty_function_body() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "module test;\n"
-                   "func main() { }");
+    compile_and_run(vm, "module test;\n"
+                        "func main() { }");
 
-    assert(vm->prototypes.size == 1);
+    assert(vm->program.prototypes.size == 1);
 
-    FuncPrototype *proto = vm->prototypes.data[0];
+    FuncPrototype *proto = vm->program.prototypes.data[0];
     assert(proto->chunk->instructions.size == 1);
     assert(VM_DECODE_OPCODE(instruction_list_get(&proto->chunk->instructions, 0)) == OP_RETURN);
 
@@ -87,11 +90,11 @@ static void test_empty_function_body() {
 static void test_struct_typed_local() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "module test;\n"
-                   "struct Vec3 { x: float, y: float, z: float }\n"
-                   "func main() { let v: Vec3; }");
+    compile_and_run(vm, "module test;\n"
+                        "struct Vec3 { x: float, y: float, z: float }\n"
+                        "func main() { let v: Vec3; }");
 
-    assert(vm->prototypes.size == 1);
+    assert(vm->program.prototypes.size == 1);
 
     vm_free(vm);
 }
@@ -101,12 +104,12 @@ static void test_struct_typed_local() {
 static void test_top_level_runs_as_frame_zero() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "module test;\n"
-                   "func main() { let a = 2; }");
+    compile_and_run(vm, "module test;\n"
+                        "func main() { let a = 2; }");
     assert(vm->frame_count == 0);
 
-    vm_execute(vm, "module test;\n"
-                   "let x: int = 7;");
+    compile_and_run(vm, "module test;\n"
+                        "let x: int = 7;");
     assert(vm->frame_count == 0);
 
     vm_free(vm);
@@ -120,20 +123,22 @@ static void test_top_level_runs_as_frame_zero() {
 static void test_types_survive_a_later_compile() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "module test;\n"
-                   "struct Player { health: int, mana: int }\n");
+    compile_and_run(vm, "module test;\n"
+                        "struct Player { health: int, mana: int }\n");
 
-    Type *player = scope_type_lookup(vm_module_scope(vm, string_from_cstr(&vm->strings, "test")),
-                                     string_from_cstr(&vm->strings, "Player"));
+    Type *player =
+        scope_type_lookup(environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "test")),
+                          string_from_cstr(&vm->env.strings, "Player"));
     assert(player);
 
     size_t size = player->size;
     size_t field_count = player->field_count;
 
     // Enough of a second script to reuse the memory the first one released.
-    vm_execute(vm, "module test;\n"
-                   "func a(x: int, y: int): int { let q: int = x + y; let w: int = q * q; return w; }\n"
-                   "func b(x: int, y: int): int { let q: int = x - y; let w: int = q * q; return w; }\n");
+    compile_and_run(vm,
+                    "module test;\n"
+                    "func a(x: int, y: int): int { let q: int = x + y; let w: int = q * q; return w; }\n"
+                    "func b(x: int, y: int): int { let q: int = x - y; let w: int = q * q; return w; }\n");
 
     assert(strcmp(player->name->data, "Player") == 0);
     assert(player->size == size);
@@ -148,18 +153,20 @@ static void test_types_survive_a_later_compile() {
 static void test_function_signatures_survive_a_later_compile() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "module test;\n"
-                   "struct Player { health: int, mana: int }\n"
-                   "func on_update(p: Player, dt: float): int { return p.health; }\n");
+    compile_and_run(vm, "module test;\n"
+                        "struct Player { health: int, mana: int }\n"
+                        "func on_update(p: Player, dt: float): int { return p.health; }\n");
 
-    Symbol *on_update = scope_symbol_lookup(vm_module_scope(vm, string_from_cstr(&vm->strings, "test")),
-                                            string_from_cstr(&vm->strings, "on_update"));
+    Symbol *on_update =
+        scope_symbol_lookup(environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "test")),
+                            string_from_cstr(&vm->env.strings, "on_update"));
     assert(on_update && on_update->kind == SYMBOL_FUNC);
     assert(on_update->func.param_count == 2);
 
-    vm_execute(vm, "module test;\n"
-                   "func a(x: int, y: int): int { let q: int = x + y; let w: int = q * q; return w; }\n"
-                   "func b(x: int, y: int): int { let q: int = x - y; let w: int = q * q; return w; }\n");
+    compile_and_run(vm,
+                    "module test;\n"
+                    "func a(x: int, y: int): int { let q: int = x + y; let w: int = q * q; return w; }\n"
+                    "func b(x: int, y: int): int { let q: int = x - y; let w: int = q * q; return w; }\n");
 
     assert(on_update->func.param_count == 2);
     assert(strcmp(on_update->func.params[0]->name->data, "Player") == 0);
@@ -176,28 +183,28 @@ static void test_function_signatures_survive_a_later_compile() {
 static void test_prototypes_survive_a_later_compile() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "module test;\n"
-                   "func seven(): int { return 7; }\n");
+    compile_and_run(vm, "module test;\n"
+                        "func seven(): int { return 7; }\n");
 
-    assert(vm->prototypes.size == 1);
+    assert(vm->program.prototypes.size == 1);
 
-    const FuncPrototype *seven = vm->prototypes.data[0];
+    const FuncPrototype *seven = vm->program.prototypes.data[0];
     const Chunk *chunk = seven->chunk;
     int arity = seven->arity;
 
     // Enough further functions to grow the list past its initial capacity.
-    vm_execute(vm, "module test;\n"
-                   "func a(x: int): int { return x; }\n"
-                   "func b(x: int): int { return x; }\n"
-                   "func c(x: int): int { return x; }\n"
-                   "func d(x: int): int { return x; }\n"
-                   "func e(x: int): int { return x; }\n"
-                   "func f(x: int): int { return x; }\n"
-                   "func g(x: int): int { return x; }\n"
-                   "func h(x: int): int { return x; }\n");
+    compile_and_run(vm, "module test;\n"
+                        "func a(x: int): int { return x; }\n"
+                        "func b(x: int): int { return x; }\n"
+                        "func c(x: int): int { return x; }\n"
+                        "func d(x: int): int { return x; }\n"
+                        "func e(x: int): int { return x; }\n"
+                        "func f(x: int): int { return x; }\n"
+                        "func g(x: int): int { return x; }\n"
+                        "func h(x: int): int { return x; }\n");
 
-    assert(vm->prototypes.size > 1);
-    assert(vm->prototypes.data[0] == seven);
+    assert(vm->program.prototypes.size > 1);
+    assert(vm->program.prototypes.data[0] == seven);
     assert(seven->chunk == chunk);
     assert(seven->arity == arity);
 
@@ -212,15 +219,15 @@ static void test_prototypes_survive_a_later_compile() {
 static void test_a_call_reaches_a_function_from_an_earlier_unit() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "module M;\nfunc seven(): int { return 7; }\n");
+    compile_and_run(vm, "module M;\nfunc seven(): int { return 7; }\n");
 
     // Prototypes of its own, so this unit's numbering cannot coincide with the
     // earlier unit's.
-    vm_execute(vm, "module M;\n"
-                   "func a(): int { return 1; }\n"
-                   "func b(): int { return 2; }\n"
-                   "func calls_across(): int { return seven(); }\n"
-                   "let r: int = calls_across();\n");
+    compile_and_run(vm, "module M;\n"
+                        "func a(): int { return 1; }\n"
+                        "func b(): int { return 2; }\n"
+                        "func calls_across(): int { return seven(); }\n"
+                        "let r: int = calls_across();\n");
 
     int32_t returned;
     memcpy(&returned, vm_slot_at(vm, 0), sizeof(returned));
@@ -237,30 +244,30 @@ static void test_a_call_reaches_a_function_from_an_earlier_unit() {
 static void test_a_unit_that_fails_to_link_installs_nothing() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "module test;\n"
-                   "func first(): int { return 1; }\n");
+    compile_and_run(vm, "module test;\n"
+                        "func first(): int { return 1; }\n");
 
-    size_t protos = vm->prototypes.size;
-    size_t types = vm->heap_types.size;
+    size_t protos = vm->program.prototypes.size;
+    size_t types = vm->program.heap_types.size;
 
     Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+    diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
 
     // Codegen succeeds and linking does not: the extern names a body no host
     // registered, which is a question only the link step can ask.
-    CompiledScript script;
-    assert(!vm_compile(vm,
-                       "module test;\n"
-                       "struct Only { a: int }\n"
-                       "func second(): int { let p: *Only = new Only; return p.a; }\n"
-                       "extern func absent(x: int): int;\n",
-                       &script, &diagnostics));
+    FuncPrototype script;
+    assert(!compile_unit(vm,
+                         "module test;\n"
+                         "struct Only { a: int }\n"
+                         "func second(): int { let p: *Only = new Only; return p.a; }\n"
+                         "extern func absent(x: int): int;\n",
+                         &script, &diagnostics));
 
     assert(diagnostics_has_errors(&diagnostics));
     diagnostics_free(&diagnostics);
 
-    assert(vm->prototypes.size == protos);
-    assert(vm->heap_types.size == types);
+    assert(vm->program.prototypes.size == protos);
+    assert(vm->program.heap_types.size == types);
 
     vm_free(vm);
 }
@@ -271,14 +278,14 @@ static void test_a_unit_that_fails_to_link_installs_nothing() {
 static void test_checking_a_unit_installs_nothing() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "module test;\n"
-                   "func first(): int { return 1; }\n");
+    compile_and_run(vm, "module test;\n"
+                        "func first(): int { return 1; }\n");
 
-    size_t protos = vm->prototypes.size;
-    size_t types = vm->heap_types.size;
+    size_t protos = vm->program.prototypes.size;
+    size_t types = vm->program.heap_types.size;
 
     Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+    diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
 
     Lexer lexer = lexer_create("module dry;\n"
                                "struct Only { a: int }\n"
@@ -290,23 +297,23 @@ static void test_checking_a_unit_installs_nothing() {
     assert(parser_parse(&parser, script));
 
     Scope staging;
-    scope_init_staging(&staging, vm->arena, &vm->strings,
-                       vm_module_scope(vm, string_from_cstr(&vm->strings, "dry")));
+    scope_init_staging(&staging, vm->env.arena, &vm->env.strings,
+                       environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "dry")));
 
-    assert(ast_script_resolve(vm->compile_arena, script, &staging, vm->module_scopes, &diagnostics));
+    assert(ast_script_resolve(vm->env.compile_arena, script, &staging, vm->env.module_scopes, &diagnostics));
 
-    CompilationUnit *unit = codegen_generate(script, vm->arena, &diagnostics);
+    Unit *unit = codegen_generate(script, vm->env.arena, &diagnostics);
     assert(unit);
 
     // Accepts, and having accepted has still changed nothing.
-    assert(vm_link_check(vm, unit, &diagnostics));
+    assert(link_check(&vm->program, unit, &diagnostics));
 
-    assert(vm->prototypes.size == protos);
-    assert(vm->heap_types.size == types);
-    assert(!scope_symbol_lookup(vm_module_scope(vm, string_from_cstr(&vm->strings, "dry")),
-                                string_from_cstr(&vm->strings, "second")));
+    assert(vm->program.prototypes.size == protos);
+    assert(vm->program.heap_types.size == types);
+    assert(!scope_symbol_lookup(environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "dry")),
+                                string_from_cstr(&vm->env.strings, "second")));
 
-    compilation_unit_free(unit);
+    unit_free(unit);
     ast_script_destroy(script);
     diagnostics_free(&diagnostics);
 
@@ -319,13 +326,13 @@ static void test_compile_once_run_many() {
     VM *vm = vm_create();
 
     Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+    diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
 
-    CompiledScript script;
-    bool ok = vm_compile(vm,
-                         "module test;\n"
-                         "func seven(): int { return 7; }\nlet r: int = seven();\n",
-                         &script, &diagnostics);
+    FuncPrototype script;
+    bool ok = compile_unit(vm,
+                           "module test;\n"
+                           "func seven(): int { return 7; }\nlet r: int = seven();\n",
+                           &script, &diagnostics);
     assert(ok);
 
     diagnostics_free(&diagnostics);
@@ -333,7 +340,7 @@ static void test_compile_once_run_many() {
     // Running repeatedly must be safe and must give the same answer each time:
     // a run leaves no frame behind and does not consume the chunk.
     for (int i = 0; i < 3; i++) {
-        vm_run(vm, &script);
+        interp_run_top_level(vm, &script);
 
         assert(vm->frame_count == 0);
         int32_t returned;
@@ -342,7 +349,7 @@ static void test_compile_once_run_many() {
         assert(returned == 7);
     }
 
-    vm_compiled_script_free(&script);
+    func_proto_free(&script);
 
     vm_free(vm);
 }
@@ -353,13 +360,13 @@ static void test_compile_failure_is_reportable() {
     VM *vm = vm_create();
 
     Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+    diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
 
-    CompiledScript script;
-    bool ok = vm_compile(vm,
-                         "module test;\n"
-                         "func broken(: int { return",
-                         &script, &diagnostics);
+    FuncPrototype script;
+    bool ok = compile_unit(vm,
+                           "module test;\n"
+                           "func broken(: int { return",
+                           &script, &diagnostics);
 
     assert(!ok);
     assert(diagnostics_has_errors(&diagnostics));
@@ -372,15 +379,15 @@ static void test_compile_failure_is_reportable() {
 // tests care only about whether resolution accepted the source.
 static bool compile_ok(VM *vm, const char *source) {
     Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+    diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
 
-    CompiledScript script;
-    bool ok = vm_compile(vm, source, &script, &diagnostics);
+    FuncPrototype script;
+    bool ok = compile_unit(vm, source, &script, &diagnostics);
 
     diagnostics_free(&diagnostics);
 
     if (ok) {
-        vm_compiled_script_free(&script);
+        func_proto_free(&script);
     }
 
     return ok;
@@ -458,6 +465,22 @@ static void test_module_scope_does_not_change_pointer_lifetimes() {
     vm_free(vm);
 }
 
+// The name a unit loads under is a diagnostic label, not an identity. Two units
+// loaded under one name are both retained, because nothing looks a unit up by
+// the name it came in under -- what a unit declared is reached through its
+// module, and the load name never enters that.
+static void test_a_load_name_replaces_nothing() {
+    GabVM *handle = gab_vm_new();
+    GabError err;
+
+    assert(gab_load(handle, "same.gab", "module test;\nfunc first(): int { return 1; }\n", &err));
+    assert(gab_load(handle, "same.gab", "module test;\nfunc second(): int { return 2; }\n", &err));
+
+    assert(((VM *)handle)->program.top_levels.size == 2);
+
+    gab_vm_free(handle);
+}
+
 int main() {
     test_modules_isolate_declarations();
     test_modules_accumulate_across_units();
@@ -477,6 +500,7 @@ int main() {
     test_checking_a_unit_installs_nothing();
     test_compile_once_run_many();
     test_compile_failure_is_reportable();
+    test_a_load_name_replaces_nothing();
 
     return 0;
 }

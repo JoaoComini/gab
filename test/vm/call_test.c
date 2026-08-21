@@ -1,4 +1,6 @@
+#include "compile.h"
 #include "support/run.h"
+#include "vm/interp.h"
 #include "vm/vm.h"
 
 #include <assert.h>
@@ -58,25 +60,25 @@ static void test_deep_recursion_grows_the_stack() {
 }
 
 // Exceeding the depth limit must unwind cleanly rather than corrupt memory,
-// and must say why. vm_run is used rather than vm_execute so the failure is
+// and must say why. interp_run_top_level is used rather than compile_and_run so the failure is
 // read from the status instead of being printed.
 static void test_call_depth_limit() {
     VM *vm = vm_create();
 
     Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+    diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
 
-    CompiledScript script;
-    assert(vm_compile(vm,
-                      "module test;\n"
-                      "func forever(n: int): int { return forever(n + 1); }\n"
-                      "func main(): int { return forever(0); }\n"
-                      "let r: int = main();",
-                      &script, &diagnostics));
+    FuncPrototype script;
+    assert(compile_unit(vm,
+                        "module test;\n"
+                        "func forever(n: int): int { return forever(n + 1); }\n"
+                        "func main(): int { return forever(0); }\n"
+                        "let r: int = main();",
+                        &script, &diagnostics));
 
     diagnostics_free(&diagnostics);
 
-    assert(vm_run(vm, &script) == VM_RUN_ERR_CALL_DEPTH);
+    assert(interp_run_top_level(vm, &script) == VM_RUN_ERR_CALL_DEPTH);
     assert(vm->error.status == VM_RUN_ERR_CALL_DEPTH);
     assert(vm->error.message);
 
@@ -84,9 +86,9 @@ static void test_call_depth_limit() {
 
     // The VM is still usable: a later run reports its own outcome rather than
     // the stale failure.
-    assert(vm_run(vm, &script) == VM_RUN_ERR_CALL_DEPTH);
+    assert(interp_run_top_level(vm, &script) == VM_RUN_ERR_CALL_DEPTH);
 
-    vm_compiled_script_free(&script);
+    func_proto_free(&script);
     vm_free(vm);
 }
 

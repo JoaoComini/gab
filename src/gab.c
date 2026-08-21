@@ -1,5 +1,6 @@
 #include "gab.h"
 
+#include "compile.h"
 #include "diagnostics.h"
 #include "object.h"
 #include "scope.h"
@@ -7,6 +8,7 @@
 #include "symbol_table.h"
 #include "type.h"
 #include "type_registry.h"
+#include "vm/interp.h"
 #include "vm/vm.h"
 
 #include <stdio.h>
@@ -199,19 +201,6 @@ void gab_vm_free(GabVM *handle) {
     vm_free(vm);
 }
 
-// Where this name's unit is kept, or NULL if it has not been loaded. Linear
-// because a host loads a handful of units and looks one up only when loading,
-// never per frame.
-static LoadedScript *gab_find_script(VM *vm, const char *name) {
-    for (size_t i = 0; i < vm->scripts.size; i++) {
-        if (strcmp(vm->scripts.data[i].name, name) == 0) {
-            return &vm->scripts.data[i];
-        }
-    }
-
-    return NULL;
-}
-
 // --- Extern functions ------------------------------------------------------
 
 // Where a parameter's slots begin, counting from the frame's slot 0 — which
@@ -361,8 +350,7 @@ void gab_error(GabArgs *args, const char *message) {
         return;
     }
 
-    snprintf(args->vm->extern_message, sizeof(args->vm->extern_message), "%s",
-             message ? message : "the extern function failed");
+    vm_fail(args->vm, VM_RUN_ERR_EXTERN, message ? message : "the extern function failed");
 
     args->failed = true;
 }
@@ -379,16 +367,17 @@ bool gab_extern(GabVM *handle, const char *module, const char *name, GabExternFn
 
     // Interned rather than copied: the binding is matched against a declared
     // name, which is interned in the same pool, so identity is the comparison.
-    String *interned_name = string_from_cstr(&vm->strings, name);
-    String *interned_module = (module && module[0] != '\0') ? string_from_cstr(&vm->strings, module) : NULL;
+    String *interned_name = string_from_cstr(&vm->env.strings, name);
+    String *interned_module =
+        (module && module[0] != '\0') ? string_from_cstr(&vm->env.strings, module) : NULL;
 
     if (!interned_name || (module && module[0] != '\0' && !interned_module)) {
         gab_error_set(err, 0, 0, "out of memory");
         return false;
     }
 
-    for (size_t i = 0; i < vm->externs.size; i++) {
-        const ExternBinding *binding = &vm->externs.data[i];
+    for (size_t i = 0; i < vm->program.externs.size; i++) {
+        const ExternBinding *binding = &vm->program.externs.data[i];
 
         if (binding->name == interned_name && binding->module == interned_module) {
             gab_error_set(err, 0, 0, "an extern of this name is already bound in this module");
@@ -396,7 +385,7 @@ bool gab_extern(GabVM *handle, const char *module, const char *name, GabExternFn
         }
     }
 
-    extern_binding_list_add(&vm->externs,
+    extern_binding_list_add(&vm->program.externs,
                             (ExternBinding){.module = interned_module, .name = interned_name, .fn = fn});
 
     return true;
@@ -416,12 +405,12 @@ bool gab_load(GabVM *handle, const char *name, const char *src, GabError *err) {
     snprintf(unit_name, sizeof(unit_name), "%s", name ? name : "<script>");
 
     Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, vm->compile_arena, unit_name);
+    diagnostics_init(&diagnostics, vm->env.compile_arena, unit_name);
 
     // Compiled into a local: a failed load must leave whatever is already
     // loaded intact and running.
-    CompiledScript compiled = {0};
-    bool ok = vm_compile(vm, src, &compiled, &diagnostics);
+    FuncPrototype compiled = {0};
+    bool ok = compile_unit(vm, src, &compiled, &diagnostics);
 
     if (!ok) {
         // Nothing is printed: a host reports through its own console, and the
@@ -437,28 +426,17 @@ bool gab_load(GabVM *handle, const char *name, const char *src, GabError *err) {
     // The top level declares the unit's functions and types and initialises
     // whatever it sets up, so a load that did not run it would leave the unit
     // half present.
-    if (vm_run(vm, &compiled) != VM_RUN_OK) {
+    if (interp_run_top_level(vm, &compiled) != VM_RUN_OK) {
         gab_error_set(err, 0, 0, vm->error.message);
-        vm_compiled_script_free(&compiled);
+        func_proto_free(&compiled);
 
         return false;
     }
 
-    // Only now that it has compiled and run does it replace the previous unit
-    // of this name. The old chunk is dead: its declarations have already been
-    LoadedScript *existing = gab_find_script(vm, unit_name);
-
-    if (existing) {
-        vm_compiled_script_free(&existing->script);
-        existing->script = compiled;
-
-        return true;
-    }
-
-    LoadedScript loaded = {.script = compiled};
-    snprintf(loaded.name, sizeof(loaded.name), "%s", unit_name);
-
-    loaded_script_list_add(&vm->scripts, loaded);
+    // Kept only so its chunk is freed with the program. A unit is never looked
+    // up again: what it declared is reached by name, and the name it loaded
+    // under was a diagnostic label.
+    top_level_list_add(&vm->program.top_levels, compiled);
 
     return true;
 }
@@ -476,8 +454,8 @@ static Scope *gab_namespace(VM *vm, const char *module) {
         return NULL;
     }
 
-    String *interned = string_from_cstr(&vm->strings, module);
-    Scope **found = interned ? module_scope_map_lookup(vm->module_scopes, interned) : NULL;
+    String *interned = string_from_cstr(&vm->env.strings, module);
+    Scope **found = interned ? module_scope_map_lookup(vm->env.module_scopes, interned) : NULL;
 
     return found ? *found : NULL;
 }
@@ -496,7 +474,7 @@ const GabType *gab_find_type(GabVM *handle, const char *module, const char *name
 
     // Interning is a lookup, not an insert-if-missing, only because the name
     // of a type that exists is already in the pool.
-    String *interned = string_from_cstr(&vm->strings, name);
+    String *interned = string_from_cstr(&vm->env.strings, name);
     if (!interned) {
         return NULL;
     }
@@ -591,7 +569,7 @@ GabFunc *gab_lookup(GabVM *handle, const char *module, const char *name, GabErro
         return NULL;
     }
 
-    String *interned = string_from_cstr(&vm->strings, name);
+    String *interned = string_from_cstr(&vm->env.strings, name);
     Symbol *symbol = interned ? scope_symbol_lookup(scope, interned) : NULL;
 
     if (!symbol) {
@@ -889,12 +867,12 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
 
     size_t proto_index = fn->symbol->func.proto_index;
 
-    if (proto_index >= vm->prototypes.size) {
+    if (proto_index >= vm->program.prototypes.size) {
         gab_error_set(err, 0, 0, "this function has no compiled body");
         return GAB_ERR_RUNTIME;
     }
 
-    const FuncPrototype *proto = vm->prototypes.data[proto_index];
+    const FuncPrototype *proto = vm->program.prototypes.data[proto_index];
 
     // An extern is bound rather than compiled, so a missing body means a
     // missing chunk for one and a missing binding for the other.
@@ -917,7 +895,8 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
     // frame — based here — expects its parameters.
     memcpy(vm->stack + base + VM_SLOT_SIZE, call->args + VM_SLOT_SIZE, fn->arg_slots * VM_SLOT_SIZE);
 
-    VmRunStatus status = proto->native ? vm_run_extern(vm, proto, base) : vm_run_frame(vm, proto, base, 0);
+    VmRunStatus status =
+        proto->native ? interp_run_extern(vm, proto, base) : interp_run_frame(vm, proto, base, 0);
 
     if (status != VM_RUN_OK) {
         gab_error_set(err, 0, 0, vm->error.message);

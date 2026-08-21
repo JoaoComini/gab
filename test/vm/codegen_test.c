@@ -247,8 +247,8 @@ static void test_a_function_compiles_into_its_own_chunk() {
 
     assert(test_top_chunk(&program)->instructions.size == 0);
 
-    assert(program.vm->prototypes.size == 1);
-    assert(program.vm->prototypes.data[0]->arity == 2);
+    assert(program.vm->program.prototypes.size == 1);
+    assert(program.vm->program.prototypes.data[0]->arity == 2);
 
     Chunk *body = test_func_chunk(&program, 0);
 
@@ -271,8 +271,8 @@ static void test_a_method_counts_its_receiver() {
     TestProgram program = test_compile("struct Vec { x: int }\n"
                                        "func (v: ref Vec) scaled(by: int): int { return v.x * by; }\n");
 
-    assert(program.vm->prototypes.size == 1);
-    assert(program.vm->prototypes.data[0]->arity == 2);
+    assert(program.vm->program.prototypes.size == 1);
+    assert(program.vm->program.prototypes.data[0]->arity == 2);
 
     test_program_free(&program);
 }

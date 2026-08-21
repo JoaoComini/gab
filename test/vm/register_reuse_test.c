@@ -1,3 +1,4 @@
+#include "compile.h"
 #include "support/run.h"
 #include "vm/vm.h"
 
@@ -9,15 +10,15 @@
 // The frame size codegen settled on for the given function, which is the number
 // register reuse is supposed to hold flat as a function grows.
 static int func_max_registers(VM *vm, size_t index) {
-    assert(index < vm->prototypes.size);
+    assert(index < vm->program.prototypes.size);
 
-    return vm->prototypes.data[index]->max_registers;
+    return vm->program.prototypes.data[index]->max_registers;
 }
 
 static int compile_max_registers(const char *source, size_t index) {
     VM *vm = vm_create();
 
-    vm_execute(vm, test_in_a_module(source));
+    compile_and_run(vm, test_in_a_module(source));
 
     int result = func_max_registers(vm, index);
 
@@ -161,12 +162,12 @@ static int compile_sequential_lets(unsigned int count) {
     snprintf(source + used, capacity - used, "return n;\n}\nlet r: int = f(7);\n");
 
     VM *vm = vm_create();
-    vm_execute(vm, test_in_a_module(source));
+    compile_and_run(vm, test_in_a_module(source));
 
     int32_t returned;
     memcpy(&returned, vm_slot_at(vm, 0), sizeof(returned));
 
-    int result = returned == 7 ? vm->prototypes.data[0]->max_registers : -1;
+    int result = returned == 7 ? vm->program.prototypes.data[0]->max_registers : -1;
 
     vm_free(vm);
     free(source);

@@ -1,5 +1,7 @@
+#include "compile.h"
 #include "diagnostics.h"
 #include "support/run.h"
+#include "vm/interp.h"
 #include "vm/vm.h"
 
 #include <assert.h>
@@ -134,22 +136,22 @@ static void test_an_abnormal_unwind_frees_what_it_held() {
     VM *vm = vm_create();
 
     Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+    diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
 
-    CompiledScript script;
-    assert(vm_compile(vm,
-                      "module test;\n"
-                      "struct Node { n: int }\n"
-                      "func deep(n: int): int { return deep(n + 1); }\n"
-                      "func main(): int { let p: *Node = new Node; return deep(0); }\n"
-                      "let r: int = main();",
-                      &script, &diagnostics));
+    FuncPrototype script;
+    assert(compile_unit(vm,
+                        "module test;\n"
+                        "struct Node { n: int }\n"
+                        "func deep(n: int): int { return deep(n + 1); }\n"
+                        "func main(): int { let p: *Node = new Node; return deep(0); }\n"
+                        "let r: int = main();",
+                        &script, &diagnostics));
 
     diagnostics_free(&diagnostics);
 
-    assert(vm_run(vm, &script) == VM_RUN_ERR_CALL_DEPTH);
+    assert(interp_run_top_level(vm, &script) == VM_RUN_ERR_CALL_DEPTH);
 
-    vm_compiled_script_free(&script);
+    func_proto_free(&script);
     vm_free(vm);
 }
 

@@ -1,3 +1,4 @@
+#include "compile.h"
 #include "vm/opcode.h"
 #include "vm/vm.h"
 
@@ -98,7 +99,7 @@ static void test_emit_site_rejects_an_over_large_frame() {
 
     snprintf(source + used, sizeof(source) - used, "return n;\n}\nlet r: int = f(7);\n");
 
-    vm_execute(vm, source);
+    compile_and_run(vm, source);
 
     // The program never ran, so the result slot keeps its zeroed value.
     int32_t returned;

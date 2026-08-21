@@ -8,7 +8,6 @@
 #include "vm/chunk.h"
 #include "vm/constant_pool.h"
 #include "vm/opcode.h"
-#include "vm/vm.h"
 #include <assert.h>
 #include <stdlib.h>
 
@@ -82,7 +81,7 @@ typedef struct {
 
     // Shared by every state a compile makes, nested bodies included: what the
     // unit accumulates belongs to the compile, not to one function's frame.
-    CompilationUnit *unit;
+    Unit *unit;
     Arena *arena;
 
     // Shared with every nested state, like the unit itself: a body may call a
@@ -245,8 +244,8 @@ static OpCode field_opcode_for(size_t size, bool load, bool indirect, bool *ok);
 
 // ---- Generating a script ----
 
-CompilationUnit *codegen_generate(ASTScript *script, Arena *arena, Diagnostics *diagnostics) {
-    CompilationUnit *unit = calloc(1, sizeof(CompilationUnit));
+Unit *codegen_generate(ASTScript *script, Arena *arena, Diagnostics *diagnostics) {
+    Unit *unit = calloc(1, sizeof(Unit));
 
     if (!unit) {
         return NULL;
@@ -299,13 +298,13 @@ CompilationUnit *codegen_generate(ASTScript *script, Arena *arena, Diagnostics *
     if (state.failed) {
         chunk_free(state.chunk);
         frame_ref_list_free(&state.frame_refs);
-        compilation_unit_free(unit);
+        unit_free(unit);
         return NULL;
     }
 
-    unit->chunk = state.chunk;
-    unit->max_registers = state.max_reg;
-    unit->refs = state.frame_refs;
+    unit->top_level.chunk = state.chunk;
+    unit->top_level.max_registers = (int)state.max_reg;
+    unit->top_level.refs = state.frame_refs;
 
     return unit;
 }

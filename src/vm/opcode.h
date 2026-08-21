@@ -1,6 +1,10 @@
 #ifndef GAB_OPCODE_H
 #define GAB_OPCODE_H
 
+#include "slot.h"
+
+#include <stdint.h>
+
 typedef enum {
     OP_LOAD_CONST,
     OP_LOAD_TRUE,
@@ -127,5 +131,129 @@ typedef enum {
     // opcode added without one fails to build rather than jumping nowhere.
     OP__COUNT,
 } OpCode;
+
+/*
+    Encodes R-type instructions in a 32-bit integer
+    op: OpCode (7-bit)
+    rd: Destination register (8-bit)
+    r1: Register 1 (8-bit)
+    r2: Register 2 (8-bit)
+    k:  when set, r2 is a small unsigned immediate rather than a register
+
+    The k bit is Lua's register-or-constant operand trick: 'x + 1' would
+    otherwise need a LOAD_CONST into a register the arithmetic then reads once
+    and never again, and small literals are most of what arithmetic operates on.
+    Only the second operand can be immediate, which is enough because the
+    commutative ops are emitted with the constant on the right.
+*/
+#define VM_ENCODE_R(op, rd, r1, r2) VM_ENCODE_RK(op, rd, r1, r2, 0)
+
+/*
+    As VM_ENCODE_R, plus the spare k bit. Every field is masked: an
+    out-of-range value would otherwise smear into its neighbours — including
+    the opcode — and produce an instruction that matches no case.
+*/
+#define VM_ENCODE_RK(op, rd, r1, r2, k)                                                                      \
+    ((((op) & 0x7F) << 25) | (((rd) & 0xFF) << 17) | (((r1) & 0xFF) << 9) | (((r2) & 0xFF) << 1) |           \
+     ((k) & 0x1))
+
+#define VM_DECODE_R_RD(instr) (((instr) >> 17) & 0xFF) // Destination register
+#define VM_DECODE_R_R1(instr) (((instr) >> 9) & 0xFF)  // First source register
+#define VM_DECODE_R_R2(instr) (((instr) >> 1) & 0xFF)  // Second source register
+#define VM_DECODE_R_K(instr) ((instr) & 0x1)           // r2 is an immediate, not a register
+
+// The widest immediate the r2 field holds. A literal above this is loaded into
+// a register as before, so the range is a codegen decision and never a limit on
+// what a program can say.
+#define VM_MAX_IMMEDIATE 0xFF
+
+// The r2 field read as a signed jump offset, for OP_FOR_LOOP. Sign-extended by
+// the shift pair rather than by a cast, since the field is not a whole type's
+// width -- the same reason VM_DECODE_I_SIMM is written this way.
+#define VM_DECODE_R_SIMM(instr) ((int32_t)((uint32_t)(instr) << 23) >> 24)
+
+// How far the fused loop reaches back. A body longer than this keeps the
+// general compare-and-jump form, so the range bounds an optimisation rather
+// than a program.
+#define VM_MAX_LOOP_OFFSET 127
+
+/*
+    Encodes I-type instructions in a 32-bit integer
+    op: OpCode (7-bit)
+    rd: Destination register (8-bit)
+    kx | imm: Constant index (17 bit) or immediate value
+
+    The form for an instruction naming one register plus something that is not
+    a register, where 8 bits would be too narrow: a constant index, or a
+    prototype index. R-type's three 8-bit fields suit an instruction whose
+    operands are all register indices; this suits the rest.
+*/
+#define VM_ENCODE_I(op, rd, kx) ((((op) & 0x7F) << 25) | (((rd) & 0xFF) << 17) | ((kx) & 0x1FFFF))
+
+#define VM_DECODE_I_RD(instr) (((instr) >> 17) & 0xFF) // Destination register
+#define VM_DECODE_I_KX(instr) ((instr) & 0x1FFFF)      // 17-bit constant/index
+#define VM_DECODE_I_IMM(instr) ((instr) & 0x1FFFF)     // 17-bit immediate value
+
+// The same 17 bits read as a signed jump offset. A jump is the one I-type
+// operand with a direction: an index into the constant or prototype table
+// counts from zero and never backwards, while a jump target may lie either side
+// of the jump itself. Sign-extended by the shift pair rather than by a cast,
+// since the field is not a whole type's width.
+#define VM_DECODE_I_SIMM(instr) ((int32_t)((uint32_t)(instr) << 15) >> 15)
+
+#define VM_DECODE_OPCODE(instr) ((instr) >> 25) // Get OpCode (default to all types)
+
+// Maximum constants supported by 17-bit index
+#define VM_MAX_CONSTANTS ((1 << 17) - 1)
+
+// How far one jump reaches. The offset spends a bit on its sign, so it spans
+// half what an index of the same width does, in either direction.
+#define VM_MAX_JUMP ((1 << 16) - 1)
+
+// Maximum registers supported with 8-bit
+#define VM_MAX_REGISTERS ((1 << 8) - 1)
+
+/*
+    The limits below are named for what they bound rather than sharing one
+    constant, because they are different quantities that mostly coincide at
+    255 — the width of an 8-bit operand field. Widening one instruction's
+    field must not silently move the others.
+
+    VM_MAX_PROTOTYPES is why this matters. It was 255 while a prototype index
+    rode in OP_CALL's 8-bit register field, which capped a whole VM at 255
+    functions across every module it loaded — far too few for a real project,
+    and an arbitrary limit besides, since a prototype index is not a register
+    and only sat in a register-sized field by accident.
+*/
+
+// A prototype index rides in OP_CALL's 17-bit I-type field, so it is bounded
+// like a constant index rather than like a register.
+#define VM_MAX_PROTOTYPES VM_MAX_CONSTANTS
+
+// A type index rides in OP_NEW's 17-bit I-type field, for the same reason.
+#define VM_MAX_HEAP_TYPES VM_MAX_CONSTANTS
+
+// The slots one frame addresses, which is what a register operand indexes.
+#define VM_MAX_FRAME_SLOTS ((1 << 8) - 1)
+
+// A field's byte offset within a struct rides in an 8-bit operand.
+#define VM_MAX_FIELD_OFFSET ((1 << 8) - 1)
+
+// A struct's width in slots, carried in an 8-bit operand by the opcodes that
+// move a whole struct at once.
+#define VM_MAX_STRUCT_SLOTS ((1 << 8) - 1)
+
+// OP_RETURN_N carries its slot count in the 8-bit r2 field.
+#define VM_MAX_RETURN_SLOTS ((1 << 8) - 1)
+
+// Widest run OP_MOVE_N can carry, bounded by its 8-bit count field.
+#define VM_MAX_MOVE_SLOTS ((1 << 8) - 1)
+
+// A pointer is a raw address, so it spans two slots and wants an even slot
+// index to sit at its natural alignment.
+#define VM_POINTER_SLOTS ((unsigned int)(sizeof(void *) / VM_SLOT_SIZE))
+
+// Sentinel value for registers
+#define VM_INVALID_REGISTER VM_MAX_REGISTERS + 1
 
 #endif

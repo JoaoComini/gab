@@ -51,7 +51,10 @@ add_library(gab
     src/vm/constant_pool.c
     src/vm/chunk.c
     src/vm/vm.c
+    src/vm/link.c
+    src/vm/interp.c
     src/vm/codegen.c
+    src/compile.c
     src/gab.c
 )
 
