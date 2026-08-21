@@ -1182,6 +1182,13 @@ static ASTExpr *parse_primary(Parser *parser) {
         Literal lit = {.kind = TYPE_FLOAT, .as_float = value};
         return ast_literal_expr_create(span, lit);
     }
+    case TOKEN_STRING: {
+        StringRef text = parser->current.lexeme;
+
+        parser_next_token(parser); // eat string
+
+        return ast_literal_expr_create(span, (Literal){.kind = TYPE_STRING, .as_string = text});
+    }
     case TOKEN_TRUE: {
         parser_next_token(parser);
 

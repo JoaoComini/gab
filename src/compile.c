@@ -110,7 +110,7 @@ bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *d
         }
 
         if (ast_script_resolve(vm->env.compile_arena, script, staging, vm->env.module_scopes, diagnostics)) {
-            unit = codegen_generate(script, vm->env.arena, diagnostics);
+            unit = codegen_generate(script, vm->env.arena, &vm->env.strings, diagnostics);
         }
     }
 

@@ -49,8 +49,7 @@ typedef struct {
 #define module_import_list_item_free(item) ((void)(item))
 GAB_LIST(ModuleImportList, module_import_list, ModuleImport)
 
-#define string_list_item_free(item) ((void)(item))
-GAB_LIST(StringList, string_list, String *)
+// StringList comes from link.h, which the program's literal table also uses.
 
 // Why a run stopped. A run that completed normally leaves VM_RUN_OK; anything
 // else means the interpreter unwound early, and the frames are already gone.

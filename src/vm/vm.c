@@ -71,6 +71,7 @@ static void environment_free(Environment *env) {
 static void program_init(Program *program) {
     program->prototypes = func_proto_list_create();
     program->heap_types = type_list_create();
+    program->strings = string_list_create();
     program->top_levels = top_level_list_create();
     program->externs = extern_binding_list_create();
 }
@@ -80,6 +81,7 @@ static void program_init(Program *program) {
 static void program_free(Program *program) {
     func_proto_list_free(&program->prototypes);
     type_list_free(&program->heap_types);
+    string_list_free(&program->strings);
     extern_binding_list_free(&program->externs);
 
     // Frees each loaded unit's top-level chunk through the item_free hook.

@@ -13,6 +13,21 @@
 
     The header is found by walking back one:  header = (ObjectHeader *)ptr - 1.
 */
+
+/*
+    A 'string' value: where the characters are and how many there are. Passed
+    and copied by value like a small struct, and owning nothing -- the
+    characters belong to whatever allocated them, which for a literal is the
+    unit's arena.
+
+    Laid out to tile the stack exactly, so a string in a frame slot and a string
+    in a struct field are the same bytes.
+*/
+typedef struct {
+    const char *data;
+    int32_t length;
+} GabStringValue;
+
 typedef struct ObjectHeader {
     // What the payload is, and the only thing the header carries. Freeing a
     // Player means freeing the objects its '*T' fields own, and only the Type

@@ -84,6 +84,10 @@ typedef struct {
     Unit *unit;
     Arena *arena;
 
+    // Where a string literal's characters are interned. They outlive every
+    // frame, so a literal's header borrows them.
+    StringPool *strings;
+
     // Shared with every nested state, like the unit itself: a body may call a
     // function declared anywhere in the unit.
     ProtoMap *local_protos;
@@ -251,7 +255,7 @@ static OpCode field_opcode_for(size_t size, bool load, bool indirect, bool *ok);
 
 // ---- Generating a script ----
 
-Unit *codegen_generate(ASTScript *script, Arena *arena, Diagnostics *diagnostics) {
+Unit *codegen_generate(ASTScript *script, Arena *arena, StringPool *strings, Diagnostics *diagnostics) {
     Unit *unit = calloc(1, sizeof(Unit));
 
     if (!unit) {
@@ -260,8 +264,10 @@ Unit *codegen_generate(ASTScript *script, Arena *arena, Diagnostics *diagnostics
 
     unit->prototypes = func_proto_list_create();
     unit->types = type_list_create();
+    unit->strings = string_list_create();
     unit->proto_relocations = relocation_list_create();
     unit->type_relocations = relocation_list_create();
+    unit->string_relocations = relocation_list_create();
     unit->bindings = proto_binding_list_create();
     unit->externs = extern_request_list_create();
     unit->arena = arena;
@@ -272,6 +278,7 @@ Unit *codegen_generate(ASTScript *script, Arena *arena, Diagnostics *diagnostics
         .max_reg = 0,
         .unit = unit,
         .arena = arena,
+        .strings = strings,
         .local_protos = proto_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .owned = owned_list_create(),
@@ -1045,6 +1052,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         .chunk = func_chunk,
         .unit = state->unit,
         .arena = state->arena,
+        .strings = state->strings,
         .local_protos = state->local_protos,
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .owned = owned_list_create(),
@@ -1149,7 +1157,79 @@ static Constant value_from_literal(Literal lit) {
     abort();
 }
 
+// Decodes a literal's escapes into the arena and interns the result, so that
+// equal text is one String * and the header can borrow characters that outlive
+// every frame.
+//
+// The decoded text is never longer than the source slice, since every escape is
+// two characters becoming one.
+static String *codegen_intern_literal(CodegenState *state, StringRef text) {
+    char *decoded = arena_alloc(state->arena, text.length + 1);
+    size_t length = 0;
+
+    for (size_t i = 0; i < text.length; i++) {
+        if (text.data[i] != '\\' || i + 1 == text.length) {
+            decoded[length++] = text.data[i];
+            continue;
+        }
+
+        // An unknown escape stands for the character it names, so '\q' is 'q'.
+        // The lexer has already refused the one case that would matter, a
+        // backslash at the end of an unterminated literal.
+        switch (text.data[++i]) {
+        case 'n':
+            decoded[length++] = '\n';
+            break;
+        case 't':
+            decoded[length++] = '\t';
+            break;
+        case '0':
+            decoded[length++] = '\0';
+            break;
+        default:
+            decoded[length++] = text.data[i];
+            break;
+        }
+    }
+
+    decoded[length] = '\0';
+
+    return string_from_ref(state->strings, (StringRef){.data = decoded, .length = length});
+}
+
+static unsigned int codegen_string_literal(CodegenState *state, ASTExpr *node) {
+    String *text = codegen_intern_literal(state, node->lit.as_string);
+
+    unsigned int rd = codegen_alloc_slots(state, VM_STRING_SLOTS, VM_POINTER_SLOTS, node->span);
+
+    // Interned within the unit, as a type index is: the index means nothing
+    // until linking gives the unit its base. See codegen_new_expr.
+    size_t index = state->unit->strings.size;
+
+    for (size_t i = 0; i < state->unit->strings.size; i++) {
+        if (state->unit->strings.data[i] == text) {
+            index = i;
+            break;
+        }
+    }
+
+    if (index == state->unit->strings.size) {
+        string_list_add(&state->unit->strings, text);
+    }
+
+    size_t offset = chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_LOAD_STR, rd, (unsigned int)index));
+
+    relocation_list_add(&state->unit->string_relocations,
+                        (Relocation){.chunk = state->chunk, .offset = offset});
+
+    return rd;
+}
+
 static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node) {
+    if (node->lit.kind == TYPE_STRING) {
+        return codegen_string_literal(state, node);
+    }
+
     unsigned int const_index = constpool_add(state->chunk->const_pool, value_from_literal(node->lit));
     unsigned int r1 = codegen_alloc_register(state, node->span);
     Instruction load_const = VM_ENCODE_I(OP_LOAD_CONST, r1, const_index);

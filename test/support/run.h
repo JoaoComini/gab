@@ -12,6 +12,7 @@
 #include "ast/ast.h"
 #include "compile.h"
 #include "lexer.h"
+#include "object.h"
 #include "parser.h"
 #include "scope.h"
 #include "slot.h"
@@ -45,6 +46,28 @@ static inline void test_run(const char *source, void *out, size_t width) {
     vm_free(vm);
 }
 
+// Runs a script whose top level ends in a 'string' and copies the characters
+// out while the VM still lives. A string header borrows: its characters belong
+// to the VM's arena, so reading them after vm_free would be a use-after-free --
+// exactly the dangle the language says a borrow can become.
+static inline void test_run_string(const char *source, char *out, size_t capacity, int32_t *out_length) {
+    VM *vm = vm_create();
+
+    compile_and_run(vm, test_in_a_module(source));
+
+    assert(vm->frame_count == 0);
+
+    GabStringValue value;
+    memcpy(&value, vm_slot_at(vm, 0), sizeof(value));
+
+    assert((size_t)value.length < capacity);
+
+    memcpy(out, value.data, (size_t)value.length);
+    out[value.length] = '\0';
+    *out_length = value.length;
+
+    vm_free(vm);
+}
 static inline int test_run_int(const char *source) {
     int32_t result;
     test_run(source, &result, sizeof(result));

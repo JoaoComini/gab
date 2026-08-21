@@ -302,7 +302,7 @@ static void test_checking_a_unit_installs_nothing() {
 
     assert(ast_script_resolve(vm->env.compile_arena, script, &staging, vm->env.module_scopes, &diagnostics));
 
-    Unit *unit = codegen_generate(script, vm->env.arena, &diagnostics);
+    Unit *unit = codegen_generate(script, vm->env.arena, &vm->env.strings, &diagnostics);
     assert(unit);
 
     // Accepts, and having accepted has still changed nothing.

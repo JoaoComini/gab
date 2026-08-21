@@ -75,6 +75,11 @@ GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype *)
 #define type_list_item_free(item) ((void)(item))
 GAB_LIST(TypeList, type_list, const Type *)
 
+// The literals OP_LOAD_STR can load. Interned in the VM's pool, so equal text
+// is one String * and the list holds borrowed pointers.
+#define string_list_item_free(item) ((void)(item))
+GAB_LIST(StringList, string_list, String *)
+
 // One operand a unit must rewrite once linking tells it where its indices
 // landed. A unit numbers what it declares from zero, so an operand it encoded
 // means nothing until the unit's base is added to it.
@@ -127,9 +132,11 @@ typedef struct {
 
     FuncProtoList prototypes;
     TypeList types;
+    StringList strings;
 
     RelocationList proto_relocations;
     RelocationList type_relocations;
+    RelocationList string_relocations;
 
     ProtoBindingList bindings;
     ExternRequestList externs;
@@ -141,6 +148,7 @@ typedef struct {
     // Where each of the unit's types landed in the program's list, filled in by the
     // link check so that installing has nothing left that can fail.
     size_t *type_map;
+    size_t *string_map;
 } Unit;
 
 void unit_free(Unit *unit);
@@ -182,6 +190,11 @@ typedef struct {
     // its type by index the same way a call names its prototype. Interning is
     // by pointer identity, which the type system already guarantees.
     TypeList heap_types;
+
+    // The literals OP_LOAD_STR loads, indexed from the instruction. A String *
+    // is 8 bytes, so a literal names itself by index the way an allocation
+    // names its type.
+    StringList strings;
 
     // Every loaded unit's top level. See TopLevelList.
     TopLevelList top_levels;

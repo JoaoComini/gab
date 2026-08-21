@@ -2,6 +2,7 @@
 #define GAB_AST_EXPR_H
 
 #include "diagnostics.h"
+#include "string/string_ref.h"
 #include "symbol_table.h"
 #include "type.h"
 #include "util/list.h"
@@ -13,6 +14,10 @@ typedef struct {
     union {
         int32_t as_int;
         float as_float;
+
+        // The characters as they appear in the source, still escaped. Decoded
+        // and interned at codegen, which is where the unit's pool is.
+        StringRef as_string;
     };
 } Literal;
 

@@ -25,6 +25,7 @@ static void scope_declare_builtins(Scope *scope) {
     scope_decl_type(scope, builtins->int_type->name, builtins->int_type);
     scope_decl_type(scope, builtins->float_type->name, builtins->float_type);
     scope_decl_type(scope, builtins->bool_type->name, builtins->bool_type);
+    scope_decl_type(scope, builtins->string_type->name, builtins->string_type);
 }
 
 void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope *parent, int depth) {

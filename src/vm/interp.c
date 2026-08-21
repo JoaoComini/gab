@@ -380,6 +380,19 @@ static void vm_run_loop(VM *vm) {
                 memcpy(vm_reg_at(vm, reg), &constant, VM_SLOT_SIZE);
                 VM_NEXT();
             }
+            VM_CASE(OP_LOAD_STR) {
+                unsigned int rd = VM_DECODE_I_RD(instruction);
+                size_t string_index = VM_DECODE_I_KX(instruction);
+
+                const String *text = vm->program.strings.data[string_index];
+
+                // Borrowed, not copied: the characters are interned and outlive
+                // every frame, so the header names them where they already are.
+                GabStringValue value = {.data = text->data, .length = (int32_t)text->length};
+
+                memcpy(vm->registers + rd * VM_SLOT_SIZE, &value, sizeof(value));
+                VM_NEXT();
+            }
             VM_CASE(OP_LOAD_TRUE) {
                 size_t reg = VM_DECODE_I_RD(instruction);
                 vm_write_i32(vm, reg, 1);
