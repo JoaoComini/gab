@@ -1117,9 +1117,9 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
     // module in it.
     String *struct_name = resolver_intern(state, stmt->struct_decl.name);
 
-    // Local: shadowing an outer type is allowed, declaring the same name
-    // twice in one scope is not.
-    if (scope_type_lookup_local(state->current_scope, struct_name)) {
+    // Shadowing an outer type is allowed; redeclaring one this module already
+    // has is not, whether this unit declared it or an earlier one did.
+    if (scope_type_lookup_declaring(state->current_scope, struct_name)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "type '%s' is already declared",
                    struct_name->data);
         return;

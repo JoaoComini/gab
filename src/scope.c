@@ -34,6 +34,7 @@ void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope 
     scope->types = type_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     scope->parent = parent;
     scope->depth = depth;
+    scope->declares_module = false;
 
     // One registry for the whole chain: it interns, and interning must be
     // single however deep the scope is.
@@ -53,6 +54,8 @@ void scope_init_module(Scope *scope, Arena *arena, StringPool *strings, Scope *p
     // not a block. Depth drives the pointer-lifetime rule, where 0 means
     // 'outlives everything'.
     scope_init_at_depth(scope, arena, strings, parent, 0);
+
+    scope->declares_module = true;
 }
 
 // A scope a compile declares into instead of the one it is for, so nothing it
@@ -66,33 +69,14 @@ void scope_init_staging(Scope *scope, Arena *arena, StringPool *strings, Scope *
     assert(target && "a staging scope stands in for a scope that exists");
 
     scope_init_at_depth(scope, arena, strings, target, target->depth);
-}
 
-// Whether merging would collide: a name the staging scope declared that the
-// target already holds. Asked before anything is installed, so that a collision
-// is the compile failing rather than half a unit landing.
-bool scope_merge_collides(Scope *target, Scope *staged) {
-    for (size_t i = 0; i < staged->symbol_table->capacity; i++) {
-        for (SymbolTableEntry *entry = staged->symbol_table->buckets[i]; entry; entry = entry->next) {
-            if (symbol_table_lookup(target->symbol_table, entry->key)) {
-                return true;
-            }
-        }
-    }
-
-    for (size_t i = 0; i < staged->types->capacity; i++) {
-        for (TypeMapEntry *entry = staged->types->buckets[i]; entry; entry = entry->next) {
-            if (type_map_lookup(target->types, entry->key)) {
-                return true;
-            }
-        }
-    }
-
-    return false;
+    // Stands in for the target, so a declaration searches the two together.
+    scope->declares_module = target->declares_module;
 }
 
 // Moves everything a staging scope declared into the scope it stood in for.
-// The caller has already asked scope_merge_collides, so nothing here can fail.
+// Cannot collide: a name the module already holds was refused where the unit
+// declared it, so nothing here can fail.
 void scope_merge_staged(Scope *target, Scope *staged) {
     for (size_t i = 0; i < staged->symbol_table->capacity; i++) {
         for (SymbolTableEntry *entry = staged->symbol_table->buckets[i]; entry; entry = entry->next) {
@@ -139,6 +123,36 @@ Type *scope_type_lookup_local(Scope *scope, String *name) {
     return entry ? entry->type : NULL;
 }
 
+// A declaration clashes with this scope, and with the module scope a staging
+// scope stands in for. Stops before the root, whose builtins may be shadowed.
+Type *scope_type_lookup_declaring(Scope *scope, String *name) {
+    for (Scope *s = scope;; s = s->parent) {
+        TypeBinding *entry = type_map_lookup(s->types, name);
+
+        if (entry) {
+            return entry->type;
+        }
+
+        if (!s->declares_module || !s->parent || !s->parent->declares_module) {
+            return NULL;
+        }
+    }
+}
+
+Symbol *scope_symbol_lookup_declaring(Scope *scope, String *name) {
+    for (Scope *s = scope;; s = s->parent) {
+        Symbol **entry = symbol_table_lookup(s->symbol_table, name);
+
+        if (entry) {
+            return *entry;
+        }
+
+        if (!s->declares_module || !s->parent || !s->parent->declares_module) {
+            return NULL;
+        }
+    }
+}
+
 void scope_withdraw_type(Scope *scope, String *name) { type_map_delete(scope->types, name); }
 
 bool scope_decl_type(Scope *scope, String *name, Type *type) {
@@ -152,7 +166,7 @@ bool scope_decl_type(Scope *scope, String *name, Type *type) {
 }
 
 Symbol *scope_decl_var(Scope *scope, String *name, Type *type) {
-    if (symbol_table_lookup(scope->symbol_table, name)) {
+    if (scope_symbol_lookup_declaring(scope, name)) {
         return NULL;
     }
 
@@ -172,7 +186,7 @@ Symbol *scope_decl_var(Scope *scope, String *name, Type *type) {
 }
 
 Symbol *scope_decl_func(Scope *scope, String *name, Type *return_type) {
-    if (symbol_table_lookup(scope->symbol_table, name)) {
+    if (scope_symbol_lookup_declaring(scope, name)) {
         return NULL;
     }
 

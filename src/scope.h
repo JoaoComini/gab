@@ -5,6 +5,8 @@
 #include "string/string.h"
 #include "type_registry.h"
 
+#include <stdbool.h>
+
 typedef struct SymbolTable SymbolTable;
 typedef struct Symbol Symbol;
 typedef struct Scope Scope;
@@ -34,6 +36,12 @@ typedef struct Scope {
 
     struct Scope *parent;
     int depth;
+
+    // Where a declaration's search for a clashing name stops. Set on a module
+    // scope and on the staging scope standing in for one, so the two are
+    // searched together and the root beneath them is not: a unit may shadow a
+    // builtin, but may not redeclare what its own module already has.
+    bool declares_module;
 } Scope;
 
 // Initialize a new scope
@@ -62,6 +70,16 @@ Type *scope_type_lookup(Scope *scope, String *name);
 // an outer name is allowed and redeclaring one of this scope's own is not.
 Type *scope_type_lookup_local(Scope *scope, String *name);
 
+// As the _local pair, but also through a staging scope to the module scope it
+// stands in for, so the two are searched together. Stops before the root, whose
+// builtins a unit may still shadow.
+//
+// This is what makes a collision with an earlier unit's declaration an error
+// where it is written, rather than one reported without a span after the whole
+// unit has compiled.
+Type *scope_type_lookup_declaring(Scope *scope, String *name);
+Symbol *scope_symbol_lookup_declaring(Scope *scope, String *name);
+
 // Removes a name this scope declared. Exists for one case: a struct is
 // registered before its fields resolve, so that a field may point at the struct
 // being declared, and a struct whose fields fail to resolve has to be taken
@@ -78,12 +96,8 @@ bool scope_decl_type(Scope *scope, String *name, Type *type);
 // already declared.
 void scope_init_staging(Scope *scope, Arena *arena, StringPool *strings, Scope *target);
 
-// Whether merging would collide with a name the target already holds. Asked
-// before anything is installed.
-bool scope_merge_collides(Scope *target, Scope *staged);
-
-// Moves what a staging scope declared into the scope it stood in for. The
-// caller has already asked scope_merge_collides.
+// Moves what a staging scope declared into the scope it stood in for. Cannot
+// collide: a name already in the module was refused where it was declared.
 void scope_merge_staged(Scope *target, Scope *staged);
 
 Symbol *scope_decl_var(Scope *scope, String *name, Type *type);

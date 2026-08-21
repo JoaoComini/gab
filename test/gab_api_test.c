@@ -917,7 +917,11 @@ static void test_a_name_may_only_be_declared_once(void) {
     // called has nothing to do with it.
     assert(gab_load(vm, "first.gab", "module M;\nfunc shared(): int { return 1; }\n", &err));
     assert(!gab_load(vm, "second.gab", "module M;\nfunc shared(): int { return 2; }\n", &err));
-    assert(err.message[0] != '\0');
+
+    // Reported where the second declaration is written, naming it -- the same
+    // diagnostic a collision inside one unit gets.
+    assert(strstr(err.message, "shared"));
+    assert(err.line == 2);
 
     // Reloading is the same collision: a unit's name is not a key it replaces.
     assert(!gab_load(vm, "first.gab", "module M;\nfunc shared(): int { return 3; }\n", &err));

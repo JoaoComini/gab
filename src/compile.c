@@ -122,15 +122,6 @@ bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *d
         return false;
     }
 
-    // Asked before either commits: linking installs prototypes and merging
-    // installs names, and a unit that cannot do both must do neither.
-    if (scope_merge_collides(target, staging)) {
-        diag_error(diagnostics, GAB_ERR_NAME, (Span){0},
-                   "this unit declares a name that is already declared");
-        unit_free(unit);
-        return false;
-    }
-
     if (!link_check(&vm->program, unit, diagnostics)) {
         unit_free(unit);
         return false;
