@@ -100,6 +100,12 @@ typedef struct {
     // slot still holds what it was declared as.
     OwnedList owned;
 
+    // Slots holding an owned reference the expression under way produced and no
+    // slot will name. Released where the statement ends: an operand reaching into
+    // such an object -- a field read from 'new T' -- must keep it alive until the
+    // expression is done with it, and nothing later can name it to free it.
+    OwnedList temporaries;
+
     // Every slot this function ever owns a reference in, for the unwinder. See
     // FuncPrototype::refs.
     FrameRefList frame_refs;
@@ -212,6 +218,7 @@ static bool expr_yields_owned(const ASTExpr *expr);
 
 // Records that 'slot' owns an object for as long as the current block runs.
 static void codegen_own_slot(CodegenState *state, unsigned int slot, const Type *type);
+static void codegen_record_frame_ref(CodegenState *state, unsigned int slot);
 
 // Whether this slot already owns a reference, and so has one to drop when it is
 // overwritten.
@@ -268,6 +275,7 @@ Unit *codegen_generate(ASTScript *script, Arena *arena, Diagnostics *diagnostics
         .local_protos = proto_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .owned = owned_list_create(),
+        .temporaries = owned_list_create(),
         .depth = 0,
         .frame_refs = frame_ref_list_create(),
         .diagnostics = diagnostics,
@@ -293,6 +301,7 @@ Unit *codegen_generate(ASTScript *script, Arena *arena, Diagnostics *diagnostics
     // The slots were only ever true of this compile, so they go with it.
     slot_map_destroy(state.slots);
     owned_list_free(&state.owned);
+    owned_list_free(&state.temporaries);
     proto_map_destroy(state.local_protos);
 
     if (state.failed) {
@@ -310,6 +319,17 @@ Unit *codegen_generate(ASTScript *script, Arena *arena, Diagnostics *diagnostics
 }
 
 // ---- Statements ----
+
+// Frees every unbound owned value the statement produced. Emitted at the end of
+// the statement rather than where each was created: an operand may still be
+// reaching into the object while the rest of the expression is evaluated.
+static void codegen_release_temporaries(CodegenState *state) {
+    while (state->temporaries.size > 0) {
+        OwnedSlot temporary = state->temporaries.data[--state->temporaries.size];
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE, temporary.slot, 0, 0));
+    }
+}
 
 static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
     unsigned int saved = state->next_reg;
@@ -366,6 +386,8 @@ static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
         break;
     }
 
+    codegen_release_temporaries(state);
+
     // A declaration's slot outlives the statement: it belongs to the enclosing
     // block, which reclaims it at the closing brace.
     if (ast->kind != STMT_VAR_DECL) {
@@ -388,6 +410,11 @@ static void codegen_return_stmt(CodegenState *state, ASTReturnStmt *ast) {
         state->failed = true;
         return;
     }
+
+    // A temporary is the innermost thing alive, so it goes first. The returned
+    // value has already been copied into its own slot, so nothing released here
+    // is what is being returned.
+    codegen_release_temporaries(state);
 
     // Everything the function owns dies here, so it is released before the
     // return rather than at each block's close, which this jumps past. The
@@ -1021,6 +1048,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         .local_protos = state->local_protos,
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .owned = owned_list_create(),
+        .temporaries = owned_list_create(),
         .depth = 0,
         .frame_refs = frame_ref_list_create(),
         .diagnostics = state->diagnostics,
@@ -1069,6 +1097,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
     };
 
     owned_list_free(&func_state.owned);
+    owned_list_free(&func_state.temporaries);
     slot_map_destroy(func_state.slots);
 }
 
@@ -1532,6 +1561,15 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
     }
 
     unsigned int base = codegen_expr(state, node);
+
+    // An allocation reached into but never bound: the field read below needs the
+    // object, so the release waits for the statement rather than happening here.
+    if (expr_yields_owned(node)) {
+        owned_list_add(&state->temporaries,
+                       (OwnedSlot){.slot = base, .depth = state->depth, .type = node->type});
+        codegen_record_frame_ref(state, base);
+    }
+
     bool indirect = auto_deref && type_is_pointer(node->type);
 
     // Only a pointer actually reached through needs checking. '&w' names the
@@ -1961,6 +1999,23 @@ static bool expr_yields_owned(const ASTExpr *expr) {
     }
 }
 
+// Records that this slot may hold a reference when the frame unwinds. A failure
+// jumps past every free emitted below, so the frame has to know what it may
+// still be holding.
+//
+// Recorded once per slot: a slot reused by a later block is the same slot, and
+// the runtime clears one when it frees it, so a second entry would only make the
+// unwinder visit an empty slot twice.
+static void codegen_record_frame_ref(CodegenState *state, unsigned int slot) {
+    for (size_t i = 0; i < state->frame_refs.size; i++) {
+        if (state->frame_refs.data[i].slot == slot) {
+            return;
+        }
+    }
+
+    frame_ref_list_add(&state->frame_refs, (FrameRef){.slot = slot});
+}
+
 static void codegen_own_slot(CodegenState *state, unsigned int slot, const Type *type) {
     // A 'ref T' slot borrows, so it never owns and is never freed. Callers
     // check this too, but a stray own here would be a use-after-free rather
@@ -1969,20 +2024,8 @@ static void codegen_own_slot(CodegenState *state, unsigned int slot, const Type 
 
     owned_list_add(&state->owned, (OwnedSlot){.slot = slot, .depth = state->depth, .type = type});
 
-    // Also recorded on the frame, for the unwinder. A failure jumps past every
-    // free emitted below, so the frame has to know what it may still be
-    // holding — and this is the only place that becomes true.
-    //
-    // Recorded once per slot: a slot reused by a later block is the same slot,
-    // and the runtime clears one when it frees it, so a second entry would only
-    // make the unwinder visit an empty slot twice.
-    for (size_t i = 0; i < state->frame_refs.size; i++) {
-        if (state->frame_refs.data[i].slot == slot) {
-            return;
-        }
-    }
-
-    frame_ref_list_add(&state->frame_refs, (FrameRef){.slot = slot});
+    // Also recorded on the frame, for the unwinder.
+    codegen_record_frame_ref(state, slot);
 }
 
 // Whether this slot already owns a reference, and so has one to drop when it is

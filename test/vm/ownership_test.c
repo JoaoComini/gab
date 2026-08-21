@@ -256,6 +256,39 @@ static void test_a_ref_parameter_is_an_out_parameter_for_values() {
                         "let r: int = main();") == 42);
 }
 
+// The same where the statement is not a return: the release belongs to the
+// statement that produced the temporary, whichever statement that is.
+static void test_an_owned_temporary_in_an_assignment_does_not_leak() {
+    TestProgram program = test_compile("struct Node { v: int }\n"
+                                       "func f(): int { let x: int = 0; x = (new Node).v; return x; }\n");
+
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    assert(test_find_opcode(chunk, OP_RELEASE) > test_find_opcode(chunk, OP_NEW));
+    assert(test_find_opcode(chunk, OP_RELEASE) < test_find_opcode(chunk, OP_RETURN));
+
+    // Released once: the statement that produced it takes it off the list, so the
+    // return has nothing left to free.
+    assert(test_count_opcode(chunk, OP_RELEASE) == 1);
+
+    test_program_free(&program);
+}
+
+// An owned value no slot names is still freed: a field read reaches into the
+// object for the length of the expression, and nothing binds it afterwards.
+static void test_a_field_read_from_an_owned_temporary_does_not_leak() {
+    TestProgram program = test_compile("struct Node { v: int }\n"
+                                       "func f(): int { return (new Node).v; }\n");
+
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    // Before the return, or it never runs.
+    assert(test_find_opcode(chunk, OP_RELEASE) > 0);
+    assert(test_find_opcode(chunk, OP_RELEASE) < test_find_opcode(chunk, OP_RETURN));
+
+    test_program_free(&program);
+}
+
 int main(void) {
     test_taking_the_address_of_an_owning_pointer_is_refused();
     test_taking_the_address_of_a_borrow_is_allowed();
@@ -273,6 +306,8 @@ int main(void) {
     test_an_owned_pointer_passes_to_a_ref_parameter();
     test_a_call_returning_a_ref_is_not_freed();
     test_a_self_referential_struct_declares();
+    test_a_field_read_from_an_owned_temporary_does_not_leak();
+    test_an_owned_temporary_in_an_assignment_does_not_leak();
     test_conversion_is_owned_to_ref_only();
     test_ref_does_not_combine_with_a_star();
     test_a_ref_field_reads_and_writes();
