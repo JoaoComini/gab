@@ -1158,9 +1158,8 @@ static Constant value_from_literal(Literal lit) {
 }
 
 static unsigned int codegen_string_literal(CodegenState *state, ASTExpr *node) {
-    // Already decoded and interned by the lexer, so this is a lookup that finds
-    // the String * the token's characters were given.
-    String *text = string_from_ref(state->strings, node->lit.as_string);
+    // Decoded and interned by the lexer, so the node already holds the String *.
+    String *text = node->lit.as_string;
 
     unsigned int rd = codegen_alloc_slots(state, VM_STRING_SLOTS, VM_POINTER_SLOTS, node->span);
 

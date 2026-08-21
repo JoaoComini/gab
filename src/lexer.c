@@ -3,7 +3,10 @@
 
 #include <assert.h>
 #include <ctype.h>
+#include <errno.h>
+#include <limits.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -22,6 +25,10 @@ void lexer_eat(Lexer *lexer) {
 
 Token token_create(Lexer *lexer, TokenType type) {
     return (Token){.type = type, .line = lexer->start_line, .column = lexer->start_column};
+}
+
+Token token_create_value(Lexer *lexer, TokenType type, TokenValue value) {
+    return (Token){.type = type, .value = value, .line = lexer->start_line, .column = lexer->start_column};
 }
 
 Token token_create_ref(Lexer *lexer, TokenType type, StringRef ref) {
@@ -144,6 +151,7 @@ const char *token_description(TokenType type) {
 }
 
 static Token lexer_number(Lexer *lexer) {
+    Span opened = {.line = lexer->start_line, .column = lexer->start_column};
     const char *begin = lexer->source + lexer->pos;
 
     while (isdigit(lexer_peek(lexer))) {
@@ -161,12 +169,26 @@ static Token lexer_number(Lexer *lexer) {
         type = TOKEN_FLOAT;
     }
 
-    const char *end = lexer->source + lexer->pos;
-    size_t length = end - begin;
+    // strtol and strtod read up to the first character that cannot continue the
+    // number, and the scan above has already found where that is -- so the
+    // digits are converted in place rather than copied out to be terminated.
+    if (type == TOKEN_FLOAT) {
+        return token_create_value(lexer, type, (TokenValue){.as_float = strtof(begin, NULL)});
+    }
 
-    StringRef ref = {.data = begin, .length = length};
+    errno = 0;
+    long value = strtol(begin, NULL, 10);
 
-    return token_create_ref(lexer, type, ref);
+    // Checked here because a run of digits always denotes an int today, so the
+    // lexer can answer it. A type error rather than a syntax one: the literal is
+    // well formed, and what it denotes is what has no representation.
+    if (errno == ERANGE || value > INT32_MAX) {
+        diag_error(lexer->diagnostics, GAB_ERR_TYPE, opened, "integer literal is out of range");
+
+        return token_create(lexer, TOKEN_INVALID);
+    }
+
+    return token_create_value(lexer, type, (TokenValue){.as_int = (int32_t)value});
 }
 // Grows the scratch buffer to hold at least 'needed' bytes. The buffer is
 // reused across literals, so it settles at the longest one in the file.
@@ -268,7 +290,7 @@ static Token lexer_string(Lexer *lexer) {
 
     String *text = string_from_ref(lexer->strings, (StringRef){.data = lexer->scratch, .length = length});
 
-    return token_create_ref(lexer, TOKEN_STRING, (StringRef){.data = text->data, .length = text->length});
+    return token_create_value(lexer, TOKEN_STRING, (TokenValue){.as_string = text});
 }
 
 static bool is_ident_char(char ch) { return isalnum(ch) || ch == '_'; }

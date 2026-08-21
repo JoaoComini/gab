@@ -3,6 +3,7 @@
 
 #include "arena.h"
 #include "diagnostics.h"
+#include "string/string.h"
 #include "string/string_pool.h"
 #include "string/string_ref.h"
 
@@ -65,9 +66,25 @@ typedef enum {
     TOKEN_IDENT,       // Variable and function names
 } TokenType;
 
+// What a token denotes, for the kinds that denote something. Which arm is live
+// is decided by the type: a literal's value is fixed by its characters, so it
+// is converted where they are read rather than again by every stage that wants
+// it. Punctuation and keywords denote nothing and leave this untouched.
+typedef union {
+    int32_t as_int;    // TOKEN_INT
+    float as_float;    // TOKEN_FLOAT
+    String *as_string; // TOKEN_STRING, decoded and interned
+} TokenValue;
+
 typedef struct {
     TokenType type;
+
+    // The source text the token was read from. A name is what it spells, so
+    // this is what an identifier carries; a literal carries its value instead.
     StringRef lexeme;
+
+    TokenValue value;
+
     int line;
     int column;
 } Token;

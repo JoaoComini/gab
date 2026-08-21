@@ -241,15 +241,14 @@ static void test_unterminated_block_comment_is_an_error() {
     assert(diagnostic->span.column == 3);
 }
 
-// A string literal is one token, and its lexeme is the text between the quotes
-// rather than the quotes themselves.
+// A string literal is one token carrying the characters it denotes.
 static void test_a_string_literal_is_one_token() {
     Lexer lexer = test_lexer("\"hello\"");
     Token token = lexer_next(&lexer);
 
     assert(token.type == TOKEN_STRING);
-    assert(token.lexeme.length == 5);
-    assert(strncmp(token.lexeme.data, "hello", 5) == 0);
+    assert(token.value.as_string->length == 5);
+    assert(memcmp(token.value.as_string->data, "hello", 5) == 0);
 
     assert_token(&lexer, TOKEN_EOF);
 }
@@ -260,7 +259,7 @@ static void test_an_empty_string_literal_lexes() {
     Token token = lexer_next(&lexer);
 
     assert(token.type == TOKEN_STRING);
-    assert(token.lexeme.length == 0);
+    assert(token.value.as_string->length == 0);
 
     assert_token(&lexer, TOKEN_EOF);
 }
@@ -298,8 +297,8 @@ static void test_a_string_literal_carries_decoded_characters() {
     Token token = lexer_next(&lexer);
 
     assert(token.type == TOKEN_STRING);
-    assert(token.lexeme.length == 5);
-    assert(memcmp(token.lexeme.data, "a\nb\"c", 5) == 0);
+    assert(token.value.as_string->length == 5);
+    assert(memcmp(token.value.as_string->data, "a\nb\"c", 5) == 0);
 }
 
 // A '\0' escape is a character like any other, so it neither ends the string
@@ -309,8 +308,8 @@ static void test_a_null_escape_is_a_character() {
     Token token = lexer_next(&lexer);
 
     assert(token.type == TOKEN_STRING);
-    assert(token.lexeme.length == 3);
-    assert(memcmp(token.lexeme.data, "a\0b", 3) == 0);
+    assert(token.value.as_string->length == 3);
+    assert(memcmp(token.value.as_string->data, "a\0b", 3) == 0);
 }
 
 // An escape the language does not define is refused rather than standing for
@@ -325,6 +324,43 @@ static void test_an_unknown_escape_is_an_error() {
     const Diagnostic *diagnostic = diagnostics_get(&diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_SYNTAX);
     assert(strcmp(diagnostic->message, "unknown escape sequence '\\p'") == 0);
+}
+
+// A numeric token carries its value, converted where the characters are read.
+static void test_a_number_token_carries_its_value() {
+    Lexer lexer = test_lexer("42 3.5");
+
+    Token integer = lexer_next(&lexer);
+    assert(integer.type == TOKEN_INT);
+    assert(integer.value.as_int == 42);
+
+    Token real = lexer_next(&lexer);
+    assert(real.type == TOKEN_FLOAT);
+    assert(real.value.as_float == 3.5f);
+}
+
+// An integer literal too large for the type it denotes is refused. The digits
+// are well formed, so what is wrong is that no int holds what they denote.
+static void test_an_out_of_range_integer_is_an_error() {
+    Lexer lexer = test_lexer("99999999999999");
+    assert_token(&lexer, TOKEN_INVALID);
+
+    assert(diagnostics_count(&diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(&diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_TYPE);
+    assert(strcmp(diagnostic->message, "integer literal is out of range") == 0);
+}
+
+// The largest value the type holds is not out of range.
+static void test_the_largest_integer_literal_lexes() {
+    Lexer lexer = test_lexer("2147483647");
+
+    Token token = lexer_next(&lexer);
+    assert(token.type == TOKEN_INT);
+    assert(token.value.as_int == 2147483647);
+
+    assert(diagnostics_count(&diagnostics) == 0);
 }
 
 // A lone '/' is still division.
@@ -365,6 +401,9 @@ int main(void) {
     test_a_string_literal_carries_decoded_characters();
     test_a_null_escape_is_a_character();
     test_an_unknown_escape_is_an_error();
+    test_a_number_token_carries_its_value();
+    test_an_out_of_range_integer_is_an_error();
+    test_the_largest_integer_literal_lexes();
     test_slash_is_division();
 
     diagnostics_free(&diagnostics);
