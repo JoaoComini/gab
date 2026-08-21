@@ -34,16 +34,7 @@ typedef struct Scope {
 
     struct Scope *parent;
     int depth;
-
-    // Stamped onto whatever this scope declares. Set on the scopes a compile
-    // declares into — the root and the module scopes — and inherited by the
-    // block scopes beneath them.
-    unsigned int generation;
 } Scope;
-
-// Sets the generation stamped onto subsequent declarations. Called once per
-// compile on the scope that compile declares into.
-void scope_set_generation(Scope *scope, unsigned int generation);
 
 // Initialize a new scope
 Scope *scope_create(Arena *arena, StringPool *strings, Scope *parent);
@@ -63,7 +54,7 @@ void scope_init_module(Scope *scope, Arena *arena, StringPool *strings, Scope *p
 Symbol *scope_symbol_lookup(Scope *scope, String *name);
 
 // The type this name means here: this scope, then outward. A module's own
-// 'Config' therefore shadows a root-level one, and 'int' resolves from
+// 'Config' therefore shadows an outer one, and 'int' resolves from
 // anywhere because the root scope declares it.
 Type *scope_type_lookup(Scope *scope, String *name);
 
@@ -71,21 +62,30 @@ Type *scope_type_lookup(Scope *scope, String *name);
 // an outer name is allowed and redeclaring one of this scope's own is not.
 Type *scope_type_lookup_local(Scope *scope, String *name);
 
-// Returns false if this scope already declares the name at the current
-// generation — that is, if this same compile declared it. A name an earlier
-// compile declared is replaced, since recompiling a unit redeclares its types.
 // Removes a name this scope declared. Exists for one case: a struct is
 // registered before its fields resolve, so that a field may point at the struct
 // being declared, and a struct whose fields fail to resolve has to be taken
 // back out — it has no layout, so nothing may use it as a type.
 void scope_withdraw_type(Scope *scope, String *name);
 
+// Returns false if this scope already declares the name. Declaring a name is a
+// one-time act: a second declaration of it, in this unit or a later one, is a
+// collision rather than a replacement.
 bool scope_decl_type(Scope *scope, String *name, Type *type);
 
-// Whether this scope declares the name at the current generation. Distinct
-// from scope_type_lookup_local, which finds an earlier compile's declaration
-// too and so cannot tell a duplicate from something a reload may replace.
-bool scope_declares_type_now(Scope *scope, String *name);
+// A scope a compile declares into instead of its real target, so a compile that
+// fails declares nothing. Parented to the target, so lookups still reach what is
+// already declared.
+void scope_init_staging(Scope *scope, Arena *arena, StringPool *strings, Scope *target);
+
+// Whether merging would collide with a name the target already holds. Asked
+// before anything is installed.
+bool scope_merge_collides(Scope *target, Scope *staged);
+
+// Moves what a staging scope declared into the scope it stood in for. The
+// caller has already asked scope_merge_collides.
+void scope_merge_staged(Scope *target, Scope *staged);
+
 Symbol *scope_decl_var(Scope *scope, String *name, Type *type);
 Symbol *scope_decl_func(Scope *scope, String *name, Type *return_type);
 

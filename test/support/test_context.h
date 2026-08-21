@@ -1,6 +1,10 @@
 #ifndef GAB_TEST_CONTEXT_H
 #define GAB_TEST_CONTEXT_H
 
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+
 #include "arena.h"
 #include "diagnostics.h"
 #include "scope.h"
@@ -16,6 +20,30 @@ typedef struct {
     StringPool strings;
     Diagnostics diagnostics;
 } TestContext;
+
+// Every unit names a module, and a test snippet is a unit. Applied by the
+// helpers rather than written at the top of several hundred string literals:
+// which module a snippet declares into is never what the snippet is about.
+//
+// Source that already names one is returned unchanged, so a test whose subject
+// is modules is not given a second directive.
+static inline const char *test_in_a_module(const char *source) {
+    static char buffer[1 << 16];
+
+    while (*source == ' ' || *source == '\n' || *source == '\t') {
+        source++;
+    }
+
+    if (strncmp(source, "module ", 7) == 0) {
+        return source;
+    }
+
+    int written = snprintf(buffer, sizeof(buffer), "module test;\n%s", source);
+
+    assert(written > 0 && (size_t)written < sizeof(buffer));
+
+    return buffer;
+}
 
 static inline void test_context_init(TestContext *ctx) {
     ctx->arena = arena_create(TEST_ARENA_BLOCK_SIZE);

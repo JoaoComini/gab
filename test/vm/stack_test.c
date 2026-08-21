@@ -28,7 +28,8 @@ static void test_stack_does_not_move_under_deep_recursion() {
     const uint8_t *before = vm->stack;
     size_t capacity_before = vm->stack_capacity;
 
-    vm_execute(vm, "func down(n: int): int {\n"
+    vm_execute(vm, "module test;\n"
+                   "func down(n: int): int {\n"
                    "if n <= 0 { return 0; }\n"
                    "let a = n + 1; let b = n + 2; let c = n + 3;\n"
                    "return down(n - 1) + a + b + c;\n"
@@ -48,7 +49,8 @@ static void test_stack_does_not_move_under_deep_recursion() {
 static void test_deep_recursion_preserves_live_frames() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "func down(n: int): int {\n"
+    vm_execute(vm, "module test;\n"
+                   "func down(n: int): int {\n"
                    "if n <= 0 { return 0; }\n"
                    "let keep = n;\n"
                    "let rest = down(n - 1);\n"

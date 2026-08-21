@@ -247,8 +247,8 @@ static void test_a_function_compiles_into_its_own_chunk() {
 
     assert(test_top_chunk(&program)->instructions.size == 0);
 
-    assert(program.vm->global_funcs.size == 1);
-    assert(program.vm->global_funcs.data[0].arity == 2);
+    assert(program.vm->prototypes.size == 1);
+    assert(program.vm->prototypes.data[0]->arity == 2);
 
     Chunk *body = test_func_chunk(&program, 0);
 
@@ -271,8 +271,8 @@ static void test_a_method_counts_its_receiver() {
     TestProgram program = test_compile("struct Vec { x: int }\n"
                                        "func (v: ref Vec) scaled(by: int): int { return v.x * by; }\n");
 
-    assert(program.vm->global_funcs.size == 1);
-    assert(program.vm->global_funcs.data[0].arity == 2);
+    assert(program.vm->prototypes.size == 1);
+    assert(program.vm->prototypes.data[0]->arity == 2);
 
     test_program_free(&program);
 }
@@ -532,6 +532,38 @@ static void test_a_chunk_past_the_index_bound_falls_back() {
     test_program_free(&program);
 }
 
+// A second unit numbers its types from zero, so the operand it emits for a type
+// the VM already holds is not the index that type sits at until linking rewrites
+// it. Behaviour cannot see this: the wrong type still allocates, just at the
+// wrong size, and nothing a program can read reports a size.
+static void test_new_encodes_the_type_index_the_vm_holds() {
+    TestProgram program = test_compile("module M;\n"
+                                       "struct Wide { a: int, b: int, c: int, d: int }\n"
+                                       "func first(): int { let p: *Wide = new Wide; return p.a; }\n");
+
+    // Its own type first, so this unit numbers 'Wide' second while the VM
+    // already holds it first: the two orderings disagree, and the operand is
+    // only right if it was rewritten.
+    test_compile_next(&program, "module M;\n"
+                                "struct Narrow { a: int }\n"
+                                "func second(): int {\n"
+                                "    let n: *Narrow = new Narrow;\n"
+                                "    let w: *Wide = new Wide;\n"
+                                "    return n.a + w.a;\n"
+                                "}\n");
+
+    long narrow = test_heap_type_index(&program, "Narrow");
+    long wide = test_heap_type_index(&program, "Wide");
+
+    assert(narrow >= 0 && wide >= 0 && narrow != wide);
+
+    // 'new Narrow' comes first in the body, so the first OP_NEW is the one to
+    // ask -- and what it names must be where the VM put 'Narrow'.
+    assert(test_first_operand(test_func_chunk(&program, 1), OP_NEW) == narrow);
+
+    test_program_free(&program);
+}
+
 int main() {
     test_negated_literal_folds_to_one_load();
     test_negating_a_variable_emits_a_subtraction();
@@ -560,6 +592,8 @@ int main() {
     test_a_self_copy_emits_nothing();
     test_a_struct_read_through_a_pointer_is_one_instruction();
     test_a_struct_write_through_a_pointer_is_one_instruction();
+
+    test_new_encodes_the_type_index_the_vm_holds();
 
     printf("codegen_test: all tests passed\n");
     return 0;

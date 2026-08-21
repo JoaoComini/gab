@@ -20,13 +20,6 @@ typedef enum {
     GAB_ERR_RUNTIME,
     GAB_ERR_ARG,
 
-    // The function this call was prepared for has been recompiled, and its
-    // signature is no longer the one the call was built against. Its staged
-    // arguments described the old signature, so they are gone: initialise the
-    // call again to stage them afresh. A reload that leaves the signature alone
-    // does not invalidate anything, and the call goes on reaching the new body,
-    // which is the point of reloading.
-    GAB_ERR_STALE,
 } GabStatus;
 
 // The message is copied rather than pointed at, so a GabError outlives the
@@ -54,20 +47,10 @@ void gab_vm_free(GabVM *vm);
 // and releases it with itself, so loading is a statement rather than a resource
 // a host has to keep track of.
 //
-// 'name' identifies the unit. It names the source in diagnostics, and it is the
-// key a reload replaces: loading a name already loaded compiles the new source
-// over the old one and frees the top-level chunk the old one held, so reloading
-// one file for as long as a host runs keeps one of those rather than one per
-// load. Declarations are replaced the same way, which is what makes this hot
-// reload — a GabFunc looked up before a reload goes on working, calling the new
-// body.
-//
-// What a reload does not reclaim is the function prototypes the unit compiled:
-// a prototype index is baked into OP_CALL operands and into every handle that
-// resolves through it, so an index cannot be reused while anything may still
-// name it. A reload therefore leaves its predecessor's prototypes behind, one
-// set per load, which is a cost that grows with how often a host reloads rather
-// than with how long it runs.
+// 'name' identifies the unit in diagnostics and nothing else. It does not scope
+// what the unit declares, and loading is not idempotent: a declaration is a
+// one-time act, so a second unit declaring a name the first one did collides
+// and fails to compile, whatever either unit is called.
 //
 // The namespace a unit declares into is not this name: it comes from the unit's
 // own 'module' directive, and is what the host passes to gab_lookup and
@@ -89,7 +72,8 @@ typedef struct GabArgs GabArgs;
 typedef void (*GabExternFn)(GabArgs *args);
 
 // Binds a host body to the name a script declares 'extern'. 'module' is the
-// namespace, exactly as for gab_lookup; NULL is the root.
+// namespace, exactly as for gab_lookup, and required: every unit names a
+// module, so every extern belongs to one.
 //
 // Registration must happen before the script that declares the name is loaded:
 // binding is resolved at load, so that an extern nothing supplies is a load
@@ -97,8 +81,8 @@ typedef void (*GabExternFn)(GabArgs *args);
 // runs. Returns false and fills 'err' if the VM or name is missing, or the same
 // name is already bound in that module.
 //
-// The binding outlives any one load and is not disturbed by a reload, so a host
-// registers its externs once at startup and reloads scripts against them.
+// The binding outlives any one load, so a host registers its externs once at
+// startup and loads scripts against them.
 bool gab_extern(GabVM *vm, const char *module, const char *name, GabExternFn fn, GabError *err);
 
 // Reading an extern's arguments. The index counts declared parameters from
@@ -147,10 +131,10 @@ void gab_error(GabArgs *args, const char *message);
 // offsetof rather than trusting it.
 //
 // 'module' is the namespace to look in, as written in a unit's 'module'
-// directive; NULL is the root namespace. Types resolve exactly as symbols do:
-// the module's own are found first and the root namespace after, so a module's
-// 'Config' shadows a root-level one and 'int' needs no import. An unknown
-// module is a miss rather than a silent fallback to the root.
+// directive, and required: every unit names one. Types resolve exactly as
+// symbols do, and only in the module named -- nothing falls through to another
+// module, and an unknown module is a miss. Only the builtin types are visible
+// from everywhere.
 const GabType *gab_find_type(GabVM *vm, const char *module, const char *name);
 
 size_t gab_type_size(const GabType *type);
@@ -186,9 +170,9 @@ void gab_free(GabVM *vm, void *object);
 // costs no lookup. Returns NULL if the name is missing or names something that
 // is not a function.
 //
-// 'module' is the namespace, exactly as for gab_find_type; NULL is the root.
-// A module is a name rather than a handle because several units may declare
-// the same one: the namespace is the module, not the unit that compiled it.
+// 'module' is the namespace, exactly as for gab_find_type, and required. A
+// module is a name rather than a handle because several units may declare the
+// same one: the namespace is the module, not the unit that compiled it.
 //
 // There is nothing to free. The VM owns every handle it hands out and releases
 // them with itself, so a host looks a function up and then forgets about its
@@ -212,15 +196,6 @@ int gab_func_arity(const GabFunc *fn);
 // in this API a host frees: gab_call_free when the caller is done with it.
 // Returns NULL if the function is NULL or memory ran out.
 GabCall *gab_call_init(GabFunc *fn, GabError *err);
-
-// After GAB_ERR_STALE: resizes the call for the signature the function now has
-// and clears what it staged, so the host stages afresh and calls again. The
-// GabCall keeps its address, so whatever the host stored it in goes on pointing
-// at a live call.
-//
-// Returns false only if memory ran out, leaving the call as it was — still
-// stale, still refusing, still the host's to free.
-bool gab_call_restage(GabCall *call, GabError *err);
 
 void gab_call_free(GabCall *call);
 

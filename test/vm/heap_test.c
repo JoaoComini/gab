@@ -138,6 +138,7 @@ static void test_an_abnormal_unwind_frees_what_it_held() {
 
     CompiledScript script;
     assert(vm_compile(vm,
+                      "module test;\n"
                       "struct Node { n: int }\n"
                       "func deep(n: int): int { return deep(n + 1); }\n"
                       "func main(): int { let p: *Node = new Node; return deep(0); }\n"

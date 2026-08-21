@@ -27,6 +27,17 @@ GAB_HASH_MAP(SlotMap, slot_map, Symbol *, unsigned int)
 
 #define SLOT_MAP_INITIAL_CAPACITY 16
 
+// A function this unit declared, and the index it was given within the unit.
+// The symbol's own proto_index cannot hold it: that field is absolute, and a
+// call to a function an earlier unit compiled reads it expecting an index this
+// unit must not rebase. The two are told apart by which of them has the answer.
+#define proto_map_hash(key) (size_t)key
+#define proto_map_key_equals(key, other) key == other
+#define proto_map_key_dup(key) key
+#define proto_map_entry_free(key, value)
+
+GAB_HASH_MAP(ProtoMap, proto_map, Symbol *, size_t)
+
 // A slot holding an owned reference, and the block depth that declared it.
 // Kept as a stack because blocks nest and close in order.
 typedef struct {
@@ -69,7 +80,14 @@ typedef struct {
     // highest slot ever reached rather than the final value.
     unsigned int max_reg;
 
-    CodegenOutput output;
+    // Shared by every state a compile makes, nested bodies included: what the
+    // unit accumulates belongs to the compile, not to one function's frame.
+    CompilationUnit *unit;
+    Arena *arena;
+
+    // Shared with every nested state, like the unit itself: a body may call a
+    // function declared anywhere in the unit.
+    ProtoMap *local_protos;
 
     // Frame-local, so it is per function body: a nested function generates
     // against its own, and the outer one's slots are not visible in it.
@@ -227,13 +245,28 @@ static OpCode field_opcode_for(size_t size, bool load, bool indirect, bool *ok);
 
 // ---- Generating a script ----
 
-Chunk *codegen_generate(ASTScript *script, CodegenOutput output, Diagnostics *diagnostics,
-                        CodegenFrameInfo *frame_info) {
+CompilationUnit *codegen_generate(ASTScript *script, Arena *arena, Diagnostics *diagnostics) {
+    CompilationUnit *unit = calloc(1, sizeof(CompilationUnit));
+
+    if (!unit) {
+        return NULL;
+    }
+
+    unit->prototypes = func_proto_list_create();
+    unit->types = type_list_create();
+    unit->proto_relocations = relocation_list_create();
+    unit->type_relocations = relocation_list_create();
+    unit->bindings = proto_binding_list_create();
+    unit->externs = extern_request_list_create();
+    unit->arena = arena;
+
     CodegenState state = {
         .chunk = chunk_create(),
         .next_reg = 0,
         .max_reg = 0,
-        .output = output,
+        .unit = unit,
+        .arena = arena,
+        .local_protos = proto_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .owned = owned_list_create(),
         .depth = 0,
@@ -261,24 +294,20 @@ Chunk *codegen_generate(ASTScript *script, CodegenOutput output, Diagnostics *di
     // The slots were only ever true of this compile, so they go with it.
     slot_map_destroy(state.slots);
     owned_list_free(&state.owned);
+    proto_map_destroy(state.local_protos);
 
     if (state.failed) {
         chunk_free(state.chunk);
         frame_ref_list_free(&state.frame_refs);
+        compilation_unit_free(unit);
         return NULL;
     }
 
-    // The refs outlive the compile, unlike everything above: the top-level
-    // frame is unwound through them, so ownership passes to the caller with the
-    // chunk.
-    if (frame_info) {
-        frame_info->max_registers = state.max_reg;
-        frame_info->refs = state.frame_refs;
-    } else {
-        frame_ref_list_free(&state.frame_refs);
-    }
+    unit->chunk = state.chunk;
+    unit->max_registers = state.max_reg;
+    unit->refs = state.frame_refs;
 
-    return state.chunk;
+    return unit;
 }
 
 // ---- Statements ----
@@ -924,35 +953,24 @@ static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast) {
 // body call a function whose own body has not been reached yet — the recursion
 // case, and now the forward-call case the resolver's hoisting admits.
 //
-// Durable, unlike a frame slot: this is what OP_CALL encodes and what a host's
-// handle resolves through after the compile is long gone.
+// The index is the unit's own. What OP_CALL finally encodes is this plus the
+// base linking assigns, which is why every call emitted against it is recorded
+// for relocation.
 static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast) {
-    if (!ast->symbol || ast->symbol->func.proto_index != SYMBOL_FUNC_NO_PROTO) {
+    if (!ast->symbol || proto_map_lookup(state->local_protos, ast->symbol)) {
         return;
     }
 
-    func_proto_list_add(state->output.funcs, (FuncPrototype){0});
-    ast->symbol->func.proto_index = state->output.funcs->size - 1;
-}
+    FuncPrototype *proto = arena_alloc(state->arena, sizeof(FuncPrototype));
+    *proto = (FuncPrototype){0};
 
-// The host body registered for an extern's module and name, or NULL if none is.
-// Both are interned, so identity is the comparison.
-static GabExternFn codegen_find_extern(CodegenState *state, const Symbol *symbol) {
-    const ExternBindingList *externs = state->output.externs;
+    func_proto_list_add(&state->unit->prototypes, proto);
 
-    if (!externs) {
-        return NULL;
-    }
+    size_t local = state->unit->prototypes.size - 1;
 
-    for (size_t i = 0; i < externs->size; i++) {
-        const ExternBinding *binding = &externs->data[i];
-
-        if (binding->name == symbol->func.name && binding->module == symbol->func.module) {
-            return binding->fn;
-        }
-    }
-
-    return NULL;
+    proto_map_insert(state->local_protos, ast->symbol, local);
+    proto_binding_list_add(&state->unit->bindings,
+                           (ProtoBinding){.symbol = ast->symbol, .local_index = local});
 }
 
 static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
@@ -966,33 +984,28 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         return;
     }
 
-    size_t proto_index = ast->symbol->func.proto_index;
+    const size_t *local = proto_map_lookup(state->local_protos, ast->symbol);
 
-    // An extern emits no code. Its host body is resolved here, as the prototype
-    // is created, so a prototype never exists in a state where a call could
-    // reach it without one.
+    if (!local) {
+        return;
+    }
+
+    size_t proto_index = *local;
+
+    // An extern emits no code and carries no body yet. Which host function it
+    // binds to is a question only a VM can answer, so the unit records the ask
+    // and linking either answers all of them or installs nothing.
     if (ast->symbol->func.is_extern) {
-        GabExternFn native = codegen_find_extern(state, ast->symbol);
+        *state->unit->prototypes.data[proto_index] = (FuncPrototype){
+            .extern_symbol = ast->symbol,
+            .arity = (int)ast->params.size,
+            .max_registers = 0,
+            .refs = frame_ref_list_create(),
+        };
 
-        if (!native) {
-            if (!state->failed) {
-                diag_error(state->diagnostics, GAB_ERR_CODEGEN, stmt->span,
-                           "extern function '%s' was never registered", ast->symbol->func.name->data);
-            }
-
-            state->failed = true;
-
-            return;
-        }
-
-        func_proto_list_emplace(state->output.funcs, proto_index,
-                                (FuncPrototype){
-                                    .extern_symbol = ast->symbol,
-                                    .native = native,
-                                    .arity = (int)ast->params.size,
-                                    .max_registers = 0,
-                                    .refs = frame_ref_list_create(),
-                                });
+        extern_request_list_add(
+            &state->unit->externs,
+            (ExternRequest){.local_index = proto_index, .symbol = ast->symbol, .span = stmt->span});
 
         return;
     }
@@ -1004,7 +1017,9 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
     // The body generates against its own frame, so its slots are its own.
     CodegenState func_state = (CodegenState){
         .chunk = func_chunk,
-        .output = state->output,
+        .unit = state->unit,
+        .arena = state->arena,
+        .local_protos = state->local_protos,
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .owned = owned_list_create(),
         .depth = 0,
@@ -1046,14 +1061,13 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         chunk_add_instruction(func_chunk, VM_ENCODE_R(OP_RETURN, 0, 0, 0));
     }
 
-    func_proto_list_emplace(state->output.funcs, proto_index,
-                            (FuncPrototype){
-                                .chunk = func_chunk,
-                                // The receiver is parameter zero, so it counts.
-                                .arity = ast->params.size + (ast->receiver ? 1 : 0),
-                                .max_registers = func_state.max_reg,
-                                .refs = func_state.frame_refs,
-                            });
+    *state->unit->prototypes.data[proto_index] = (FuncPrototype){
+        .chunk = func_chunk,
+        // The receiver is parameter zero, so it counts.
+        .arity = ast->params.size + (ast->receiver ? 1 : 0),
+        .max_registers = func_state.max_reg,
+        .refs = func_state.frame_refs,
+    };
 
     owned_list_free(&func_state.owned);
     slot_map_destroy(func_state.slots);
@@ -1133,9 +1147,24 @@ static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node) {
 // callee's frame is based at dest, so the arguments written above dest already
 // are its parameters, and its size comes from the prototype.
 static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symbol *callee, Span span) {
-    // Masking alone would encode a call to the wrong function, so an index too
-    // wide for the field is rejected rather than truncated.
-    if (callee->func.proto_index > VM_MAX_PROTOTYPES) {
+    // A function this unit declared is numbered by the unit and rebased at link;
+    // one an earlier unit declared already has its final index and must be left
+    // alone. Which it is, is which of the two knows the answer.
+    const size_t *local = proto_map_lookup(state->local_protos, (Symbol *)callee);
+    size_t index = local ? *local : callee->func.proto_index;
+
+    if (index == SYMBOL_FUNC_NO_PROTO) {
+        if (!state->failed) {
+            diag_error(state->diagnostics, GAB_ERR_CODEGEN, span, "call to a function with no body");
+        }
+
+        state->failed = true;
+        return;
+    }
+
+    // Only an absolute index can be bounds-checked here. A unit-local one is
+    // checked at link, where the base it will be given is known.
+    if (!local && index > VM_MAX_PROTOTYPES) {
         if (!state->failed) {
             diag_error(state->diagnostics, GAB_ERR_CODEGEN, span, "too many functions in one program");
         }
@@ -1144,7 +1173,12 @@ static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symb
         return;
     }
 
-    chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_CALL, dest, (unsigned int)callee->func.proto_index));
+    size_t offset = chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_CALL, dest, (unsigned int)index));
+
+    if (local) {
+        relocation_list_add(&state->unit->proto_relocations,
+                            (Relocation){.chunk = state->chunk, .offset = offset});
+    }
 }
 
 // Arguments go into the registers immediately above the destination, which is
@@ -1425,32 +1459,26 @@ static unsigned int codegen_cast_expr(CodegenState *state, ASTExpr *node) {
 static unsigned int codegen_new_expr(CodegenState *state, ASTExpr *node) {
     unsigned int rd = codegen_alloc_slots(state, VM_POINTER_SLOTS, VM_POINTER_SLOTS, node->span);
 
-    size_t type_index = state->output.heap_types->size;
+    // Interned within the unit, not across the VM: an index means nothing until
+    // linking gives the unit its base, so a type an earlier unit registered is
+    // registered again here and the two are reconciled at link.
+    size_t type_index = state->unit->types.size;
 
-    for (size_t i = 0; i < state->output.heap_types->size; i++) {
-        if (state->output.heap_types->data[i] == node->new_expr.type) {
+    for (size_t i = 0; i < state->unit->types.size; i++) {
+        if (state->unit->types.data[i] == node->new_expr.type) {
             type_index = i;
             break;
         }
     }
 
-    if (type_index == state->output.heap_types->size) {
-        type_list_add(state->output.heap_types, node->new_expr.type);
+    if (type_index == state->unit->types.size) {
+        type_list_add(&state->unit->types, node->new_expr.type);
     }
 
-    // Masking alone would allocate the wrong type, so an index too wide for
-    // the field is rejected rather than truncated.
-    if (type_index > VM_MAX_HEAP_TYPES) {
-        if (!state->failed) {
-            diag_error(state->diagnostics, GAB_ERR_CODEGEN, node->span,
-                       "too many allocated types in one program");
-        }
+    size_t offset = chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_NEW, rd, (unsigned int)type_index));
 
-        state->failed = true;
-        return rd;
-    }
-
-    chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_NEW, rd, (unsigned int)type_index));
+    relocation_list_add(&state->unit->type_relocations,
+                        (Relocation){.chunk = state->chunk, .offset = offset});
 
     return rd;
 }

@@ -1,5 +1,8 @@
+#include "vm/codegen.h"
 #include "vm/vm.h"
 
+#include "lexer.h"
+#include "parser.h"
 #include "string/string.h"
 #include "symbol_table.h"
 #include "type_registry.h"
@@ -11,7 +14,8 @@
 static void test_vm_execute() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "func execute(): bool {\n"
+    vm_execute(vm, "module test;\n"
+                   "func execute(): bool {\n"
                    "let a = 2;\n"
                    "let b = 3;\n"
                    "let c = a + b * 5;\n"
@@ -37,8 +41,10 @@ static void test_two_vms_are_independent() {
     VM *second = vm_create();
 
     // Each VM interns its own copy of the same identifiers and type names.
-    vm_execute(first, "func run(): int { let value : int = 1; return value; }");
-    vm_execute(second, "func run(): int { let value : int = 2; return value; }");
+    vm_execute(first, "module test;\n"
+                      "func run(): int { let value : int = 1; return value; }");
+    vm_execute(second, "module test;\n"
+                       "func run(): int { let value : int = 2; return value; }");
 
     assert(&first->strings != &second->strings);
 
@@ -53,7 +59,8 @@ static void test_two_vms_are_independent() {
 
     assert(strcmp(second_int->name->data, "int") == 0);
 
-    vm_execute(second, "func again(): int { return 3; }");
+    vm_execute(second, "module test;\n"
+                       "func again(): int { return 3; }");
 
     vm_free(second);
 }
@@ -63,11 +70,12 @@ static void test_two_vms_are_independent() {
 static void test_empty_function_body() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "func main() { }");
+    vm_execute(vm, "module test;\n"
+                   "func main() { }");
 
-    assert(vm->global_funcs.size == 1);
+    assert(vm->prototypes.size == 1);
 
-    FuncPrototype *proto = &vm->global_funcs.data[0];
+    FuncPrototype *proto = vm->prototypes.data[0];
     assert(proto->chunk->instructions.size == 1);
     assert(VM_DECODE_OPCODE(instruction_list_get(&proto->chunk->instructions, 0)) == OP_RETURN);
 
@@ -79,10 +87,11 @@ static void test_empty_function_body() {
 static void test_struct_typed_local() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "struct Vec3 { x: float, y: float, z: float }\n"
+    vm_execute(vm, "module test;\n"
+                   "struct Vec3 { x: float, y: float, z: float }\n"
                    "func main() { let v: Vec3; }");
 
-    assert(vm->global_funcs.size == 1);
+    assert(vm->prototypes.size == 1);
 
     vm_free(vm);
 }
@@ -92,10 +101,12 @@ static void test_struct_typed_local() {
 static void test_top_level_runs_as_frame_zero() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "func main() { let a = 2; }");
+    vm_execute(vm, "module test;\n"
+                   "func main() { let a = 2; }");
     assert(vm->frame_count == 0);
 
-    vm_execute(vm, "let x: int = 7;");
+    vm_execute(vm, "module test;\n"
+                   "let x: int = 7;");
     assert(vm->frame_count == 0);
 
     vm_free(vm);
@@ -109,16 +120,19 @@ static void test_top_level_runs_as_frame_zero() {
 static void test_types_survive_a_later_compile() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "struct Player { health: int, mana: int }\n");
+    vm_execute(vm, "module test;\n"
+                   "struct Player { health: int, mana: int }\n");
 
-    Type *player = scope_type_lookup(&vm->global_scope, string_from_cstr(&vm->strings, "Player"));
+    Type *player = scope_type_lookup(vm_module_scope(vm, string_from_cstr(&vm->strings, "test")),
+                                     string_from_cstr(&vm->strings, "Player"));
     assert(player);
 
     size_t size = player->size;
     size_t field_count = player->field_count;
 
     // Enough of a second script to reuse the memory the first one released.
-    vm_execute(vm, "func a(x: int, y: int): int { let q: int = x + y; let w: int = q * q; return w; }\n"
+    vm_execute(vm, "module test;\n"
+                   "func a(x: int, y: int): int { let q: int = x + y; let w: int = q * q; return w; }\n"
                    "func b(x: int, y: int): int { let q: int = x - y; let w: int = q * q; return w; }\n");
 
     assert(strcmp(player->name->data, "Player") == 0);
@@ -134,20 +148,167 @@ static void test_types_survive_a_later_compile() {
 static void test_function_signatures_survive_a_later_compile() {
     VM *vm = vm_create();
 
-    vm_execute(vm, "struct Player { health: int, mana: int }\n"
+    vm_execute(vm, "module test;\n"
+                   "struct Player { health: int, mana: int }\n"
                    "func on_update(p: Player, dt: float): int { return p.health; }\n");
 
-    Symbol *on_update = scope_symbol_lookup(&vm->global_scope, string_from_cstr(&vm->strings, "on_update"));
+    Symbol *on_update = scope_symbol_lookup(vm_module_scope(vm, string_from_cstr(&vm->strings, "test")),
+                                            string_from_cstr(&vm->strings, "on_update"));
     assert(on_update && on_update->kind == SYMBOL_FUNC);
     assert(on_update->func.param_count == 2);
 
-    vm_execute(vm, "func a(x: int, y: int): int { let q: int = x + y; let w: int = q * q; return w; }\n"
+    vm_execute(vm, "module test;\n"
+                   "func a(x: int, y: int): int { let q: int = x + y; let w: int = q * q; return w; }\n"
                    "func b(x: int, y: int): int { let q: int = x - y; let w: int = q * q; return w; }\n");
 
     assert(on_update->func.param_count == 2);
     assert(strcmp(on_update->func.params[0]->name->data, "Player") == 0);
     assert(strcmp(on_update->func.params[1]->name->data, "float") == 0);
     assert(strcmp(on_update->func.return_type->name->data, "int") == 0);
+
+    vm_free(vm);
+}
+
+// A prototype is addressed by pointer for as long as a frame is on the stack,
+// so it must not live in storage a later compile can move. The prototype list
+// grows as units load, and a growable array reallocates -- which is why the
+// list holds pointers to prototypes rather than the prototypes themselves.
+static void test_prototypes_survive_a_later_compile() {
+    VM *vm = vm_create();
+
+    vm_execute(vm, "module test;\n"
+                   "func seven(): int { return 7; }\n");
+
+    assert(vm->prototypes.size == 1);
+
+    const FuncPrototype *seven = vm->prototypes.data[0];
+    const Chunk *chunk = seven->chunk;
+    int arity = seven->arity;
+
+    // Enough further functions to grow the list past its initial capacity.
+    vm_execute(vm, "module test;\n"
+                   "func a(x: int): int { return x; }\n"
+                   "func b(x: int): int { return x; }\n"
+                   "func c(x: int): int { return x; }\n"
+                   "func d(x: int): int { return x; }\n"
+                   "func e(x: int): int { return x; }\n"
+                   "func f(x: int): int { return x; }\n"
+                   "func g(x: int): int { return x; }\n"
+                   "func h(x: int): int { return x; }\n");
+
+    assert(vm->prototypes.size > 1);
+    assert(vm->prototypes.data[0] == seven);
+    assert(seven->chunk == chunk);
+    assert(seven->arity == arity);
+
+    vm_free(vm);
+}
+
+// A call into a function an earlier unit compiled reaches that function's body,
+// not whatever now sits at its index. The callee keeps the index it was given
+// when its own unit loaded, while the caller's unit numbers its prototypes
+// after it -- so the two indices come from different places and only agree if
+// the caller encoded the callee's absolute one.
+static void test_a_call_reaches_a_function_from_an_earlier_unit() {
+    VM *vm = vm_create();
+
+    vm_execute(vm, "module M;\nfunc seven(): int { return 7; }\n");
+
+    // Prototypes of its own, so this unit's numbering cannot coincide with the
+    // earlier unit's.
+    vm_execute(vm, "module M;\n"
+                   "func a(): int { return 1; }\n"
+                   "func b(): int { return 2; }\n"
+                   "func calls_across(): int { return seven(); }\n"
+                   "let r: int = calls_across();\n");
+
+    int32_t returned;
+    memcpy(&returned, vm_slot_at(vm, 0), sizeof(returned));
+
+    assert(returned == 7);
+
+    vm_free(vm);
+}
+
+// A unit that cannot link leaves the VM as it was. The unit numbers its own
+// prototypes and types and hands them over only once every extern in it has
+// been bound, so a failure partway through installs none of them -- and the
+// indices the next unit is given are the ones it would have had.
+static void test_a_unit_that_fails_to_link_installs_nothing() {
+    VM *vm = vm_create();
+
+    vm_execute(vm, "module test;\n"
+                   "func first(): int { return 1; }\n");
+
+    size_t protos = vm->prototypes.size;
+    size_t types = vm->heap_types.size;
+
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+
+    // Codegen succeeds and linking does not: the extern names a body no host
+    // registered, which is a question only the link step can ask.
+    CompiledScript script;
+    assert(!vm_compile(vm,
+                       "module test;\n"
+                       "struct Only { a: int }\n"
+                       "func second(): int { let p: *Only = new Only; return p.a; }\n"
+                       "extern func absent(x: int): int;\n",
+                       &script, &diagnostics));
+
+    assert(diagnostics_has_errors(&diagnostics));
+    diagnostics_free(&diagnostics);
+
+    assert(vm->prototypes.size == protos);
+    assert(vm->heap_types.size == types);
+
+    vm_free(vm);
+}
+
+// Checking a unit answers whether it would install without installing it, which
+// is what a dry run is: the prototypes, the types, and the names are all still
+// the caller's to discard.
+static void test_checking_a_unit_installs_nothing() {
+    VM *vm = vm_create();
+
+    vm_execute(vm, "module test;\n"
+                   "func first(): int { return 1; }\n");
+
+    size_t protos = vm->prototypes.size;
+    size_t types = vm->heap_types.size;
+
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
+
+    Lexer lexer = lexer_create("module dry;\n"
+                               "struct Only { a: int }\n"
+                               "func second(): int { let p: *Only = new Only; return p.a; }\n",
+                               &diagnostics);
+    Parser parser = parser_create(&lexer, &diagnostics);
+    ASTScript *script = ast_script_create();
+
+    assert(parser_parse(&parser, script));
+
+    Scope staging;
+    scope_init_staging(&staging, vm->arena, &vm->strings,
+                       vm_module_scope(vm, string_from_cstr(&vm->strings, "dry")));
+
+    assert(ast_script_resolve(vm->compile_arena, script, &staging, vm->module_scopes, &diagnostics));
+
+    CompilationUnit *unit = codegen_generate(script, vm->arena, &diagnostics);
+    assert(unit);
+
+    // Accepts, and having accepted has still changed nothing.
+    assert(vm_link_check(vm, unit, &diagnostics));
+
+    assert(vm->prototypes.size == protos);
+    assert(vm->heap_types.size == types);
+    assert(!scope_symbol_lookup(vm_module_scope(vm, string_from_cstr(&vm->strings, "dry")),
+                                string_from_cstr(&vm->strings, "second")));
+
+    compilation_unit_free(unit);
+    ast_script_destroy(script);
+    diagnostics_free(&diagnostics);
 
     vm_free(vm);
 }
@@ -161,8 +322,10 @@ static void test_compile_once_run_many() {
     diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
 
     CompiledScript script;
-    bool ok =
-        vm_compile(vm, "func seven(): int { return 7; }\nlet r: int = seven();\n", &script, &diagnostics);
+    bool ok = vm_compile(vm,
+                         "module test;\n"
+                         "func seven(): int { return 7; }\nlet r: int = seven();\n",
+                         &script, &diagnostics);
     assert(ok);
 
     diagnostics_free(&diagnostics);
@@ -193,7 +356,10 @@ static void test_compile_failure_is_reportable() {
     diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
 
     CompiledScript script;
-    bool ok = vm_compile(vm, "func broken(: int { return", &script, &diagnostics);
+    bool ok = vm_compile(vm,
+                         "module test;\n"
+                         "func broken(: int { return",
+                         &script, &diagnostics);
 
     assert(!ok);
     assert(diagnostics_has_errors(&diagnostics));
@@ -246,19 +412,17 @@ static void test_modules_accumulate_across_units() {
     vm_free(vm);
 }
 
-// A unit that names no module declares into the root namespace, which is what
-// keeps every script written before modules existed compiling unchanged.
-static void test_root_namespace_and_modules() {
+// The root holds the builtins and nothing else. A module resolves 'int' through
+// it, and reaches anything else only by naming the module that declares it.
+static void test_the_root_holds_only_builtins() {
     VM *vm = vm_create();
 
-    assert(compile_ok(vm, "func shared(): int { return 7; }\n"));
+    assert(compile_ok(vm, "module M;\nfunc uses_builtins(a: int, b: float): int { return a; }\n"));
 
-    // A module parents to the root, so builtins and root declarations resolve
-    // through it.
-    assert(compile_ok(vm, "module M;\nfunc g(a: int, b: float): int { return shared() + a; }\n"));
-
-    // The root does not see into a module: visibility goes one way only.
-    assert(!compile_ok(vm, "func h(): int { return g(); }\n"));
+    // Another module sees the builtins the same way, and 'uses_builtins' not at
+    // all: nothing falls through from one module to another.
+    assert(compile_ok(vm, "module N;\nfunc also_builtins(a: int): int { return a; }\n"));
+    assert(!compile_ok(vm, "module P;\nfunc g(): int { return uses_builtins(1, 2.0); }\n"));
 
     vm_free(vm);
 }
@@ -283,12 +447,11 @@ static void test_module_scope_does_not_change_pointer_lifetimes() {
 
     char buffer[512];
 
-    assert(compile_ok(vm, takes_address));
     snprintf(buffer, sizeof(buffer), "module A;\n%s", takes_address);
     assert(compile_ok(vm, buffer));
 
-    // And the rule still bites inside a module.
-    assert(!compile_ok(vm, escapes));
+    // The rule bites the same in any module: a module scope is depth 0, so a
+    // top-level local is no more a block local there than anywhere else.
     snprintf(buffer, sizeof(buffer), "module B;\n%s", escapes);
     assert(!compile_ok(vm, buffer));
 
@@ -298,7 +461,7 @@ static void test_module_scope_does_not_change_pointer_lifetimes() {
 int main() {
     test_modules_isolate_declarations();
     test_modules_accumulate_across_units();
-    test_root_namespace_and_modules();
+    test_the_root_holds_only_builtins();
     test_module_scope_does_not_change_pointer_lifetimes();
 
     test_vm_execute();
@@ -308,6 +471,10 @@ int main() {
     test_struct_typed_local();
     test_types_survive_a_later_compile();
     test_function_signatures_survive_a_later_compile();
+    test_prototypes_survive_a_later_compile();
+    test_a_call_reaches_a_function_from_an_earlier_unit();
+    test_a_unit_that_fails_to_link_installs_nothing();
+    test_checking_a_unit_installs_nothing();
     test_compile_once_run_many();
     test_compile_failure_is_reportable();
 

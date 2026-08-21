@@ -70,11 +70,11 @@ it does not. Nothing is printed by the library — diagnostics come back through
 
 Four properties are worth knowing before you build against it:
 
-- **Hot reload.** Loading a unit name that is already loaded compiles the new
-  source over the old. Handles taken before the reload keep working and call
-  the new body. If a reload changes a function's signature, calls staged
-  against it report `GAB_ERR_STALE` rather than building a frame from stale
-  arguments; the host restages and calls again.
+- **A load is all or nothing.** A unit that fails to compile, or that names an
+  extern nothing registered, declares nothing and installs nothing — the names
+  it got as far as declaring are withdrawn, so the host fixes the source and
+  loads it again. There is no reload: a declaration stands once made, and a
+  second unit declaring the same name collides.
 - **Little to free.** The VM owns the units it compiles and the handles it
   hands out. `GabCall` is the one exception, because it holds one caller's
   staged arguments.
@@ -85,7 +85,7 @@ Four properties are worth knowing before you build against it:
   int;` and the host supplies the body with `gab_extern`. The binding is
   resolved while the unit loads, so an extern nothing supplies is a load
   failure naming the function rather than a trap the first time that branch
-  runs. Registrations outlive a reload.
+  runs. Registrations outlive every load.
 - **Objects have one owner.** `gab_new` hands the host the only reference to an
   object, and `gab_free` gives it back. A pointer staged with
   `gab_arg_pointer` is borrowed for the call, so the host goes on owning it; a
@@ -186,7 +186,7 @@ more or less, and a second spelling would say nothing the first does not.
 | Conversions | `int(x)` and `float(x)`; nothing converts implicitly |
 | Assignment | `=`, and compound `+=` `-=` `*=` `/=` `%=` on any assignable target |
 | Memory | Unique ownership, `new`, `ref` borrows, scope-based free |
-| Modules | `module` namespaces, resolved per unit with a root fallback |
+| Modules | `module` names the namespace a unit declares into, `import` the ones it may name |
 | Externs | `extern func` declares a host body, bound by name at load |
 | Comments | `// line` and `/* block */`, which do not nest |
 

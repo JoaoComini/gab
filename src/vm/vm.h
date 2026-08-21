@@ -207,20 +207,95 @@ typedef struct {
     FrameRefList refs;
 
     // The module the unit declared, interned in the VM's pool, or NULL for the
-    // root namespace. Carried out because the AST that held it is destroyed
+    // default module. Carried out because the AST that held it is destroyed
     // inside vm_compile.
     String *module_name;
 } CompiledScript;
 
-void func_proto_free(FuncPrototype proto);
+void func_proto_free(FuncPrototype *proto);
 
+// Prototypes are held by pointer, not by value: a frame addresses its prototype
+// for as long as it runs, and this list grows whenever a unit loads. Each
+// prototype comes from the VM arena, so the list frees what a prototype owns
+// and not the prototype itself.
 #define func_proto_list_item_free(item) func_proto_free(item)
-GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype)
+GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype *)
 
 // The types OP_NEW can allocate. Types are owned by the scope arena and
 // outlive every compile, so the list holds borrowed pointers and frees none.
 #define type_list_item_free(item) ((void)(item))
 GAB_LIST(TypeList, type_list, const Type *)
+
+// One operand a unit must rewrite once linking tells it where its indices
+// landed. A unit numbers what it declares from zero, so an operand it encoded
+// means nothing until the unit's base is added to it.
+//
+// A reference to something an earlier unit declared is already absolute and is
+// never recorded here: only what this unit numbered itself gets rebased.
+typedef struct {
+    Chunk *chunk;
+    size_t offset;
+} Relocation;
+
+#define relocation_list_item_free(item) ((void)(item))
+GAB_LIST(RelocationList, relocation_list, Relocation)
+
+// A prototype this unit declared, and the symbol to stamp with its index once
+// linking makes that index absolute. Stamping at link rather than during
+// codegen is what keeps a compile that fails from leaving a symbol pointing at
+// a prototype nothing installed.
+typedef struct {
+    struct Symbol *symbol;
+    size_t local_index;
+} ProtoBinding;
+
+#define proto_binding_list_item_free(item) ((void)(item))
+GAB_LIST(ProtoBindingList, proto_binding_list, ProtoBinding)
+
+// An 'extern' declaration awaiting a host body. Resolved at link, so a unit
+// that names a body nothing supplied installs nothing rather than leaving a
+// prototype behind that a call could reach unbound.
+typedef struct {
+    size_t local_index;
+    const struct Symbol *symbol;
+    Span span;
+} ExternRequest;
+
+#define extern_request_list_item_free(item) ((void)(item))
+GAB_LIST(ExternRequestList, extern_request_list, ExternRequest)
+
+// What a compile produces, before any of it belongs to a VM.
+//
+// Everything here is numbered from zero and owned by the unit, so a compile
+// that fails is discarded by freeing this and nothing else. Linking appends the
+// unit's prototypes and types to the VM's, rebases every operand the unit
+// recorded, resolves its externs, and only then stamps the symbols -- so the VM
+// either gains the whole unit or is untouched by it.
+typedef struct {
+    Chunk *chunk;
+    unsigned int max_registers;
+    FrameRefList refs;
+    String *module_name;
+
+    FuncProtoList prototypes;
+    TypeList types;
+
+    RelocationList proto_relocations;
+    RelocationList type_relocations;
+
+    ProtoBindingList bindings;
+    ExternRequestList externs;
+
+    // The arena the unit allocates from, held so that anything the link needs
+    // can be allocated after codegen has finished.
+    Arena *arena;
+
+    // Where each of the unit's types landed in the VM's list, filled in by the
+    // link check so that installing has nothing left that can fail.
+    size_t *type_map;
+} CompilationUnit;
+
+void compilation_unit_free(CompilationUnit *unit);
 
 void vm_compiled_script_free(CompiledScript *script);
 
@@ -245,6 +320,22 @@ GAB_LIST(LoadedScriptList, loaded_script_list, LoadedScript)
 // gab.c does the freeing, which is why the item_free hook is empty.
 #define func_handle_list_item_free(item) ((void)(item))
 GAB_LIST(FuncHandleList, func_handle_list, void *)
+
+// One module naming another, recorded as each unit links. The graph a host
+// would otherwise have to keep for itself: what a unit depends on is what it
+// imported, and this is where that becomes something the VM can be asked.
+//
+// Both names are interned, so identity is the comparison.
+typedef struct {
+    String *from;
+    String *to;
+} ModuleImport;
+
+#define module_import_list_item_free(item) ((void)(item))
+GAB_LIST(ModuleImportList, module_import_list, ModuleImport)
+
+#define string_list_item_free(item) ((void)(item))
+GAB_LIST(StringList, string_list, String *)
 
 // A host body bound to a name, waiting for a script to declare it 'extern'.
 // Registrations outlive every load, so a reload binds against the same set the
@@ -303,9 +394,9 @@ typedef struct {
 
     StringPool strings; // must outlive global_scope
 
-    // The root namespace: builtins, plus the declarations of any unit that
-    // named no module. Every module scope parents to it, so builtins resolve
-    // from anywhere and the type registry is shared.
+    // The builtins, and nothing else: no unit declares into this scope. Every
+    // module scope parents to it, so 'int' and its siblings resolve from
+    // anywhere and the type registry is shared.
     Scope global_scope;
 
     // One scope per declared module name, created on first use and living as
@@ -313,16 +404,10 @@ typedef struct {
     // naming the same module compiles against the scope the first one filled.
     ModuleScopeMap *module_scopes;
 
-    // Bumped once per compile, and stamped onto every symbol that compile
-    // declares. It is what tells a redeclaration apart from a reload: the same
-    // generation means one unit declared the name twice, which is an error,
-    // while an older one means a previous compile did and this one replaces it.
-    unsigned int compile_generation;
-
     // Function prototypes are VM-wide because a prototype index is baked into
     // OP_CALL operands. Top-level variables are not here: they are frame-zero
     // locals on the stack, so top-level state lives and dies with a run.
-    FuncProtoList global_funcs;
+    FuncProtoList prototypes;
 
     // The types OP_NEW allocates, indexed from the instruction. A Type * is 8
     // bytes and the constant pool holds 4-byte Values, so an allocation names
@@ -339,6 +424,9 @@ typedef struct {
     // Host bodies bound by name, resolved against a unit's 'extern'
     // declarations as it loads. See ExternBinding.
     ExternBindingList externs;
+
+    // Which module imports which. See ModuleImport.
+    ModuleImportList module_imports;
 
     // The stack is byte-addressed and 8-byte aligned at the base, so a value
     // wider than a slot can sit at its natural alignment. Capacity is still
@@ -442,10 +530,19 @@ void vm_free(VM *vm);
 //
 // Diagnostics are allocated from the VM's compile arena, which the next compile
 // reclaims — so they stay readable until then, but not past it.
+// Whether this unit could be installed. Reports through the diagnostics sink if
+// an index would not fit its operand field once rebased, or an "extern" names a
+// body nothing registered. Touches nothing on the VM, so a caller may ask and
+// then discard the unit.
+bool vm_link_check(VM *vm, CompilationUnit *unit, Diagnostics *diagnostics);
+
+// Installs a unit that vm_link_check has accepted. Cannot fail.
+void vm_link_install(VM *vm, CompilationUnit *unit);
+
 bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *diagnostics);
 
 // The scope holding a module's declarations, created on first mention and
-// living as long as the VM. NULL names the root namespace.
+// living as long as the VM. NULL names the default module.
 Scope *vm_module_scope(VM *vm, String *name);
 
 // Runs a compiled script as frame zero, leaving its result in slot 0. Returns

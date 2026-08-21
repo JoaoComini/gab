@@ -27,8 +27,6 @@ static void scope_declare_builtins(Scope *scope) {
     scope_decl_type(scope, builtins->bool_type->name, builtins->bool_type);
 }
 
-void scope_set_generation(Scope *scope, unsigned int generation) { scope->generation = generation; }
-
 void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope *parent, int depth) {
     scope->arena = arena;
     scope->strings = strings;
@@ -36,11 +34,6 @@ void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope 
     scope->types = type_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     scope->parent = parent;
     scope->depth = depth;
-
-    // Inherited, so a block declares at the same generation as the unit it is
-    // part of: two 'let x' in one block are still a duplicate, and a block
-    // scope is fresh per compile anyway.
-    scope->generation = parent ? parent->generation : 0;
 
     // One registry for the whole chain: it interns, and interning must be
     // single however deep the scope is.
@@ -60,6 +53,58 @@ void scope_init_module(Scope *scope, Arena *arena, StringPool *strings, Scope *p
     // not a block. Depth drives the pointer-lifetime rule, where 0 means
     // 'outlives everything'.
     scope_init_at_depth(scope, arena, strings, parent, 0);
+}
+
+// A scope a compile declares into instead of the one it is for, so nothing it
+// declares is visible until the compile has wholly succeeded.
+//
+// Parented to the target, which is what lets the compile still see everything
+// already declared there and further out. The depth is the target's, not one
+// deeper: a staging scope stands in for its target rather than nesting inside
+// it, and depth drives the pointer-lifetime rule.
+void scope_init_staging(Scope *scope, Arena *arena, StringPool *strings, Scope *target) {
+    assert(target && "a staging scope stands in for a scope that exists");
+
+    scope_init_at_depth(scope, arena, strings, target, target->depth);
+}
+
+// Whether merging would collide: a name the staging scope declared that the
+// target already holds. Asked before anything is installed, so that a collision
+// is the compile failing rather than half a unit landing.
+bool scope_merge_collides(Scope *target, Scope *staged) {
+    for (size_t i = 0; i < staged->symbol_table->capacity; i++) {
+        for (SymbolTableEntry *entry = staged->symbol_table->buckets[i]; entry; entry = entry->next) {
+            if (symbol_table_lookup(target->symbol_table, entry->key)) {
+                return true;
+            }
+        }
+    }
+
+    for (size_t i = 0; i < staged->types->capacity; i++) {
+        for (TypeMapEntry *entry = staged->types->buckets[i]; entry; entry = entry->next) {
+            if (type_map_lookup(target->types, entry->key)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+// Moves everything a staging scope declared into the scope it stood in for.
+// The caller has already asked scope_merge_collides, so nothing here can fail.
+void scope_merge_staged(Scope *target, Scope *staged) {
+    for (size_t i = 0; i < staged->symbol_table->capacity; i++) {
+        for (SymbolTableEntry *entry = staged->symbol_table->buckets[i]; entry; entry = entry->next) {
+            symbol_table_insert(target->symbol_table, entry->key, entry->value);
+        }
+    }
+
+    for (size_t i = 0; i < staged->types->capacity; i++) {
+        for (TypeMapEntry *entry = staged->types->buckets[i]; entry; entry = entry->next) {
+            type_map_insert(target->types, entry->key, entry->value);
+        }
+    }
 }
 
 Symbol *scope_symbol_lookup(Scope *scope, String *name) {
@@ -94,65 +139,27 @@ Type *scope_type_lookup_local(Scope *scope, String *name) {
     return entry ? entry->type : NULL;
 }
 
-bool scope_declares_type_now(Scope *scope, String *name) {
-    TypeBinding *entry = type_map_lookup(scope->types, name);
-
-    return entry && entry->generation == scope->generation;
-}
-
 void scope_withdraw_type(Scope *scope, String *name) { type_map_delete(scope->types, name); }
 
 bool scope_decl_type(Scope *scope, String *name, Type *type) {
-    TypeBinding binding = {.type = type, .generation = scope->generation};
-
-    // Only this compile's own declaration is a duplicate. An earlier one is
-    // rebound, which is what lets a unit declaring a struct be recompiled.
-    TypeBinding *existing = type_map_lookup(scope->types, name);
-
-    if (existing) {
-        if (existing->generation == scope->generation) {
-            return false;
-        }
-
-        // insert does not overwrite, so rebinding is a write through the entry
-        // the lookup found.
-        *existing = binding;
-
-        return true;
+    if (type_map_lookup(scope->types, name)) {
+        return false;
     }
 
-    type_map_insert(scope->types, name, binding);
+    type_map_insert(scope->types, name, (TypeBinding){.type = type});
 
     return true;
 }
 
 Symbol *scope_decl_var(Scope *scope, String *name, Type *type) {
-    // As scope_decl_func: an older generation is a previous compile's
-    // declaration, which recompiling replaces in place.
-    Symbol **existing = symbol_table_lookup(scope->symbol_table, name);
-
-    if (existing) {
-        Symbol *sym = *existing;
-
-        if (sym->generation == scope->generation) {
-            return NULL;
-        }
-
-        sym->kind = SYMBOL_VAR;
-        sym->scope_depth = scope->depth;
-        sym->pinned = false;
-        sym->generation = scope->generation;
-        sym->var.type = type;
-        sym->var.pointee_depth = 0;
-
-        return sym;
+    if (symbol_table_lookup(scope->symbol_table, name)) {
+        return NULL;
     }
 
     Symbol *sym = arena_alloc(scope->arena, sizeof(Symbol));
     sym->kind = SYMBOL_VAR;
     sym->scope_depth = scope->depth;
     sym->pinned = false;
-    sym->generation = scope->generation;
     sym->var.type = type;
     sym->var.pointee_depth = 0;
 
@@ -165,40 +172,14 @@ Symbol *scope_decl_var(Scope *scope, String *name, Type *type) {
 }
 
 Symbol *scope_decl_func(Scope *scope, String *name, Type *return_type) {
-    // A name this scope already holds is a duplicate only if this same compile
-    // declared it. An older generation is a previous compile's, and recompiling
-    // a unit is expected to replace what it declared last time.
-    //
-    // The existing Symbol is reused rather than replaced, because a host's
-    // GabFunc handle points at it: allocating a fresh one would leave every
-    // live handle addressing a symbol nothing declares any more.
-    Symbol **existing = symbol_table_lookup(scope->symbol_table, name);
-
-    if (existing) {
-        Symbol *sym = *existing;
-
-        if (sym->generation == scope->generation) {
-            return NULL;
-        }
-
-        sym->kind = SYMBOL_FUNC;
-        sym->scope_depth = scope->depth;
-        sym->pinned = false;
-        sym->generation = scope->generation;
-        sym->func.return_type = return_type;
-        sym->func.params = NULL;
-        sym->func.param_count = 0;
-        sym->func.proto_index = SYMBOL_FUNC_NO_PROTO;
-        sym->func.is_extern = false;
-
-        return sym;
+    if (symbol_table_lookup(scope->symbol_table, name)) {
+        return NULL;
     }
 
     Symbol *sym = arena_alloc(scope->arena, sizeof(Symbol));
     sym->kind = SYMBOL_FUNC;
     sym->scope_depth = scope->depth;
     sym->pinned = false;
-    sym->generation = scope->generation;
     sym->func.return_type = return_type;
     sym->func.params = NULL;
     sym->func.param_count = 0;

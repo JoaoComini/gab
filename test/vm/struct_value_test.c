@@ -234,7 +234,8 @@ static void test_layout_agrees_with_c() {
 
     VM *vm = vm_create();
 
-    vm_execute(vm, "struct Vec3 { x: float, y: float, z: float }\n"
+    vm_execute(vm, "module test;\n"
+                   "struct Vec3 { x: float, y: float, z: float }\n"
                    "func f(): float { let v: Vec3;\n"
                    "v.x = 1.5; v.y = 2.25; v.z = 7.0;\n"
                    "return v.x; }\n"
@@ -258,7 +259,8 @@ static void test_mixed_width_layout_agrees_with_c() {
 
     // The padding bytes are whatever the zeroed stack left them, so the C value
     // is zeroed first to match rather than carrying stack garbage.
-    vm_execute(vm, "struct M { flag: bool, value: int }\n"
+    vm_execute(vm, "module test;\n"
+                   "struct M { flag: bool, value: int }\n"
                    "func f(): int { let v: M;\n"
                    "v.flag = true; v.value = 305419896;\n"
                    "return v.value; }\n"
@@ -290,7 +292,8 @@ static void test_layout_comparison_rejects_wrong_layouts() {
 
     VM *vm = vm_create();
 
-    vm_execute(vm, "struct Vec3 { x: float, y: float, z: float }\n"
+    vm_execute(vm, "module test;\n"
+                   "struct Vec3 { x: float, y: float, z: float }\n"
                    "struct M { flag: bool, value: int }\n"
                    "func f(): float { let v: Vec3; let m: M;\n"
                    "v.x = 1.5; v.y = 2.25; v.z = 7.0;\n"

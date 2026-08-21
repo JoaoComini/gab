@@ -68,6 +68,7 @@ static void test_call_depth_limit() {
 
     CompiledScript script;
     assert(vm_compile(vm,
+                      "module test;\n"
                       "func forever(n: int): int { return forever(n + 1); }\n"
                       "func main(): int { return forever(0); }\n"
                       "let r: int = main();",

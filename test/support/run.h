@@ -34,7 +34,7 @@
 static inline void test_run(const char *source, void *out, size_t width) {
     VM *vm = vm_create();
 
-    vm_execute(vm, source);
+    vm_execute(vm, test_in_a_module(source));
 
     assert(vm->frame_count == 0);
 
@@ -68,7 +68,7 @@ static inline bool test_run_bool(const char *source) {
 // and script, so a test can inspect the symbols and types the front end
 // settled on. The caller owns both, since what is worth inspecting differs.
 static inline bool test_resolve(TestContext *ctx, Scope *scope, ASTScript *script, const char *source) {
-    Lexer lexer = lexer_create(source, &ctx->diagnostics);
+    Lexer lexer = lexer_create(test_in_a_module(source), &ctx->diagnostics);
     Parser parser = parser_create(&lexer, &ctx->diagnostics);
 
     if (!parser_parse(&parser, script)) {
@@ -105,7 +105,7 @@ static inline bool test_codegens(const char *source) {
     diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
 
     CompiledScript script;
-    bool ok = vm_compile(vm, source, &script, &diagnostics);
+    bool ok = vm_compile(vm, test_in_a_module(source), &script, &diagnostics);
 
     diagnostics_free(&diagnostics);
 
@@ -128,7 +128,7 @@ static inline VmRunStatus test_run_status(const char *source) {
     diagnostics_init(&diagnostics, vm->compile_arena, "<test>");
 
     CompiledScript script;
-    bool compiled = vm_compile(vm, source, &script, &diagnostics);
+    bool compiled = vm_compile(vm, test_in_a_module(source), &script, &diagnostics);
 
     diagnostics_free(&diagnostics);
     assert(compiled);
@@ -164,7 +164,7 @@ static inline TestProgram test_compile(const char *source) {
     Diagnostics diagnostics;
     diagnostics_init(&diagnostics, program.vm->compile_arena, "<test>");
 
-    bool ok = vm_compile(program.vm, source, &program.script, &diagnostics);
+    bool ok = vm_compile(program.vm, test_in_a_module(source), &program.script, &diagnostics);
 
     diagnostics_free(&diagnostics);
     assert(ok);
@@ -172,7 +172,35 @@ static inline TestProgram test_compile(const char *source) {
     return program;
 }
 
+// Compiles a further unit into the same VM, replacing the program's script with
+// it. For the claims that need two units: an index a second unit encodes means
+// nothing unless the first has already taken the ones below it.
+static inline void test_compile_next(TestProgram *program, const char *source) {
+    vm_compiled_script_free(&program->script);
+
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, program->vm->compile_arena, "<test>");
+
+    bool ok = vm_compile(program->vm, test_in_a_module(source), &program->script, &diagnostics);
+
+    diagnostics_free(&diagnostics);
+    assert(ok);
+}
+
+// Where a type sits in the VM's list, which is what OP_NEW encodes. -1 if the
+// VM has never been asked to allocate it.
+static inline long test_heap_type_index(TestProgram *program, const char *name) {
+    for (size_t i = 0; i < program->vm->heap_types.size; i++) {
+        if (strcmp(program->vm->heap_types.data[i]->name->data, name) == 0) {
+            return (long)i;
+        }
+    }
+
+    return -1;
+}
+
 static inline void test_program_free(TestProgram *program) {
+
     vm_compiled_script_free(&program->script);
     vm_free(program->vm);
 }
@@ -181,9 +209,9 @@ static inline Chunk *test_top_chunk(TestProgram *program) { return program->scri
 
 // The chunk of a declared function, by declaration order.
 static inline Chunk *test_func_chunk(TestProgram *program, size_t index) {
-    assert(index < program->vm->global_funcs.size);
+    assert(index < program->vm->prototypes.size);
 
-    return program->vm->global_funcs.data[index].chunk;
+    return program->vm->prototypes.data[index]->chunk;
 }
 
 // How many times an opcode appears. Most claims about emitted code are really
@@ -211,6 +239,17 @@ static inline long test_find_opcode(const Chunk *chunk, OpCode op) {
     }
 
     return -1;
+}
+
+// The I-type operand of the first instruction with this opcode, or -1.
+static inline long test_first_operand(const Chunk *chunk, OpCode op) {
+    long at = test_find_opcode(chunk, op);
+
+    if (at < 0) {
+        return -1;
+    }
+
+    return (long)VM_DECODE_I_KX(chunk->instructions.data[at]);
 }
 
 static inline Instruction test_instruction(const Chunk *chunk, size_t index) {

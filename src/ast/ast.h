@@ -5,18 +5,33 @@
 #include "diagnostics.h"
 #include "scope.h"
 #include "string/string_ref.h"
+#include "util/list.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 
+// A module this unit may name. The span is where it was imported, so a module
+// that turns out not to exist is reported against the line that asked for it.
+typedef struct {
+    StringRef name;
+    Span span;
+} ASTImport;
+
+#define ast_import_list_item_free(item) ((void)(item))
+GAB_LIST(ASTImportList, ast_import_list, ASTImport)
+
 typedef struct ASTScript {
     ASTStmtList statements;
 
-    // The unit's 'module' directive. 'module_name.data' is NULL when the unit
-    // declared none, in which case its declarations belong to the root
-    // namespace. The span is kept for diagnostics about the directive itself.
+    // The unit's 'module' directive, which every unit has. The span is kept for
+    // diagnostics about the directive itself.
     StringRef module_name;
     Span module_span;
+
+    // The modules this unit declared it would name. A qualified reference to
+    // anything else is an error, which is what makes the dependency between two
+    // units something written down rather than discovered.
+    ASTImportList imports;
 } ASTScript;
 
 ASTScript *ast_script_create();

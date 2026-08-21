@@ -18,7 +18,7 @@ static ASTScript *assert_parse(const char *code) {
     Diagnostics *diagnostics = &ctx.diagnostics;
 
     ASTScript *script = ast_script_create();
-    Lexer lexer = lexer_create(code, diagnostics);
+    Lexer lexer = lexer_create(test_in_a_module(code), diagnostics);
     Parser parser = parser_create(&lexer, diagnostics);
     bool ok = parser_parse(&parser, script);
     assert(ok);
@@ -35,7 +35,7 @@ static void assert_parse_error(const char *code, const char *expected_error) {
     Diagnostics *diagnostics = &ctx.diagnostics;
 
     ASTScript *script = ast_script_create();
-    Lexer lexer = lexer_create(code, diagnostics);
+    Lexer lexer = lexer_create(test_in_a_module(code), diagnostics);
     Parser parser = parser_create(&lexer, diagnostics);
     bool ok = parser_parse(&parser, script);
     assert(!ok);
@@ -456,13 +456,22 @@ static void test_module_directive() {
     ast_script_destroy(script);
 }
 
-static void test_module_directive_is_optional() {
-    ASTScript *script = assert_parse("func f(): int { return 1; }\n");
+// A unit must name its module. Built here rather than through assert_parse_error
+// because the helpers supply a directive to snippets that lack one, and this is
+// the one test whose subject is a snippet lacking one.
+static void test_a_unit_must_name_its_module() {
+    TestContext ctx;
+    test_context_init(&ctx);
 
-    assert(script->module_name.data == NULL);
-    assert(script->module_name.length == 0);
+    ASTScript *script = ast_script_create();
+    Lexer lexer = lexer_create("func f(): int { return 1; }\n", &ctx.diagnostics);
+    Parser parser = parser_create(&lexer, &ctx.diagnostics);
+
+    assert(!parser_parse(&parser, script));
+    assert(diagnostics_has_errors(&ctx.diagnostics));
 
     ast_script_destroy(script);
+    test_context_free(&ctx);
 }
 
 static void test_module_directive_alone() {
@@ -593,7 +602,7 @@ int main() {
     test_function_cannot_be_declared_inside_another();
     test_function_cannot_be_declared_inside_a_method();
     test_module_directive();
-    test_module_directive_is_optional();
+    test_a_unit_must_name_its_module();
     test_module_directive_alone();
     test_module_name_cannot_be_nested();
     test_module_must_come_first();

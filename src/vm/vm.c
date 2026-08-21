@@ -44,11 +44,12 @@ VM *vm_create() {
     VM *vm = malloc(sizeof(VM));
     vm->instruction_pointer = 0;
 
-    vm->global_funcs = func_proto_list_create();
+    vm->prototypes = func_proto_list_create();
     vm->heap_types = type_list_create();
     vm->func_handles = func_handle_list_create();
     vm->scripts = loaded_script_list_create();
     vm->externs = extern_binding_list_create();
+    vm->module_imports = module_import_list_create();
 
     vm->arena = arena_create(ARENA_BLOCK_SIZE);
     vm->compile_arena = arena_create(ARENA_BLOCK_SIZE);
@@ -59,10 +60,6 @@ VM *vm_create() {
 
     scope_init(&vm->global_scope, vm->arena, &vm->strings, NULL);
     vm->module_scopes = module_scope_map_create_alloc(arena_allocator(vm->arena), 8);
-
-    // The root scope declares the builtins at generation 0, so the first
-    // compile is generation 1 and never mistakes a builtin for its own work.
-    vm->compile_generation = 0;
 
     vm->stack_capacity = VM_STACK_SIZE;
     vm->stack = calloc(vm->stack_capacity, VM_SLOT_SIZE);
@@ -163,16 +160,18 @@ static void vm_pop_frame(VM *vm) {
     vm->instruction_pointer = frame.return_ip;
 }
 
-void func_proto_free(FuncPrototype proto) {
-    if (proto.chunk) {
-        chunk_free(proto.chunk);
+// Frees what a prototype allocated. The prototype itself is arena-owned and is
+// reclaimed with the VM.
+void func_proto_free(FuncPrototype *proto) {
+    if (proto->chunk) {
+        chunk_free(proto->chunk);
     }
 
-    frame_ref_list_free(&proto.refs);
+    frame_ref_list_free(&proto->refs);
 }
 
 void vm_free(VM *vm) {
-    func_proto_list_free(&vm->global_funcs);
+    func_proto_list_free(&vm->prototypes);
     type_list_free(&vm->heap_types);
 
     // The handles themselves are gab.c's to free, and gab_vm_free has done so
@@ -180,6 +179,7 @@ void vm_free(VM *vm) {
     func_handle_list_free(&vm->func_handles);
 
     extern_binding_list_free(&vm->externs);
+    module_import_list_free(&vm->module_imports);
 
     // Frees each loaded unit's top-level chunk through the item_free hook.
     loaded_script_list_free(&vm->scripts);
@@ -392,9 +392,7 @@ static void vm_store_field_ptr(VM *vm, Instruction instruction, size_t width) {
 // The scope is parented to the root for builtin lookup but stays at depth 0:
 // its declarations are a unit's top level, not a nested block.
 Scope *vm_module_scope(VM *vm, String *name) {
-    if (!name) {
-        return &vm->global_scope;
-    }
+    assert(name && "every unit names a module");
 
     Scope **existing = module_scope_map_lookup(vm->module_scopes, name);
     if (existing) {
@@ -409,16 +407,217 @@ Scope *vm_module_scope(VM *vm, String *name) {
     return scope;
 }
 
+// Frees a unit nothing linked. The prototypes come from an arena and are not
+// freed here; what each one allocated is, because a unit that never linked is
+// the only owner those chunks ever had.
+void compilation_unit_free(CompilationUnit *unit) {
+    if (!unit) {
+        return;
+    }
+
+    if (unit->chunk) {
+        chunk_free(unit->chunk);
+    }
+
+    frame_ref_list_free(&unit->refs);
+    func_proto_list_free(&unit->prototypes);
+    type_list_free(&unit->types);
+    relocation_list_free(&unit->proto_relocations);
+    relocation_list_free(&unit->type_relocations);
+    proto_binding_list_free(&unit->bindings);
+    extern_request_list_free(&unit->externs);
+
+    free(unit);
+}
+
+// Rewrites one I-type operand to what it means now the unit has a base.
+static void vm_relocate(const RelocationList *relocations, size_t base) {
+    for (size_t i = 0; i < relocations->size; i++) {
+        const Relocation *reloc = &relocations->data[i];
+        Instruction instruction = instruction_list_get(&reloc->chunk->instructions, reloc->offset);
+
+        chunk_patch_instruction(reloc->chunk, reloc->offset,
+                                VM_ENCODE_I(VM_DECODE_OPCODE(instruction), VM_DECODE_I_RD(instruction),
+                                            (unsigned int)(VM_DECODE_I_KX(instruction) + base)));
+    }
+}
+
+// Rewrites each type operand to the index its type was given in the VM's list.
+// Unlike a prototype the mapping is not a single base: a type an earlier unit
+// already registered keeps that unit's index, so the unit's types can land out
+// of order and each one is looked up.
+static void vm_remap_types(const RelocationList *relocations, const size_t *type_map) {
+    for (size_t i = 0; i < relocations->size; i++) {
+        const Relocation *reloc = &relocations->data[i];
+        Instruction instruction = instruction_list_get(&reloc->chunk->instructions, reloc->offset);
+
+        chunk_patch_instruction(reloc->chunk, reloc->offset,
+                                VM_ENCODE_I(VM_DECODE_OPCODE(instruction), VM_DECODE_I_RD(instruction),
+                                            (unsigned int)type_map[VM_DECODE_I_KX(instruction)]));
+    }
+}
+
+// The host body bound to a name, or NULL if none is. Both are interned, so
+// identity is the comparison.
+static GabExternFn vm_find_extern(const VM *vm, const Symbol *symbol) {
+    for (size_t i = 0; i < vm->externs.size; i++) {
+        const ExternBinding *binding = &vm->externs.data[i];
+
+        if (binding->name == symbol->func.name && binding->module == symbol->func.module) {
+            return binding->fn;
+        }
+    }
+
+    return NULL;
+}
+
+// Whether this unit could be installed: the indices fit their operand fields
+// once rebased, and every extern names a host body that exists.
+//
+// Answers without touching the VM, which is what lets a caller compile a unit
+// to find out whether it would load and then walk away. The externs it resolves
+// are written into the unit's own prototypes, not the VM's.
+bool vm_link_check(VM *vm, CompilationUnit *unit, Diagnostics *diagnostics) {
+    if (vm->prototypes.size + unit->prototypes.size > VM_MAX_PROTOTYPES) {
+        diag_error(diagnostics, GAB_ERR_CODEGEN, (Span){0}, "too many functions in one program");
+        return false;
+    }
+
+    // An upper bound: interning may add fewer than the unit declared, never
+    // more.
+    if (vm->heap_types.size + unit->types.size > VM_MAX_HEAP_TYPES) {
+        diag_error(diagnostics, GAB_ERR_CODEGEN, (Span){0}, "too many allocated types in one program");
+        return false;
+    }
+
+    // Allocated here rather than while installing, so that installing has
+    // nothing left in it that can fail.
+    if (unit->types.size && !unit->type_map) {
+        unit->type_map = arena_alloc(unit->arena, unit->types.size * sizeof(size_t));
+
+        if (!unit->type_map) {
+            return false;
+        }
+    }
+
+    for (size_t i = 0; i < unit->externs.size; i++) {
+        const ExternRequest *request = &unit->externs.data[i];
+        GabExternFn native = vm_find_extern(vm, request->symbol);
+
+        if (!native) {
+            diag_error(diagnostics, GAB_ERR_CODEGEN, request->span,
+                       "extern function '%s' was never registered", request->symbol->func.name->data);
+            return false;
+        }
+
+        unit->prototypes.data[request->local_index]->native = native;
+    }
+
+    return true;
+}
+
+// Installs a unit the caller has already checked with vm_link_check.
+//
+// Nothing here can fail, which is the point: by the time anything is appended,
+// every question that could have refused the unit has been asked.
+void vm_link_install(VM *vm, CompilationUnit *unit) {
+    size_t proto_base = vm->prototypes.size;
+
+    for (size_t i = 0; i < unit->prototypes.size; i++) {
+        func_proto_list_add(&vm->prototypes, unit->prototypes.data[i]);
+    }
+
+    // Interned against what the VM already holds, so a type two units both
+    // allocate is registered once. A prototype cannot be shared this way --
+    // each declaration is a distinct function -- which is why only types are
+    // looked up rather than appended outright.
+    for (size_t i = 0; i < unit->types.size; i++) {
+        size_t found = vm->heap_types.size;
+
+        for (size_t j = 0; j < vm->heap_types.size; j++) {
+            if (vm->heap_types.data[j] == unit->types.data[i]) {
+                found = j;
+                break;
+            }
+        }
+
+        if (found == vm->heap_types.size) {
+            type_list_add(&vm->heap_types, unit->types.data[i]);
+        }
+
+        unit->type_map[i] = found;
+    }
+
+    vm_relocate(&unit->proto_relocations, proto_base);
+    vm_remap_types(&unit->type_relocations, unit->type_map);
+
+    // Last, because a symbol stamped with an index is a symbol a later compile
+    // will call through: nothing may carry one until the prototype it names is
+    // installed.
+    for (size_t i = 0; i < unit->bindings.size; i++) {
+        const ProtoBinding *binding = &unit->bindings.data[i];
+        binding->symbol->func.proto_index = proto_base + binding->local_index;
+    }
+}
+
+// Whether 'module' imports 'other', directly. One hop is enough: a cycle is
+// refused as it forms, so no chain of imports can already contain one.
+static bool vm_module_imports(const VM *vm, const String *module, const String *other) {
+    for (size_t i = 0; i < vm->module_imports.size; i++) {
+        const ModuleImport *edge = &vm->module_imports.data[i];
+
+        if (edge->from == module && edge->to == other) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// Whether every module this unit imported is one the VM has. Asked before the
+// unit resolves, so a missing module is reported once rather than as one
+// unknown type per mention of it.
+//
+// A cycle is refused here too: a module already importing this one cannot also
+// be imported by it, because linking installs a unit whole and two units that
+// each need the other have no order in which that is possible.
+static bool vm_check_imports(VM *vm, const ASTScript *script, Diagnostics *diagnostics) {
+    String *self = string_from_ref(&vm->strings, script->module_name);
+    bool ok = true;
+
+    for (size_t i = 0; i < script->imports.size; i++) {
+        const ASTImport *import = &script->imports.data[i];
+        String *name = string_from_ref(&vm->strings, import->name);
+
+        if (name == self) {
+            diag_error(diagnostics, GAB_ERR_NAME, import->span,
+                       "a unit needs no import to name its own module");
+            ok = false;
+            continue;
+        }
+
+        if (!module_scope_map_lookup(vm->module_scopes, name)) {
+            diag_error(diagnostics, GAB_ERR_NAME, import->span, "no module '%s' is loaded", name->data);
+            ok = false;
+            continue;
+        }
+
+        if (vm_module_imports(vm, name, self)) {
+            diag_error(diagnostics, GAB_ERR_NAME, import->span,
+                       "'%s' already imports this module, and two modules cannot import each other",
+                       name->data);
+            ok = false;
+        }
+    }
+
+    return ok;
+}
+
 bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *diagnostics) {
     // Reclaimed at the start of a compile rather than the end of one, so
     // everything a compile produced — diagnostics included — stays readable
     // until the next compile begins.
     arena_reset(vm->compile_arena);
-
-    // A new generation, so every name this compile declares is stamped as its
-    // own. Anything it meets bearing an older stamp was declared by a previous
-    // compile and is replaced rather than rejected.
-    vm->compile_generation++;
 
     Lexer lexer = lexer_create(source, diagnostics);
     Parser parser = parser_create(&lexer, diagnostics);
@@ -426,43 +625,86 @@ bool vm_compile(VM *vm, const char *source, CompiledScript *out, Diagnostics *di
 
     // Each stage is a precondition for the next: a failure must stop the
     // pipeline rather than let a malformed AST reach codegen.
-    Chunk *chunk = NULL;
-    CodegenFrameInfo frame_info = {.max_registers = 0, .refs = frame_ref_list_create()};
+    CompilationUnit *unit = NULL;
     String *module_name = NULL;
+    Scope *target = NULL;
+    Scope *staging = NULL;
 
-    if (parser_parse(&parser, script)) {
-        // A unit that named no module declares into the root namespace, which
-        // is what keeps a single-script host from needing a directive at all.
-        if (script->module_name.data) {
-            module_name = string_from_ref(&vm->strings, script->module_name);
+    // Interned before the AST goes, since the edges are recorded only once the
+    // unit has linked and the StringRefs point into the source by then.
+    StringList imported = string_list_create();
+
+    if (parser_parse(&parser, script) && vm_check_imports(vm, script, diagnostics)) {
+        module_name = string_from_ref(&vm->strings, script->module_name);
+        target = vm_module_scope(vm, module_name);
+
+        // Declared into a scope of its own, merged into the target only once the
+        // whole compile has succeeded: a name is declared once and never
+        // replaced, so a compile that fails partway must leave nothing behind
+        // for the retry to collide with.
+        //
+        // Allocated from the target's arena rather than the compile arena, since
+        // what a unit declares outlives the compile that declared it. Only the
+        // staging scope's own struct is short-lived.
+        staging = arena_alloc(vm->compile_arena, sizeof(Scope));
+        scope_init_staging(staging, target->arena, &vm->strings, target);
+
+        for (size_t i = 0; i < script->imports.size; i++) {
+            string_list_add(&imported, string_from_ref(&vm->strings, script->imports.data[i].name));
         }
 
-        Scope *scope = module_name ? vm_module_scope(vm, module_name) : &vm->global_scope;
-
-        // Every name this compile declares is stamped with this generation.
-        scope_set_generation(scope, vm->compile_generation);
-
-        if (ast_script_resolve(vm->compile_arena, script, scope, vm->module_scopes, diagnostics)) {
-            chunk = codegen_generate(script,
-                                     (CodegenOutput){.funcs = &vm->global_funcs,
-                                                     .heap_types = &vm->heap_types,
-                                                     .externs = &vm->externs},
-                                     diagnostics, &frame_info);
+        if (ast_script_resolve(vm->compile_arena, script, staging, vm->module_scopes, diagnostics)) {
+            unit = codegen_generate(script, vm->arena, diagnostics);
         }
     }
 
     // Nothing reads the AST once codegen has run, so the compile owns it end to
-    // end and only the chunk outlives this call.
+    // end and only the unit outlives this call.
     ast_script_destroy(script);
 
-    if (!chunk) {
+    if (!unit) {
         return false;
     }
 
-    out->chunk = chunk;
-    out->max_registers = frame_info.max_registers;
-    out->refs = frame_info.refs;
+    // Asked before either commits: linking installs prototypes and merging
+    // installs names, and a unit that cannot do both must do neither.
+    if (scope_merge_collides(target, staging)) {
+        diag_error(diagnostics, GAB_ERR_NAME, (Span){0},
+                   "this unit declares a name that is already declared");
+        compilation_unit_free(unit);
+        return false;
+    }
+
+    if (!vm_link_check(vm, unit, diagnostics)) {
+        compilation_unit_free(unit);
+        return false;
+    }
+
+    // Both installs, once neither can refuse.
+    vm_link_install(vm, unit);
+    scope_merge_staged(target, staging);
+
+    // Recorded only now: an edge from a unit that did not load would refuse an
+    // import that should be allowed.
+    for (size_t i = 0; i < imported.size; i++) {
+        module_import_list_add(&vm->module_imports,
+                               (ModuleImport){.from = module_name, .to = imported.data[i]});
+    }
+
+    string_list_free(&imported);
+
+    // Linking took the prototypes and types; what is left is the top-level
+    // frame, which belongs to the caller.
+    out->chunk = unit->chunk;
+    out->max_registers = unit->max_registers;
+    out->refs = unit->refs;
     out->module_name = module_name;
+
+    unit->chunk = NULL;
+    unit->refs = frame_ref_list_create();
+    unit->prototypes.size = 0;
+
+    compilation_unit_free(unit);
 
     return true;
 }
@@ -765,7 +1007,7 @@ static void vm_run_loop(VM *vm) {
                 unsigned int dest = VM_DECODE_I_RD(instruction);
                 size_t proto_index = VM_DECODE_I_KX(instruction);
 
-                const FuncPrototype *proto = &vm->global_funcs.data[proto_index];
+                const FuncPrototype *proto = vm->prototypes.data[proto_index];
 
                 // The callee's r0 is its return slot and its parameters are
                 // r1..arity, so basing it at dest lines its parameters up with the

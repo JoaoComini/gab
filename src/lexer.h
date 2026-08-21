@@ -47,6 +47,7 @@ typedef enum {
     TOKEN_EXTERN,      // 'extern'
     TOKEN_STRUCT,      // 'struct'
     TOKEN_MODULE,      // 'module'
+    TOKEN_IMPORT,      // 'import'
     TOKEN_RETURN,      // 'return'
     TOKEN_IF,          // 'if'
     TOKEN_ELSE,        // 'else'

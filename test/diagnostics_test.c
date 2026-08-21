@@ -17,7 +17,7 @@ static void compile(TestContext *ctx, const char *source) {
     Arena *arena = ctx->arena;
     Diagnostics *diagnostics = &ctx->diagnostics;
 
-    Lexer lexer = lexer_create(source, diagnostics);
+    Lexer lexer = lexer_create(test_in_a_module(source), diagnostics);
     Parser parser = parser_create(&lexer, diagnostics);
     ASTScript *script = ast_script_create();
 
@@ -516,13 +516,15 @@ static void test_spans_track_lines_and_columns() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test() {\n    let x: int = 1;\n    let y: int = nope;\n}");
+    // Writes its own directive, so the line numbers asserted below are the ones
+    // in the string rather than the ones after a helper prepended anything.
+    compile(&ctx, "module test;\nfunc test() {\n    let x: int = 1;\n    let y: int = nope;\n}");
 
     assert(diagnostics_count(diagnostics) == 1);
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(strcmp(diagnostic->message, "undeclared variable 'nope'") == 0);
-    assert(diagnostic->span.line == 3);
+    assert(diagnostic->span.line == 4);
     assert(diagnostic->span.column == 18);
 
     test_context_free(&ctx);

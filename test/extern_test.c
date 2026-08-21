@@ -49,14 +49,15 @@ static void test_an_extern_returns_to_its_caller(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, NULL, "twice", twice, &err));
+    assert(gab_extern(vm, "test", "twice", twice, &err));
 
     assert(gab_load(vm, "<m>",
+                    "module test;\n"
                     "extern func twice(x: int): int;\n"
                     "func run(): int { return twice(21); }\n",
                     &err));
 
-    GabFunc *fn = gab_lookup(vm, NULL, "run", &err);
+    GabFunc *fn = gab_lookup(vm, "test", "run", &err);
     assert(fn);
 
     GabCall *call = gab_call_init(fn, &err);
@@ -76,14 +77,15 @@ static void test_an_extern_may_return_nothing(void) {
     last_logged = 0;
 
     GabError err;
-    assert(gab_extern(vm, NULL, "log", host_log, &err));
+    assert(gab_extern(vm, "test", "log", host_log, &err));
 
     assert(gab_load(vm, "<m>",
+                    "module test;\n"
                     "extern func log(amount: int);\n"
                     "func run() { log(7); }\n",
                     &err));
 
-    GabFunc *fn = gab_lookup(vm, NULL, "run", &err);
+    GabFunc *fn = gab_lookup(vm, "test", "run", &err);
     GabCall *call = gab_call_init(fn, &err);
 
     assert(gab_call(vm, call, NULL, &err) == GAB_OK);
@@ -98,22 +100,23 @@ static void test_scalars_cross_the_boundary(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, NULL, "scale", scale, &err));
-    assert(gab_extern(vm, NULL, "negate", negate, &err));
+    assert(gab_extern(vm, "test", "scale", scale, &err));
+    assert(gab_extern(vm, "test", "negate", negate, &err));
 
     assert(gab_load(vm, "<m>",
+                    "module test;\n"
                     "extern func scale(x: float): float;\n"
                     "extern func negate(b: bool): bool;\n"
                     "func f(): float { return scale(1.5); }\n"
                     "func b(): bool { return negate(true); }\n",
                     &err));
 
-    GabCall *fcall = gab_call_init(gab_lookup(vm, NULL, "f", &err), &err);
+    GabCall *fcall = gab_call_init(gab_lookup(vm, "test", "f", &err), &err);
     float f = 0.0f;
     assert(gab_call(vm, fcall, &f, &err) == GAB_OK);
     assert(f == 3.0f);
 
-    GabCall *bcall = gab_call_init(gab_lookup(vm, NULL, "b", &err), &err);
+    GabCall *bcall = gab_call_init(gab_lookup(vm, "test", "b", &err), &err);
     bool b = true;
     assert(gab_call(vm, bcall, &b, &err) == GAB_OK);
     assert(b == false);
@@ -129,15 +132,16 @@ static void test_a_struct_crosses_by_value(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, NULL, "heal", heal, &err));
+    assert(gab_extern(vm, "test", "heal", heal, &err));
 
     assert(gab_load(vm, "<m>",
+                    "module test;\n"
                     "struct Player { health: int, mana: int }\n"
                     "extern func heal(p: Player): Player;\n"
                     "func run(p: Player): Player { return heal(p); }\n",
                     &err));
 
-    GabFunc *fn = gab_lookup(vm, NULL, "run", &err);
+    GabFunc *fn = gab_lookup(vm, "test", "run", &err);
     GabCall *call = gab_call_init(fn, &err);
 
     Player in = {.health = 30, .mana = 4};
@@ -158,18 +162,19 @@ static void test_a_borrow_is_written_through(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, NULL, "boost", boost, &err));
+    assert(gab_extern(vm, "test", "boost", boost, &err));
 
     assert(gab_load(vm, "<m>",
+                    "module test;\n"
                     "struct Player { health: int, mana: int }\n"
                     "extern func boost(p: ref Player);\n"
                     "func run(p: ref Player) { boost(p); }\n",
                     &err));
 
-    const GabType *type = gab_find_type(vm, NULL, "Player");
+    const GabType *type = gab_find_type(vm, "test", "Player");
     assert(type);
 
-    GabFunc *fn = gab_lookup(vm, NULL, "run", &err);
+    GabFunc *fn = gab_lookup(vm, "test", "run", &err);
     GabCall *call = gab_call_init(fn, &err);
 
     Player p = {.health = 1, .mana = 2};
@@ -189,6 +194,7 @@ static void test_an_unbound_extern_fails_the_load(void) {
 
     GabError err;
     assert(!gab_load(vm, "<m>",
+                     "module test;\n"
                      "func first(): int { return 1; }\n"
                      "extern func missing(x: int): int;\n",
                      &err));
@@ -196,7 +202,7 @@ static void test_an_unbound_extern_fails_the_load(void) {
     // The declaration is what failed, so the message names it and points at the
     // line it was written on.
     assert(strstr(err.message, "missing"));
-    assert(err.line == 2);
+    assert(err.line == 3);
 
     gab_vm_free(vm);
 }
@@ -207,15 +213,19 @@ static void test_an_extern_must_be_registered_before_the_load(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(!gab_load(vm, "<m>", "extern func twice(x: int): int;\n", &err));
+    assert(!gab_load(vm, "<m>",
+                     "module test;\n"
+                     "extern func twice(x: int): int;\n",
+                     &err));
 
-    assert(gab_extern(vm, NULL, "twice", twice, &err));
+    assert(gab_extern(vm, "test", "twice", twice, &err));
     assert(gab_load(vm, "<m>",
+                    "module test;\n"
                     "extern func twice(x: int): int;\n"
                     "func run(): int { return twice(2); }\n",
                     &err));
 
-    GabCall *call = gab_call_init(gab_lookup(vm, NULL, "run", &err), &err);
+    GabCall *call = gab_call_init(gab_lookup(vm, "test", "run", &err), &err);
     int32_t out = 0;
     assert(gab_call(vm, call, &out, &err) == GAB_OK);
     assert(out == 4);
@@ -230,10 +240,13 @@ static void test_a_host_may_call_an_extern_directly(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, NULL, "twice", twice, &err));
-    assert(gab_load(vm, "<m>", "extern func twice(x: int): int;\n", &err));
+    assert(gab_extern(vm, "test", "twice", twice, &err));
+    assert(gab_load(vm, "<m>",
+                    "module test;\n"
+                    "extern func twice(x: int): int;\n",
+                    &err));
 
-    GabFunc *fn = gab_lookup(vm, NULL, "twice", &err);
+    GabFunc *fn = gab_lookup(vm, "test", "twice", &err);
     assert(fn);
 
     GabCall *call = gab_call_init(fn, &err);
@@ -253,14 +266,15 @@ static void test_an_extern_may_fail_the_run(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, NULL, "refuse", refuse, &err));
+    assert(gab_extern(vm, "test", "refuse", refuse, &err));
 
     assert(gab_load(vm, "<m>",
+                    "module test;\n"
                     "extern func refuse(): int;\n"
                     "func run(): int { return refuse(); }\n",
                     &err));
 
-    GabCall *call = gab_call_init(gab_lookup(vm, NULL, "run", &err), &err);
+    GabCall *call = gab_call_init(gab_lookup(vm, "test", "run", &err), &err);
 
     int32_t out = 0;
     assert(gab_call(vm, call, &out, &err) == GAB_ERR_RUNTIME);
@@ -276,8 +290,11 @@ static void test_an_extern_may_not_have_a_body(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, NULL, "twice", twice, &err));
-    assert(!gab_load(vm, "<m>", "extern func twice(x: int): int { return x; }\n", &err));
+    assert(gab_extern(vm, "test", "twice", twice, &err));
+    assert(!gab_load(vm, "<m>",
+                     "module test;\n"
+                     "extern func twice(x: int): int { return x; }\n",
+                     &err));
 
     gab_vm_free(vm);
 }
@@ -288,7 +305,10 @@ static void test_a_plain_func_still_needs_a_body(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(!gab_load(vm, "<m>", "func twice(x: int): int;\n", &err));
+    assert(!gab_load(vm, "<m>",
+                     "module test;\n"
+                     "func twice(x: int): int;\n",
+                     &err));
 
     gab_vm_free(vm);
 }
@@ -307,7 +327,7 @@ static void test_an_extern_lives_in_its_module(void) {
                     &err));
 
     assert(gab_lookup(vm, "game", "twice", &err));
-    assert(!gab_lookup(vm, NULL, "twice", &err));
+    assert(!gab_lookup(vm, "test", "twice", &err));
 
     gab_vm_free(vm);
 }

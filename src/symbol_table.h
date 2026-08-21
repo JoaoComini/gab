@@ -31,7 +31,6 @@ typedef struct Symbol {
     // that made it, so a later compile meeting the same name needs to know
     // whether it is looking at its own work — a duplicate declaration — or at
     // an earlier compile's, which it is entitled to replace.
-    unsigned int generation;
 
     // Set when '&x' is taken. A pinned variable's slot must survive its whole
     // block, so codegen may not reclaim it at the end of a statement.

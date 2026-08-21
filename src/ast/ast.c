@@ -16,12 +16,14 @@ ASTScript *ast_script_create() {
     script->statements = ast_stmt_list_create();
     script->module_name = (StringRef){.data = NULL, .length = 0};
     script->module_span = (Span){0};
+    script->imports = ast_import_list_create();
 
     return script;
 }
 
 void ast_script_destroy(ASTScript *script) {
     ast_stmt_list_free(&script->statements);
+    ast_import_list_free(&script->imports);
 
     free(script);
 }
@@ -49,7 +51,12 @@ typedef struct {
 
     ModuleScopeMap *module_scopes;
 
-    // The module this unit declares into, or NULL for the root namespace. Only
+    // The modules this unit imported, and its own. A qualified reference to
+    // anything outside this set is an error even when the module exists: what a
+    // unit may name is what it said it would.
+    const ASTImportList *imports;
+
+    // The module this unit declares into, or NULL for the default one. Only
     // an extern records it, so that a host binds a body to the same module the
     // declaration lives in.
     String *module_name;
@@ -91,6 +98,23 @@ static bool string_ref_split_colons(StringRef ref, StringRef *module, StringRef 
     return false;
 }
 
+// Whether this unit may name that module: its own, or one it imported. A module
+// it did not import is refused even where it exists, so that the units a unit
+// depends on are the ones it says it depends on.
+static bool resolver_may_name(ResolverState *state, String *module) {
+    if (module == state->module_name) {
+        return true;
+    }
+
+    for (size_t i = 0; i < state->imports->size; i++) {
+        if (string_from_ref(state->current_scope->strings, state->imports->data[i].name) == module) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 // The scope a type spec names: another module's for 'Module::Type', and the
 // current one otherwise. NULL when the spec names a module that does not
 // exist, which the caller reports as an unknown type.
@@ -106,6 +130,11 @@ static Scope *resolver_spec_scope(ResolverState *state, StringRef name) {
     }
 
     String *module_name = string_from_ref(state->current_scope->strings, module);
+
+    if (!resolver_may_name(state, module_name)) {
+        return NULL;
+    }
+
     Scope **existing = module_scope_map_lookup(state->module_scopes, module_name);
 
     return existing ? *existing : NULL;
@@ -1090,7 +1119,7 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
 
     // Local: shadowing an outer type is allowed, declaring the same name
     // twice in one scope is not.
-    if (scope_declares_type_now(state->current_scope, struct_name)) {
+    if (scope_type_lookup_local(state->current_scope, struct_name)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "type '%s' is already declared",
                    struct_name->data);
         return;
@@ -1230,9 +1259,9 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
         return;
     }
 
-    // Go's rule, and it keeps ownership of the method map unambiguous: a type
-    // and its methods are made by one compile and replaced together on reload.
-    if (!scope_declares_type_now(state->current_scope, base->name)) {
+    // Go's rule: a method belongs with the module that declares its receiver,
+    // so the type has to be one this scope holds rather than one it inherits.
+    if (!scope_type_lookup_local(state->current_scope, base->name)) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, receiver->span,
                    "cannot declare a method on '%s', which this module does not declare", base->name->data);
         return;
@@ -1250,7 +1279,6 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
     *method = (Symbol){
         .kind = SYMBOL_FUNC,
         .scope_depth = state->current_scope->depth,
-        .generation = state->current_scope->generation,
         .pinned = false,
         .func =
             {
@@ -1626,6 +1654,7 @@ bool ast_script_resolve(Arena *compile_arena, ASTScript *script, Scope *global_s
         .global_scope = global_scope,
         .current_scope = global_scope,
         .module_scopes = module_scopes,
+        .imports = &script->imports,
         .module_name =
             script->module_name.data ? string_from_ref(global_scope->strings, script->module_name) : NULL,
         .func_context =
