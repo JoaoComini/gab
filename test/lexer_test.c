@@ -239,6 +239,56 @@ static void test_unterminated_block_comment_is_an_error() {
     assert(diagnostic->span.column == 3);
 }
 
+// A string literal is one token, and its lexeme is the text between the quotes
+// rather than the quotes themselves.
+static void test_a_string_literal_is_one_token() {
+    Lexer lexer = test_lexer("\"hello\"");
+    Token token = lexer_next(&lexer);
+
+    assert(token.type == TOKEN_STRING);
+    assert(token.lexeme.length == 5);
+    assert(strncmp(token.lexeme.data, "hello", 5) == 0);
+
+    assert_token(&lexer, TOKEN_EOF);
+}
+
+// An empty literal is a string of no characters, not a missing token.
+static void test_an_empty_string_literal_lexes() {
+    Lexer lexer = test_lexer("\"\"");
+    Token token = lexer_next(&lexer);
+
+    assert(token.type == TOKEN_STRING);
+    assert(token.lexeme.length == 0);
+
+    assert_token(&lexer, TOKEN_EOF);
+}
+
+// A literal ending at the end of input is reported: the closing quote is what
+// says where the string stops, so without it there is no token to hand on.
+static void test_an_unterminated_string_is_an_error() {
+    Lexer lexer = test_lexer("x \"open");
+    assert_identifier(&lexer, "x");
+    assert_token(&lexer, TOKEN_INVALID);
+
+    assert(diagnostics_count(&diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(&diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_SYNTAX);
+    assert(strcmp(diagnostic->message, "unterminated string literal") == 0);
+    assert(diagnostic->span.line == 1);
+    assert(diagnostic->span.column == 3);
+}
+
+// A newline ends the line before it can end the string, so a literal never
+// spans one: the error points at the quote that opened it.
+static void test_a_newline_does_not_continue_a_string() {
+    Lexer lexer = test_lexer("\"open\nx\"");
+    assert_token(&lexer, TOKEN_INVALID);
+
+    assert(diagnostics_count(&diagnostics) == 1);
+    assert(strcmp(diagnostics_get(&diagnostics, 0)->message, "unterminated string literal") == 0);
+}
+
 // A lone '/' is still division.
 static void test_slash_is_division() {
     Lexer lexer = test_lexer("a / b");
@@ -269,6 +319,10 @@ int main(void) {
     test_block_comment_spans_lines();
     test_block_comment_does_not_nest();
     test_unterminated_block_comment_is_an_error();
+    test_a_string_literal_is_one_token();
+    test_an_empty_string_literal_lexes();
+    test_an_unterminated_string_is_an_error();
+    test_a_newline_does_not_continue_a_string();
     test_slash_is_division();
 
     diagnostics_free(&diagnostics);

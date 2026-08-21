@@ -42,6 +42,8 @@ const char *token_description(TokenType type) {
         return "an integer literal";
     case TOKEN_FLOAT:
         return "a float literal";
+    case TOKEN_STRING:
+        return "a string literal";
     case TOKEN_IDENT:
         return "an identifier";
     case TOKEN_PLUS:
@@ -165,6 +167,42 @@ static Token lexer_number(Lexer *lexer) {
     StringRef ref = {.data = begin, .length = length};
 
     return token_create_ref(lexer, type, ref);
+}
+
+// The lexeme is the text between the quotes, still escaped: decoding needs
+// somewhere to put the decoded bytes, and the lexer has no arena to put them
+// in. A backslash escapes the character after it, so that a '\"' inside a
+// literal does not close it.
+static Token lexer_string(Lexer *lexer) {
+    Span opened = {.line = lexer->start_line, .column = lexer->start_column};
+
+    lexer_eat(lexer); // the opening quote
+
+    const char *begin = lexer->source + lexer->pos;
+
+    while (lexer_peek(lexer) != '"') {
+        char ch = lexer_peek(lexer);
+
+        // A literal stops at the end of its line, so a missing quote is
+        // reported where it opened rather than swallowing the rest of the file.
+        if (ch == '\0' || ch == '\n') {
+            diag_error(lexer->diagnostics, GAB_ERR_SYNTAX, opened, "unterminated string literal");
+
+            return token_create(lexer, TOKEN_INVALID);
+        }
+
+        if (ch == '\\' && lexer->source[lexer->pos + 1] != '\0') {
+            lexer_eat(lexer);
+        }
+
+        lexer_eat(lexer);
+    }
+
+    size_t length = (size_t)(lexer->source + lexer->pos - begin);
+
+    lexer_eat(lexer); // the closing quote
+
+    return token_create_ref(lexer, TOKEN_STRING, (StringRef){.data = begin, .length = length});
 }
 
 static bool is_ident_char(char ch) { return isalnum(ch) || ch == '_'; }
@@ -369,6 +407,10 @@ Token lexer_next(Lexer *lexer) {
 
     if (isalpha(lexer_peek(lexer)) || lexer_peek(lexer) == '_') { // Start with a letter or '_'
         return lexer_identifier(lexer);
+    }
+
+    if (lexer_peek(lexer) == '"') {
+        return lexer_string(lexer);
     }
 
     // Not eaten: advancing past the terminator would read out of bounds on any

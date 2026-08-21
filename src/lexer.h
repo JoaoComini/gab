@@ -9,6 +9,7 @@ typedef enum {
     TOKEN_EOF,         // End of input
     TOKEN_INT,         // Integer literals (1, 2 ,3)
     TOKEN_FLOAT,       // Float literals (3.14)
+    TOKEN_STRING,      // String literals ("hi"), lexeme is the text between the quotes
                        // BEGIN OPERATORS
     TOKEN_PLUS,        // '+'
     TOKEN_MINUS,       // '-'
