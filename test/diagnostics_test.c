@@ -17,7 +17,7 @@ static void compile(TestContext *ctx, const char *source) {
     Arena *arena = ctx->arena;
     Diagnostics *diagnostics = &ctx->diagnostics;
 
-    Lexer lexer = lexer_create(test_in_a_module(source), diagnostics);
+    Lexer lexer = lexer_create(test_in_a_module(source), ctx->arena, &ctx->strings, diagnostics);
     Parser parser = parser_create(&lexer, diagnostics);
     ASTScript *script = ast_script_create();
 
@@ -496,7 +496,7 @@ static void test_lexer_reports_invalid_character() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    Lexer lexer = lexer_create("let x = $;", diagnostics);
+    Lexer lexer = lexer_create("let x = $;", ctx.arena, &ctx.strings, diagnostics);
     while (lexer_next(&lexer).type != TOKEN_EOF) {
     }
 

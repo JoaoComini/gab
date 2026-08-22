@@ -155,6 +155,7 @@
 #define VM_LOOP()                                                                                            \
     static void *const vm_dispatch_table[] = {                                                               \
         [OP_LOAD_CONST] = &&OP_LOAD_CONST_label,                                                             \
+        [OP_LOAD_STR] = &&OP_LOAD_STR_label,                                                                 \
         [OP_LOAD_TRUE] = &&OP_LOAD_TRUE_label,                                                               \
         [OP_LOAD_FALSE] = &&OP_LOAD_FALSE_label,                                                             \
         [OP_MOVE] = &&OP_MOVE_label,                                                                         \
@@ -182,6 +183,8 @@
         [OP_DIVFK] = &&OP_DIVFK_label,                                                                       \
         [OP_CMP_LTF] = &&OP_CMP_LTF_label,                                                                   \
         [OP_CMP_GTF] = &&OP_CMP_GTF_label,                                                                   \
+        [OP_CMP_EQS] = &&OP_CMP_EQS_label,                                                                   \
+        [OP_CMP_NES] = &&OP_CMP_NES_label,                                                                   \
         [OP_CMP_EQF] = &&OP_CMP_EQF_label,                                                                   \
         [OP_CMP_NEF] = &&OP_CMP_NEF_label,                                                                   \
         [OP_CMP_LEF] = &&OP_CMP_LEF_label,                                                                   \

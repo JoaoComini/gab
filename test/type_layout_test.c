@@ -36,7 +36,7 @@ typedef struct {
 } SingleC;
 
 static Type *resolve_struct(TestContext *ctx, const char *source, const char *name) {
-    Lexer lexer = lexer_create(test_in_a_module(source), &ctx->diagnostics);
+    Lexer lexer = lexer_create(test_in_a_module(source), ctx->arena, &ctx->strings, &ctx->diagnostics);
     Parser parser = parser_create(&lexer, &ctx->diagnostics);
     ASTScript *script = ast_script_create();
 
@@ -184,7 +184,8 @@ static void test_unknown_field_type_is_not_registered() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Lexer lexer = lexer_create("module test;\nstruct Broken { value: Nope }", &ctx.diagnostics);
+    Lexer lexer = lexer_create("module test;\nstruct Broken { value: Nope }", ctx.arena, &ctx.strings,
+                               &ctx.diagnostics);
     Parser parser = parser_create(&lexer, &ctx.diagnostics);
     ASTScript *script = ast_script_create();
 

@@ -3,10 +3,12 @@
 #include <diagnostics.h>
 #include <lexer.h>
 #include <string.h>
+#include <string/string_pool.h>
 
 #define TEST_ARENA_BLOCK_SIZE 2048
 
 static Arena *arena = NULL;
+static StringPool strings;
 static Diagnostics diagnostics;
 
 // Every case lexes into a fresh sink, so a test can assert on exactly what its
@@ -15,7 +17,7 @@ static Lexer test_lexer(const char *source) {
     diagnostics_free(&diagnostics);
     diagnostics_init(&diagnostics, arena, "<test>");
 
-    return lexer_create(source, &diagnostics);
+    return lexer_create(source, arena, &strings, &diagnostics);
 }
 
 static void assert_token(Lexer *lexer, TokenType expected_type) {
@@ -239,6 +241,128 @@ static void test_unterminated_block_comment_is_an_error() {
     assert(diagnostic->span.column == 3);
 }
 
+// A string literal is one token carrying the characters it denotes.
+static void test_a_string_literal_is_one_token() {
+    Lexer lexer = test_lexer("\"hello\"");
+    Token token = lexer_next(&lexer);
+
+    assert(token.type == TOKEN_STRING);
+    assert(token.value.as_string->length == 5);
+    assert(memcmp(token.value.as_string->data, "hello", 5) == 0);
+
+    assert_token(&lexer, TOKEN_EOF);
+}
+
+// An empty literal is a string of no characters, not a missing token.
+static void test_an_empty_string_literal_lexes() {
+    Lexer lexer = test_lexer("\"\"");
+    Token token = lexer_next(&lexer);
+
+    assert(token.type == TOKEN_STRING);
+    assert(token.value.as_string->length == 0);
+
+    assert_token(&lexer, TOKEN_EOF);
+}
+
+// A literal ending at the end of input is reported: the closing quote is what
+// says where the string stops, so without it there is no token to hand on.
+static void test_an_unterminated_string_is_an_error() {
+    Lexer lexer = test_lexer("x \"open");
+    assert_identifier(&lexer, "x");
+    assert_token(&lexer, TOKEN_INVALID);
+
+    assert(diagnostics_count(&diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(&diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_SYNTAX);
+    assert(strcmp(diagnostic->message, "unterminated string literal") == 0);
+    assert(diagnostic->span.line == 1);
+    assert(diagnostic->span.column == 3);
+}
+
+// A newline ends the line before it can end the string, so a literal never
+// spans one: the error points at the quote that opened it.
+static void test_a_newline_does_not_continue_a_string() {
+    Lexer lexer = test_lexer("\"open\nx\"");
+    assert_token(&lexer, TOKEN_INVALID);
+
+    assert(diagnostics_count(&diagnostics) == 1);
+    assert(strcmp(diagnostics_get(&diagnostics, 0)->message, "unterminated string literal") == 0);
+}
+
+// The token carries the characters the literal denotes, not the source between
+// the quotes: an escape is two characters in the source and one in the string.
+static void test_a_string_literal_carries_decoded_characters() {
+    Lexer lexer = test_lexer("\"a\\nb\\\"c\"");
+    Token token = lexer_next(&lexer);
+
+    assert(token.type == TOKEN_STRING);
+    assert(token.value.as_string->length == 5);
+    assert(memcmp(token.value.as_string->data, "a\nb\"c", 5) == 0);
+}
+
+// A '\0' escape is a character like any other, so it neither ends the string
+// nor shortens it.
+static void test_a_null_escape_is_a_character() {
+    Lexer lexer = test_lexer("\"a\\0b\"");
+    Token token = lexer_next(&lexer);
+
+    assert(token.type == TOKEN_STRING);
+    assert(token.value.as_string->length == 3);
+    assert(memcmp(token.value.as_string->data, "a\0b", 3) == 0);
+}
+
+// An escape the language does not define is refused rather than standing for
+// the character it names, so a Windows path is a mistake rather than a string
+// nobody meant.
+static void test_an_unknown_escape_is_an_error() {
+    Lexer lexer = test_lexer("\"C:\\path\"");
+    assert_token(&lexer, TOKEN_INVALID);
+
+    assert(diagnostics_count(&diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(&diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_SYNTAX);
+    assert(strcmp(diagnostic->message, "unknown escape sequence '\\p'") == 0);
+}
+
+// A numeric token carries its value, converted where the characters are read.
+static void test_a_number_token_carries_its_value() {
+    Lexer lexer = test_lexer("42 3.5");
+
+    Token integer = lexer_next(&lexer);
+    assert(integer.type == TOKEN_INT);
+    assert(integer.value.as_int == 42);
+
+    Token real = lexer_next(&lexer);
+    assert(real.type == TOKEN_FLOAT);
+    assert(real.value.as_float == 3.5f);
+}
+
+// An integer literal too large for the type it denotes is refused. The digits
+// are well formed, so what is wrong is that no int holds what they denote.
+static void test_an_out_of_range_integer_is_an_error() {
+    Lexer lexer = test_lexer("99999999999999");
+    assert_token(&lexer, TOKEN_INVALID);
+
+    assert(diagnostics_count(&diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(&diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_TYPE);
+    assert(strcmp(diagnostic->message, "integer literal is out of range") == 0);
+}
+
+// The largest value the type holds is not out of range.
+static void test_the_largest_integer_literal_lexes() {
+    Lexer lexer = test_lexer("2147483647");
+
+    Token token = lexer_next(&lexer);
+    assert(token.type == TOKEN_INT);
+    assert(token.value.as_int == 2147483647);
+
+    assert(diagnostics_count(&diagnostics) == 0);
+}
+
 // A lone '/' is still division.
 static void test_slash_is_division() {
     Lexer lexer = test_lexer("a / b");
@@ -250,6 +374,7 @@ static void test_slash_is_division() {
 
 int main(void) {
     arena = arena_create(TEST_ARENA_BLOCK_SIZE);
+    string_pool_init(&strings, arena);
     diagnostics_init(&diagnostics, arena, "<test>");
 
     test_numbers();
@@ -269,9 +394,20 @@ int main(void) {
     test_block_comment_spans_lines();
     test_block_comment_does_not_nest();
     test_unterminated_block_comment_is_an_error();
+    test_a_string_literal_is_one_token();
+    test_an_empty_string_literal_lexes();
+    test_an_unterminated_string_is_an_error();
+    test_a_newline_does_not_continue_a_string();
+    test_a_string_literal_carries_decoded_characters();
+    test_a_null_escape_is_a_character();
+    test_an_unknown_escape_is_an_error();
+    test_a_number_token_carries_its_value();
+    test_an_out_of_range_integer_is_an_error();
+    test_the_largest_integer_literal_lexes();
     test_slash_is_division();
 
     diagnostics_free(&diagnostics);
+    string_pool_free(&strings);
     arena_destroy(arena);
     return 0;
 }

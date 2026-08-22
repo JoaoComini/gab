@@ -2,6 +2,7 @@
 #define GAB_AST_EXPR_H
 
 #include "diagnostics.h"
+#include "string/string.h"
 #include "symbol_table.h"
 #include "type.h"
 #include "util/list.h"
@@ -13,6 +14,9 @@ typedef struct {
     union {
         int32_t as_int;
         float as_float;
+
+        // The characters the literal denotes, decoded and interned by the lexer.
+        String *as_string;
     };
 } Literal;
 

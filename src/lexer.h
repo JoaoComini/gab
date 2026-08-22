@@ -1,7 +1,10 @@
 #ifndef LEXER_H
 #define LEXER_H
 
+#include "arena.h"
 #include "diagnostics.h"
+#include "string/string.h"
+#include "string/string_pool.h"
 #include "string/string_ref.h"
 
 typedef enum {
@@ -9,6 +12,7 @@ typedef enum {
     TOKEN_EOF,         // End of input
     TOKEN_INT,         // Integer literals (1, 2 ,3)
     TOKEN_FLOAT,       // Float literals (3.14)
+    TOKEN_STRING,      // String literals ("hi"), lexeme is the text between the quotes
                        // BEGIN OPERATORS
     TOKEN_PLUS,        // '+'
     TOKEN_MINUS,       // '-'
@@ -62,9 +66,25 @@ typedef enum {
     TOKEN_IDENT,       // Variable and function names
 } TokenType;
 
+// What a token denotes, for the kinds that denote something. Which arm is live
+// is decided by the type: a literal's value is fixed by its characters, so it
+// is converted where they are read rather than again by every stage that wants
+// it. Punctuation and keywords denote nothing and leave this untouched.
+typedef union {
+    int32_t as_int;    // TOKEN_INT
+    float as_float;    // TOKEN_FLOAT
+    String *as_string; // TOKEN_STRING, decoded and interned
+} TokenValue;
+
 typedef struct {
     TokenType type;
+
+    // The source text the token was read from. A name is what it spells, so
+    // this is what an identifier carries; a literal carries its value instead.
     StringRef lexeme;
+
+    TokenValue value;
+
     int line;
     int column;
 } Token;
@@ -81,9 +101,20 @@ typedef struct {
     int start_column;
 
     Diagnostics *diagnostics; // invalid tokens are reported here
+
+    // Where a string literal's characters end up. A literal is decoded into
+    // the scratch buffer and then interned, so only the interned copy lasts and
+    // equal literals are one String *.
+    Arena *arena;
+    StringPool *strings;
+
+    // Reused by every literal rather than allocated per token: decoding needs
+    // somewhere to put bytes only until the interning copies them out.
+    char *scratch;
+    size_t scratch_capacity;
 } Lexer;
 
-Lexer lexer_create(const char *source, Diagnostics *diagnostics);
+Lexer lexer_create(const char *source, Arena *arena, StringPool *strings, Diagnostics *diagnostics);
 Token lexer_next(Lexer *lexer);
 
 Span token_span(Token token);

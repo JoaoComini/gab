@@ -1,6 +1,7 @@
 #ifndef GAB_OPCODE_H
 #define GAB_OPCODE_H
 
+#include "object.h"
 #include "slot.h"
 
 #include <stdint.h>
@@ -9,6 +10,13 @@ typedef enum {
     OP_LOAD_CONST,
     OP_LOAD_TRUE,
     OP_LOAD_FALSE,
+
+    // Writes a literal's header -- the address of its characters and their
+    // count -- into the slots at rd. I-type: a string index is not a register.
+    //
+    // The characters are interned in the unit's arena and outlive every frame,
+    // so the header borrows them and nothing frees them.
+    OP_LOAD_STR,
     OP_MOVE,
 
     // Copies a run of slots between frame slots, the register-to-register
@@ -59,6 +67,17 @@ typedef enum {
     OP_DIVFK,
     OP_CMP_LTF,
     OP_CMP_GTF,
+
+    // String equality: rd becomes whether the strings in r1 and r2 spell the
+    // same characters. Not a slot comparison -- two headers may name different
+    // addresses and still be equal -- so it reads the lengths and then the
+    // characters.
+    //
+    // Interning makes equal literals one address, which the comparison takes as
+    // its fast path rather than as its definition: a string built at runtime
+    // would never be interned, so identity alone would answer wrongly.
+    OP_CMP_EQS,
+    OP_CMP_NES,
     OP_CMP_EQF,
     OP_CMP_NEF,
     OP_CMP_LEF,
@@ -232,6 +251,12 @@ typedef enum {
 
 // A type index rides in OP_NEW's 17-bit I-type field, for the same reason.
 #define VM_MAX_HEAP_TYPES VM_MAX_CONSTANTS
+#define VM_MAX_STRINGS VM_MAX_CONSTANTS
+
+// A string value is an address and a count. The count is padded out to the
+// address's alignment, which is what makes the script's layout the C one -- so it
+// costs a slot more than its two fields need.
+#define VM_STRING_SLOTS ((unsigned int)(sizeof(GabStringValue) / VM_SLOT_SIZE))
 
 // The slots one frame addresses, which is what a register operand indexes.
 #define VM_MAX_FRAME_SLOTS ((1 << 8) - 1)

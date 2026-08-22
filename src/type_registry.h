@@ -35,6 +35,7 @@ typedef struct {
     Type *int_type;
     Type *float_type;
     Type *bool_type;
+    Type *string_type;
     Type *error_type;
 } TypeBuiltins;
 

@@ -13,7 +13,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
 
 // Registers sit at base + r * VM_SLOT_SIZE, so the stack must hold every
@@ -236,6 +235,30 @@ void vm_conditionali(VM *vm, Instruction instruction, bool (*func)(int32_t, int3
     vm_write_i32(vm, rd, func(vm_read_i32(vm, r1), vm_operand2i(vm, instruction)));
 }
 
+// Whether two string headers name the same characters. Length first, since it
+// settles most pairs without reading any of them, and identical addresses
+// second: interning makes equal literals one address, but a string built at
+// runtime is never interned, so identity is a fast path and never the answer.
+bool vm_equals(VM *vm, size_t r1, size_t r2) {
+    GabStringValue a;
+    GabStringValue b;
+
+    memcpy(&a, vm->registers + r1 * VM_SLOT_SIZE, sizeof(a));
+    memcpy(&b, vm->registers + r2 * VM_SLOT_SIZE, sizeof(b));
+
+    if (a.length != b.length) {
+        return false;
+    }
+
+    if (a.data == b.data) {
+        return true;
+    }
+
+    return memcmp(a.data, b.data, (size_t)a.length) == 0;
+}
+
+bool vm_not_equals(VM *vm, size_t r1, size_t r2) { return !vm_equals(vm, r1, r2); }
+
 void vm_conditional(VM *vm, Instruction instruction, bool (*func)(VM *, size_t, size_t)) {
     size_t rd = VM_DECODE_R_RD(instruction);
     size_t r1 = VM_DECODE_R_R1(instruction);
@@ -303,25 +326,26 @@ void vm_fail(VM *vm, VmRunStatus status, const char *message) {
     snprintf(vm->error.message, sizeof(vm->error.message), "%s", message);
 }
 
-// Runs an extern's host body against the frame at 'base'. Returns false when
-// the run must unwind: either nothing was ever bound, or the body reported
-// failure.
+// Adapts a host body to the native signature. A host writes to GabExternFn,
+// which reports failure by setting a flag rather than by returning it.
+bool vm_call_extern(Args *args) {
+    args->proto->extern_body(args);
+
+    // gab_error set both the status and the message on its way through, so
+    // there is nothing to carry across the boundary here.
+    return !args->failed;
+}
+
+// Runs a C body against the frame at 'base'. Returns false when the run must
+// unwind, which is the body reporting failure.
 //
 // No frame is pushed. The body reads and writes slots directly, so there is
 // nothing for a frame to track — and a C function that cannot be interpreted
 // has no instruction pointer to return to.
-static bool vm_call_extern(VM *vm, const FuncPrototype *proto, size_t base) {
-    GabArgs args = {.vm = vm, .symbol = proto->extern_symbol, .base = base, .failed = false};
+static bool vm_call_native(VM *vm, const FuncPrototype *proto, size_t base) {
+    Args args = {.vm = vm, .proto = proto, .symbol = proto->extern_symbol, .base = base, .failed = false};
 
-    proto->native(&args);
-
-    if (args.failed) {
-        // gab_error set both the status and the message on its way through, so
-        // there is nothing to carry across the boundary here.
-        return false;
-    }
-
-    return true;
+    return proto->native(&args);
 }
 
 // Whether an int division or remainder may go ahead, failing the run when it
@@ -378,6 +402,19 @@ static void vm_run_loop(VM *vm) {
                 Constant constant = constpool_get(chunk->const_pool, const_index);
 
                 memcpy(vm_reg_at(vm, reg), &constant, VM_SLOT_SIZE);
+                VM_NEXT();
+            }
+            VM_CASE(OP_LOAD_STR) {
+                unsigned int rd = VM_DECODE_I_RD(instruction);
+                size_t string_index = VM_DECODE_I_KX(instruction);
+
+                const String *text = vm->program.strings.data[string_index];
+
+                // Borrowed, not copied: the characters are interned and outlive
+                // every frame, so the header names them where they already are.
+                GabStringValue value = {.data = text->data, .length = (int32_t)text->length};
+
+                memcpy(vm->registers + rd * VM_SLOT_SIZE, &value, sizeof(value));
                 VM_NEXT();
             }
             VM_CASE(OP_LOAD_TRUE) {
@@ -447,6 +484,14 @@ static void vm_run_loop(VM *vm) {
             }
             VM_CASE(OP_CMP_GTF) {
                 vm_conditional(vm, instruction, vm_greater_thanf);
+                VM_NEXT();
+            }
+            VM_CASE(OP_CMP_EQS) {
+                vm_conditional(vm, instruction, vm_equals);
+                VM_NEXT();
+            }
+            VM_CASE(OP_CMP_NES) {
+                vm_conditional(vm, instruction, vm_not_equals);
                 VM_NEXT();
             }
             VM_CASE(OP_CMP_EQF) {
@@ -586,11 +631,11 @@ static void vm_run_loop(VM *vm) {
                 // arguments the caller already placed above dest.
                 size_t base = frame->base + dest * VM_SLOT_SIZE;
 
-                // An extern runs in the caller's frame rather than pushing one:
+                // A C body runs in the caller's frame rather than pushing one:
                 // there is no bytecode to interpret, and its arguments are
                 // already where a callee's would be.
                 if (proto->native) {
-                    if (!vm_call_extern(vm, proto, base)) {
+                    if (!vm_call_native(vm, proto, base)) {
                         vm_unwind(vm);
                     }
 
@@ -792,7 +837,7 @@ VmRunStatus interp_run_extern(VM *vm, const FuncPrototype *proto, size_t base) {
 
     // Nothing to unwind on failure: no frame was pushed, and an extern owns
     // none of the caller's slots.
-    vm_call_extern(vm, proto, base);
+    vm_call_native(vm, proto, base);
 
     return vm->error.status;
 }

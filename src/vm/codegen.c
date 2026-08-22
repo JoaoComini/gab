@@ -84,6 +84,10 @@ typedef struct {
     Unit *unit;
     Arena *arena;
 
+    // Where a string literal's characters are interned. They outlive every
+    // frame, so a literal's header borrows them.
+    StringPool *strings;
+
     // Shared with every nested state, like the unit itself: a body may call a
     // function declared anywhere in the unit.
     ProtoMap *local_protos;
@@ -99,6 +103,12 @@ typedef struct {
     // release whatever replaced it. Releasing at the close happens while the
     // slot still holds what it was declared as.
     OwnedList owned;
+
+    // Slots holding an owned reference the expression under way produced and no
+    // slot will name. Released where the statement ends: an operand reaching into
+    // such an object -- a field read from 'new T' -- must keep it alive until the
+    // expression is done with it, and nothing later can name it to free it.
+    OwnedList temporaries;
 
     // Every slot this function ever owns a reference in, for the unwinder. See
     // FuncPrototype::refs.
@@ -212,6 +222,7 @@ static bool expr_yields_owned(const ASTExpr *expr);
 
 // Records that 'slot' owns an object for as long as the current block runs.
 static void codegen_own_slot(CodegenState *state, unsigned int slot, const Type *type);
+static void codegen_record_frame_ref(CodegenState *state, unsigned int slot);
 
 // Whether this slot already owns a reference, and so has one to drop when it is
 // overwritten.
@@ -244,7 +255,7 @@ static OpCode field_opcode_for(size_t size, bool load, bool indirect, bool *ok);
 
 // ---- Generating a script ----
 
-Unit *codegen_generate(ASTScript *script, Arena *arena, Diagnostics *diagnostics) {
+Unit *codegen_generate(ASTScript *script, Arena *arena, StringPool *strings, Diagnostics *diagnostics) {
     Unit *unit = calloc(1, sizeof(Unit));
 
     if (!unit) {
@@ -253,8 +264,10 @@ Unit *codegen_generate(ASTScript *script, Arena *arena, Diagnostics *diagnostics
 
     unit->prototypes = func_proto_list_create();
     unit->types = type_list_create();
+    unit->strings = string_list_create();
     unit->proto_relocations = relocation_list_create();
     unit->type_relocations = relocation_list_create();
+    unit->string_relocations = relocation_list_create();
     unit->bindings = proto_binding_list_create();
     unit->externs = extern_request_list_create();
     unit->arena = arena;
@@ -265,9 +278,11 @@ Unit *codegen_generate(ASTScript *script, Arena *arena, Diagnostics *diagnostics
         .max_reg = 0,
         .unit = unit,
         .arena = arena,
+        .strings = strings,
         .local_protos = proto_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .owned = owned_list_create(),
+        .temporaries = owned_list_create(),
         .depth = 0,
         .frame_refs = frame_ref_list_create(),
         .diagnostics = diagnostics,
@@ -293,6 +308,7 @@ Unit *codegen_generate(ASTScript *script, Arena *arena, Diagnostics *diagnostics
     // The slots were only ever true of this compile, so they go with it.
     slot_map_destroy(state.slots);
     owned_list_free(&state.owned);
+    owned_list_free(&state.temporaries);
     proto_map_destroy(state.local_protos);
 
     if (state.failed) {
@@ -310,6 +326,17 @@ Unit *codegen_generate(ASTScript *script, Arena *arena, Diagnostics *diagnostics
 }
 
 // ---- Statements ----
+
+// Frees every unbound owned value the statement produced. Emitted at the end of
+// the statement rather than where each was created: an operand may still be
+// reaching into the object while the rest of the expression is evaluated.
+static void codegen_release_temporaries(CodegenState *state) {
+    while (state->temporaries.size > 0) {
+        OwnedSlot temporary = state->temporaries.data[--state->temporaries.size];
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE, temporary.slot, 0, 0));
+    }
+}
 
 static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
     unsigned int saved = state->next_reg;
@@ -366,6 +393,8 @@ static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
         break;
     }
 
+    codegen_release_temporaries(state);
+
     // A declaration's slot outlives the statement: it belongs to the enclosing
     // block, which reclaims it at the closing brace.
     if (ast->kind != STMT_VAR_DECL) {
@@ -388,6 +417,11 @@ static void codegen_return_stmt(CodegenState *state, ASTReturnStmt *ast) {
         state->failed = true;
         return;
     }
+
+    // A temporary is the innermost thing alive, so it goes first. The returned
+    // value has already been copied into its own slot, so nothing released here
+    // is what is being returned.
+    codegen_release_temporaries(state);
 
     // Everything the function owns dies here, so it is released before the
     // return rather than at each block's close, which this jumps past. The
@@ -1018,9 +1052,11 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         .chunk = func_chunk,
         .unit = state->unit,
         .arena = state->arena,
+        .strings = state->strings,
         .local_protos = state->local_protos,
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .owned = owned_list_create(),
+        .temporaries = owned_list_create(),
         .depth = 0,
         .frame_refs = frame_ref_list_create(),
         .diagnostics = state->diagnostics,
@@ -1069,6 +1105,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
     };
 
     owned_list_free(&func_state.owned);
+    owned_list_free(&func_state.temporaries);
     slot_map_destroy(func_state.slots);
 }
 
@@ -1120,7 +1157,40 @@ static Constant value_from_literal(Literal lit) {
     abort();
 }
 
+static unsigned int codegen_string_literal(CodegenState *state, ASTExpr *node) {
+    // Decoded and interned by the lexer, so the node already holds the String *.
+    String *text = node->lit.as_string;
+
+    unsigned int rd = codegen_alloc_slots(state, VM_STRING_SLOTS, VM_POINTER_SLOTS, node->span);
+
+    // Interned within the unit, as a type index is: the index means nothing
+    // until linking gives the unit its base. See codegen_new_expr.
+    size_t index = state->unit->strings.size;
+
+    for (size_t i = 0; i < state->unit->strings.size; i++) {
+        if (state->unit->strings.data[i] == text) {
+            index = i;
+            break;
+        }
+    }
+
+    if (index == state->unit->strings.size) {
+        string_list_add(&state->unit->strings, text);
+    }
+
+    size_t offset = chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_LOAD_STR, rd, (unsigned int)index));
+
+    relocation_list_add(&state->unit->string_relocations,
+                        (Relocation){.chunk = state->chunk, .offset = offset});
+
+    return rd;
+}
+
 static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node) {
+    if (node->lit.kind == TYPE_STRING) {
+        return codegen_string_literal(state, node);
+    }
+
     unsigned int const_index = constpool_add(state->chunk->const_pool, value_from_literal(node->lit));
     unsigned int r1 = codegen_alloc_register(state, node->span);
     Instruction load_const = VM_ENCODE_I(OP_LOAD_CONST, r1, const_index);
@@ -1455,6 +1525,7 @@ static unsigned int codegen_cast_expr(CodegenState *state, ASTExpr *node) {
 // The type travels by index because a Type * is 8 bytes and cannot ride in an
 // instruction; the list is interned by pointer identity, which the type system
 // already guarantees.
+
 static unsigned int codegen_new_expr(CodegenState *state, ASTExpr *node) {
     unsigned int rd = codegen_alloc_slots(state, VM_POINTER_SLOTS, VM_POINTER_SLOTS, node->span);
 
@@ -1532,6 +1603,15 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
     }
 
     unsigned int base = codegen_expr(state, node);
+
+    // An allocation reached into but never bound: the field read below needs the
+    // object, so the release waits for the statement rather than happening here.
+    if (expr_yields_owned(node)) {
+        owned_list_add(&state->temporaries,
+                       (OwnedSlot){.slot = base, .depth = state->depth, .type = node->type});
+        codegen_record_frame_ref(state, base);
+    }
+
     bool indirect = auto_deref && type_is_pointer(node->type);
 
     // Only a pointer actually reached through needs checking. '&w' names the
@@ -1763,6 +1843,12 @@ static unsigned int codegen_rhs(CodegenState *state, ASTExpr *rhs, const Type *l
 // takes the constant-pool form, and anything else the register or immediate
 // form the k bit already distinguished.
 static OpCode bin_op_opcode_for(BinOp op, const Type *left_type, RhsKind kind) {
+    // A string is compared by its characters rather than its slots, so the
+    // opcode is chosen by the operand type before the numeric families.
+    if (left_type->kind == TYPE_STRING) {
+        return op == BIN_OP_EQUAL ? OP_CMP_EQS : OP_CMP_NES;
+    }
+
     if (kind != RHS_CONSTANT) {
         return left_type->kind == TYPE_FLOAT ? bin_op_to_float_op(op) : bin_op_to_int_op(op);
     }
@@ -1961,6 +2047,23 @@ static bool expr_yields_owned(const ASTExpr *expr) {
     }
 }
 
+// Records that this slot may hold a reference when the frame unwinds. A failure
+// jumps past every free emitted below, so the frame has to know what it may
+// still be holding.
+//
+// Recorded once per slot: a slot reused by a later block is the same slot, and
+// the runtime clears one when it frees it, so a second entry would only make the
+// unwinder visit an empty slot twice.
+static void codegen_record_frame_ref(CodegenState *state, unsigned int slot) {
+    for (size_t i = 0; i < state->frame_refs.size; i++) {
+        if (state->frame_refs.data[i].slot == slot) {
+            return;
+        }
+    }
+
+    frame_ref_list_add(&state->frame_refs, (FrameRef){.slot = slot});
+}
+
 static void codegen_own_slot(CodegenState *state, unsigned int slot, const Type *type) {
     // A 'ref T' slot borrows, so it never owns and is never freed. Callers
     // check this too, but a stray own here would be a use-after-free rather
@@ -1969,20 +2072,8 @@ static void codegen_own_slot(CodegenState *state, unsigned int slot, const Type 
 
     owned_list_add(&state->owned, (OwnedSlot){.slot = slot, .depth = state->depth, .type = type});
 
-    // Also recorded on the frame, for the unwinder. A failure jumps past every
-    // free emitted below, so the frame has to know what it may still be
-    // holding — and this is the only place that becomes true.
-    //
-    // Recorded once per slot: a slot reused by a later block is the same slot,
-    // and the runtime clears one when it frees it, so a second entry would only
-    // make the unwinder visit an empty slot twice.
-    for (size_t i = 0; i < state->frame_refs.size; i++) {
-        if (state->frame_refs.data[i].slot == slot) {
-            return;
-        }
-    }
-
-    frame_ref_list_add(&state->frame_refs, (FrameRef){.slot = slot});
+    // Also recorded on the frame, for the unwinder.
+    codegen_record_frame_ref(state, slot);
 }
 
 // Whether this slot already owns a reference, and so has one to drop when it is
@@ -2143,7 +2234,11 @@ static bool type_is_struct(const Type *type) { return type && type->kind == TYPE
 // field opcode. A struct is, because its slots are laid out inline — and so is
 // a pointer, which is 8 bytes and has no 8-wide opcode. Before heap objects
 // existed no struct could hold a pointer, so the two cases only meet now.
-static bool type_moves_as_slots(const Type *type) { return type_is_struct(type) || type_is_pointer(type); }
+// A string is a header of several slots, so it moves as one run like a struct
+// rather than as a single slot.
+static bool type_moves_as_slots(const Type *type) {
+    return type_is_struct(type) || type_is_pointer(type) || (type && type->kind == TYPE_STRING);
+}
 
 // The field's width is known at compile time, so it picks the opcode instead
 // of spending operand bits. 'load' selects the load or store family.

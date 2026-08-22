@@ -26,7 +26,11 @@ static String *string_from_cstr_len(StringPool *pool, const char *cstr, size_t l
     string->length = length;
 
     string->data = arena_alloc(pool->arena, length + 1);
-    memcpy(string->data, cstr, length);
+
+    // An empty string has no characters to copy, and its data may be null.
+    if (length) {
+        memcpy(string->data, cstr, length);
+    }
     string->data[length] = '\0';
 
     key.data = string->data;

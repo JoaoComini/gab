@@ -3,7 +3,10 @@
 
 #include <assert.h>
 #include <ctype.h>
+#include <errno.h>
+#include <limits.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -24,6 +27,10 @@ Token token_create(Lexer *lexer, TokenType type) {
     return (Token){.type = type, .line = lexer->start_line, .column = lexer->start_column};
 }
 
+Token token_create_value(Lexer *lexer, TokenType type, TokenValue value) {
+    return (Token){.type = type, .value = value, .line = lexer->start_line, .column = lexer->start_column};
+}
+
 Token token_create_ref(Lexer *lexer, TokenType type, StringRef ref) {
     return (Token){.type = type, .lexeme = ref, .line = lexer->start_line, .column = lexer->start_column};
 }
@@ -42,6 +49,8 @@ const char *token_description(TokenType type) {
         return "an integer literal";
     case TOKEN_FLOAT:
         return "a float literal";
+    case TOKEN_STRING:
+        return "a string literal";
     case TOKEN_IDENT:
         return "an identifier";
     case TOKEN_PLUS:
@@ -142,6 +151,7 @@ const char *token_description(TokenType type) {
 }
 
 static Token lexer_number(Lexer *lexer) {
+    Span opened = {.line = lexer->start_line, .column = lexer->start_column};
     const char *begin = lexer->source + lexer->pos;
 
     while (isdigit(lexer_peek(lexer))) {
@@ -159,12 +169,130 @@ static Token lexer_number(Lexer *lexer) {
         type = TOKEN_FLOAT;
     }
 
-    const char *end = lexer->source + lexer->pos;
-    size_t length = end - begin;
+    // strtol and strtod read up to the first character that cannot continue the
+    // number, and the scan above has already found where that is -- so the
+    // digits are converted in place rather than copied out to be terminated.
+    if (type == TOKEN_FLOAT) {
+        return token_create_value(lexer, type, (TokenValue){.as_float = strtof(begin, NULL)});
+    }
 
-    StringRef ref = {.data = begin, .length = length};
+    errno = 0;
+    long value = strtol(begin, NULL, 10);
 
-    return token_create_ref(lexer, type, ref);
+    // Checked here because a run of digits always denotes an int today, so the
+    // lexer can answer it. A type error rather than a syntax one: the literal is
+    // well formed, and what it denotes is what has no representation.
+    if (errno == ERANGE || value > INT32_MAX) {
+        diag_error(lexer->diagnostics, GAB_ERR_TYPE, opened, "integer literal is out of range");
+
+        return token_create(lexer, TOKEN_INVALID);
+    }
+
+    return token_create_value(lexer, type, (TokenValue){.as_int = (int32_t)value});
+}
+// Grows the scratch buffer to hold at least 'needed' bytes. The buffer is
+// reused across literals, so it settles at the longest one in the file.
+static bool lexer_reserve(Lexer *lexer, size_t needed) {
+    if (needed <= lexer->scratch_capacity) {
+        return true;
+    }
+
+    size_t capacity = lexer->scratch_capacity ? lexer->scratch_capacity : 32;
+
+    while (capacity < needed) {
+        capacity *= 2;
+    }
+
+    char *grown = arena_alloc(lexer->arena, capacity);
+
+    if (!grown) {
+        return false;
+    }
+
+    // Only when there is something to carry over: the first growth has no
+    // buffer yet, and memcpy may not be handed a null even for zero bytes.
+    if (lexer->scratch) {
+        memcpy(grown, lexer->scratch, lexer->scratch_capacity);
+    }
+
+    lexer->scratch = grown;
+    lexer->scratch_capacity = capacity;
+
+    return true;
+}
+
+// The character an escape denotes, or -1 if the language defines none for it.
+static int escape_value(char ch) {
+    switch (ch) {
+    case 'n':
+        return '\n';
+    case 't':
+        return '\t';
+    case '0':
+        return '\0';
+    case '\\':
+        return '\\';
+    case '"':
+        return '"';
+    default:
+        return -1;
+    }
+}
+
+// A literal's characters, decoded and interned. The lexeme is what the string
+// denotes rather than the source between the quotes, so an escape has already
+// become the one character it stands for and a '\0' escape is a character like
+// any other -- which is why the length travels with it.
+static Token lexer_string(Lexer *lexer) {
+    Span opened = {.line = lexer->start_line, .column = lexer->start_column};
+
+    lexer_eat(lexer); // the opening quote
+
+    size_t length = 0;
+
+    while (lexer_peek(lexer) != '"') {
+        char ch = lexer_peek(lexer);
+
+        // A literal stops at the end of its line, so a missing quote is
+        // reported where it opened rather than swallowing the rest of the file.
+        if (ch == '\0' || ch == '\n') {
+            diag_error(lexer->diagnostics, GAB_ERR_SYNTAX, opened, "unterminated string literal");
+
+            return token_create(lexer, TOKEN_INVALID);
+        }
+
+        if (ch == '\\') {
+            Span at = {.line = lexer->line, .column = lexer->column};
+
+            lexer_eat(lexer);
+
+            int value = escape_value(lexer_peek(lexer));
+
+            if (value < 0) {
+                diag_error(lexer->diagnostics, GAB_ERR_SYNTAX, at, "unknown escape sequence '\\%c'",
+                           lexer_peek(lexer));
+
+                return token_create(lexer, TOKEN_INVALID);
+            }
+
+            ch = (char)value;
+        }
+
+        if (!lexer_reserve(lexer, length + 1)) {
+            diag_error(lexer->diagnostics, GAB_ERR_SYNTAX, opened, "string literal is too long");
+
+            return token_create(lexer, TOKEN_INVALID);
+        }
+
+        lexer->scratch[length++] = ch;
+        lexer_eat(lexer);
+    }
+
+    lexer_eat(lexer); // the closing quote
+
+    String *text = string_from_ref(lexer->strings, (StringRef){.data = lexer->scratch, .length = length});
+
+    return token_create_value(lexer, TOKEN_STRING, (TokenValue){.as_string = text});
 }
 
 static bool is_ident_char(char ch) { return isalnum(ch) || ch == '_'; }
@@ -248,7 +376,7 @@ static Token lexer_identifier(Lexer *lexer) {
     return token_create_ref(lexer, TOKEN_IDENT, ref);
 }
 
-Lexer lexer_create(const char *source, Diagnostics *diagnostics) {
+Lexer lexer_create(const char *source, Arena *arena, StringPool *strings, Diagnostics *diagnostics) {
     return (Lexer){
         .source = source,
         .pos = 0,
@@ -257,6 +385,8 @@ Lexer lexer_create(const char *source, Diagnostics *diagnostics) {
         .start_line = 1,
         .start_column = 1,
         .diagnostics = diagnostics,
+        .arena = arena,
+        .strings = strings,
     };
 }
 
@@ -369,6 +499,10 @@ Token lexer_next(Lexer *lexer) {
 
     if (isalpha(lexer_peek(lexer)) || lexer_peek(lexer) == '_') { // Start with a letter or '_'
         return lexer_identifier(lexer);
+    }
+
+    if (lexer_peek(lexer) == '"') {
+        return lexer_string(lexer);
     }
 
     // Not eaten: advancing past the terminator would read out of bounds on any

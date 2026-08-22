@@ -5,6 +5,7 @@
 #include "string/string.h"
 #include "symbol_table.h"
 #include "vm/chunk.h"
+#include "vm/interp.h"
 #include "vm/opcode.h"
 #include "vm/vm.h"
 
@@ -37,8 +38,10 @@ void unit_free(Unit *unit) {
     func_proto_free(&unit->top_level);
     func_proto_list_free(&unit->prototypes);
     type_list_free(&unit->types);
+    string_list_free(&unit->strings);
     relocation_list_free(&unit->proto_relocations);
     relocation_list_free(&unit->type_relocations);
+    relocation_list_free(&unit->string_relocations);
     proto_binding_list_free(&unit->bindings);
     extern_request_list_free(&unit->externs);
 
@@ -57,18 +60,18 @@ static void relocate(const RelocationList *relocations, size_t base) {
     }
 }
 
-// Rewrites each type operand to the index its type was given in the program's list.
-// Unlike a prototype the mapping is not a single base: a type an earlier unit
-// already registered keeps that unit's index, so the unit's types can land out
+// Rewrites each index operand to the index the program gave what it names.
+// Unlike a prototype the mapping is not a single base: something an earlier unit
+// already registered keeps that unit's index, so a unit's entries can land out
 // of order and each one is looked up.
-static void remap_types(const RelocationList *relocations, const size_t *type_map) {
+static void remap_indices(const RelocationList *relocations, const size_t *index_map) {
     for (size_t i = 0; i < relocations->size; i++) {
         const Relocation *reloc = &relocations->data[i];
         Instruction instruction = instruction_list_get(&reloc->chunk->instructions, reloc->offset);
 
         chunk_patch_instruction(reloc->chunk, reloc->offset,
                                 VM_ENCODE_I(VM_DECODE_OPCODE(instruction), VM_DECODE_I_RD(instruction),
-                                            (unsigned int)type_map[VM_DECODE_I_KX(instruction)]));
+                                            (unsigned int)index_map[VM_DECODE_I_KX(instruction)]));
     }
 }
 
@@ -115,6 +118,19 @@ bool link_check(Program *program, Unit *unit, Diagnostics *diagnostics) {
         }
     }
 
+    if (program->strings.size + unit->strings.size > VM_MAX_STRINGS) {
+        diag_error(diagnostics, GAB_ERR_CODEGEN, (Span){0}, "too many string literals in one program");
+        return false;
+    }
+
+    if (unit->strings.size && !unit->string_map) {
+        unit->string_map = arena_alloc(unit->arena, unit->strings.size * sizeof(size_t));
+
+        if (!unit->string_map) {
+            return false;
+        }
+    }
+
     for (size_t i = 0; i < unit->externs.size; i++) {
         const ExternRequest *request = &unit->externs.data[i];
         GabExternFn native = find_extern(program, request->symbol);
@@ -125,7 +141,8 @@ bool link_check(Program *program, Unit *unit, Diagnostics *diagnostics) {
             return false;
         }
 
-        unit->prototypes.data[request->local_index]->native = native;
+        unit->prototypes.data[request->local_index]->extern_body = native;
+        unit->prototypes.data[request->local_index]->native = vm_call_extern;
     }
 
     return true;
@@ -163,8 +180,28 @@ void link_install(Program *program, Unit *unit) {
         unit->type_map[i] = found;
     }
 
+    // Interned in the pool already, so equality is pointer identity and a
+    // literal two units share is registered once.
+    for (size_t i = 0; i < unit->strings.size; i++) {
+        size_t found = program->strings.size;
+
+        for (size_t j = 0; j < program->strings.size; j++) {
+            if (program->strings.data[j] == unit->strings.data[i]) {
+                found = j;
+                break;
+            }
+        }
+
+        if (found == program->strings.size) {
+            string_list_add(&program->strings, unit->strings.data[i]);
+        }
+
+        unit->string_map[i] = found;
+    }
+
     relocate(&unit->proto_relocations, proto_base);
-    remap_types(&unit->type_relocations, unit->type_map);
+    remap_indices(&unit->type_relocations, unit->type_map);
+    remap_indices(&unit->string_relocations, unit->string_map);
 
     // Last, because a symbol stamped with an index is a symbol a later compile
     // will call through: nothing may carry one until the prototype it names is

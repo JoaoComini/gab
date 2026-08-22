@@ -8,6 +8,7 @@
 #include "symbol_table.h"
 #include "type.h"
 #include "type_registry.h"
+#include "vm/args.h"
 #include "vm/interp.h"
 #include "vm/vm.h"
 
@@ -95,9 +96,6 @@ static void gab_func_bind(GabFunc *fn);
 // The slots a call block needs for this signature: one per parameter's worth of
 // slots, plus slot 0 for the return value.
 static unsigned int gab_signature_slots(const Symbol *symbol);
-
-// How many slots a value of this type occupies.
-static unsigned int gab_type_slots(const Type *type);
 
 // The handle's per-parameter arrays, in one allocation separate from the
 // struct, so that the struct itself never moves under the pointer gab_lookup
@@ -203,147 +201,42 @@ void gab_vm_free(GabVM *handle) {
 
 // --- Extern functions ------------------------------------------------------
 
-// Where a parameter's slots begin, counting from the frame's slot 0 — which
-// holds the return value, exactly as it does for a script callee. A multi-slot
-// parameter occupies consecutive slots, so each index is found by walking the
-// widths ahead of it rather than by indexing a table.
-//
-// Returns NULL when the index names no parameter, which is what every accessor
-// checks before touching a slot.
-static uint8_t *gab_arg_address(GabArgs *args, int index, const Type **out_type) {
-    if (!args || index < 0) {
-        return NULL;
-    }
+// Every accessor below is the host's name for one in vm/args.h. A host body and
+// a builtin read the same slots through the same code: what a host declares in
+// script and what it implements in C are one signature, so an access that does
+// not match it is the host's bug rather than a condition to report back.
 
-    const Symbol *symbol = args->symbol;
+int32_t gab_arg_get_int(GabArgs *args, int index) { return args_int(args, index); }
 
-    if ((size_t)index >= symbol->func.param_count) {
-        return NULL;
-    }
+float gab_arg_get_float(GabArgs *args, int index) { return args_float(args, index); }
 
-    unsigned int slot = 1;
+bool gab_arg_get_bool(GabArgs *args, int index) { return args_bool(args, index); }
 
-    for (int i = 0; i < index; i++) {
-        slot += gab_type_slots(symbol->func.params[i]);
-    }
-
-    if (out_type) {
-        *out_type = symbol->func.params[index];
-    }
-
-    return args->vm->stack + args->base + (size_t)slot * VM_SLOT_SIZE;
+void gab_arg_get_struct(GabArgs *args, int index, void *out, size_t size) {
+    args_struct(args, index, out, size);
 }
 
-int32_t gab_arg_get_int(GabArgs *args, int index) {
-    const uint8_t *at = gab_arg_address(args, index, NULL);
+const char *gab_arg_get_string(GabArgs *args, int index, int32_t *out_length) {
+    GabStringValue value = args_string(args, index);
 
-    if (!at) {
-        return 0;
+    if (out_length) {
+        *out_length = value.length;
     }
 
-    int32_t value;
-    memcpy(&value, at, sizeof(value));
-
-    return value;
+    return value.data;
 }
 
-float gab_arg_get_float(GabArgs *args, int index) {
-    const uint8_t *at = gab_arg_address(args, index, NULL);
+void *gab_arg_get_pointer(GabArgs *args, int index) { return args_pointer(args, index); }
 
-    if (!at) {
-        return 0.0f;
-    }
+void gab_return_int(GabArgs *args, int32_t value) { args_return_int(args, value); }
 
-    float value;
-    memcpy(&value, at, sizeof(value));
+void gab_return_float(GabArgs *args, float value) { args_return_float(args, value); }
 
-    return value;
-}
+void gab_return_bool(GabArgs *args, bool value) { args_return_bool(args, value); }
 
-bool gab_arg_get_bool(GabArgs *args, int index) {
-    const uint8_t *at = gab_arg_address(args, index, NULL);
+void gab_return_struct(GabArgs *args, const void *data, size_t size) { args_return_struct(args, data, size); }
 
-    if (!at) {
-        return false;
-    }
-
-    int32_t value;
-    memcpy(&value, at, sizeof(value));
-
-    return value != 0;
-}
-
-bool gab_arg_get_struct(GabArgs *args, int index, void *out, size_t size) {
-    const Type *type = NULL;
-    const uint8_t *at = gab_arg_address(args, index, &type);
-
-    if (!at || !out || !type || type->size != size) {
-        return false;
-    }
-
-    memcpy(out, at, size);
-
-    return true;
-}
-
-void *gab_arg_get_pointer(GabArgs *args, int index) {
-    const Type *type = NULL;
-    const uint8_t *at = gab_arg_address(args, index, &type);
-
-    if (!at || !type || type->kind != TYPE_POINTER) {
-        return NULL;
-    }
-
-    void *pointer;
-    memcpy(&pointer, at, sizeof(pointer));
-
-    return pointer;
-}
-
-// The frame's slot 0, which is where a callee leaves its result.
-static uint8_t *gab_return_address(GabArgs *args) { return args->vm->stack + args->base; }
-
-void gab_return_int(GabArgs *args, int32_t value) {
-    if (args) {
-        memcpy(gab_return_address(args), &value, sizeof(value));
-    }
-}
-
-void gab_return_float(GabArgs *args, float value) {
-    if (args) {
-        memcpy(gab_return_address(args), &value, sizeof(value));
-    }
-}
-
-void gab_return_bool(GabArgs *args, bool value) {
-    if (args) {
-        int32_t widened = value ? 1 : 0;
-
-        memcpy(gab_return_address(args), &widened, sizeof(widened));
-    }
-}
-
-bool gab_return_struct(GabArgs *args, const void *data, size_t size) {
-    if (!args || !data) {
-        return false;
-    }
-
-    const Type *return_type = args->symbol->func.return_type;
-
-    if (!return_type || return_type->size != size) {
-        return false;
-    }
-
-    memcpy(gab_return_address(args), data, size);
-
-    return true;
-}
-
-void gab_return_pointer(GabArgs *args, void *pointer) {
-    if (args) {
-        memcpy(gab_return_address(args), &pointer, sizeof(pointer));
-    }
-}
+void gab_return_pointer(GabArgs *args, void *pointer) { args_return_pointer(args, pointer); }
 
 void gab_error(GabArgs *args, const char *message) {
     if (!args) {
@@ -536,16 +429,6 @@ void gab_free(GabVM *handle, void *object) {
 
 // --- Calling ---------------------------------------------------------------
 
-// Slots a value of this type occupies, matching codegen's tiling exactly: the
-// two must agree or an argument lands in the wrong register.
-static unsigned int gab_type_slots(const Type *type) {
-    if (!type) {
-        return 1;
-    }
-
-    return (unsigned int)((type->size + VM_SLOT_SIZE - 1) / VM_SLOT_SIZE);
-}
-
 GabFunc *gab_lookup(GabVM *handle, const char *module, const char *name, GabError *err) {
     gab_error_clear(err);
 
@@ -629,7 +512,7 @@ static unsigned int gab_signature_slots(const Symbol *symbol) {
     unsigned int slots = 1;
 
     for (size_t i = 0; i < symbol->func.param_count; i++) {
-        slots += gab_type_slots(symbol->func.params[i]);
+        slots += args_type_slots(symbol->func.params[i]);
     }
 
     return slots;
@@ -650,7 +533,7 @@ static void gab_func_bind(GabFunc *fn) {
     for (size_t i = 0; i < symbol->func.param_count; i++) {
         fn->sig_params[i] = symbol->func.params[i];
         fn->param_slot[i] = offset;
-        offset += gab_type_slots(symbol->func.params[i]);
+        offset += args_type_slots(symbol->func.params[i]);
     }
 
     fn->arg_slots = offset - 1;

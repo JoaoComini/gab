@@ -1,6 +1,7 @@
 #include "type_registry.h"
 
 #include "arena.h"
+#include "object.h"
 #include "string/string.h"
 #include "type.h"
 
@@ -20,6 +21,11 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     registry->builtins.int_type = register_builtin(registry, TYPE_INT, "int", 4, 4);
     registry->builtins.float_type = register_builtin(registry, TYPE_FLOAT, "float", 4, 4);
     registry->builtins.bool_type = register_builtin(registry, TYPE_BOOL, "bool", 1, 1);
+
+    // Two fields, so its size and alignment come from the layout the VM reads
+    // rather than from a number repeated here.
+    registry->builtins.string_type =
+        register_builtin(registry, TYPE_STRING, "string", sizeof(GabStringValue), _Alignof(GabStringValue));
 
     // Poison type. Deliberately never given a name in any scope: no script can
     // name it, it only arises from a failed resolution.
@@ -84,6 +90,8 @@ Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind kind) {
         return registry->builtins.float_type;
     case TYPE_BOOL:
         return registry->builtins.bool_type;
+    case TYPE_STRING:
+        return registry->builtins.string_type;
     default:
         break;
     }

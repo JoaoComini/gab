@@ -12,6 +12,7 @@
 #include "ast/ast.h"
 #include "compile.h"
 #include "lexer.h"
+#include "object.h"
 #include "parser.h"
 #include "scope.h"
 #include "slot.h"
@@ -45,6 +46,28 @@ static inline void test_run(const char *source, void *out, size_t width) {
     vm_free(vm);
 }
 
+// Runs a script whose top level ends in a 'string' and copies the characters
+// out while the VM still lives. A string header borrows: its characters belong
+// to the VM's arena, so reading them after vm_free would be a use-after-free --
+// exactly the dangle the language says a borrow can become.
+static inline void test_run_string(const char *source, char *out, size_t capacity, int32_t *out_length) {
+    VM *vm = vm_create();
+
+    compile_and_run(vm, test_in_a_module(source));
+
+    assert(vm->frame_count == 0);
+
+    GabStringValue value;
+    memcpy(&value, vm_slot_at(vm, 0), sizeof(value));
+
+    assert((size_t)value.length < capacity);
+
+    memcpy(out, value.data, (size_t)value.length);
+    out[value.length] = '\0';
+    *out_length = value.length;
+
+    vm_free(vm);
+}
 static inline int test_run_int(const char *source) {
     int32_t result;
     test_run(source, &result, sizeof(result));
@@ -70,7 +93,7 @@ static inline bool test_run_bool(const char *source) {
 // and script, so a test can inspect the symbols and types the front end
 // settled on. The caller owns both, since what is worth inspecting differs.
 static inline bool test_resolve(TestContext *ctx, Scope *scope, ASTScript *script, const char *source) {
-    Lexer lexer = lexer_create(test_in_a_module(source), &ctx->diagnostics);
+    Lexer lexer = lexer_create(test_in_a_module(source), ctx->arena, &ctx->strings, &ctx->diagnostics);
     Parser parser = parser_create(&lexer, &ctx->diagnostics);
 
     if (!parser_parse(&parser, script)) {
@@ -209,11 +232,25 @@ static inline void test_program_free(TestProgram *program) {
 
 static inline Chunk *test_top_chunk(TestProgram *program) { return program->script.chunk; }
 
-// The chunk of a declared function, by declaration order.
+// The chunk of a declared function, by declaration order. Counted from the
+// first prototype a unit contributed: the builtin types' methods are registered
+// before any load, and they carry a host body rather than a chunk.
 static inline Chunk *test_func_chunk(TestProgram *program, size_t index) {
+    index += program->vm->program.builtin_proto_count;
+
     assert(index < program->vm->program.prototypes.size);
 
     return program->vm->program.prototypes.data[index]->chunk;
+}
+
+// The prototype of a declared function, and how many the loaded units
+// contributed. Counted the same way test_func_chunk counts.
+static inline FuncPrototype *test_func_proto(TestProgram *program, size_t index) {
+    return program->vm->program.prototypes.data[program->vm->program.builtin_proto_count + index];
+}
+
+static inline size_t test_func_count(TestProgram *program) {
+    return program->vm->program.prototypes.size - program->vm->program.builtin_proto_count;
 }
 
 // How many times an opcode appears. Most claims about emitted code are really

@@ -30,20 +30,38 @@ GAB_LIST(FrameRefList, frame_ref_list, FrameRef)
 typedef struct GabArgs GabArgs;
 typedef void (*GabExternFn)(GabArgs *args);
 
+// What the VM calls the same struct. The tag is the host's because gab.h
+// declares it opaque under that name and must stay self-contained; the
+// accessors a host reaches it through are the checked tier over the VM's own.
+typedef struct GabArgs Args;
+
+// A body written in C rather than in bytecode, which is both a builtin type's
+// method and a host extern. Answers false when the run must unwind.
+//
+// One signature for both, so OP_CALL has a single native path: a builtin sits
+// in this slot itself, and a host body sits behind a wrapper that adapts it.
+typedef bool (*NativeFn)(Args *args);
+
 // One callable function. A unit's top level is one of these too, with an arity
 // of zero and no host body: it runs as frame zero, so the interpreter has a
 // single path and OP_RETURN means the same thing everywhere.
 typedef struct {
-    // NULL for an extern, whose body is 'native' instead. Exactly one of the
-    // two is set, and OP_CALL branches on which.
+    // NULL for a function whose body is C, which runs through 'native'
+    // instead. Exactly one of the two is set, and OP_CALL branches on which.
     Chunk *chunk;
 
-    GabExternFn native;
+    NativeFn native;
 
-    // The declaration an extern was bound to, for resolving a parameter index
-    // to its slot. Set only for an extern: a script function's frame is
-    // addressed by the code codegen emitted, which needs no signature at run
-    // time. Points into the environment's arena, so it outlives every compile.
+    // The host body, for an extern. Held apart from 'native' because a host
+    // writes to the GabExternFn signature, which knows nothing of a VM: what
+    // sits in 'native' is the wrapper that calls this one.
+    GabExternFn extern_body;
+
+    // The declaration a C body was written against, for resolving a parameter
+    // index to its slot. Set for an extern and for a builtin method; a script
+    // function's frame is addressed by the code codegen emitted, which needs no
+    // signature at run time. Points into the environment's arena, so it
+    // outlives every compile.
     const struct Symbol *extern_symbol;
 
     int arity;
@@ -74,6 +92,11 @@ GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype *)
 // outlive every compile, so the list holds borrowed pointers and frees none.
 #define type_list_item_free(item) ((void)(item))
 GAB_LIST(TypeList, type_list, const Type *)
+
+// The literals OP_LOAD_STR can load. Interned in the VM's pool, so equal text
+// is one String * and the list holds borrowed pointers.
+#define string_list_item_free(item) ((void)(item))
+GAB_LIST(StringList, string_list, String *)
 
 // One operand a unit must rewrite once linking tells it where its indices
 // landed. A unit numbers what it declares from zero, so an operand it encoded
@@ -127,9 +150,11 @@ typedef struct {
 
     FuncProtoList prototypes;
     TypeList types;
+    StringList strings;
 
     RelocationList proto_relocations;
     RelocationList type_relocations;
+    RelocationList string_relocations;
 
     ProtoBindingList bindings;
     ExternRequestList externs;
@@ -141,6 +166,7 @@ typedef struct {
     // Where each of the unit's types landed in the program's list, filled in by the
     // link check so that installing has nothing left that can fail.
     size_t *type_map;
+    size_t *string_map;
 } Unit;
 
 void unit_free(Unit *unit);
@@ -177,11 +203,22 @@ typedef struct {
     // run.
     FuncProtoList prototypes;
 
+    // Where the prototypes a unit loaded begin. The VM registers the builtin
+    // types' methods below this, once, before any unit loads -- so a loaded
+    // function's index is its position in the list, not its position among the
+    // functions its own module declared.
+    size_t builtin_proto_count;
+
     // The types OP_NEW allocates, indexed from the instruction. A Type * is 8
     // bytes and the constant pool holds 4-byte Values, so an allocation names
     // its type by index the same way a call names its prototype. Interning is
     // by pointer identity, which the type system already guarantees.
     TypeList heap_types;
+
+    // The literals OP_LOAD_STR loads, indexed from the instruction. A String *
+    // is 8 bytes, so a literal names itself by index the way an allocation
+    // names its type.
+    StringList strings;
 
     // Every loaded unit's top level. See TopLevelList.
     TopLevelList top_levels;

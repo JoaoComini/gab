@@ -1160,27 +1160,28 @@ static ASTExpr *parse_precedence(Parser *parser, int min_precedence) {
 
 static ASTExpr *parse_primary(Parser *parser) {
     Span span = parser_span(parser);
-
     switch (parser->current.type) {
+
     case TOKEN_INT: {
-        char *temp = string_ref_to_cstr(parser->current.lexeme);
-        long value = strtol(temp, NULL, 10);
-        free(temp);
+        int32_t value = parser->current.value.as_int;
 
         parser_next_token(parser); // eat integer
 
-        Literal lit = {.kind = TYPE_INT, .as_int = value};
-        return ast_literal_expr_create(span, lit);
+        return ast_literal_expr_create(span, (Literal){.kind = TYPE_INT, .as_int = value});
     }
     case TOKEN_FLOAT: {
-        char *temp = string_ref_to_cstr(parser->current.lexeme);
-        double value = strtod(temp, NULL);
-        free(temp);
+        float value = parser->current.value.as_float;
 
         parser_next_token(parser); // eat float
 
-        Literal lit = {.kind = TYPE_FLOAT, .as_float = value};
-        return ast_literal_expr_create(span, lit);
+        return ast_literal_expr_create(span, (Literal){.kind = TYPE_FLOAT, .as_float = value});
+    }
+    case TOKEN_STRING: {
+        String *text = parser->current.value.as_string;
+
+        parser_next_token(parser); // eat string
+
+        return ast_literal_expr_create(span, (Literal){.kind = TYPE_STRING, .as_string = text});
     }
     case TOKEN_TRUE: {
         parser_next_token(parser);

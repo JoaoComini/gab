@@ -13,6 +13,10 @@ typedef enum {
     TYPE_INT,
     TYPE_FLOAT,
     TYPE_BOOL,
+
+    // A header by value: the address of the characters and their count. Nominal
+    // rather than structural, so it is interned once like the other builtins.
+    TYPE_STRING,
     TYPE_STRUCT,
     TYPE_POINTER,
     TYPE_UNKNOWN,
