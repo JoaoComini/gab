@@ -5,6 +5,7 @@
 #include "string/string.h"
 #include "symbol_table.h"
 #include "vm/chunk.h"
+#include "vm/interp.h"
 #include "vm/opcode.h"
 #include "vm/vm.h"
 
@@ -140,7 +141,8 @@ bool link_check(Program *program, Unit *unit, Diagnostics *diagnostics) {
             return false;
         }
 
-        unit->prototypes.data[request->local_index]->native = native;
+        unit->prototypes.data[request->local_index]->extern_body = native;
+        unit->prototypes.data[request->local_index]->native = vm_call_extern;
     }
 
     return true;

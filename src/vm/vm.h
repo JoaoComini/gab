@@ -154,10 +154,16 @@ typedef struct VM {
     VmError error;
 } VM;
 
-// One extern call's view of the frame it was called with. Opaque to a host,
-// which reaches its arguments through the gab_arg_get_* accessors.
+// One C body's view of the frame it was called with, shared by a builtin
+// method and a host extern. Opaque to a host, which reaches its arguments
+// through the gab_arg_get_* accessors; the VM's own bodies read the same slots
+// through the args_* ones.
 struct GabArgs {
     VM *vm;
+
+    // The function being called, which is what the native wrapper reads to find
+    // the host body it stands in front of.
+    const FuncPrototype *proto;
 
     // The declaration this call was made against, which is what turns a
     // parameter index into a slot and says how wide the return value is.

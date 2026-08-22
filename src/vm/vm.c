@@ -2,13 +2,13 @@
 
 #include "arena.h"
 #include "ast/ast.h"
-#include "gab.h"
 #include "lexer.h"
 #include "object.h"
 #include "parser.h"
 #include "scope.h"
 #include "string/string.h"
 #include "type.h"
+#include "vm/args.h"
 #include "vm/chunk.h"
 #include "vm/codegen.h"
 #include "vm/constant_pool.h"
@@ -90,13 +90,14 @@ static void program_free(Program *program) {
     top_level_list_free(&program->top_levels);
 }
 
-// 's.len()'. Reads the count the receiver's header already carries, which is
-// what a string argument's accessor hands back.
-static void string_len(GabArgs *args) {
-    int32_t length = 0;
+// 's.len()'. Reads the count the receiver's header already carries.
+//
+// Unchecked: the signature this reads against is the one registered below, so
+// there is no host declaration for it to disagree with.
+static bool string_len(Args *args) {
+    args_return_int(args, args_string(args, 0).length);
 
-    gab_arg_get_string(args, 0, &length);
-    gab_return_int(args, length);
+    return true;
 }
 
 // The methods a builtin type answers, registered the way a host registers an
@@ -106,7 +107,7 @@ static void string_len(GabArgs *args) {
 // here instead of a case in the resolver and another in codegen. It costs a
 // call where an instruction would do; nothing yet makes that worth a second
 // mechanism.
-static void register_builtin_method(VM *vm, Type *receiver, const char *name, GabExternFn body,
+static void register_builtin_method(VM *vm, Type *receiver, const char *name, NativeFn body,
                                     Type *return_type) {
     Arena *arena = vm->env.arena;
 

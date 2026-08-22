@@ -88,19 +88,24 @@ bool gab_extern(GabVM *vm, const char *module, const char *name, GabExternFn fn,
 // Reading an extern's arguments. The index counts declared parameters from
 // zero, and a receiver is parameter zero for a method.
 //
-// The type must be the one the script declared: a slot carries no tag, so
-// reading an int as a float reinterprets the bytes rather than converting them.
-// That is the same contract gab_arg_int and friends answer to from the other
-// side, checked there against the signature and here against nothing — an
-// extern is trusted about its own declaration.
+// The type must be the one the script declared, and the index must name a
+// parameter the declaration has: a slot carries no tag, so reading an int as a
+// float reinterprets the bytes rather than converting them.
+//
+// Neither is reported back. An extern declares its signature in script and
+// implements it in C, so an access disagreeing with that signature is a bug in
+// one of the two halves and has no recovery a host could be handed — it trips
+// an assertion instead, and a zero returned in its place would let the misread
+// travel on as data. A release build compiles the assertion out and performs
+// the access as written.
 int32_t gab_arg_get_int(GabArgs *args, int index);
 float gab_arg_get_float(GabArgs *args, int index);
 bool gab_arg_get_bool(GabArgs *args, int index);
 
 // Copies a struct argument out into the host's own storage. 'size' is what the
-// host expects; nothing is copied if it does not match what the parameter
-// occupies, which is the one place an extern's ABI can be got wrong.
-bool gab_arg_get_struct(GabArgs *args, int index, void *out, size_t size);
+// host expects, and must be what the parameter occupies — the one place an
+// extern's ABI can be got wrong.
+void gab_arg_get_struct(GabArgs *args, int index, void *out, size_t size);
 
 // The address a pointer argument holds, for a '*T' or 'ref T' parameter. The
 // object belongs to the caller for the duration of the call: an extern reads
@@ -119,7 +124,7 @@ void *gab_arg_get_pointer(GabArgs *args, int index);
 void gab_return_int(GabArgs *args, int32_t value);
 void gab_return_float(GabArgs *args, float value);
 void gab_return_bool(GabArgs *args, bool value);
-bool gab_return_struct(GabArgs *args, const void *data, size_t size);
+void gab_return_struct(GabArgs *args, const void *data, size_t size);
 void gab_return_pointer(GabArgs *args, void *pointer);
 
 // Fails the run from inside an extern. The message is copied, and reaches the

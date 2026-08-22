@@ -326,25 +326,26 @@ void vm_fail(VM *vm, VmRunStatus status, const char *message) {
     snprintf(vm->error.message, sizeof(vm->error.message), "%s", message);
 }
 
-// Runs an extern's host body against the frame at 'base'. Returns false when
-// the run must unwind: either nothing was ever bound, or the body reported
-// failure.
+// Adapts a host body to the native signature. A host writes to GabExternFn,
+// which reports failure by setting a flag rather than by returning it.
+bool vm_call_extern(Args *args) {
+    args->proto->extern_body(args);
+
+    // gab_error set both the status and the message on its way through, so
+    // there is nothing to carry across the boundary here.
+    return !args->failed;
+}
+
+// Runs a C body against the frame at 'base'. Returns false when the run must
+// unwind, which is the body reporting failure.
 //
 // No frame is pushed. The body reads and writes slots directly, so there is
 // nothing for a frame to track — and a C function that cannot be interpreted
 // has no instruction pointer to return to.
-static bool vm_call_extern(VM *vm, const FuncPrototype *proto, size_t base) {
-    GabArgs args = {.vm = vm, .symbol = proto->extern_symbol, .base = base, .failed = false};
+static bool vm_call_native(VM *vm, const FuncPrototype *proto, size_t base) {
+    Args args = {.vm = vm, .proto = proto, .symbol = proto->extern_symbol, .base = base, .failed = false};
 
-    proto->native(&args);
-
-    if (args.failed) {
-        // gab_error set both the status and the message on its way through, so
-        // there is nothing to carry across the boundary here.
-        return false;
-    }
-
-    return true;
+    return proto->native(&args);
 }
 
 // Whether an int division or remainder may go ahead, failing the run when it
@@ -630,11 +631,11 @@ static void vm_run_loop(VM *vm) {
                 // arguments the caller already placed above dest.
                 size_t base = frame->base + dest * VM_SLOT_SIZE;
 
-                // An extern runs in the caller's frame rather than pushing one:
+                // A C body runs in the caller's frame rather than pushing one:
                 // there is no bytecode to interpret, and its arguments are
                 // already where a callee's would be.
                 if (proto->native) {
-                    if (!vm_call_extern(vm, proto, base)) {
+                    if (!vm_call_native(vm, proto, base)) {
                         vm_unwind(vm);
                     }
 
@@ -836,7 +837,7 @@ VmRunStatus interp_run_extern(VM *vm, const FuncPrototype *proto, size_t base) {
 
     // Nothing to unwind on failure: no frame was pushed, and an extern owns
     // none of the caller's slots.
-    vm_call_extern(vm, proto, base);
+    vm_call_native(vm, proto, base);
 
     return vm->error.status;
 }

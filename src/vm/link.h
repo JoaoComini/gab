@@ -30,20 +30,38 @@ GAB_LIST(FrameRefList, frame_ref_list, FrameRef)
 typedef struct GabArgs GabArgs;
 typedef void (*GabExternFn)(GabArgs *args);
 
+// What the VM calls the same struct. The tag is the host's because gab.h
+// declares it opaque under that name and must stay self-contained; the
+// accessors a host reaches it through are the checked tier over the VM's own.
+typedef struct GabArgs Args;
+
+// A body written in C rather than in bytecode, which is both a builtin type's
+// method and a host extern. Answers false when the run must unwind.
+//
+// One signature for both, so OP_CALL has a single native path: a builtin sits
+// in this slot itself, and a host body sits behind a wrapper that adapts it.
+typedef bool (*NativeFn)(Args *args);
+
 // One callable function. A unit's top level is one of these too, with an arity
 // of zero and no host body: it runs as frame zero, so the interpreter has a
 // single path and OP_RETURN means the same thing everywhere.
 typedef struct {
-    // NULL for an extern, whose body is 'native' instead. Exactly one of the
-    // two is set, and OP_CALL branches on which.
+    // NULL for a function whose body is C, which runs through 'native'
+    // instead. Exactly one of the two is set, and OP_CALL branches on which.
     Chunk *chunk;
 
-    GabExternFn native;
+    NativeFn native;
 
-    // The declaration an extern was bound to, for resolving a parameter index
-    // to its slot. Set only for an extern: a script function's frame is
-    // addressed by the code codegen emitted, which needs no signature at run
-    // time. Points into the environment's arena, so it outlives every compile.
+    // The host body, for an extern. Held apart from 'native' because a host
+    // writes to the GabExternFn signature, which knows nothing of a VM: what
+    // sits in 'native' is the wrapper that calls this one.
+    GabExternFn extern_body;
+
+    // The declaration a C body was written against, for resolving a parameter
+    // index to its slot. Set for an extern and for a builtin method; a script
+    // function's frame is addressed by the code codegen emitted, which needs no
+    // signature at run time. Points into the environment's arena, so it
+    // outlives every compile.
     const struct Symbol *extern_symbol;
 
     int arity;
