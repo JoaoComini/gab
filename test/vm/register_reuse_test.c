@@ -9,13 +9,7 @@
 
 // The frame size codegen settled on for the given function, which is the number
 // register reuse is supposed to hold flat as a function grows.
-//
-// Counted from the first prototype the script declared: the builtin types'
-// methods are registered ahead of every load, so position in the list is not
-// position in the script.
 static int func_max_registers(VM *vm, size_t index) {
-    index += vm->program.builtin_proto_count;
-
     assert(index < vm->program.prototypes.size);
 
     return vm->program.prototypes.data[index]->max_registers;

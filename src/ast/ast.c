@@ -1288,7 +1288,7 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
                 .return_type = return_type,
                 .params = NULL,
                 .param_count = 0,
-                .proto_index = SYMBOL_FUNC_NO_PROTO,
+                .func_index = SYMBOL_FUNC_NO_BODY,
             },
     };
 

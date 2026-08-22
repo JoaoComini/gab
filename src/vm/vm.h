@@ -161,10 +161,6 @@ typedef struct VM {
 struct GabArgs {
     VM *vm;
 
-    // The function being called, which is what the native wrapper reads to find
-    // the host body it stands in front of.
-    const FuncPrototype *proto;
-
     // The declaration this call was made against, which is what turns a
     // parameter index into a slot and says how wide the return value is.
     const struct Symbol *symbol;
@@ -172,11 +168,6 @@ struct GabArgs {
     // Byte offset of the frame's slot 0, which is where the return value goes;
     // the arguments follow it, laid out exactly as a script callee's would be.
     size_t base;
-
-    // Set when the extern reported failure, which unwinds the run once it
-    // returns. A C function cannot longjmp out of the interpreter safely, so
-    // the failure is recorded and acted on at the boundary.
-    bool failed;
 };
 
 // Where register r of the current frame begins, and where slot i of the stack

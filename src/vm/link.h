@@ -35,34 +35,33 @@ typedef void (*GabExternFn)(GabArgs *args);
 // accessors a host reaches it through are the checked tier over the VM's own.
 typedef struct GabArgs Args;
 
-// A body written in C rather than in bytecode, which is both a builtin type's
-// method and a host extern. Answers false when the run must unwind.
+// A function whose body is C rather than bytecode: a host extern, and a
+// builtin type's method, which the VM registers the same way.
 //
-// One signature for both, so OP_CALL has a single native path: a builtin sits
-// in this slot itself, and a host body sits behind a wrapper that adapts it.
-typedef bool (*NativeFn)(Args *args);
-
-// One callable function. A unit's top level is one of these too, with an arity
-// of zero and no host body: it runs as frame zero, so the interpreter has a
-// single path and OP_RETURN means the same thing everywhere.
+// Separate from FuncPrototype because the two share nothing a call needs. This
+// has no chunk to interpret, no registers to reserve, and no frame to push --
+// its arguments are already laid out where a callee's would be, so it runs in
+// the caller's frame. Keeping them apart is what lets OP_CALL_EXTERN index
+// straight to a body instead of testing which kind it found.
 typedef struct {
-    // NULL for a function whose body is C, which runs through 'native'
-    // instead. Exactly one of the two is set, and OP_CALL branches on which.
+    GabExternFn body;
+
+    // The declaration the body was written against, which is what turns a
+    // parameter index into a slot and says how wide the return value is.
+    // Points into the environment's arena, so it outlives every compile.
+    const struct Symbol *symbol;
+} ExternProto;
+
+#define extern_proto_list_item_free(item) ((void)(item))
+GAB_LIST(ExternProtoList, extern_proto_list, ExternProto)
+
+// One function compiled to bytecode. A unit's top level is one of these too,
+// with an arity of zero: it runs as frame zero, so the interpreter has a single
+// path and OP_RETURN means the same thing everywhere.
+//
+// A function whose body is C is an ExternProto instead, in its own table.
+typedef struct {
     Chunk *chunk;
-
-    NativeFn native;
-
-    // The host body, for an extern. Held apart from 'native' because a host
-    // writes to the GabExternFn signature, which knows nothing of a VM: what
-    // sits in 'native' is the wrapper that calls this one.
-    GabExternFn extern_body;
-
-    // The declaration a C body was written against, for resolving a parameter
-    // index to its slot. Set for an extern and for a builtin method; a script
-    // function's frame is addressed by the code codegen emitted, which needs no
-    // signature at run time. Points into the environment's arena, so it
-    // outlives every compile.
-    const struct Symbol *extern_symbol;
 
     int arity;
     int max_registers;
@@ -112,10 +111,13 @@ typedef struct {
 #define relocation_list_item_free(item) ((void)(item))
 GAB_LIST(RelocationList, relocation_list, Relocation)
 
-// A prototype this unit declared, and the symbol to stamp with its index once
+// A function this unit declared, and the symbol to stamp with its index once
 // linking makes that index absolute. Stamping at link rather than during
 // codegen is what keeps a compile that fails from leaving a symbol pointing at
-// a prototype nothing installed.
+// a function nothing installed.
+//
+// Which table the index is into is the symbol's own 'is_extern': a declaration
+// is one kind or the other before codegen reserves anything for it.
 typedef struct {
     struct Symbol *symbol;
     size_t local_index;
@@ -149,10 +151,12 @@ typedef struct {
     FuncPrototype top_level;
 
     FuncProtoList prototypes;
+    ExternProtoList extern_protos;
     TypeList types;
     StringList strings;
 
     RelocationList proto_relocations;
+    RelocationList extern_relocations;
     RelocationList type_relocations;
     RelocationList string_relocations;
 
@@ -203,11 +207,12 @@ typedef struct {
     // run.
     FuncProtoList prototypes;
 
-    // Where the prototypes a unit loaded begin. The VM registers the builtin
-    // types' methods below this, once, before any unit loads -- so a loaded
-    // function's index is its position in the list, not its position among the
-    // functions its own module declared.
-    size_t builtin_proto_count;
+    // The bodies OP_CALL_EXTERN indexes, numbered in their own space. A unit's
+    // externs and its script functions are counted separately, so neither
+    // numbering leaves gaps for the other -- and the builtin methods the VM
+    // registers before any unit loads sit at the bottom of this one without
+    // displacing a single script function's index.
+    ExternProtoList extern_protos;
 
     // The types OP_NEW allocates, indexed from the instruction. A Type * is 8
     // bytes and the constant pool holds 4-byte Values, so an allocation names
@@ -225,7 +230,7 @@ typedef struct {
 
     // Host bodies bound by name, resolved against a unit's 'extern'
     // declarations as it loads. See ExternBinding.
-    ExternBindingList externs;
+    ExternBindingList extern_bindings;
 } Program;
 
 // Whether this unit could be installed. Reports through the diagnostics sink if

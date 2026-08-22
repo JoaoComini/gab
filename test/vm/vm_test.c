@@ -14,16 +14,10 @@
 #include <assert.h>
 #include <string.h>
 
-// How many prototypes the loaded units contributed, and the nth of them. The
-// builtin types' methods are registered before any load, so a script's first
-// function is not the list's first entry.
-static size_t loaded_protos(const VM *vm) {
-    return vm->program.prototypes.size - vm->program.builtin_proto_count;
-}
+// How many prototypes the loaded units contributed, and the nth of them.
+static size_t loaded_protos(const VM *vm) { return vm->program.prototypes.size; }
 
-static FuncPrototype *loaded_proto(const VM *vm, size_t index) {
-    return vm->program.prototypes.data[vm->program.builtin_proto_count + index];
-}
+static FuncPrototype *loaded_proto(const VM *vm, size_t index) { return vm->program.prototypes.data[index]; }
 
 static void test_vm_execute() {
     VM *vm = vm_create();

@@ -27,7 +27,7 @@ GAB_HASH_MAP(SlotMap, slot_map, Symbol *, unsigned int)
 #define SLOT_MAP_INITIAL_CAPACITY 16
 
 // A function this unit declared, and the index it was given within the unit.
-// The symbol's own proto_index cannot hold it: that field is absolute, and a
+// The symbol's own func_index cannot hold it: that field is absolute, and a
 // call to a function an earlier unit compiled reads it expecting an index this
 // unit must not rebase. The two are told apart by which of them has the answer.
 #define proto_map_hash(key) (size_t)key
@@ -263,9 +263,11 @@ Unit *codegen_generate(ASTScript *script, Arena *arena, StringPool *strings, Dia
     }
 
     unit->prototypes = func_proto_list_create();
+    unit->extern_protos = extern_proto_list_create();
     unit->types = type_list_create();
     unit->strings = string_list_create();
     unit->proto_relocations = relocation_list_create();
+    unit->extern_relocations = relocation_list_create();
     unit->type_relocations = relocation_list_create();
     unit->string_relocations = relocation_list_create();
     unit->bindings = proto_binding_list_create();
@@ -981,25 +983,37 @@ static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast) {
     codegen_patch_jump(state, end, OP_JMP, 0);
 }
 
-// Claims the prototype index a function's OP_CALL will encode, without
-// generating anything. Reserving it before any body is generated is what lets a
-// body call a function whose own body has not been reached yet — the recursion
-// case, and now the forward-call case the resolver's hoisting admits.
+// Claims the index a function's call will encode, without generating anything.
+// Reserving it before any body is generated is what lets a body call a function
+// whose own body has not been reached yet — the recursion case, and now the
+// forward-call case the resolver's hoisting admits.
 //
-// The index is the unit's own. What OP_CALL finally encodes is this plus the
-// base linking assigns, which is why every call emitted against it is recorded
-// for relocation.
+// An extern is counted in its own space, since OP_CALL_EXTERN indexes a
+// different table: numbering both from one counter would leave each table as
+// sparse as the other is full.
+//
+// The index is the unit's own. What the call finally encodes is this plus the
+// base linking assigns to that table, which is why every call emitted against
+// it is recorded for relocation.
 static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast) {
     if (!ast->symbol || proto_map_lookup(state->local_protos, ast->symbol)) {
         return;
     }
 
-    FuncPrototype *proto = arena_alloc(state->arena, sizeof(FuncPrototype));
-    *proto = (FuncPrototype){0};
+    size_t local;
 
-    func_proto_list_add(&state->unit->prototypes, proto);
+    if (ast->symbol->func.is_extern) {
+        extern_proto_list_add(&state->unit->extern_protos, (ExternProto){0});
 
-    size_t local = state->unit->prototypes.size - 1;
+        local = state->unit->extern_protos.size - 1;
+    } else {
+        FuncPrototype *proto = arena_alloc(state->arena, sizeof(FuncPrototype));
+        *proto = (FuncPrototype){0};
+
+        func_proto_list_add(&state->unit->prototypes, proto);
+
+        local = state->unit->prototypes.size - 1;
+    }
 
     proto_map_insert(state->local_protos, ast->symbol, local);
     proto_binding_list_add(&state->unit->bindings,
@@ -1023,22 +1037,17 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         return;
     }
 
-    size_t proto_index = *local;
+    size_t func_index = *local;
 
     // An extern emits no code and carries no body yet. Which host function it
     // binds to is a question only a VM can answer, so the unit records the ask
     // and linking either answers all of them or installs nothing.
     if (ast->symbol->func.is_extern) {
-        *state->unit->prototypes.data[proto_index] = (FuncPrototype){
-            .extern_symbol = ast->symbol,
-            .arity = (int)ast->params.size,
-            .max_registers = 0,
-            .refs = frame_ref_list_create(),
-        };
+        state->unit->extern_protos.data[func_index] = (ExternProto){.symbol = ast->symbol};
 
         extern_request_list_add(
             &state->unit->externs,
-            (ExternRequest){.local_index = proto_index, .symbol = ast->symbol, .span = stmt->span});
+            (ExternRequest){.local_index = func_index, .symbol = ast->symbol, .span = stmt->span});
 
         return;
     }
@@ -1081,6 +1090,26 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         func_next_reg += type_slot_count(param->var.type);
     }
 
+    // Parameters are placed rather than allocated, so codegen_alloc_slots never
+    // sees them and its bound does not apply. A signature wide enough to run
+    // past the frame has to be caught here: past this point a parameter's slot
+    // number is an operand no instruction can encode, and the frame it asks for
+    // is one no stack can reserve.
+    if (func_next_reg > VM_MAX_FRAME_SLOTS) {
+        diag_error(state->diagnostics, GAB_ERR_CODEGEN, stmt->span,
+                   "function signature is too large for a frame");
+
+        state->failed = true;
+
+        chunk_free(func_chunk);
+        frame_ref_list_free(&func_state.frame_refs);
+        owned_list_free(&func_state.owned);
+        owned_list_free(&func_state.temporaries);
+        slot_map_destroy(func_state.slots);
+
+        return;
+    }
+
     func_state.next_reg = func_next_reg;
     func_state.max_reg = func_next_reg;
 
@@ -1096,7 +1125,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         chunk_add_instruction(func_chunk, VM_ENCODE_R(OP_RETURN, 0, 0, 0));
     }
 
-    *state->unit->prototypes.data[proto_index] = (FuncPrototype){
+    *state->unit->prototypes.data[func_index] = (FuncPrototype){
         .chunk = func_chunk,
         // The receiver is parameter zero, so it counts.
         .arity = ast->params.size + (ast->receiver ? 1 : 0),
@@ -1206,23 +1235,27 @@ static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node) {
     return codegen_slot_of(state, node->symbol);
 }
 
-// The OP_CALL itself, shared by a plain call and a method call: by this point
-// the two have laid out an identical block and differ in nothing the
+// The call instruction itself, shared by a plain call and a method call: by
+// this point the two have laid out an identical block and differ in nothing the
 // instruction records.
 //
-// I-type, so the prototype index gets the 17-bit field. It is not a register,
-// and while it rode in an 8-bit one a single VM could hold only 255 functions
-// across every module it ever loaded. No argument count is encoded: the
-// callee's frame is based at dest, so the arguments written above dest already
-// are its parameters, and its size comes from the prototype.
+// Which opcode is which table the callee lives in, and that is the declaration's
+// own 'is_extern' rather than anything this has to work out: a C body is reached
+// by OP_CALL_EXTERN and a bytecode one by OP_CALL.
+//
+// I-type, so the index gets the 17-bit field. It is not a register, and while it
+// rode in an 8-bit one a single VM could hold only 255 functions across every
+// module it ever loaded. No argument count is encoded: the callee's frame is
+// based at dest, so the arguments written above dest already are its parameters,
+// and its size comes from the prototype.
 static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symbol *callee, Span span) {
     // A function this unit declared is numbered by the unit and rebased at link;
     // one an earlier unit declared already has its final index and must be left
     // alone. Which it is, is which of the two knows the answer.
     const size_t *local = proto_map_lookup(state->local_protos, (Symbol *)callee);
-    size_t index = local ? *local : callee->func.proto_index;
+    size_t index = local ? *local : callee->func.func_index;
 
-    if (index == SYMBOL_FUNC_NO_PROTO) {
+    if (index == SYMBOL_FUNC_NO_BODY) {
         if (!state->failed) {
             diag_error(state->diagnostics, GAB_ERR_CODEGEN, span, "call to a function with no body");
         }
@@ -1231,9 +1264,11 @@ static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symb
         return;
     }
 
+    bool is_extern = callee->func.is_extern;
+
     // Only an absolute index can be bounds-checked here. A unit-local one is
     // checked at link, where the base it will be given is known.
-    if (!local && index > VM_MAX_PROTOTYPES) {
+    if (!local && index > (is_extern ? VM_MAX_EXTERN_PROTOS : VM_MAX_PROTOTYPES)) {
         if (!state->failed) {
             diag_error(state->diagnostics, GAB_ERR_CODEGEN, span, "too many functions in one program");
         }
@@ -1242,10 +1277,11 @@ static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symb
         return;
     }
 
-    size_t offset = chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_CALL, dest, (unsigned int)index));
+    size_t offset = chunk_add_instruction(
+        state->chunk, VM_ENCODE_I(is_extern ? OP_CALL_EXTERN : OP_CALL, dest, (unsigned int)index));
 
     if (local) {
-        relocation_list_add(&state->unit->proto_relocations,
+        relocation_list_add(is_extern ? &state->unit->extern_relocations : &state->unit->proto_relocations,
                             (Relocation){.chunk = state->chunk, .offset = offset});
     }
 }

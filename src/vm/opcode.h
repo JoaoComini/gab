@@ -87,6 +87,15 @@ typedef enum {
     OP_JMP_IF_TRUE,
     OP_CALL,
 
+    // Calls extern_protos[kx], whose body is C. I-type like OP_CALL, but into
+    // the other table: the two are numbered separately, so the same kx names a
+    // different function in each.
+    //
+    // No frame is pushed. A C body has no bytecode to interpret and no
+    // instruction pointer to return to, and its arguments are already laid out
+    // where a callee's would be, so it runs in the caller's frame.
+    OP_CALL_EXTERN,
+
     // Allocates a heap object of heap_types[kx] into rd. I-type: a type index
     // is not a register.
     OP_NEW,
@@ -248,6 +257,11 @@ typedef enum {
 // A prototype index rides in OP_CALL's 17-bit I-type field, so it is bounded
 // like a constant index rather than like a register.
 #define VM_MAX_PROTOTYPES VM_MAX_CONSTANTS
+
+// An extern index rides in OP_CALL_EXTERN's 17-bit I-type field, and is its
+// own space: a program may hold this many extern bodies and that many
+// prototypes, neither counting against the other.
+#define VM_MAX_EXTERN_PROTOS VM_MAX_CONSTANTS
 
 // A type index rides in OP_NEW's 17-bit I-type field, for the same reason.
 #define VM_MAX_HEAP_TYPES VM_MAX_CONSTANTS

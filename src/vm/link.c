@@ -37,9 +37,11 @@ void unit_free(Unit *unit) {
 
     func_proto_free(&unit->top_level);
     func_proto_list_free(&unit->prototypes);
+    extern_proto_list_free(&unit->extern_protos);
     type_list_free(&unit->types);
     string_list_free(&unit->strings);
     relocation_list_free(&unit->proto_relocations);
+    relocation_list_free(&unit->extern_relocations);
     relocation_list_free(&unit->type_relocations);
     relocation_list_free(&unit->string_relocations);
     proto_binding_list_free(&unit->bindings);
@@ -78,8 +80,8 @@ static void remap_indices(const RelocationList *relocations, const size_t *index
 // The host body bound to a name, or NULL if none is. Both are interned, so
 // identity is the comparison.
 static GabExternFn find_extern(const Program *program, const Symbol *symbol) {
-    for (size_t i = 0; i < program->externs.size; i++) {
-        const ExternBinding *binding = &program->externs.data[i];
+    for (size_t i = 0; i < program->extern_bindings.size; i++) {
+        const ExternBinding *binding = &program->extern_bindings.data[i];
 
         if (binding->name == symbol->func.name && binding->module == symbol->func.module) {
             return binding->fn;
@@ -98,6 +100,11 @@ static GabExternFn find_extern(const Program *program, const Symbol *symbol) {
 bool link_check(Program *program, Unit *unit, Diagnostics *diagnostics) {
     if (program->prototypes.size + unit->prototypes.size > VM_MAX_PROTOTYPES) {
         diag_error(diagnostics, GAB_ERR_CODEGEN, (Span){0}, "too many functions in one program");
+        return false;
+    }
+
+    if (program->extern_protos.size + unit->extern_protos.size > VM_MAX_EXTERN_PROTOS) {
+        diag_error(diagnostics, GAB_ERR_CODEGEN, (Span){0}, "too many extern functions in one program");
         return false;
     }
 
@@ -133,16 +140,15 @@ bool link_check(Program *program, Unit *unit, Diagnostics *diagnostics) {
 
     for (size_t i = 0; i < unit->externs.size; i++) {
         const ExternRequest *request = &unit->externs.data[i];
-        GabExternFn native = find_extern(program, request->symbol);
+        GabExternFn body = find_extern(program, request->symbol);
 
-        if (!native) {
+        if (!body) {
             diag_error(diagnostics, GAB_ERR_CODEGEN, request->span,
                        "extern function '%s' was never registered", request->symbol->func.name->data);
             return false;
         }
 
-        unit->prototypes.data[request->local_index]->extern_body = native;
-        unit->prototypes.data[request->local_index]->native = vm_call_extern;
+        unit->extern_protos.data[request->local_index].body = body;
     }
 
     return true;
@@ -154,9 +160,14 @@ bool link_check(Program *program, Unit *unit, Diagnostics *diagnostics) {
 // every question that could have refused the unit has been asked.
 void link_install(Program *program, Unit *unit) {
     size_t proto_base = program->prototypes.size;
+    size_t extern_base = program->extern_protos.size;
 
     for (size_t i = 0; i < unit->prototypes.size; i++) {
         func_proto_list_add(&program->prototypes, unit->prototypes.data[i]);
+    }
+
+    for (size_t i = 0; i < unit->extern_protos.size; i++) {
+        extern_proto_list_add(&program->extern_protos, unit->extern_protos.data[i]);
     }
 
     // Interned against what the program already holds, so a type two units both
@@ -200,14 +211,20 @@ void link_install(Program *program, Unit *unit) {
     }
 
     relocate(&unit->proto_relocations, proto_base);
+    relocate(&unit->extern_relocations, extern_base);
     remap_indices(&unit->type_relocations, unit->type_map);
     remap_indices(&unit->string_relocations, unit->string_map);
 
     // Last, because a symbol stamped with an index is a symbol a later compile
-    // will call through: nothing may carry one until the prototype it names is
+    // will call through: nothing may carry one until the function it names is
     // installed.
+    //
+    // Which base applies is the declaration's own kind, the same thing that
+    // decided which table codegen reserved in.
     for (size_t i = 0; i < unit->bindings.size; i++) {
         const ProtoBinding *binding = &unit->bindings.data[i];
-        binding->symbol->func.proto_index = proto_base + binding->local_index;
+        size_t base = binding->symbol->func.is_extern ? extern_base : proto_base;
+
+        binding->symbol->func.func_index = base + binding->local_index;
     }
 }
