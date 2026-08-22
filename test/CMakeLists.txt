@@ -22,6 +22,7 @@ set(
     vm/heap_test.c
     vm/ownership_test.c
     vm/string_test.c
+    builtin/string_method_test.c
     vm/neg_test.c
     vm/not_test.c
     vm/modulo_test.c
