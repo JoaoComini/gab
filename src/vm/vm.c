@@ -74,8 +74,8 @@ static void program_init(Program *program) {
     program->heap_types = type_list_create();
     program->strings = string_list_create();
     program->top_levels = top_level_list_create();
-    program->externs = extern_binding_list_create();
-    program->builtin_proto_count = 0;
+    program->extern_bindings = extern_binding_list_create();
+    program->extern_protos = extern_proto_list_create();
 }
 
 // Frees only what the program allocated for itself. The prototypes and types it
@@ -84,30 +84,30 @@ static void program_free(Program *program) {
     func_proto_list_free(&program->prototypes);
     type_list_free(&program->heap_types);
     string_list_free(&program->strings);
-    extern_binding_list_free(&program->externs);
+    extern_binding_list_free(&program->extern_bindings);
+    extern_proto_list_free(&program->extern_protos);
 
     // Frees each loaded unit's top-level chunk through the item_free hook.
     top_level_list_free(&program->top_levels);
 }
 
 // 's.len()'. Reads the count the receiver's header already carries.
-//
-// Unchecked: the signature this reads against is the one registered below, so
-// there is no host declaration for it to disagree with.
-static bool string_len(Args *args) {
-    args_return_int(args, args_string(args, 0).length);
+static void string_len(Args *args) { args_return_int(args, args_string(args, 0).length); }
 
-    return true;
-}
-
-// The methods a builtin type answers, registered the way a host registers an
-// extern: a Symbol in the type's method map, and a prototype carrying a C body.
+// The methods a builtin type answers, registered as an extern is: a Symbol in
+// the type's method map, and an entry in the table OP_CALL_EXTERN indexes. The
+// body is a GabExternFn because that is what a C body is here, whether the host
+// wrote it or the VM did.
 //
 // Registered rather than known to the compiler, so that adding one is an entry
 // here instead of a case in the resolver and another in codegen. It costs a
 // call where an instruction would do; nothing yet makes that worth a second
 // mechanism.
-static void register_builtin_method(VM *vm, Type *receiver, const char *name, NativeFn body,
+//
+// These land at the bottom of the extern table, before any unit loads. That
+// costs a unit's own externs nothing: the two tables are numbered apart, so a
+// script function's index is unaffected by how many builtins exist.
+static void register_builtin_method(VM *vm, Type *receiver, const char *name, GabExternFn body,
                                     Type *return_type) {
     Arena *arena = vm->env.arena;
 
@@ -124,18 +124,9 @@ static void register_builtin_method(VM *vm, Type *receiver, const char *name, Na
     // copies, and a method that only reads it wants no indirection.
     symbol->func.params[0] = receiver;
 
-    FuncPrototype *proto = arena_alloc(arena, sizeof(FuncPrototype));
-    *proto = (FuncPrototype){
-        .chunk = NULL,
-        .native = body,
-        .extern_symbol = symbol,
-        .arity = 1,
-        .max_registers = (int)(1 + (receiver->size + VM_SLOT_SIZE - 1) / VM_SLOT_SIZE),
-        .refs = frame_ref_list_create(),
-    };
+    symbol->func.func_index = vm->program.extern_protos.size;
 
-    symbol->func.func_index = vm->program.prototypes.size;
-    func_proto_list_add(&vm->program.prototypes, proto);
+    extern_proto_list_add(&vm->program.extern_protos, (ExternProto){.body = body, .symbol = symbol});
 
     type_add_method(arena, receiver, string_from_cstr(&vm->env.strings, name), symbol);
 }
@@ -162,11 +153,8 @@ VM *vm_create() {
     vm->instruction_pointer = 0;
     vm->error = (VmError){.status = VM_RUN_OK};
 
-    // After the program exists: a method's prototype goes in its list.
+    // After the program exists: a method's entry goes in its table.
     register_builtin_methods(vm);
-
-    // Everything after this point is a unit's.
-    vm->program.builtin_proto_count = vm->program.prototypes.size;
 
     return vm;
 }

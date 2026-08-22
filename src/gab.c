@@ -244,8 +244,6 @@ void gab_error(GabArgs *args, const char *message) {
     }
 
     vm_fail(args->vm, VM_RUN_ERR_EXTERN, message ? message : "the extern function failed");
-
-    args->failed = true;
 }
 
 bool gab_extern(GabVM *handle, const char *module, const char *name, GabExternFn fn, GabError *err) {
@@ -269,8 +267,8 @@ bool gab_extern(GabVM *handle, const char *module, const char *name, GabExternFn
         return false;
     }
 
-    for (size_t i = 0; i < vm->program.externs.size; i++) {
-        const ExternBinding *binding = &vm->program.externs.data[i];
+    for (size_t i = 0; i < vm->program.extern_bindings.size; i++) {
+        const ExternBinding *binding = &vm->program.extern_bindings.data[i];
 
         if (binding->name == interned_name && binding->module == interned_module) {
             gab_error_set(err, 0, 0, "an extern of this name is already bound in this module");
@@ -278,7 +276,7 @@ bool gab_extern(GabVM *handle, const char *module, const char *name, GabExternFn
         }
     }
 
-    extern_binding_list_add(&vm->program.externs,
+    extern_binding_list_add(&vm->program.extern_bindings,
                             (ExternBinding){.module = interned_module, .name = interned_name, .fn = fn});
 
     return true;
@@ -750,18 +748,39 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
 
     size_t func_index = fn->symbol->func.func_index;
 
-    if (func_index >= vm->program.prototypes.size) {
-        gab_error_set(err, 0, 0, "this function has no compiled body");
-        return GAB_ERR_RUNTIME;
-    }
+    // Which table the index is into is the declaration's own kind, the same
+    // thing codegen reserved against. An extern is bound rather than compiled,
+    // so a missing body is a missing binding for one and a missing chunk for
+    // the other.
+    bool is_extern = fn->symbol->func.is_extern;
 
-    const FuncPrototype *proto = vm->program.prototypes.data[func_index];
+    const ExternProto *extern_proto = NULL;
+    const FuncPrototype *proto = NULL;
 
-    // An extern is bound rather than compiled, so a missing body means a
-    // missing chunk for one and a missing binding for the other.
-    if (!proto->chunk && !proto->native) {
-        gab_error_set(err, 0, 0, "this function has no compiled body");
-        return GAB_ERR_RUNTIME;
+    if (is_extern) {
+        if (func_index >= vm->program.extern_protos.size) {
+            gab_error_set(err, 0, 0, "this function has no compiled body");
+            return GAB_ERR_RUNTIME;
+        }
+
+        extern_proto = &vm->program.extern_protos.data[func_index];
+
+        if (!extern_proto->body) {
+            gab_error_set(err, 0, 0, "this function has no compiled body");
+            return GAB_ERR_RUNTIME;
+        }
+    } else {
+        if (func_index >= vm->program.prototypes.size) {
+            gab_error_set(err, 0, 0, "this function has no compiled body");
+            return GAB_ERR_RUNTIME;
+        }
+
+        proto = vm->program.prototypes.data[func_index];
+
+        if (!proto->chunk) {
+            gab_error_set(err, 0, 0, "this function has no compiled body");
+            return GAB_ERR_RUNTIME;
+        }
     }
 
     // The call block goes above anything a module run left in frame zero, so a
@@ -779,7 +798,7 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
     memcpy(vm->stack + base + VM_SLOT_SIZE, call->args + VM_SLOT_SIZE, fn->arg_slots * VM_SLOT_SIZE);
 
     VmRunStatus status =
-        proto->native ? interp_run_extern(vm, proto, base) : interp_run_frame(vm, proto, base, 0);
+        is_extern ? interp_run_extern(vm, extern_proto, base) : interp_run_frame(vm, proto, base, 0);
 
     if (status != VM_RUN_OK) {
         gab_error_set(err, 0, 0, vm->error.message);

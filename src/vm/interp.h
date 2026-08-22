@@ -20,12 +20,12 @@ VmRunStatus interp_run_frame(VM *vm, const FuncPrototype *proto, size_t base, un
 // Runs an extern's host body against the block at 'base', for a host calling
 // one directly. No frame is pushed and no bytecode runs: an extern has none,
 // and its arguments are already laid out where a callee's would be.
-VmRunStatus interp_run_extern(VM *vm, const FuncPrototype *proto, size_t base);
+VmRunStatus interp_run_extern(VM *vm, const ExternProto *proto, size_t base);
 
-// The native body that stands in front of a host extern, adapting GabExternFn
-// to the signature OP_CALL dispatches through. Linking installs it as an
-// extern's 'native' once it has resolved the host body behind it.
-bool vm_call_extern(Args *args);
+// Runs an extern's C body against the frame at 'base', for OP_CALL_EXTERN and
+// for a host calling one directly. Answers false when the body reported a
+// failure and the run must unwind.
+bool vm_call_extern(VM *vm, const ExternProto *proto, size_t base);
 
 // Records why a run stopped, copying the message. The first failure wins: a
 // later one is a consequence of unwinding, not an independent problem. An

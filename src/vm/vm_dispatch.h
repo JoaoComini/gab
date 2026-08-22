@@ -193,6 +193,7 @@
         [OP_JMP_IF_FALSE] = &&OP_JMP_IF_FALSE_label,                                                         \
         [OP_JMP_IF_TRUE] = &&OP_JMP_IF_TRUE_label,                                                           \
         [OP_CALL] = &&OP_CALL_label,                                                                         \
+        [OP_CALL_EXTERN] = &&OP_CALL_EXTERN_label,                                                           \
         [OP_NEW] = &&OP_NEW_label,                                                                           \
         [OP_RELEASE] = &&OP_RELEASE_label,                                                                   \
         [OP_RETURN] = &&OP_RETURN_label,                                                                     \
