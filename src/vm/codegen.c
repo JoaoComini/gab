@@ -1090,6 +1090,26 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         func_next_reg += type_slot_count(param->var.type);
     }
 
+    // Parameters are placed rather than allocated, so codegen_alloc_slots never
+    // sees them and its bound does not apply. A signature wide enough to run
+    // past the frame has to be caught here: past this point a parameter's slot
+    // number is an operand no instruction can encode, and the frame it asks for
+    // is one no stack can reserve.
+    if (func_next_reg > VM_MAX_FRAME_SLOTS) {
+        diag_error(state->diagnostics, GAB_ERR_CODEGEN, stmt->span,
+                   "function signature is too large for a frame");
+
+        state->failed = true;
+
+        chunk_free(func_chunk);
+        frame_ref_list_free(&func_state.frame_refs);
+        owned_list_free(&func_state.owned);
+        owned_list_free(&func_state.temporaries);
+        slot_map_destroy(func_state.slots);
+
+        return;
+    }
+
     func_state.next_reg = func_next_reg;
     func_state.max_reg = func_next_reg;
 

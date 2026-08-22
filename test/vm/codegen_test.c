@@ -564,6 +564,33 @@ static void test_new_encodes_the_type_index_the_vm_holds() {
     test_program_free(&program);
 }
 
+// Parameters are placed at fixed slots rather than allocated, so the bound the
+// allocator enforces does not reach them. A signature wide enough to run past
+// the frame is refused: a struct parameter occupies its whole width, so a
+// plausible-looking parameter list can still ask for more slots than an operand
+// can name.
+static void test_a_signature_too_wide_for_a_frame_is_refused(void) {
+    char source[8192];
+    size_t at = 0;
+
+    at += (size_t)snprintf(source + at, sizeof(source) - at, "module test;\nstruct Big { ");
+
+    for (int i = 0; i < 7; i++) {
+        at += (size_t)snprintf(source + at, sizeof(source) - at, "f%d: int, ", i);
+    }
+
+    at += (size_t)snprintf(source + at, sizeof(source) - at, "last: int }\nfunc fat(");
+
+    // Eight slots each, and enough of them to pass what a frame addresses. The
+    // body allocates nothing, so nothing but the signature can trip the bound.
+    for (int i = 0; i < 40; i++) {
+        at += (size_t)snprintf(source + at, sizeof(source) - at, "%sp%d: Big", i ? ", " : "", i);
+    }
+
+    snprintf(source + at, sizeof(source) - at, ") { }\n");
+
+    assert(!test_codegens(source));
+}
 int main() {
     test_negated_literal_folds_to_one_load();
     test_negating_a_variable_emits_a_subtraction();
@@ -594,6 +621,8 @@ int main() {
     test_a_struct_write_through_a_pointer_is_one_instruction();
 
     test_new_encodes_the_type_index_the_vm_holds();
+
+    test_a_signature_too_wide_for_a_frame_is_refused();
 
     printf("codegen_test: all tests passed\n");
     return 0;
