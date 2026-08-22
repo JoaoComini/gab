@@ -394,6 +394,40 @@ static void test_a_long_extern_message_is_truncated(void) {
     gab_vm_free(vm);
 }
 
+// A call reaches the body its name declares, whichever kind that is. Externs
+// and script functions are numbered in separate spaces, so a unit that
+// interleaves them has two indices for every position: a call carrying the
+// wrong one would land on whatever shares its number in the other space.
+static void test_a_call_reaches_the_body_its_name_declares(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, "test", "twice", twice, &err));
+    assert(gab_extern(vm, "test", "negate", negate, &err));
+    assert(gab_load(vm, "<m>",
+                    "module test;\n"
+                    "extern func twice(x: int): int;\n"
+                    "func add_one(x: int): int { return x + 1; }\n"
+                    "extern func negate(b: bool): bool;\n"
+                    "func triple(x: int): int { return x * 3; }\n"
+                    "func mixed(x: int): int { return twice(add_one(triple(x))); }\n",
+                    &err));
+
+    GabFunc *fn = gab_lookup(vm, "test", "mixed", &err);
+    assert(fn);
+
+    GabCall *call = gab_call_init(fn, &err);
+    assert(gab_arg_int(call, 0, 2));
+
+    // 2 * 3 = 6, + 1 = 7, doubled = 14.
+    int32_t out = 0;
+    assert(gab_call(vm, call, &out, &err) == GAB_OK);
+    assert(out == 14);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
 int main(void) {
     test_an_extern_returns_to_its_caller();
     test_an_extern_may_return_nothing();
@@ -409,6 +443,7 @@ int main(void) {
     test_an_extern_may_not_have_a_body();
     test_a_plain_func_still_needs_a_body();
     test_an_extern_lives_in_its_module();
+    test_a_call_reaches_the_body_its_name_declares();
 
     printf("extern_test: all tests passed\n");
 
