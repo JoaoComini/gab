@@ -12,6 +12,7 @@
 #include "vm/interp.h"
 #include "vm/vm.h"
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -746,42 +747,19 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
         }
     }
 
+    // Which table the index is into is the declaration's own kind, the same
+    // thing codegen reserved against.
+    //
+    // Neither the index nor the body is checked. A unit whose function has no
+    // body, or whose extern nothing bound, is refused as it loads -- so a
+    // symbol reachable through gab_lookup was installed, and an installed index
+    // names a body in the table its kind selects.
+    bool is_extern = fn->symbol->func.is_extern;
     size_t func_index = fn->symbol->func.func_index;
 
-    // Which table the index is into is the declaration's own kind, the same
-    // thing codegen reserved against. An extern is bound rather than compiled,
-    // so a missing body is a missing binding for one and a missing chunk for
-    // the other.
-    bool is_extern = fn->symbol->func.is_extern;
-
-    const ExternProto *extern_proto = NULL;
-    const FuncPrototype *proto = NULL;
-
-    if (is_extern) {
-        if (func_index >= vm->program.extern_protos.size) {
-            gab_error_set(err, 0, 0, "this function has no compiled body");
-            return GAB_ERR_RUNTIME;
-        }
-
-        extern_proto = &vm->program.extern_protos.data[func_index];
-
-        if (!extern_proto->body) {
-            gab_error_set(err, 0, 0, "this function has no compiled body");
-            return GAB_ERR_RUNTIME;
-        }
-    } else {
-        if (func_index >= vm->program.prototypes.size) {
-            gab_error_set(err, 0, 0, "this function has no compiled body");
-            return GAB_ERR_RUNTIME;
-        }
-
-        proto = vm->program.prototypes.data[func_index];
-
-        if (!proto->chunk) {
-            gab_error_set(err, 0, 0, "this function has no compiled body");
-            return GAB_ERR_RUNTIME;
-        }
-    }
+    assert(func_index != SYMBOL_FUNC_NO_BODY && "a loaded function has a body");
+    assert(func_index < (is_extern ? vm->program.extern_protos.size : vm->program.prototypes.size) &&
+           "an installed index names a body in its own table");
 
     // The call block goes above anything a module run left in frame zero, so a
     // host call never overwrites top-level state it might want to read after.
@@ -797,8 +775,8 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
     // frame — based here — expects its parameters.
     memcpy(vm->stack + base + VM_SLOT_SIZE, call->args + VM_SLOT_SIZE, fn->arg_slots * VM_SLOT_SIZE);
 
-    VmRunStatus status =
-        is_extern ? interp_run_extern(vm, extern_proto, base) : interp_run_frame(vm, proto, base, 0);
+    VmRunStatus status = is_extern ? interp_run_extern(vm, &vm->program.extern_protos.data[func_index], base)
+                                   : interp_run_frame(vm, vm->program.prototypes.data[func_index], base, 0);
 
     if (status != VM_RUN_OK) {
         gab_error_set(err, 0, 0, vm->error.message);
