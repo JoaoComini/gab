@@ -27,7 +27,7 @@ GAB_HASH_MAP(SlotMap, slot_map, Symbol *, unsigned int)
 #define SLOT_MAP_INITIAL_CAPACITY 16
 
 // A function this unit declared, and the index it was given within the unit.
-// The symbol's own proto_index cannot hold it: that field is absolute, and a
+// The symbol's own func_index cannot hold it: that field is absolute, and a
 // call to a function an earlier unit compiled reads it expecting an index this
 // unit must not rebase. The two are told apart by which of them has the answer.
 #define proto_map_hash(key) (size_t)key
@@ -1023,13 +1023,13 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         return;
     }
 
-    size_t proto_index = *local;
+    size_t func_index = *local;
 
     // An extern emits no code and carries no body yet. Which host function it
     // binds to is a question only a VM can answer, so the unit records the ask
     // and linking either answers all of them or installs nothing.
     if (ast->symbol->func.is_extern) {
-        *state->unit->prototypes.data[proto_index] = (FuncPrototype){
+        *state->unit->prototypes.data[func_index] = (FuncPrototype){
             .extern_symbol = ast->symbol,
             .arity = (int)ast->params.size,
             .max_registers = 0,
@@ -1038,7 +1038,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
 
         extern_request_list_add(
             &state->unit->externs,
-            (ExternRequest){.local_index = proto_index, .symbol = ast->symbol, .span = stmt->span});
+            (ExternRequest){.local_index = func_index, .symbol = ast->symbol, .span = stmt->span});
 
         return;
     }
@@ -1096,7 +1096,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         chunk_add_instruction(func_chunk, VM_ENCODE_R(OP_RETURN, 0, 0, 0));
     }
 
-    *state->unit->prototypes.data[proto_index] = (FuncPrototype){
+    *state->unit->prototypes.data[func_index] = (FuncPrototype){
         .chunk = func_chunk,
         // The receiver is parameter zero, so it counts.
         .arity = ast->params.size + (ast->receiver ? 1 : 0),
@@ -1220,9 +1220,9 @@ static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symb
     // one an earlier unit declared already has its final index and must be left
     // alone. Which it is, is which of the two knows the answer.
     const size_t *local = proto_map_lookup(state->local_protos, (Symbol *)callee);
-    size_t index = local ? *local : callee->func.proto_index;
+    size_t index = local ? *local : callee->func.func_index;
 
-    if (index == SYMBOL_FUNC_NO_PROTO) {
+    if (index == SYMBOL_FUNC_NO_BODY) {
         if (!state->failed) {
             diag_error(state->diagnostics, GAB_ERR_CODEGEN, span, "call to a function with no body");
         }

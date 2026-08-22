@@ -134,7 +134,7 @@ static void register_builtin_method(VM *vm, Type *receiver, const char *name, Na
         .refs = frame_ref_list_create(),
     };
 
-    symbol->func.proto_index = vm->program.prototypes.size;
+    symbol->func.func_index = vm->program.prototypes.size;
     func_proto_list_add(&vm->program.prototypes, proto);
 
     type_add_method(arena, receiver, string_from_cstr(&vm->env.strings, name), symbol);

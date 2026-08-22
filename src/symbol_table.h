@@ -11,8 +11,8 @@
 
 #define SYMBOL_TABLE_INITIAL_CAPACITY 8
 
-// A function symbol that has been declared but has no compiled body yet.
-#define SYMBOL_FUNC_NO_PROTO ((size_t)-1)
+// A function symbol that has been declared but has no body yet.
+#define SYMBOL_FUNC_NO_BODY ((size_t)-1)
 
 typedef enum {
     SYMBOL_VAR,
@@ -52,11 +52,11 @@ typedef struct Symbol {
             Type **params;
             size_t param_count;
 
-            // Index into the VM's prototype list. Unlike a frame slot this is
-            // durable output: it is what OP_CALL encodes and what gab_call
-            // resolves a handle through, long after the compile that made it.
-            // SYMBOL_FUNC_NO_PROTO until codegen emits a body.
-            size_t proto_index;
+            // Which function this names, in the VM's list of them. Unlike a
+            // frame slot this is durable output: it is what a call encodes and
+            // what gab_call resolves a handle through, long after the compile
+            // that made it. SYMBOL_FUNC_NO_BODY until codegen emits a body.
+            size_t func_index;
 
             // Declared 'extern': the body lives in the host, and the prototype
             // codegen reserves carries a C function pointer instead of a chunk.

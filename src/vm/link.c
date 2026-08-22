@@ -208,6 +208,6 @@ void link_install(Program *program, Unit *unit) {
     // installed.
     for (size_t i = 0; i < unit->bindings.size; i++) {
         const ProtoBinding *binding = &unit->bindings.data[i];
-        binding->symbol->func.proto_index = proto_base + binding->local_index;
+        binding->symbol->func.func_index = proto_base + binding->local_index;
     }
 }

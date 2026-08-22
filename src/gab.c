@@ -748,14 +748,14 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
         }
     }
 
-    size_t proto_index = fn->symbol->func.proto_index;
+    size_t func_index = fn->symbol->func.func_index;
 
-    if (proto_index >= vm->program.prototypes.size) {
+    if (func_index >= vm->program.prototypes.size) {
         gab_error_set(err, 0, 0, "this function has no compiled body");
         return GAB_ERR_RUNTIME;
     }
 
-    const FuncPrototype *proto = vm->program.prototypes.data[proto_index];
+    const FuncPrototype *proto = vm->program.prototypes.data[func_index];
 
     // An extern is bound rather than compiled, so a missing body means a
     // missing chunk for one and a missing binding for the other.
