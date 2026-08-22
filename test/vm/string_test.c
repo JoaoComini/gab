@@ -118,6 +118,36 @@ static void test_len_is_not_a_free_function() {
     assert(!test_compiles("func f(): int { let s: string = \"a\"; return len(s); }\n"));
 }
 
+// A method reads the character at an index, counting from zero.
+static void test_at_answers_the_character_at_an_index() {
+    assert(test_run_int("func f(): int { let s: string = \"abc\"; return s.at(0); }\n"
+                        "let r: int = f();") == 'a');
+
+    assert(test_run_int("func f(): int { let s: string = \"abc\"; return s.at(2); }\n"
+                        "let r: int = f();") == 'c');
+}
+
+// The count a method declares is what a call must supply, receiver aside.
+static void test_at_takes_exactly_one_argument() {
+    assert(!test_compiles("func f(): int { let s: string = \"abc\"; return s.at(); }\n"));
+
+    assert(!test_compiles("func f(): int { let s: string = \"abc\"; return s.at(0, 1); }\n"));
+
+    assert(!test_compiles("func f(): int { let s: string = \"abc\"; return s.at(\"x\"); }\n"));
+}
+
+// An index no character sits at fails the run, at either end.
+static void test_at_outside_the_string_fails_the_run() {
+    assert(test_run_status("func f(): int { let s: string = \"abc\"; return s.at(3); }\n"
+                           "let r: int = f();") == VM_RUN_ERR_EXTERN);
+
+    assert(test_run_status("func f(): int { let s: string = \"abc\"; return s.at(-1); }\n"
+                           "let r: int = f();") == VM_RUN_ERR_EXTERN);
+
+    assert(test_run_status("func f(): int { let s: string = \"\"; return s.at(0); }\n"
+                           "let r: int = f();") == VM_RUN_ERR_EXTERN);
+}
+
 int main(void) {
     test_string_names_a_type();
     test_a_literal_is_a_string();
@@ -131,6 +161,9 @@ int main(void) {
     test_strings_do_not_add();
     test_len_answers_the_character_count();
     test_len_is_not_a_free_function();
+    test_at_answers_the_character_at_an_index();
+    test_at_takes_exactly_one_argument();
+    test_at_outside_the_string_fails_the_run();
 
     return 0;
 }

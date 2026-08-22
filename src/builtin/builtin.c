@@ -10,14 +10,15 @@
 
 #include <stddef.h>
 
-void builtin_register_method(VM *vm, Type *receiver, const char *name, GabExternFn body, Type *return_type) {
+void builtin_register_method(VM *vm, Type *receiver, const char *name, GabExternFn body, Type *return_type,
+                             Type *const *params, size_t param_count) {
     Arena *arena = vm->env.arena;
 
     Symbol *symbol = arena_alloc(arena, sizeof(Symbol));
     symbol->kind = SYMBOL_FUNC;
     symbol->func.return_type = return_type;
-    symbol->func.param_count = 1;
-    symbol->func.params = arena_alloc(arena, sizeof(Type *));
+    symbol->func.param_count = param_count + 1;
+    symbol->func.params = arena_alloc(arena, sizeof(Type *) * (param_count + 1));
     symbol->func.is_extern = true;
     symbol->func.name = string_from_cstr(&vm->env.strings, name);
     symbol->func.module = NULL;
@@ -25,6 +26,10 @@ void builtin_register_method(VM *vm, Type *receiver, const char *name, GabExtern
     // The receiver is parameter zero, by value: a string is a header that
     // copies, and a method that only reads it wants no indirection.
     symbol->func.params[0] = receiver;
+
+    for (size_t i = 0; i < param_count; i++) {
+        symbol->func.params[i + 1] = params[i];
+    }
 
     symbol->func.func_index = vm->program.extern_protos.size;
 
