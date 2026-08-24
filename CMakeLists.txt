@@ -44,7 +44,10 @@ add_library(gab
     src/type_registry.c
     src/scope.c
     src/ast/ast.c
+    src/ast/resolve.c
     src/ast/flow.c
+    src/ast/cfg.c
+    src/ast/flow_pass.c
     src/ast/expr.c
     src/ast/stmt.c
     src/string/string_ref.c

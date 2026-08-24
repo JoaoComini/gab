@@ -1,4 +1,4 @@
-#include "ast/ast.h"
+#include "ast/resolve.h"
 #include "lexer.h"
 #include "parser.h"
 #include "support/test_context.h"
