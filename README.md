@@ -119,12 +119,29 @@ func (p: ref Player) is_alive(): bool {
 Field access reaches through a pointer the way `->` does in C, so `p.health`
 works whether `p` is a `Player`, a `*Player`, or a `ref Player`.
 
-Parameters and receivers borrow. A receiver is `T` or `ref T` — by value, which
-copies, or by borrow, which mutates what the caller holds — and a parameter is
-`T` or `ref T` the same way. Never `*T`: a callee is handed its arguments for the
-duration of the call and frees nothing, so an owning parameter would spell an
-ownership it cannot have. An owned `*T` is lent to either, since lending is all
-a callee asks for.
+A parameter spells ownership the way a local and a field do: bare `*T` owns what
+it is given and frees it when the call ends, `ref T` borrows and frees nothing,
+and `T` is by value, which copies. Ownership is therefore part of the signature,
+and a call site can tell from the declaration alone whether it must move:
+
+```
+func consume(b: *Box): int { ... }   // owns; freed when the call ends
+func peek(b: ref Box): int { ... }   // borrows; the caller goes on owning
+
+consume(move a);                     // required: 'a' is dead afterwards
+peek(a);                             // no move: nothing changes hands
+```
+
+An owned `*T` is lent to a `ref T` parameter without a move, since lending is
+all a borrow asks for. Ownership moved into a parameter may be handed back out
+as an owned return — the caller gave it up, so returning it transfers rather
+than duplicating — while a `ref T` may not become a `*T` return, which would
+hand out ownership nobody granted.
+
+A receiver is `T` or `ref T` — by value, which copies, or by borrow, which
+mutates what the caller holds. Never `*T`: a method is handed its receiver for
+the duration of the call, and there is no call-site spelling that would give
+that ownership away.
 
 `&x` yields `ref T`, because taking an address borrows: the slot it names is
 owned by whoever declared it. `ref ref T` is a borrow of a borrow, which is what
@@ -139,15 +156,67 @@ the caller owns works as it always did.
 
 Memory is uniquely owned. `new T` yields a `*T` that exactly one slot owns and
 that is freed where that slot goes out of scope; freeing an object frees what
-its fields own. An owning field or variable may only be given a value nothing
-else owns — `new`, or a call handing its result over — so `ref T` is how
-something is named without being owned, as a child names its parent.
+its fields own. `ref T` is how something is named without being owned, as a
+child names its parent.
+
+Copying is the default and is implicit, and a type is copyable exactly when
+nothing it holds transitively owns. That is derived from the type rather than
+declared on it: a struct of `int`s copies, and so does one holding a `ref`,
+while one holding a `*T` does not — the moment a field owns, the struct does.
+
+A non-copyable value needs an explicit `move`, which transfers ownership:
+
+```
+let b = move a;    // 'a' is dead from here; reading it is an error
+```
+
+Writing `let b = a;` for a non-copyable `a` is refused, since it would leave two
+slots believing they own one object. Assigning something new to a moved-from
+slot revives it — deadness is about what the slot holds, not a mark the name
+carries forever.
+
+A type may say how it is duplicated by declaring a `clone` method, which takes
+nothing but its receiver and returns another of its own type:
+
+```
+func (h: ref Holder) clone(): Holder { ... }
+
+let g = h.clone();   // 'h' is still live; 'g' owns a separate object
+```
+
+`clone` is a reserved method name: a `clone` returning some other type, or
+taking parameters, is refused where it is declared rather than surprising a
+caller. Declaring one does not make the type implicitly copyable — `let g = h;`
+stays refused — so duplicating an owning value is always visible at the point
+it happens, and the allocation is spelled as the call it is. The copy
+diagnostic names `clone()` as a remedy only for a type that declares one, and
+tells the others that they do not.
+
+Whether a struct lives on the heap or in a frame does not change what it owns:
+an owning field is freed when the struct holding it goes out of scope, wherever
+that struct sits. A field starts holding nothing, so the first store into it
+frees nothing; a later store frees what the field held before.
+
+Because an owning field starts holding nothing, reaching through one before
+anything is stored into it is refused — the slot holds null, and the read would
+dereference it. Storing into the field is what makes it readable, and that is
+tracked per path like everything else here: a field written on only one arm of
+an `if` is not readable after the join. This covers the fields a local's own
+declaration nulls; a field reached through a pointer is not tracked, since what
+it belongs to was not declared here.
+
+A struct moves whole or not at all. `move h.b` is refused — a half-moved struct
+would leave the rest of its fields in a state the language says nothing about —
+so `move h` is how ownership of what it holds changes hands.
+
+Whether a slot is dead follows control flow the way a borrow's lifetime does. A
+slot moved on one arm of an `if` is dead after the join, and moving in a loop
+body is refused because the back-edge would move the same slot twice.
 
 The rule behind all of this: **`*T` marks a slot that can free what it holds.**
-That is a `let`, a struct field, and a return type — each outlives the statement
-and each is where a free is emitted. A parameter and a receiver are neither, so
-they take `ref T`; `&x` is an address rather than an allocation, so it yields one
-too.
+That is a `let`, a struct field, a parameter, and a return type — each is where
+a free may be emitted. A receiver is not one, so it takes `ref T`; `&x` is an
+address rather than an allocation, so it yields one too.
 
 There is no reference count and no runtime liveness check: a `ref T` whose
 object has been freed dangles, exactly as a C pointer would.
@@ -159,6 +228,19 @@ shortest-lived argument, since which one it really came from would need a
 per-function summary. What is not caught is a borrow that outlives its pointee
 without ever being moved: holding a `ref` while the object's owner frees it is
 undefined, as holding a C++ reference across the owner's destruction is.
+
+That check follows control flow. What a slot names is tracked per path and
+merged where paths rejoin, so a borrow is judged by what holds on every route
+to its use: a slot given a short-lived borrow on one arm of an `if` is
+short-lived after the join, and a borrow taken at the tail of a loop body is
+checked against the code that reads it at the head of the next iteration. An
+arm that cannot fall through — one ending in `return`, `break`, or `continue` —
+is not a route to the join that follows it, so what it left behind constrains
+nothing there. A `break` is still a route out of its loop, though, so what it
+carries is merged into the state after that loop: a slot moved before a `break`
+is dead once the loop is left. A slot reassigned something longer-lived is
+usable again; the depth is what the last assignment left, not the deepest the
+slot ever held.
 
 `for` is the only loop keyword, and spells all three shapes:
 
@@ -185,7 +267,7 @@ more or less, and a second spelling would say nothing the first does not.
 | Operators | `+` `-` `*` `/` `%`, unary `-` `!`, `==` `!=` `<` `>` `<=` `>=`, `&&` `||`, `&` and `*`, field access |
 | Conversions | `int(x)` and `float(x)`; nothing converts implicitly |
 | Assignment | `=`, and compound `+=` `-=` `*=` `/=` `%=` on any assignable target |
-| Memory | Unique ownership, `new`, `ref` borrows, scope-based free |
+| Memory | Unique ownership, `new`, `ref` borrows, implicit copy, explicit `move`, user-declared `clone`, scope-based free |
 | Modules | `module` names the namespace a unit declares into, `import` the ones it may name |
 | Externs | `extern func` declares a host body, bound by name at load |
 | Comments | `// line` and `/* block */`, which do not nest |

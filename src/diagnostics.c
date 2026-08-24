@@ -48,6 +48,12 @@ bool diagnostics_has_errors(const Diagnostics *diagnostics) { return diagnostics
 
 size_t diagnostics_count(const Diagnostics *diagnostics) { return diagnostics->items.size; }
 
+void diagnostics_truncate(Diagnostics *diagnostics, size_t count) {
+    if (count < diagnostics->items.size) {
+        diagnostic_list_resize(&diagnostics->items, count);
+    }
+}
+
 const Diagnostic *diagnostics_get(const Diagnostics *diagnostics, size_t index) {
     if (index >= diagnostics->items.size) {
         return NULL;

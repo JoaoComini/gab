@@ -125,6 +125,8 @@ const char *token_description(TokenType type) {
         return "'new'";
     case TOKEN_REF:
         return "'ref'";
+    case TOKEN_MOVE:
+        return "'move'";
     case TOKEN_MODULE:
         return "'module'";
     case TOKEN_IMPORT:
@@ -351,6 +353,10 @@ static Token lexer_identifier(Lexer *lexer) {
 
     if (string_ref_equals_cstr(ref, "ref")) {
         return token_create_ref(lexer, TOKEN_REF, ref);
+    }
+
+    if (string_ref_equals_cstr(ref, "move")) {
+        return token_create_ref(lexer, TOKEN_MOVE, ref);
     }
 
     if (string_ref_equals_cstr(ref, "module")) {

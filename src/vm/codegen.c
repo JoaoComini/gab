@@ -9,7 +9,6 @@
 #include "vm/constant_pool.h"
 #include "vm/opcode.h"
 #include <assert.h>
-#include <stdlib.h>
 
 // Where a variable or parameter lives in the frame being generated. Keyed by
 // Symbol * because a Symbol is what a name resolved to, but held here rather
@@ -22,7 +21,16 @@
 #define slot_map_key_dup(key) key
 #define slot_map_entry_free(key, value)
 
-GAB_HASH_MAP(SlotMap, slot_map, Symbol *, unsigned int)
+// The frame slot a name was given, and the depth of the block that declared
+// it. The depth is what an ownership record has to use: a value assigned to
+// the variable inside a nested block belongs to the variable, not to the block
+// doing the assigning, so it must not be freed where that block closes.
+typedef struct {
+    unsigned int slot;
+    unsigned int depth;
+} SlotBinding;
+
+GAB_HASH_MAP(SlotMap, slot_map, Symbol *, SlotBinding)
 
 #define SLOT_MAP_INITIAL_CAPACITY 16
 
@@ -215,13 +223,13 @@ static void codegen_emit_loop(CodegenState *state, size_t target);
 // scalar never does, which is why an int costs nothing at runtime: the question
 // is settled at compile time from the static type.
 static bool type_is_owned(const Type *type);
-
 // Whether an expression hands its caller a reference to own, or merely lends
 // one it keeps.
 static bool expr_yields_owned(const ASTExpr *expr);
 
 // Records that 'slot' owns an object for as long as the current block runs.
 static void codegen_own_slot(CodegenState *state, unsigned int slot, const Type *type);
+static void codegen_own_slot_at(CodegenState *state, unsigned int slot, const Type *type, unsigned int depth);
 static void codegen_record_frame_ref(CodegenState *state, unsigned int slot);
 
 // Whether this slot already owns a reference, and so has one to drop when it is
@@ -233,12 +241,17 @@ static bool codegen_slot_is_owned(const CodegenState *state, unsigned int slot);
 // pointer — and is skipped; pass VM_INVALID_REGISTER when nothing is moving.
 static void codegen_release_owned(CodegenState *state, unsigned int keep_depth, unsigned int moved);
 
+// Forgets that a slot owns, without emitting a release: for 'move', whose
+// destination now holds the reference.
+static void codegen_disown_slot(CodegenState *state, unsigned int slot);
+
 // Emits a release for every owned slot deeper than keep_depth without dropping
 // the entries, for a jump that leaves those blocks early.
 static void codegen_emit_releases_below(CodegenState *state, unsigned int keep_depth);
 
 // Frame slots and registers.
 static unsigned int codegen_slot_of(CodegenState *state, Symbol *symbol);
+static unsigned int codegen_decl_depth_of(CodegenState *state, Symbol *symbol);
 static void codegen_set_slot(CodegenState *state, Symbol *symbol, unsigned int slot);
 static unsigned int codegen_alloc_register(CodegenState *state, Span span);
 static unsigned int codegen_alloc_slots(CodegenState *state, unsigned int count, unsigned int align_slots,
@@ -442,6 +455,59 @@ static void codegen_return_stmt(CodegenState *state, ASTReturnStmt *ast) {
     chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RETURN_N, 0, reg, slots));
 }
 
+// What codegen_walk_owning_slots does at each owning pointer it finds.
+typedef enum {
+    // Write null, so a slot that has never been stored to is safe to free.
+    OWNING_SLOT_NULL,
+
+    // Record it, so the block that declared it frees it.
+    OWNING_SLOT_OWN,
+
+    // Forget it, for 'move': the destination holds the reference now.
+    OWNING_SLOT_DISOWN,
+} OwningSlotAction;
+
+// Visits every owning pointer a value of this type holds at 'base' -- itself if
+// it is one, and otherwise each of its fields, recursing through nested structs
+// whose slots are laid out inline.
+//
+// A struct owns through its fields rather than as a slot, so nulling, owning
+// and disowning one all mean doing the same walk and acting at each pointer.
+// A 'ref' field is skipped throughout: nothing frees it, so nothing reads it as
+// an owner.
+static void codegen_walk_owning_slots(CodegenState *state, const Type *type, unsigned int base,
+                                      OwningSlotAction action) {
+    if (type_is_pointer(type)) {
+        if (type->is_ref) {
+            return;
+        }
+
+        switch (action) {
+        case OWNING_SLOT_NULL:
+            chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_NULL, base, 0));
+            break;
+        case OWNING_SLOT_OWN:
+            codegen_own_slot(state, base, type);
+            break;
+        case OWNING_SLOT_DISOWN:
+            codegen_disown_slot(state, base);
+            break;
+        }
+
+        return;
+    }
+
+    if (!type_is_struct(type)) {
+        return;
+    }
+
+    for (size_t i = 0; i < type->field_count; i++) {
+        const TypeField *field = &type->fields[i];
+
+        codegen_walk_owning_slots(state, field->type, base + (unsigned int)(field->offset / VM_SLOT_SIZE),
+                                  action);
+    }
+}
 static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
     Span span = ast->initializer ? ast->initializer->span : (Span){0};
 
@@ -455,6 +521,22 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
     bool is_ref = ast->symbol->var.type && ast->symbol->var.type->is_ref;
 
     if (!ast->initializer) {
+        // An owning slot holds nothing until something is stored, so the store
+        // that initializes it has no previous occupant to free.
+        if (!is_ref) {
+            unsigned int slot = codegen_slot_of(state, ast->symbol);
+
+            codegen_walk_owning_slots(state, ast->symbol->var.type, slot, OWNING_SLOT_NULL);
+
+            // A struct's fields are owned from here, since a store into one
+            // reaches through the struct rather than replacing it, and nothing
+            // else would record them. A bare pointer takes ownership where it
+            // is assigned instead.
+            if (type_is_struct(ast->symbol->var.type)) {
+                codegen_walk_owning_slots(state, ast->symbol->var.type, slot, OWNING_SLOT_OWN);
+            }
+        }
+
         return;
     }
 
@@ -481,8 +563,12 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
     // now owned by this slot. A borrowed one — reading another variable — is
     // left alone: the slot it came from still owns it, and freeing here would
     // free it twice. A 'ref T' slot never owns, whatever it was given.
+    //
+    // A struct owns through its fields rather than as one slot, so it is
+    // recorded field by field: releasing its base would free an address that is
+    // the struct itself rather than anything it holds.
     if (!is_ref && expr_yields_owned(ast->initializer)) {
-        codegen_own_slot(state, slot, ast->symbol->var.type);
+        codegen_walk_owning_slots(state, ast->symbol->var.type, slot, OWNING_SLOT_OWN);
     }
 
     codegen_release_registers(state, saved);
@@ -534,31 +620,25 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
                        type_is_owned(ast->target->type) && !ast->target->type->is_ref;
 
     if (target_owns) {
-        // Under unique ownership an owning field holds the only reference to
-        // what it names, so the value stored has to be one nothing else owns:
-        // 'new', or a call handing its result over. A borrow — a variable, a
-        // parameter, another field — is refused, because storing it would make
-        // two owners of one object and neither would know about the other.
+        // The value stored is one nothing else owns: the resolver refuses a
+        // borrow here, naming the move or the duplicate that was meant.
         //
-        // 'ref T' is how a field names something it does not own, and that is
-        // the target kind this branch has already excluded.
-        if (!expr_yields_owned(ast->value)) {
-            if (!state->failed) {
-                diag_error(state->diagnostics, GAB_ERR_CODEGEN, ast->value->span,
-                           "cannot store a borrowed value in an owning field; declare the field 'ref' to "
-                           "name something it does not own");
-            }
-
-            state->failed = true;
-            return;
-        }
-
         // Read what the destination holds before overwriting it, and free it
-        // after the store rather than before: the value being stored is fresh,
-        // but freeing first would still leave a window where the field points
-        // at freed memory if anything observed it.
-        unsigned int old = ast->target->kind == EXPR_FIELD ? codegen_field_expr(state, ast->target)
-                                                           : codegen_deref_expr(state, ast->target);
+        // after the store rather than before: freeing first would leave a
+        // window where the field points at freed memory if anything observed
+        // it.
+        //
+        // Copied into a slot of its own first. A pointer field is addressed
+        // rather than loaded -- codegen_field_expr hands back the field's own
+        // slot -- so releasing that slot directly would free whatever the store
+        // had just written into it. The local-variable path below copies for
+        // the same reason.
+        unsigned int held = ast->target->kind == EXPR_FIELD ? codegen_field_expr(state, ast->target)
+                                                            : codegen_deref_expr(state, ast->target);
+
+        unsigned int old = codegen_alloc_slots(state, VM_POINTER_SLOTS, VM_POINTER_SLOTS, ast->target->span);
+
+        codegen_copy_slots(state, old, held, VM_POINTER_SLOTS);
 
         unsigned int src = codegen_expr(state, ast->value);
 
@@ -603,19 +683,8 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
     //
     // A 'ref T' slot owns nothing, so it is a plain store however it is written.
     if (!target_is_ref && type_is_owned(ast->target->type) && codegen_slot_is_owned(state, rd)) {
-        // A borrow cannot take over a slot that owns: the old object would be
-        // freed and the slot left naming something a different slot still owns.
-        if (!expr_yields_owned(ast->value)) {
-            if (!state->failed) {
-                diag_error(state->diagnostics, GAB_ERR_CODEGEN, ast->value->span,
-                           "cannot assign a borrowed value to an owning variable; declare it 'ref' to name "
-                           "something it does not own");
-            }
-
-            state->failed = true;
-            return;
-        }
-
+        // The value is one nothing else owns: the resolver refuses a borrow
+        // here, naming the move or the duplicate that was meant.
         unsigned int old = codegen_alloc_slots(state, VM_POINTER_SLOTS, VM_POINTER_SLOTS, ast->target->span);
 
         codegen_copy_slots(state, old, rd, VM_POINTER_SLOTS);
@@ -629,8 +698,15 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
     // A borrowed value assigned into a slot that owns nothing yet leaves the
     // slot borrowing too, so there is nothing to record. An owned one makes the
     // slot an owner from here on.
+    //
+    // Recorded at the depth the variable was declared at, not the depth doing
+    // the assigning: 'if c { a = new Box; }' gives the object to a, which
+    // outlives the arm, so the arm's close must not free it.
     if (!target_is_ref && type_is_owned(ast->target->type) && expr_yields_owned(ast->value)) {
-        codegen_own_slot(state, rd, ast->target->type);
+        Symbol *target = ast->target->symbol;
+
+        codegen_own_slot_at(state, rd, ast->target->type,
+                            target ? codegen_decl_depth_of(state, target) : state->depth);
     }
 }
 
@@ -1113,6 +1189,25 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
     func_state.next_reg = func_next_reg;
     func_state.max_reg = func_next_reg;
 
+    // An owning parameter frees what it was handed when the call ends, so it
+    // joins the owned set exactly as a local declared at the top of the body
+    // would. Depth 1 is that body: a 'return' releases everything deeper than
+    // 0, and the body block's close does the same, so either exit frees it once.
+    //
+    // Registered after the frame-size check, since a signature that failed it
+    // has already torn this state down.
+    func_state.depth = 1;
+
+    for (size_t i = 0; i < ast->params.size; i++) {
+        Symbol *param = ast->params.data[i]->symbol;
+
+        if (type_is_owned(param->var.type) && !param->var.type->is_ref) {
+            codegen_own_slot(&func_state, codegen_slot_of(&func_state, param), param->var.type);
+        }
+    }
+
+    func_state.depth = 0;
+
     codegen_stmt(&func_state, ast->body);
 
     state->failed = state->failed || func_state.failed;
@@ -1152,6 +1247,19 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
         return codegen_call_expr(state, ast);
     case EXPR_FIELD:
         return codegen_field_expr(state, ast);
+    case EXPR_MOVE: {
+        // The value is produced exactly as it would be without the keyword.
+        // What the move changes is who frees it: the source slot gives up its
+        // reference, so its block must not release it.
+        unsigned int reg = codegen_expr(state, ast->unary.target);
+
+        if (ast->unary.target->kind == EXPR_VARIABLE && ast->unary.target->symbol) {
+            codegen_walk_owning_slots(state, ast->unary.target->type,
+                                      codegen_slot_of(state, ast->unary.target->symbol), OWNING_SLOT_DISOWN);
+        }
+
+        return reg;
+    }
     case EXPR_ADDR_OF:
         return codegen_addr_of_expr(state, ast);
     case EXPR_DEREF:
@@ -1286,6 +1394,19 @@ static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symb
     }
 }
 
+// Whether the callee's parameter in this position owns what it is given, and
+// so frees it itself. The resolver folds a method's receiver into the argument
+// list as parameter zero, so the positions line up without adjustment.
+static bool param_owns(const Symbol *callee, size_t index) {
+    if (!callee || callee->kind != SYMBOL_FUNC || index >= callee->func.param_count) {
+        return false;
+    }
+
+    const Type *param = callee->func.params[index];
+
+    return type_is_owned(param) && !param->is_ref;
+}
+
 // Arguments go into the registers immediately above the destination, which is
 // where the callee's frame expects them: its r0 is the return slot and its
 // parameters are r1..arity.
@@ -1319,9 +1440,12 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
     unsigned int saved = dest + return_slots;
 
     // Argument slots holding an object nothing else owns, so they can be freed
-    // once the call returns. A parameter borrows, so the callee frees nothing;
-    // an owned temporary would otherwise belong to nobody the moment the
-    // argument block is reclaimed.
+    // once the call returns. A 'ref' parameter borrows, so the callee frees
+    // nothing and an owned temporary would otherwise belong to nobody the
+    // moment the argument block is reclaimed.
+    //
+    // An owning parameter is the other case: the callee took the reference and
+    // frees it itself, so releasing here would free it twice.
     //
     // Bounded by the frame rather than by the argument count: the block was
     // reserved above, and codegen_alloc_slots refuses one wider than a frame,
@@ -1341,7 +1465,7 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
         // Recorded against the argument block rather than the expression's own
         // register: the copy above is what the callee reads, and the source
         // register may be reclaimed before the free is emitted.
-        if (expr_yields_owned(arg)) {
+        if (expr_yields_owned(arg) && !param_owns(node->symbol, i)) {
             assert(owned_arg_count < VM_MAX_FRAME_SLOTS && "more owned arguments than a frame has slots");
 
             owned_args[owned_arg_count++] = dest + offset;
@@ -2070,13 +2194,22 @@ static bool type_is_owned(const Type *type) { return type_is_pointer(type); }
 // forms are exactly these, and a flag on every node would have to be kept in
 // step with them for no extra information.
 static bool expr_yields_owned(const ASTExpr *expr) {
-    if (!expr || !type_is_owned(expr->type)) {
+    // Copyability is the same question inverted: a value carries ownership
+    // exactly when it cannot be duplicated by copying its bytes. A struct
+    // qualifies through its fields -- 'move h' on a struct holding an owning
+    // pointer hands that pointer over, though the struct is not one.
+    if (!expr || type_is_copyable(expr->type)) {
         return false;
     }
 
     switch (expr->kind) {
     case EXPR_NEW:
     case EXPR_CALL:
+
+    // A move hands the source's reference over, so the destination owns it
+    // exactly as it would a fresh one -- and the source has been disowned, so
+    // no second slot will free it.
+    case EXPR_MOVE:
         return true;
     default:
         return false;
@@ -2100,16 +2233,42 @@ static void codegen_record_frame_ref(CodegenState *state, unsigned int slot) {
     frame_ref_list_add(&state->frame_refs, (FrameRef){.slot = slot});
 }
 
-static void codegen_own_slot(CodegenState *state, unsigned int slot, const Type *type) {
+static void codegen_own_slot_at(CodegenState *state, unsigned int slot, const Type *type,
+                                unsigned int depth) {
     // A 'ref T' slot borrows, so it never owns and is never freed. Callers
     // check this too, but a stray own here would be a use-after-free rather
     // than a leak, so it is refused at the one place ownership is recorded.
     assert(!(type && type->is_ref) && "a 'ref T' slot never owns what it names");
 
-    owned_list_add(&state->owned, (OwnedSlot){.slot = slot, .depth = state->depth, .type = type});
+    owned_list_add(&state->owned, (OwnedSlot){.slot = slot, .depth = depth, .type = type});
 
     // Also recorded on the frame, for the unwinder.
     codegen_record_frame_ref(state, slot);
+}
+
+// As codegen_own_slot_at, at the depth of the block being generated. For a slot
+// the current block itself owns: a temporary, or a parameter placed at entry.
+static void codegen_own_slot(CodegenState *state, unsigned int slot, const Type *type) {
+    codegen_own_slot_at(state, slot, type, state->depth);
+}
+
+// Forgets that a slot owns, without emitting a release. For 'move': the
+// reference is now the destination's, so the source must not free it when its
+// block closes. The frame record stays, since the unwinder reads the slot
+// itself and the destination is what holds the reference now.
+static void codegen_disown_slot(CodegenState *state, unsigned int slot) {
+    for (size_t i = 0; i < state->owned.size; i++) {
+        if (state->owned.data[i].slot == slot) {
+            // Order matters: releases sweep innermost-first, so the
+            // remaining entries must keep the order they were added in.
+            for (size_t j = i + 1; j < state->owned.size; j++) {
+                state->owned.data[j - 1] = state->owned.data[j];
+            }
+
+            state->owned.size--;
+            return;
+        }
+    }
 }
 
 // Whether this slot already owns a reference, and so has one to drop when it is
@@ -2161,15 +2320,25 @@ static void codegen_emit_releases_below(CodegenState *state, unsigned int keep_d
 // The frame slot a symbol was given. Every read is of a slot this same
 // function body assigned, so a miss is a codegen bug rather than a user error.
 static unsigned int codegen_slot_of(CodegenState *state, Symbol *symbol) {
-    unsigned int *slot = slot_map_lookup(state->slots, symbol);
+    SlotBinding *slot = slot_map_lookup(state->slots, symbol);
 
     assert(slot && "symbol was never assigned a frame slot");
 
-    return *slot;
+    return slot->slot;
+}
+
+// The depth of the block that declared this name, for an ownership record that
+// must outlive the block doing the assigning.
+static unsigned int codegen_decl_depth_of(CodegenState *state, Symbol *symbol) {
+    SlotBinding *slot = slot_map_lookup(state->slots, symbol);
+
+    assert(slot && "symbol was never assigned a frame slot");
+
+    return slot->depth;
 }
 
 static void codegen_set_slot(CodegenState *state, Symbol *symbol, unsigned int slot) {
-    slot_map_insert(state->slots, symbol, slot);
+    slot_map_insert(state->slots, symbol, (SlotBinding){.slot = slot, .depth = state->depth});
 }
 
 // Register exhaustion is a legitimate "program too complex" error rather than

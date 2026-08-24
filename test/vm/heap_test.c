@@ -86,17 +86,26 @@ static void test_an_object_can_hold_another() {
                         "let r: int = main();") == 9);
 }
 
-// Two names for one object. The second is borrowed — the first still owns the
-// reference — so releasing both would free it twice.
+// Two names for one object. The second borrows, which is what 'ref' spells:
+// the first goes on owning, so nothing frees the object twice.
 static void test_an_alias_is_borrowed_not_owned() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
                         "    let a: *Box = new Box;\n"
                         "    a.n = 5;\n"
-                        "    let b: *Box = a;\n"
+                        "    let b: ref Box = a;\n"
                         "    return b.n;\n"
                         "}\n"
                         "let r: int = main();") == 5);
+
+    // Naming it a second time as an owner would make two slots free it, so it
+    // takes a 'move' -- and then the first name is dead.
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "func main(): int {\n"
+                          "    let a: *Box = new Box;\n"
+                          "    let b: *Box = a;\n"
+                          "    return b.n;\n"
+                          "}\n"));
 }
 
 // Freed where its block closes, not where the frame pops: destruction is

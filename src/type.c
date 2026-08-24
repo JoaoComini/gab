@@ -89,6 +89,32 @@ bool type_field_offset(const Type *type, const String *name, size_t *out_offset)
 
 bool type_is_pointer(const Type *type) { return type && type->kind == TYPE_POINTER; }
 
+// Whether a value of this type can be duplicated by copying its bytes. An
+// owning pointer cannot: two slots holding it would both free it. Anything
+// reaching one transitively inherits that, so a struct is copyable exactly
+// when every field is.
+//
+// Derived from the type rather than declared on it, so a struct becomes
+// non-copyable the moment it is given a field that owns, and no declaration
+// can disagree with what the type holds.
+bool type_is_copyable(const Type *type) {
+    if (!type) {
+        return true;
+    }
+
+    if (type->kind == TYPE_POINTER) {
+        return type->is_ref;
+    }
+
+    for (size_t i = 0; i < type->field_count; i++) {
+        if (!type_is_copyable(type->fields[i].type)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 // Sized for a handful: most struct types declare no methods at all, and the map
 // grows if one proves popular.
 #define METHOD_MAP_INITIAL_CAPACITY 4

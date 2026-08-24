@@ -167,7 +167,6 @@ Symbol *scope_decl_var(Scope *scope, String *name, Type *type) {
     sym->scope_depth = scope->depth;
     sym->pinned = false;
     sym->var.type = type;
-    sym->var.pointee_depth = 0;
 
     Symbol **decl = symbol_table_insert(scope->symbol_table, name, sym);
     if (!decl) {

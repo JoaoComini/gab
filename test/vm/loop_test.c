@@ -71,6 +71,20 @@ static void test_break_outside_a_loop_is_rejected() {
     assert(!test_compiles("func f(): int { if true { break; } return 0; }\n"));
 }
 
+// 'break' is a way of arriving after the loop, so what it carries reaches the
+// post-loop state: a slot moved before one is dead there, exactly as it is
+// after an 'if' arm that moved it.
+static void test_a_slot_moved_before_a_break_is_dead_after_the_loop() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "func main(): int {\n"
+                          "    let a: *Box = new Box;\n"
+                          "    for let i = 0; i < 2; i = i + 1 {\n"
+                          "        if i == 1 { let b = move a; break; }\n"
+                          "    }\n"
+                          "    return a.n;\n"
+                          "}\n"));
+}
+
 int main(void) {
     test_a_condition_loop_runs_until_it_is_false();
     test_a_false_condition_skips_the_body();
@@ -79,6 +93,7 @@ int main(void) {
     test_continue_starts_the_next_iteration();
     test_a_non_bool_condition_is_rejected();
     test_break_outside_a_loop_is_rejected();
+    test_a_slot_moved_before_a_break_is_dead_after_the_loop();
 
     printf("loop tests passed\n");
     return 0;

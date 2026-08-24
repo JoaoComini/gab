@@ -100,6 +100,16 @@ typedef enum {
     // is not a register.
     OP_NEW,
 
+    // Writes a null pointer into the slots at rd. I-type: rd is the only
+    // operand, and the value is the same every time.
+    //
+    // For a slot that must be safe to free before anything has been stored in
+    // it: an owning field of a struct local holds whatever the frame last left
+    // there, and the first store into it frees what it finds. Writing the
+    // pointer as a pointer rather than as zeroed slots keeps the width right
+    // wherever a pointer is not two slots wide.
+    OP_NULL,
+
     // Frees the object in rd, and everything it owns. The slot keeps whatever
     // it held: nothing reads it again, since codegen only emits this where the
     // value goes out of scope.

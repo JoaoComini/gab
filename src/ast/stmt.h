@@ -119,6 +119,11 @@ typedef struct {
     ASTExpr *condition;
     struct ASTStmt *post;
     struct ASTStmt *body;
+
+    // The scope holding the initializer's declarations, kept for the same
+    // reason a block keeps its own: a rechecked loop looks its names up where
+    // the first walk declared them.
+    struct Scope *scope;
 } ASTForStmt;
 
 // 'break' and 'continue'. They differ only in which end of the loop they jump
@@ -129,6 +134,11 @@ typedef struct {
 
 typedef struct {
     ASTStmtList list;
+
+    // The scope this block's declarations went into, kept so that a second
+    // walk over the same block -- a loop body rechecked against its back-edge
+    // -- looks names up where the first walk put them.
+    struct Scope *scope;
 } ASTBlockStmt;
 
 typedef struct {

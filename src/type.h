@@ -86,6 +86,10 @@ void type_layout_compute(Type *type);
 
 bool type_is_pointer(const Type *type);
 
+// Whether a value of this type duplicates by copying its bytes, which is true
+// exactly when nothing it holds transitively owns. See the definition.
+bool type_is_copyable(const Type *type);
+
 bool type_field_offset(const Type *type, const String *name, size_t *out_offset);
 const TypeField *type_find_field(const Type *type, const String *name);
 
