@@ -1252,9 +1252,22 @@ static void check_implicit_copy(ResolverState *state, ASTExpr *value, Type *dest
         return;
     }
 
+    // Only advise the clone where there is one to call. A type that declares
+    // none is told so instead, since sending the programmer to a method that
+    // does not exist costs them the round trip to find that out.
+    const Type *base = receiver_base_type(value->type);
+
+    if (base && type_find_method(base, resolver_intern(state, string_ref_create("clone")))) {
+        diag_error(state->diagnostics, GAB_ERR_LIFETIME, span,
+                   "%s owns what it holds, so binding it needs 'move' to transfer ownership, or "
+                   "'clone()' to duplicate it",
+                   type_name(state, value->type));
+        return;
+    }
+
     diag_error(state->diagnostics, GAB_ERR_LIFETIME, span,
-               "%s owns what it holds, so binding it needs 'move' to transfer ownership, or 'clone' to "
-               "duplicate it",
+               "%s owns what it holds, so binding it needs 'move' to transfer ownership; it declares no "
+               "'clone' to duplicate it",
                type_name(state, value->type));
 }
 
@@ -1496,6 +1509,25 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
         ASTField *param = stmt->func_decl.params.data[i];
 
         method->func.params[i + 1] = resolve_param_type(state, param);
+    }
+
+    // 'clone' is the remedy the implicit-copy diagnostic names, so its shape is
+    // fixed: it duplicates its receiver and yields another of the same type.
+    // Checked here rather than at a call so a type declaring the wrong thing
+    // hears about it where it wrote it.
+    if (method_name == resolver_intern(state, string_ref_create("clone"))) {
+        if (return_type != base) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
+                       "'clone' duplicates its receiver, so it must return %s, not %s", base->name->data,
+                       type_name(state, return_type));
+            return;
+        }
+
+        if (stmt->func_decl.params.size > 0) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
+                       "'clone' duplicates its receiver and takes nothing else");
+            return;
+        }
     }
 
     if (!type_add_method(resolver_owner_arena(state), base, method_name, method)) {

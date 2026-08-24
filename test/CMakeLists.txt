@@ -25,6 +25,7 @@ set(
     vm/owning_param_test.c
     vm/field_ownership_test.c
     vm/uninitialized_test.c
+    vm/clone_test.c
     vm/string_test.c
     builtin/string_method_test.c
     vm/neg_test.c

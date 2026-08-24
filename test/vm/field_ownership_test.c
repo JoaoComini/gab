@@ -136,7 +136,7 @@ static void test_an_owning_field_refuses_a_value_another_slot_owns() {
 
     assert(!test_compiles(source));
     assert(test_diagnostic_mentions(source, "move"));
-    assert(test_diagnostic_mentions(source, "clone"));
+    assert(test_diagnostic_mentions(source, "declares no 'clone'"));
 }
 
 // A struct moves whole or not at all. Moving one field would leave the rest

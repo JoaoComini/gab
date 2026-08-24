@@ -175,6 +175,23 @@ slots believing they own one object. Assigning something new to a moved-from
 slot revives it — deadness is about what the slot holds, not a mark the name
 carries forever.
 
+A type may say how it is duplicated by declaring a `clone` method, which takes
+nothing but its receiver and returns another of its own type:
+
+```
+func (h: ref Holder) clone(): Holder { ... }
+
+let g = h.clone();   // 'h' is still live; 'g' owns a separate object
+```
+
+`clone` is a reserved method name: a `clone` returning some other type, or
+taking parameters, is refused where it is declared rather than surprising a
+caller. Declaring one does not make the type implicitly copyable — `let g = h;`
+stays refused — so duplicating an owning value is always visible at the point
+it happens, and the allocation is spelled as the call it is. The copy
+diagnostic names `clone()` as a remedy only for a type that declares one, and
+tells the others that they do not.
+
 Whether a struct lives on the heap or in a frame does not change what it owns:
 an owning field is freed when the struct holding it goes out of scope, wherever
 that struct sits. A field starts holding nothing, so the first store into it
@@ -250,7 +267,7 @@ more or less, and a second spelling would say nothing the first does not.
 | Operators | `+` `-` `*` `/` `%`, unary `-` `!`, `==` `!=` `<` `>` `<=` `>=`, `&&` `||`, `&` and `*`, field access |
 | Conversions | `int(x)` and `float(x)`; nothing converts implicitly |
 | Assignment | `=`, and compound `+=` `-=` `*=` `/=` `%=` on any assignable target |
-| Memory | Unique ownership, `new`, `ref` borrows, implicit copy, explicit `move`, scope-based free |
+| Memory | Unique ownership, `new`, `ref` borrows, implicit copy, explicit `move`, user-declared `clone`, scope-based free |
 | Modules | `module` names the namespace a unit declares into, `import` the ones it may name |
 | Externs | `extern func` declares a host body, bound by name at load |
 | Comments | `// line` and `/* block */`, which do not nest |

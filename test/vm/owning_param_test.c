@@ -21,7 +21,7 @@ static void test_an_owning_parameter_takes_a_moved_argument() {
 
 // Ownership is part of the signature, so passing a non-copyable argument to an
 // owning parameter without saying where it goes is refused -- and the refusal
-// teaches the same two remedies a binding does.
+// teaches the same remedies a binding does.
 static void test_an_owning_parameter_refuses_an_unmoved_argument() {
     const char *source = "struct Box { n: int }\n"
                          "func consume(b: *Box): int { return b.n; }\n"
@@ -32,7 +32,7 @@ static void test_an_owning_parameter_refuses_an_unmoved_argument() {
 
     assert(!test_compiles(source));
     assert(test_diagnostic_mentions(source, "move"));
-    assert(test_diagnostic_mentions(source, "clone"));
+    assert(test_diagnostic_mentions(source, "declares no 'clone'"));
 }
 // The argument is dead after the call, exactly as it would be after any move.
 static void test_a_moved_argument_is_dead_after_the_call() {

@@ -104,9 +104,9 @@ static void test_moving_the_same_slot_each_iteration_is_refused() {
                           "}\n"));
 }
 
-// Writing an implicit copy of a non-copyable value is an error, and the
-// message names both ways out rather than only stating the rule.
-static void test_the_implicit_copy_error_names_both_remedies() {
+// Writing an implicit copy of a non-copyable value is an error whose message
+// names the way out and says why the other one is unavailable.
+static void test_the_implicit_copy_error_names_the_remedies() {
     const char *source = "struct Box { n: int }\n"
                          "func main(): int {\n"
                          "    let a: *Box = new Box;\n"
@@ -116,7 +116,7 @@ static void test_the_implicit_copy_error_names_both_remedies() {
 
     assert(!test_compiles(source));
     assert(test_diagnostic_mentions(source, "move"));
-    assert(test_diagnostic_mentions(source, "clone"));
+    assert(test_diagnostic_mentions(source, "declares no 'clone'"));
 }
 
 int main(void) {
@@ -128,7 +128,7 @@ int main(void) {
     test_assigning_to_a_dead_slot_revives_it();
     test_a_slot_moved_on_one_arm_is_dead_after_the_join();
     test_moving_the_same_slot_each_iteration_is_refused();
-    test_the_implicit_copy_error_names_both_remedies();
+    test_the_implicit_copy_error_names_the_remedies();
 
     printf("All move tests passed\n");
     return 0;
