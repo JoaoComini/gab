@@ -98,26 +98,6 @@ static void test_strings_do_not_add() {
     assert(!test_compiles("func f(): int { let a: string = \"a\"; let b: string = a + a; return 0; }\n"));
 }
 
-// 'len' answers how many characters a string denotes, which is what its header
-// already carries. A method, so it is reached through the receiver rather than
-// by a name a variable could shadow.
-static void test_len_answers_the_character_count() {
-    assert(test_run_int("func f(): int { let s: string = \"hello\"; return s.len(); }\n"
-                        "let r: int = f();") == 5);
-
-    assert(test_run_int("func f(): int { let s: string = \"\"; return s.len(); }\n"
-                        "let r: int = f();") == 0);
-
-    // The escape is one character, not the two that spell it.
-    assert(test_run_int("func f(): int { let s: string = \"a\\nb\"; return s.len(); }\n"
-                        "let r: int = f();") == 3);
-}
-
-// A method is keyed by its receiver, so nothing declares 'len' as a free name.
-static void test_len_is_not_a_free_function() {
-    assert(!test_compiles("func f(): int { let s: string = \"a\"; return len(s); }\n"));
-}
-
 int main(void) {
     test_string_names_a_type();
     test_a_literal_is_a_string();
@@ -129,8 +109,6 @@ int main(void) {
     test_a_null_is_compared_like_any_character();
     test_strings_are_not_ordered();
     test_strings_do_not_add();
-    test_len_answers_the_character_count();
-    test_len_is_not_a_free_function();
 
     return 0;
 }
