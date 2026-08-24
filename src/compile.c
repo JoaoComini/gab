@@ -1,7 +1,7 @@
 #include "compile.h"
 
 #include "arena.h"
-#include "ast/ast.h"
+#include "ast/resolve.h"
 #include "lexer.h"
 #include "parser.h"
 #include "scope.h"

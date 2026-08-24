@@ -4,6 +4,7 @@
 #include "vm/interp.h"
 #include "vm/vm.h"
 
+#include "ast/resolve.h"
 #include "lexer.h"
 #include "parser.h"
 #include "string/string.h"

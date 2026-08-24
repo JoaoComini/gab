@@ -1,5 +1,5 @@
 #include "arena.h"
-#include "ast/ast.h"
+#include "ast/resolve.h"
 #include "diagnostics.h"
 #include "lexer.h"
 #include "parser.h"

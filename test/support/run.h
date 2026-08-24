@@ -9,7 +9,7 @@
 // Header-only and 'static inline', matching test_context.h. The tests are
 // separate executables with no shared translation unit to link against.
 
-#include "ast/ast.h"
+#include "ast/resolve.h"
 #include "compile.h"
 #include "lexer.h"
 #include "object.h"
