@@ -41,10 +41,14 @@ typedef enum {
     FLOW_INIT,
 } FlowInit;
 
-// How many of a struct's fields the written-field set can name. A struct with
-// more owning fields than this is tracked for its first FLOW_MAX_FIELDS only,
-// and the rest read as written -- the direction that accepts a program rather
-// than inventing an error for one the set has no room to describe.
+// How many owning fields of one struct the written-field set can name. Only
+// owning fields take a bit, so a struct of scalars holding a single '*T' spends
+// one however far down it sits; what fills the set is a struct with more than
+// FLOW_MAX_FIELDS pointers of its own.
+//
+// Past that the remaining fields read as written -- the direction that accepts
+// a program rather than inventing an error for one the set has no room to
+// describe.
 #define FLOW_MAX_FIELDS 64
 
 typedef struct {

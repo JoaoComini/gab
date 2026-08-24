@@ -111,7 +111,24 @@ static bool owning_field_of_local(const ASTExpr *expr, Symbol **out_symbol, unsi
         return false;
     }
 
-    size_t index = (size_t)(field - struct_type->fields);
+    // The bit is this field's position among the struct's *owning* fields, not
+    // among all of them. A struct is mostly scalars in practice -- it mirrors a
+    // host struct -- and numbering by raw position would spend the set on
+    // fields that can never be unwritten, so a lone owning pointer behind sixty
+    // ints would fall off the end.
+    size_t index = 0;
+
+    for (size_t i = 0; i < struct_type->field_count; i++) {
+        const TypeField *other = &struct_type->fields[i];
+
+        if (other == field) {
+            break;
+        }
+
+        if (type_is_pointer(other->type) && !other->type->is_ref) {
+            index++;
+        }
+    }
 
     if (index >= FLOW_MAX_FIELDS) {
         return false;

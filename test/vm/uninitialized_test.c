@@ -120,6 +120,53 @@ static void test_an_owning_field_written_on_one_arm_is_refused() {
                           "}\n"));
 }
 
+// The written-field set names a struct's owning fields, so what fills it is
+// how many of those a struct has rather than where they sit. A struct padded
+// out with scalars is tracked on the owning field past them exactly as it
+// would be on the first.
+static void test_an_owning_field_past_the_scalars_is_still_tracked() {
+    char source[4096];
+    int written = snprintf(source, sizeof source, "struct Box { n: int }\nstruct Wide {\n");
+
+    for (int i = 0; i < 100; i++) {
+        written += snprintf(source + written, sizeof source - (size_t)written, "    f%d: int,\n", i);
+    }
+
+    snprintf(source + written, sizeof source - (size_t)written,
+             "    b: *Box\n"
+             "}\n"
+             "func main(): int {\n"
+             "    let w: Wide;\n"
+             "    return w.b.n;\n"
+             "}\n");
+
+    assert(!test_compiles(source));
+}
+
+// Each owning field gets its own bit, so writing one says nothing about
+// another: the second is still unwritten after the first is stored into.
+static void test_writing_one_owning_field_leaves_the_other_unwritten() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "struct Pair { a: *Box, b: *Box }\n"
+                          "func main(): int {\n"
+                          "    let p: Pair;\n"
+                          "    p.a = new Box;\n"
+                          "    return p.b.n;\n"
+                          "}\n"));
+
+    assert(test_run_int("struct Box { n: int }\n"
+                        "struct Pair { a: *Box, b: *Box }\n"
+                        "func main(): int {\n"
+                        "    let p: Pair;\n"
+                        "    p.a = new Box;\n"
+                        "    p.b = new Box;\n"
+                        "    p.a.n = 2;\n"
+                        "    p.b.n = 3;\n"
+                        "    return p.a.n + p.b.n;\n"
+                        "}\n"
+                        "let r: int = main();") == 5);
+}
+
 int main(void) {
     test_reading_an_uninitialized_owning_pointer_is_refused();
     test_reading_an_uninitialized_borrow_is_refused();
@@ -131,6 +178,8 @@ int main(void) {
     test_reading_through_an_unwritten_owning_field_is_refused();
     test_an_owning_field_written_before_use_is_accepted();
     test_an_owning_field_written_on_one_arm_is_refused();
+    test_an_owning_field_past_the_scalars_is_still_tracked();
+    test_writing_one_owning_field_leaves_the_other_unwritten();
 
     printf("All uninitialized use tests passed\n");
     return 0;
