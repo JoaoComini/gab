@@ -6,6 +6,7 @@
 #include "util/hash_map.h"
 
 #include <stdbool.h>
+#include <stdint.h>
 
 // Per-slot state at one point in the program, and the merge that joins two
 // points into one. The resolver walks statements in source order carrying a
@@ -40,12 +41,30 @@ typedef enum {
     FLOW_INIT,
 } FlowInit;
 
+// How many of a struct's fields the written-field set can name. A struct with
+// more owning fields than this is tracked for its first FLOW_MAX_FIELDS only,
+// and the rest read as written -- the direction that accepts a program rather
+// than inventing an error for one the set has no room to describe.
+#define FLOW_MAX_FIELDS 64
+
 typedef struct {
     FlowInit init;
 
     // The block depth of what this slot points at, or 0 for "outlives
     // everything" -- a heap object, a global, or a non-pointer.
     int pointee_depth;
+
+    // Which of a struct's owning pointer fields have been written, by field
+    // index. Codegen nulls exactly those at the declaration, so one that has
+    // not been written holds null and reaching through it is a null
+    // dereference -- the one uninitialized read a struct local can still make.
+    //
+    // A bit here rather than a lattice keyed on access paths: the fields that
+    // can crash are the ones reachable one level from a local, and paths would
+    // need aliasing and invalidation rules to say anything more. It merges the
+    // same way 'init' does -- a field counts as written only where it is
+    // written on every path -- so it rides the existing merge.
+    uint64_t written_fields;
 } FlowSlot;
 
 #define flow_map_hash(key) ((size_t)(key) >> 4)

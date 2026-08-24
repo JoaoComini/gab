@@ -15,7 +15,7 @@ FlowSlot flow_get(const Flow *flow, Symbol *symbol) {
         return *found;
     }
 
-    return (FlowSlot){.init = FLOW_UNREACHED, .pointee_depth = 0};
+    return (FlowSlot){.init = FLOW_UNREACHED, .pointee_depth = 0, .written_fields = 0};
 }
 
 void flow_set(Flow *flow, Symbol *symbol, FlowSlot slot) {
@@ -71,6 +71,10 @@ static FlowSlot slot_merge(FlowSlot a, FlowSlot b) {
     return (FlowSlot){
         .init = init,
         .pointee_depth = a.pointee_depth > b.pointee_depth ? a.pointee_depth : b.pointee_depth,
+
+        // A field is written after the join only where both paths wrote it,
+        // which is the intersection.
+        .written_fields = a.written_fields & b.written_fields,
     };
 }
 
@@ -100,7 +104,8 @@ bool flow_equals(const Flow *a, const Flow *b) {
     flow_for_each(a->slots, entry) {
         FlowSlot other = flow_get(b, entry->key);
 
-        if (other.init != entry->value.init || other.pointee_depth != entry->value.pointee_depth) {
+        if (other.init != entry->value.init || other.pointee_depth != entry->value.pointee_depth ||
+            other.written_fields != entry->value.written_fields) {
             return false;
         }
     }
@@ -108,7 +113,8 @@ bool flow_equals(const Flow *a, const Flow *b) {
     flow_for_each(b->slots, entry) {
         FlowSlot other = flow_get(a, entry->key);
 
-        if (other.init != entry->value.init || other.pointee_depth != entry->value.pointee_depth) {
+        if (other.init != entry->value.init || other.pointee_depth != entry->value.pointee_depth ||
+            other.written_fields != entry->value.written_fields) {
             return false;
         }
     }

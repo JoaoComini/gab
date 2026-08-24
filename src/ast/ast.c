@@ -82,6 +82,11 @@ typedef struct {
     // this before visiting what they reach through.
     bool assigning;
 
+    // Set while the outermost field of an assignment target is visited. 'h.b'
+    // in 'h.b = v' is stored into rather than read, so it is what makes the
+    // field readable; a nested 'h.b' in 'h.b.n = v' clears this and is read.
+    bool assigning_field;
+
     // Set while a loop body is walked a second time to check it against the
     // state the back-edge carries. Declarations reuse the symbol the first
     // walk cached rather than declaring again, so the second walk checks
@@ -317,6 +322,66 @@ static Symbol *addressed_symbol(ASTExpr *expr) {
     }
 
     return NULL;
+}
+
+// Whether this expression is a struct local's owning pointer field -- 'h.b'
+// where h is a struct variable and b owns. Those are the fields codegen nulls
+// at the declaration, so those are the ones whose written-ness has to be
+// tracked. A field reached through a pointer is excluded: what it belongs to
+// was not declared here, so nothing local says whether it was written.
+//
+// Fills 'out_index' with the field's index in its struct, which is the bit the
+// written-field set uses.
+static bool owning_field_of_local(const ASTExpr *expr, Symbol **out_symbol, unsigned int *out_index) {
+    if (expr->kind != EXPR_FIELD || expr->field.target->kind != EXPR_VARIABLE) {
+        return false;
+    }
+
+    Symbol *symbol = expr->field.target->symbol;
+    const Type *struct_type = expr->field.target->type;
+
+    if (!symbol || symbol->kind != SYMBOL_VAR || !struct_type || struct_type->kind != TYPE_STRUCT) {
+        return false;
+    }
+
+    const TypeField *field = expr->field.field;
+
+    if (!field || !type_is_pointer(field->type) || field->type->is_ref) {
+        return false;
+    }
+
+    size_t index = (size_t)(field - struct_type->fields);
+
+    if (index >= FLOW_MAX_FIELDS) {
+        return false;
+    }
+
+    *out_symbol = symbol;
+    *out_index = (unsigned int)index;
+
+    return true;
+}
+
+// The written-field set a declaration's initializer hands its new variable.
+// Taking a whole struct -- 'let g = move h', or a copy of one -- makes g's
+// fields exactly as written as h's were, so the set travels with the value.
+//
+// Everything else answers all-written. A declaration with no initializer holds
+// the nulls codegen wrote and needs none of its fields marked; every other
+// initializer is a value this frame did not build field by field -- a call
+// result, a 'new' -- and nothing local says one of its fields is unwritten.
+static uint64_t initialized_fields(ResolverState *state, ASTExpr *initializer) {
+    if (!initializer) {
+        return 0;
+    }
+
+    ASTExpr *source = initializer->kind == EXPR_MOVE ? initializer->unary.target : initializer;
+
+    if (source->kind == EXPR_VARIABLE && source->symbol && source->symbol->kind == SYMBOL_VAR) {
+        return flow_get(&state->flow, source->symbol).written_fields;
+    }
+
+    return UINT64_MAX;
 }
 
 // Something with a home in memory whose address can be named: a variable, a
@@ -899,6 +964,11 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         break;
     }
     case EXPR_FIELD: {
+        // Only this field is the one being stored into; what it reaches
+        // through is read as usual.
+        bool stored_into = state->assigning_field;
+        state->assigning_field = false;
+
         ast_script_expr_visit(state, expr->field.target);
 
         Type *target_type = expr->field.target->type;
@@ -937,6 +1007,22 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         // Field access addresses the target's slots, so it inherits the
         // target's symbol and stays assignable through the chain.
         expr->symbol = expr->field.target->symbol;
+
+        // Reaching through an owning field that nothing has written to
+        // dereferences the null the declaration put there. Writing the field
+        // is a store into it, not a read of it, so 'assigning' excludes the
+        // 'h.b = ...' that makes it readable.
+        Symbol *field_owner;
+        unsigned int field_index;
+
+        if (!stored_into && owning_field_of_local(expr, &field_owner, &field_index)) {
+            FlowSlot slot = flow_get(&state->flow, field_owner);
+
+            if (!(slot.written_fields & ((uint64_t)1 << field_index))) {
+                diag_error(state->diagnostics, GAB_ERR_LIFETIME, expr->span,
+                           "'%s' is read before it is given a value", field_name->data);
+            }
+        }
         break;
     }
     case EXPR_MOVE: {
@@ -976,7 +1062,11 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         // is caught by the ordinary use check above rather than here.
         FlowSlot slot = flow_get(&state->flow, source);
 
-        flow_set(&state->flow, source, (FlowSlot){.init = FLOW_MOVED, .pointee_depth = slot.pointee_depth});
+        // Only 'init' changes: the slot is dead, but what its fields hold is
+        // what the destination now receives, and is still true of the slot if
+        // an assignment later revives it.
+        slot.init = FLOW_MOVED;
+        flow_set(&state->flow, source, slot);
         break;
     }
     case EXPR_ADDR_OF: {
@@ -1570,7 +1660,8 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         // and returns to check against.
         flow_set(&state->flow, var,
                  (FlowSlot){.init = stmt->var_decl.initializer ? FLOW_INIT : FLOW_UNINIT,
-                            .pointee_depth = pointee_depth(state, stmt->var_decl.initializer)});
+                            .pointee_depth = pointee_depth(state, stmt->var_decl.initializer),
+                            .written_fields = initialized_fields(state, stmt->var_decl.initializer)});
 
         stmt->var_decl.symbol = var;
         break;
@@ -1599,9 +1690,16 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
     case STMT_ASSIGN: {
         // Only a bare name is purely written. Reaching through a field or a
         // dereference reads the slot first, so those are visited as uses.
+        //
+        // An owning field is the exception in one direction: 'h.b = v' stores
+        // into the field rather than through it, so it is the write that makes
+        // the field readable. 'h.b.n = v' still reaches through h.b and reads
+        // it, which is why this looks at the target itself and not the chain.
         state->assigning = stmt->assign.target->kind == EXPR_VARIABLE;
+        state->assigning_field = stmt->assign.target->kind == EXPR_FIELD;
         ast_script_expr_visit(state, stmt->assign.target);
         state->assigning = false;
+        state->assigning_field = false;
 
         ast_script_expr_visit(state, stmt->assign.value);
 
@@ -1627,6 +1725,17 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
             // as a 'let' does, so a non-copyable value needs a move.
             check_implicit_copy(state, stmt->assign.value, target_type, stmt->span);
             check_pointer_lifetime(state, stmt->assign.value, 0, stmt->span, "stored here");
+
+            // The field now holds what was stored, so reaching through it is
+            // no longer a null dereference.
+            Symbol *field_owner;
+            unsigned int field_index;
+
+            if (owning_field_of_local(stmt->assign.target, &field_owner, &field_index)) {
+                FlowSlot slot = flow_get(&state->flow, field_owner);
+                slot.written_fields |= (uint64_t)1 << field_index;
+                flow_set(&state->flow, field_owner, slot);
+            }
             break;
         }
 

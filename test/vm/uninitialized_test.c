@@ -83,6 +83,43 @@ static void test_an_uninitialized_int_is_accepted() {
                          "}\n"));
 }
 
+// An owning field is nulled when the struct holding it is declared, so
+// reaching through one before anything is stored in it dereferences null.
+static void test_reading_through_an_unwritten_owning_field_is_refused() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "struct Holder { b: *Box }\n"
+                          "func main(): int {\n"
+                          "    let h: Holder;\n"
+                          "    return h.b.n;\n"
+                          "}\n"));
+}
+
+// Storing into the field first is what the rule asks for, and the field is
+// readable from there on.
+static void test_an_owning_field_written_before_use_is_accepted() {
+    assert(test_run_int("struct Box { n: int }\n"
+                        "struct Holder { b: *Box }\n"
+                        "func main(): int {\n"
+                        "    let h: Holder;\n"
+                        "    h.b = new Box;\n"
+                        "    h.b.n = 9;\n"
+                        "    return h.b.n;\n"
+                        "}\n"
+                        "let r: int = main();") == 9);
+}
+
+// A field written on only one arm of an 'if' is not written on every path
+// reaching the use, so it is refused after the join.
+static void test_an_owning_field_written_on_one_arm_is_refused() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "struct Holder { b: *Box }\n"
+                          "func main(): int {\n"
+                          "    let h: Holder;\n"
+                          "    if 1 < 2 { h.b = new Box; }\n"
+                          "    return h.b.n;\n"
+                          "}\n"));
+}
+
 int main(void) {
     test_reading_an_uninitialized_owning_pointer_is_refused();
     test_reading_an_uninitialized_borrow_is_refused();
@@ -91,6 +128,9 @@ int main(void) {
     test_a_pointer_assigned_on_both_arms_is_accepted();
     test_a_struct_built_field_by_field_is_accepted();
     test_an_uninitialized_int_is_accepted();
+    test_reading_through_an_unwritten_owning_field_is_refused();
+    test_an_owning_field_written_before_use_is_accepted();
+    test_an_owning_field_written_on_one_arm_is_refused();
 
     printf("All uninitialized use tests passed\n");
     return 0;

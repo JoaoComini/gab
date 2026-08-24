@@ -180,6 +180,14 @@ an owning field is freed when the struct holding it goes out of scope, wherever
 that struct sits. A field starts holding nothing, so the first store into it
 frees nothing; a later store frees what the field held before.
 
+Because an owning field starts holding nothing, reaching through one before
+anything is stored into it is refused — the slot holds null, and the read would
+dereference it. Storing into the field is what makes it readable, and that is
+tracked per path like everything else here: a field written on only one arm of
+an `if` is not readable after the join. This covers the fields a local's own
+declaration nulls; a field reached through a pointer is not tracked, since what
+it belongs to was not declared here.
+
 A struct moves whole or not at all. `move h.b` is refused — a half-moved struct
 would leave the rest of its fields in a state the language says nothing about —
 so `move h` is how ownership of what it holds changes hands.
@@ -210,9 +218,12 @@ to its use: a slot given a short-lived borrow on one arm of an `if` is
 short-lived after the join, and a borrow taken at the tail of a loop body is
 checked against the code that reads it at the head of the next iteration. An
 arm that cannot fall through — one ending in `return`, `break`, or `continue` —
-is not a route to the join, so what it left behind constrains nothing. A slot
-reassigned something longer-lived is usable again; the depth is what the last
-assignment left, not the deepest the slot ever held.
+is not a route to the join that follows it, so what it left behind constrains
+nothing there. A `break` is still a route out of its loop, though, so what it
+carries is merged into the state after that loop: a slot moved before a `break`
+is dead once the loop is left. A slot reassigned something longer-lived is
+usable again; the depth is what the last assignment left, not the deepest the
+slot ever held.
 
 `for` is the only loop keyword, and spells all three shapes:
 
