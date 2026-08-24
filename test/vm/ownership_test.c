@@ -26,7 +26,12 @@ static void test_conversion_is_owned_to_ref_only() {
                          "func f(): int { let o: *Node = new Node; let b: ref Node = o; return 0; }\n"));
 
     assert(!test_compiles("struct Node { n: int }\n"
-                          "func f(): int { let b: ref Node; let o: *Node = b; return 0; }\n"));
+                          "func f(): int {\n"
+                          "    let owner: *Node = new Node;\n"
+                          "    let b: ref Node = owner;\n"
+                          "    let o: *Node = b;\n"
+                          "    return 0;\n"
+                          "}\n"));
 }
 
 // 'ref' stands in place of the '*', so combining the two has nothing to mean:
@@ -165,30 +170,7 @@ static void test_an_owned_return_does_not_inherit_argument_lifetimes() {
                         "let r: int = main();") == 2);
 }
 
-// A parameter never owns what it is given either: the caller keeps owning it
-// across the call, no callee frees one, and none may be stored where something
-// else would own it. So '*T' is refused there for the same reason.
-static void test_an_owning_parameter_is_refused() {
-    assert(!test_compiles("struct Box { n: int }\n"
-                          "func take(b: *Box): int { return b.n; }\n"));
-}
-
-// The same for a method's own parameters, which are parameters like any other.
-static void test_an_owning_method_parameter_is_refused() {
-    assert(!test_compiles("struct Box { n: int }\n"
-                          "func (b: ref Box) adopt(other: *Box): int { return other.n; }\n"));
-}
-
-// What the refusal prevents: returning a parameter as owned would hand the
-// caller a second owner of something it already owns, and both would free it.
-// With no owning parameter to return, there is nothing to launder.
-static void test_a_borrow_cannot_be_laundered_into_an_owned_return() {
-    assert(!test_compiles("struct Box { n: int }\n"
-                          "func launder(b: ref Box): *Box { return b; }\n"));
-}
-
-// An owned return is still how a function hands ownership out; only taking one
-// in is gone.
+// An owned return is how a function hands ownership out.
 static void test_an_owned_return_is_still_allowed() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func make(): *Box {\n"
@@ -289,13 +271,129 @@ static void test_a_field_read_from_an_owned_temporary_does_not_leak() {
     test_program_free(&program);
 }
 
+// Where two branches rejoin, a borrow is as short-lived as the shorter-lived
+// of what the arms left in it: it is safe at a use only if it is safe on every
+// path reaching that use.
+static void test_a_branch_join_takes_the_shorter_lived_borrow() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "func main(): int {\n"
+                          "    let heap: *Box = new Box;\n"
+                          "    let out: ref Box = heap;\n"
+                          "    {\n"
+                          "        let inner: Box;\n"
+                          "        let a: ref Box = heap;\n"
+                          "        if 1 < 2 { a = &inner; } else { a = heap; }\n"
+                          "        out = a;\n"
+                          "    }\n"
+                          "    return 0;\n"
+                          "}\n"));
+
+    // Neither arm leaves a borrow of the block's own local, so the same copy
+    // out of the block is accepted.
+    assert(test_compiles("struct Box { n: int }\n"
+                         "func main(): int {\n"
+                         "    let heap: *Box = new Box;\n"
+                         "    let out: ref Box = heap;\n"
+                         "    {\n"
+                         "        let inner: Box;\n"
+                         "        let a: ref Box = heap;\n"
+                         "        if 1 < 2 { a = heap; } else { a = heap; }\n"
+                         "        out = a;\n"
+                         "    }\n"
+                         "    return 0;\n"
+                         "}\n"));
+}
+
+// A loop body's back-edge carries what the tail of one iteration left to the
+// head of the next, so a borrow taken late is checked against the code that
+// reads it early.
+static void test_a_borrow_taken_late_in_a_loop_reaches_the_next_iteration() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "func main(): int {\n"
+                          "    let heap: *Box = new Box;\n"
+                          "    let out: ref Box = heap;\n"
+                          "    {\n"
+                          "        let inner: Box;\n"
+                          "        let a: ref Box = heap;\n"
+                          "        for let i = 0; i < 2; i = i + 1 {\n"
+                          "            out = a;\n"
+                          "            a = &inner;\n"
+                          "        }\n"
+                          "    }\n"
+                          "    return 0;\n"
+                          "}\n"));
+}
+
+// A borrow's depth is what the last assignment left, not the deepest the slot
+// ever held: reassigning it something longer-lived makes it usable again.
+static void test_reassigning_a_borrow_replaces_what_it_names() {
+    assert(test_compiles("struct Box { n: int }\n"
+                         "func main(): int {\n"
+                         "    let heap: *Box = new Box;\n"
+                         "    let out: ref Box = heap;\n"
+                         "    {\n"
+                         "        let inner: Box;\n"
+                         "        let a: ref Box = &inner;\n"
+                         "        a = heap;\n"
+                         "        out = a;\n"
+                         "    }\n"
+                         "    return 0;\n"
+                         "}\n"));
+
+    // Without that reassignment the copy names the block's local and is
+    // refused.
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "func main(): int {\n"
+                          "    let heap: *Box = new Box;\n"
+                          "    let out: ref Box = heap;\n"
+                          "    {\n"
+                          "        let inner: Box;\n"
+                          "        let a: ref Box = &inner;\n"
+                          "        out = a;\n"
+                          "    }\n"
+                          "    return 0;\n"
+                          "}\n"));
+}
+
+// An arm that cannot fall through is not a way of arriving after the 'if', so
+// what it left in a slot does not constrain the code that follows.
+static void test_an_arm_that_returns_does_not_reach_the_join() {
+    assert(test_compiles("struct Box { n: int }\n"
+                         "func main(): int {\n"
+                         "    let heap: *Box = new Box;\n"
+                         "    let out: ref Box = heap;\n"
+                         "    {\n"
+                         "        let inner: Box;\n"
+                         "        let a: ref Box = heap;\n"
+                         "        if 1 < 2 { a = &inner; return 0; } else { a = heap; }\n"
+                         "        out = a;\n"
+                         "    }\n"
+                         "    return 0;\n"
+                         "}\n"));
+
+    // The same arm falling through does reach it, and is refused.
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "func main(): int {\n"
+                          "    let heap: *Box = new Box;\n"
+                          "    let out: ref Box = heap;\n"
+                          "    {\n"
+                          "        let inner: Box;\n"
+                          "        let a: ref Box = heap;\n"
+                          "        if 1 < 2 { a = &inner; } else { a = heap; }\n"
+                          "        out = a;\n"
+                          "    }\n"
+                          "    return 0;\n"
+                          "}\n"));
+}
+
 int main(void) {
+    test_an_arm_that_returns_does_not_reach_the_join();
+    test_a_branch_join_takes_the_shorter_lived_borrow();
+    test_a_borrow_taken_late_in_a_loop_reaches_the_next_iteration();
+    test_reassigning_a_borrow_replaces_what_it_names();
     test_taking_the_address_of_an_owning_pointer_is_refused();
     test_taking_the_address_of_a_borrow_is_allowed();
     test_a_ref_parameter_is_an_out_parameter_for_values();
-    test_an_owning_parameter_is_refused();
-    test_an_owning_method_parameter_is_refused();
-    test_a_borrow_cannot_be_laundered_into_an_owned_return();
     test_an_owned_return_is_still_allowed();
     test_a_ref_to_a_local_cannot_be_returned();
     test_a_ref_returned_from_a_call_cannot_outlive_its_argument();

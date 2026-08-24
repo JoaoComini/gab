@@ -120,6 +120,33 @@ static inline bool test_compiles(const char *source) {
     return ok;
 }
 
+// Whether some diagnostic the resolver reported contains 'needle'. For a rule
+// whose message teaches a remedy: that an error was reported says the rule
+// holds, and only the text says the programmer was told what to do about it.
+static inline bool test_diagnostic_mentions(const char *source, const char *needle) {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
+    ASTScript *script = ast_script_create();
+
+    test_resolve(&ctx, scope, script, source);
+
+    bool found = false;
+
+    for (size_t i = 0; i < diagnostics_count(&ctx.diagnostics); i++) {
+        if (strstr(diagnostics_get(&ctx.diagnostics, i)->message, needle)) {
+            found = true;
+            break;
+        }
+    }
+
+    ast_script_destroy(script);
+    test_context_free(&ctx);
+
+    return found;
+}
+
 // Whether a source survives codegen, which is further than test_compiles goes.
 // A rule enforced while emitting code -- an ownership rule, say -- rejects a
 // program the resolver was happy with, and only this can see that.

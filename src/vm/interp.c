@@ -597,6 +597,10 @@ static void vm_run_loop(VM *vm) {
                 memcpy(vm->registers + rd * VM_SLOT_SIZE, &object, sizeof(object));
                 VM_NEXT();
             }
+            VM_CASE(OP_NULL) {
+                vm_clear_pointer(vm, VM_DECODE_I_RD(instruction));
+                VM_NEXT();
+            }
             VM_CASE(OP_RELEASE) {
                 unsigned int rd = VM_DECODE_R_RD(instruction);
 

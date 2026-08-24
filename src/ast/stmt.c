@@ -82,6 +82,7 @@ ASTStmt *ast_for_stmt_create(Span span, ASTStmt *init, ASTExpr *condition, ASTSt
     stmt->forstmt.condition = condition;
     stmt->forstmt.post = post;
     stmt->forstmt.body = body;
+    stmt->forstmt.scope = NULL;
     return stmt;
 }
 
@@ -96,6 +97,7 @@ ASTStmt *ast_block_stmt_create(Span span, ASTStmtList list) {
     ASTStmt *stmt = ast_stmt_create(span);
     stmt->kind = STMT_BLOCK;
     stmt->block.list = list;
+    stmt->block.scope = NULL;
     return stmt;
 }
 

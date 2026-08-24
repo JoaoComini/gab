@@ -32,6 +32,7 @@ typedef enum {
     EXPR_NOT,
     EXPR_CAST,
     EXPR_NEW,
+    EXPR_MOVE,
 } ExprKind;
 
 typedef enum {
@@ -132,6 +133,7 @@ ASTExpr *ast_call_expr_create(Span span, ASTExpr *target, ASTExprList args);
 ASTExpr *ast_field_expr_create(Span span, ASTExpr *target, StringRef name);
 ASTExpr *ast_addr_of_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_deref_expr_create(Span span, ASTExpr *target);
+ASTExpr *ast_move_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_neg_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_not_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_cast_expr_create(Span span, ASTExpr *operand);

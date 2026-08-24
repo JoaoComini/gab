@@ -195,6 +195,7 @@
         [OP_CALL] = &&OP_CALL_label,                                                                         \
         [OP_CALL_EXTERN] = &&OP_CALL_EXTERN_label,                                                           \
         [OP_NEW] = &&OP_NEW_label,                                                                           \
+        [OP_NULL] = &&OP_NULL_label,                                                                         \
         [OP_RELEASE] = &&OP_RELEASE_label,                                                                   \
         [OP_RETURN] = &&OP_RETURN_label,                                                                     \
         [OP_RETURN_N] = &&OP_RETURN_N_label,                                                                 \
