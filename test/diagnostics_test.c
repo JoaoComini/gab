@@ -19,16 +19,16 @@ static void compile(TestContext *ctx, const char *source) {
 
     Lexer lexer = lexer_create(test_in_a_module(source), ctx->arena, &ctx->strings, diagnostics);
     Parser parser = parser_create(&lexer, diagnostics);
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
 
     Scope global_scope;
     scope_init(&global_scope, arena, &ctx->strings, NULL);
 
-    if (parser_parse(&parser, script)) {
-        ast_script_resolve(arena, script, &global_scope, NULL, diagnostics);
+    if (parser_parse(&parser, unit)) {
+        resolve_unit(arena, unit, &global_scope, NULL, diagnostics);
     }
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_records_kind_and_position() {

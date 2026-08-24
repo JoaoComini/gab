@@ -23,7 +23,7 @@
 // 'Module::Type' name. The map is passed rather than the VM that owns it, so
 // the resolver depends on a data structure and not on the runtime. NULL means
 // no modules are visible; a name that misses is reported as an unknown type.
-bool ast_script_resolve(Arena *compile_arena, ASTScript *script, Scope *global_scope,
-                        ModuleScopeMap *module_scopes, Diagnostics *diagnostics);
+bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, ModuleScopeMap *module_scopes,
+                  Diagnostics *diagnostics);
 
 #endif

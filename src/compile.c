@@ -37,12 +37,12 @@ static bool module_imports_module(const VM *vm, const String *module, const Stri
 // A cycle is refused here too: a module already importing this one cannot also
 // be imported by it, because linking installs a unit whole and two units that
 // each need the other have no order in which that is possible.
-static bool check_imports(VM *vm, const ASTScript *script, Diagnostics *diagnostics) {
-    String *self = string_from_ref(&vm->env.strings, script->module_name);
+static bool check_imports(VM *vm, const ASTUnit *ast, Diagnostics *diagnostics) {
+    String *self = string_from_ref(&vm->env.strings, ast->module_name);
     bool ok = true;
 
-    for (size_t i = 0; i < script->imports.size; i++) {
-        const ASTImport *import = &script->imports.data[i];
+    for (size_t i = 0; i < ast->imports.size; i++) {
+        const ASTImport *import = &ast->imports.data[i];
         String *name = string_from_ref(&vm->env.strings, import->name);
 
         if (name == self) {
@@ -77,7 +77,7 @@ bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *d
 
     Lexer lexer = lexer_create(source, vm->env.compile_arena, &vm->env.strings, diagnostics);
     Parser parser = parser_create(&lexer, diagnostics);
-    ASTScript *script = ast_script_create();
+    ASTUnit *ast = ast_unit_create();
 
     // Each stage is a precondition for the next: a failure must stop the
     // pipeline rather than let a malformed AST reach codegen.
@@ -90,8 +90,8 @@ bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *d
     // unit has linked and the StringRefs point into the source by then.
     StringList imported = string_list_create();
 
-    if (parser_parse(&parser, script) && check_imports(vm, script, diagnostics)) {
-        module_name = string_from_ref(&vm->env.strings, script->module_name);
+    if (parser_parse(&parser, ast) && check_imports(vm, ast, diagnostics)) {
+        module_name = string_from_ref(&vm->env.strings, ast->module_name);
         target = environment_module_scope(&vm->env, module_name);
 
         // Declared into a scope of its own, merged into the target only once the
@@ -105,18 +105,18 @@ bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *d
         staging = arena_alloc(vm->env.compile_arena, sizeof(Scope));
         scope_init_staging(staging, target->arena, &vm->env.strings, target);
 
-        for (size_t i = 0; i < script->imports.size; i++) {
-            string_list_add(&imported, string_from_ref(&vm->env.strings, script->imports.data[i].name));
+        for (size_t i = 0; i < ast->imports.size; i++) {
+            string_list_add(&imported, string_from_ref(&vm->env.strings, ast->imports.data[i].name));
         }
 
-        if (ast_script_resolve(vm->env.compile_arena, script, staging, vm->env.module_scopes, diagnostics)) {
-            unit = codegen_generate(script, vm->env.arena, &vm->env.strings, diagnostics);
+        if (resolve_unit(vm->env.compile_arena, ast, staging, vm->env.module_scopes, diagnostics)) {
+            unit = codegen_generate(ast, vm->env.arena, &vm->env.strings, diagnostics);
         }
     }
 
     // Nothing reads the AST once codegen has run, so the compile owns it end to
     // end and only the unit outlives this call.
-    ast_script_destroy(script);
+    ast_unit_destroy(ast);
 
     if (!unit) {
         return false;

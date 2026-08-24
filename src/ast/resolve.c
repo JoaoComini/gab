@@ -230,7 +230,7 @@ static bool is_addressable(const ASTExpr *expr) {
 // 'Player' share a method set, so both land on the same Type.
 //
 // A builtin qualifies: methods hang on the Type, and nothing about the map
-// requires the type to be one a script declared.
+// requires the type to be one a unit declared.
 static Type *receiver_base_type(Type *type) {
     if (type_is_pointer(type)) {
         type = type->pointee;
@@ -407,7 +407,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
     return false;
 }
 
-static void ast_script_expr_visit(ResolverState *state, ASTExpr *expr);
+static void resolve_expr(ResolverState *state, ASTExpr *expr);
 
 // A call whose target is a field expression: 'recv.m(args)'. Resolves the
 // method against the receiver's type, checks the call, and lowers the whole
@@ -420,10 +420,10 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     ASTExpr *receiver = expr->call.target->field.target;
     StringRef name = expr->call.target->field.name;
 
-    ast_script_expr_visit(state, receiver);
+    resolve_expr(state, receiver);
 
     for (size_t i = 0; i < expr->call.args.size; i++) {
-        ast_script_expr_visit(state, expr->call.args.data[i]);
+        resolve_expr(state, expr->call.args.data[i]);
     }
 
     Type *receiver_type = receiver->type;
@@ -508,7 +508,7 @@ bool is_string_type(Type *t) { return t->kind == TYPE_STRING; }
 // defined for it. Equality asks only whether two strings spell the same thing.
 bool is_comparable_type(Type *t) { return is_numeric_type(t) || is_boolean_type(t) || is_string_type(t); }
 
-static Type *ast_script_resolve_type(ResolverState *state, TypeSpec *spec, Span span);
+static Type *resolve_type_spec(ResolverState *state, TypeSpec *spec, Span span);
 
 // Whether a binary operator accepts operands of this type, reporting why not
 // when it does not. Both operands are already known to share the type.
@@ -637,7 +637,7 @@ static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
         return true;
     }
 
-    ast_script_expr_visit(state, operand);
+    resolve_expr(state, operand);
 
     Type *from = operand->type;
 
@@ -662,15 +662,15 @@ static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
     return true;
 }
 
-static void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
+static void resolve_expr(ResolverState *state, ASTExpr *expr) {
     if (!expr) {
         return;
     }
 
     switch (expr->kind) {
     case EXPR_BIN_OP: {
-        ast_script_expr_visit(state, expr->bin_op.left);
-        ast_script_expr_visit(state, expr->bin_op.right);
+        resolve_expr(state, expr->bin_op.left);
+        resolve_expr(state, expr->bin_op.right);
 
         Type *left_type = expr->bin_op.left->type;
         Type *right_type = expr->bin_op.right->type;
@@ -735,10 +735,10 @@ static void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
             break;
         }
 
-        ast_script_expr_visit(state, expr->call.target);
+        resolve_expr(state, expr->call.target);
 
         for (size_t i = 0; i < expr->call.args.size; i++) {
-            ast_script_expr_visit(state, expr->call.args.data[i]);
+            resolve_expr(state, expr->call.args.data[i]);
         }
 
         Symbol *callee = expr->call.target->symbol;
@@ -768,7 +768,7 @@ static void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         break;
     }
     case EXPR_FIELD: {
-        ast_script_expr_visit(state, expr->field.target);
+        resolve_expr(state, expr->field.target);
 
         Type *target_type = expr->field.target->type;
 
@@ -810,7 +810,7 @@ static void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         break;
     }
     case EXPR_MOVE: {
-        ast_script_expr_visit(state, expr->unary.target);
+        resolve_expr(state, expr->unary.target);
 
         Type *target_type = expr->unary.target->type;
 
@@ -836,7 +836,7 @@ static void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         break;
     }
     case EXPR_ADDR_OF: {
-        ast_script_expr_visit(state, expr->unary.target);
+        resolve_expr(state, expr->unary.target);
 
         Type *target_type = expr->unary.target->type;
 
@@ -889,7 +889,7 @@ static void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         break;
     }
     case EXPR_DEREF: {
-        ast_script_expr_visit(state, expr->unary.target);
+        resolve_expr(state, expr->unary.target);
 
         Type *target_type = expr->unary.target->type;
 
@@ -913,7 +913,7 @@ static void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         break;
     }
     case EXPR_NEG: {
-        ast_script_expr_visit(state, expr->unary.target);
+        resolve_expr(state, expr->unary.target);
 
         Type *target_type = expr->unary.target->type;
 
@@ -937,7 +937,7 @@ static void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         break;
     }
     case EXPR_NOT: {
-        ast_script_expr_visit(state, expr->unary.target);
+        resolve_expr(state, expr->unary.target);
 
         Type *target_type = expr->unary.target->type;
 
@@ -962,7 +962,7 @@ static void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         break;
     }
     case EXPR_NEW: {
-        Type *type = ast_script_resolve_type(state, expr->new_expr.type_spec, expr->span);
+        Type *type = resolve_type_spec(state, expr->new_expr.type_spec, expr->span);
 
         if (is_error_type(type)) {
             expr->type = resolver_error_type(state);
@@ -1039,7 +1039,7 @@ static void check_implicit_copy(ResolverState *state, ASTExpr *value, Type *dest
 
 // Returns NULL when there is no spec to resolve (an omitted type), and the
 // poison type when the spec names something that does not exist.
-static Type *ast_script_resolve_type(ResolverState *state, TypeSpec *spec, Span span) {
+static Type *resolve_type_spec(ResolverState *state, TypeSpec *spec, Span span) {
     if (!spec) {
         return NULL;
     }
@@ -1073,10 +1073,10 @@ static Type *ast_script_resolve_type(ResolverState *state, TypeSpec *spec, Span 
     return type;
 }
 
-static void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt);
+static void resolve_stmt(ResolverState *state, ASTStmt *stmt);
 
 // Declares the struct's Type: its name, its fields, and its layout. Split from
-// the body walk so the pre-pass can run it over a whole script's top level
+// the body walk so the pre-pass can run it over a whole unit's top level
 // before any signature mentions a type.
 static void declare_struct(ResolverState *state, ASTStmt *stmt) {
     stmt->struct_decl.declared = true;
@@ -1131,7 +1131,7 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
             continue;
         }
 
-        Type *field_type = ast_script_resolve_type(state, field->type_spec, field->span);
+        Type *field_type = resolve_type_spec(state, field->type_spec, field->span);
 
         if (is_error_type(field_type)) {
             poisoned = true;
@@ -1156,7 +1156,7 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
 
 // Declares the function's name, return type, and parameter types — everything a
 // caller needs — without touching the body. Split from the body walk so the
-// pre-pass can declare a whole script's top level before resolving any of it,
+// pre-pass can declare a whole unit's top level before resolving any of it,
 // Resolves one parameter's declared type.
 //
 // A parameter spells ownership the way a local and a field do: bare '*T' owns
@@ -1164,7 +1164,7 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
 // nothing. Which one a signature declares is what a call site reads to know
 // whether it must move, so the two may not be written interchangeably.
 static Type *resolve_param_type(ResolverState *state, ASTField *param) {
-    return ast_script_resolve_type(state, param->type_spec, param->span);
+    return resolve_type_spec(state, param->type_spec, param->span);
 }
 
 // which is what lets a function call one declared below it.
@@ -1178,14 +1178,14 @@ static Type *resolve_param_type(ResolverState *state, ASTField *param) {
 static void declare_method(ResolverState *state, ASTStmt *stmt) {
     ASTField *receiver = stmt->func_decl.receiver;
 
-    Type *receiver_type = ast_script_resolve_type(state, receiver->type_spec, receiver->span);
+    Type *receiver_type = resolve_type_spec(state, receiver->type_spec, receiver->span);
 
     if (is_error_type(receiver_type)) {
         return;
     }
     Type *base = receiver_base_type(receiver_type);
 
-    // A script declares methods on its own structs only. A builtin carries the
+    // A unit declares methods on its own structs only. A builtin carries the
     // ones the VM registered, and a second set declared over them would have no
     // module to belong to and no way to be told apart from the first.
     if (!base || base->kind != TYPE_STRUCT) {
@@ -1218,7 +1218,7 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
         return;
     }
 
-    Type *return_type = ast_script_resolve_type(state, stmt->func_decl.return_type, stmt->span);
+    Type *return_type = resolve_type_spec(state, stmt->func_decl.return_type, stmt->span);
 
     stmt->func_decl.resolved_return_type = return_type;
 
@@ -1290,7 +1290,7 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
     }
 
     StringRef func_name = stmt->func_decl.name;
-    Type *func_return_type = ast_script_resolve_type(state, stmt->func_decl.return_type, stmt->span);
+    Type *func_return_type = resolve_type_spec(state, stmt->func_decl.return_type, stmt->span);
 
     stmt->func_decl.resolved_return_type = func_return_type;
 
@@ -1342,7 +1342,7 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
     ASTField *receiver = stmt->func_decl.receiver;
 
     if (receiver) {
-        Type *receiver_type = ast_script_resolve_type(state, receiver->type_spec, receiver->span);
+        Type *receiver_type = resolve_type_spec(state, receiver->type_spec, receiver->span);
 
         receiver->symbol =
             scope_decl_var(state->current_scope, resolver_intern(state, receiver->name), receiver_type);
@@ -1352,7 +1352,7 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
         ASTField *param = stmt->func_decl.params.data[i];
 
         String *param_name = resolver_intern(state, param->name);
-        Type *param_type = ast_script_resolve_type(state, param->type_spec, param->span);
+        Type *param_type = resolve_type_spec(state, param->type_spec, param->span);
 
         Symbol *symbol = scope_decl_var(state->current_scope, param_name, param_type);
 
@@ -1370,7 +1370,7 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
 
     state->func_context.return_type = stmt->func_decl.resolved_return_type;
 
-    ast_script_stmt_visit(state, stmt->func_decl.body);
+    resolve_stmt(state, stmt->func_decl.body);
 
     state->func_context = previous_context;
 
@@ -1400,22 +1400,22 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
     resolver_exit_scope(state);
 }
 
-static void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
+static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
     if (!stmt) {
         return;
     }
 
     switch (stmt->kind) {
     case STMT_EXPR: {
-        ast_script_expr_visit(state, stmt->expr.value);
+        resolve_expr(state, stmt->expr.value);
         break;
     }
     case STMT_VAR_DECL: {
-        ast_script_expr_visit(state, stmt->var_decl.initializer);
+        resolve_expr(state, stmt->var_decl.initializer);
 
         Type *type;
         if (stmt->var_decl.type_spec) {
-            Type *decl_type = ast_script_resolve_type(state, stmt->var_decl.type_spec, stmt->span);
+            Type *decl_type = resolve_type_spec(state, stmt->var_decl.type_spec, stmt->span);
 
             if (stmt->var_decl.initializer) {
                 Type *init_type = stmt->var_decl.initializer->type;
@@ -1473,8 +1473,8 @@ static void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         break;
     }
     case STMT_ASSIGN: {
-        ast_script_expr_visit(state, stmt->assign.target);
-        ast_script_expr_visit(state, stmt->assign.value);
+        resolve_expr(state, stmt->assign.target);
+        resolve_expr(state, stmt->assign.value);
 
         Type *target_type = stmt->assign.target->type;
         Type *value_type = stmt->assign.value->type;
@@ -1508,8 +1508,8 @@ static void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         break;
     }
     case STMT_COMPOUND_ASSIGN: {
-        ast_script_expr_visit(state, stmt->compound_assign.target);
-        ast_script_expr_visit(state, stmt->compound_assign.value);
+        resolve_expr(state, stmt->compound_assign.target);
+        resolve_expr(state, stmt->compound_assign.value);
 
         Type *target_type = stmt->compound_assign.target->type;
         Type *value_type = stmt->compound_assign.value->type;
@@ -1544,7 +1544,7 @@ static void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         break;
     }
     case STMT_IF: {
-        ast_script_expr_visit(state, stmt->ifstmt.condition);
+        resolve_expr(state, stmt->ifstmt.condition);
 
         // A branch has to have something to branch on, and bool is the only
         // thing the jump opcodes read. An already-poisoned condition has
@@ -1557,8 +1557,8 @@ static void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
                        "'if' requires a boolean condition, found %s", type_name(state, condition_type));
         }
 
-        ast_script_stmt_visit(state, stmt->ifstmt.then_block);
-        ast_script_stmt_visit(state, stmt->ifstmt.else_block);
+        resolve_stmt(state, stmt->ifstmt.then_block);
+        resolve_stmt(state, stmt->ifstmt.else_block);
         break;
     }
     case STMT_FOR: {
@@ -1569,10 +1569,10 @@ static void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         resolver_enter_scope(state);
         stmt->forstmt.scope = state->current_scope;
 
-        ast_script_stmt_visit(state, stmt->forstmt.init);
+        resolve_stmt(state, stmt->forstmt.init);
 
         if (stmt->forstmt.condition) {
-            ast_script_expr_visit(state, stmt->forstmt.condition);
+            resolve_expr(state, stmt->forstmt.condition);
 
             Type *condition_type = stmt->forstmt.condition->type;
 
@@ -1586,8 +1586,8 @@ static void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         // the flow pass's question, and it iterates the graph rather than the
         // tree.
         state->func_context.loop_depth++;
-        ast_script_stmt_visit(state, stmt->forstmt.body);
-        ast_script_stmt_visit(state, stmt->forstmt.post);
+        resolve_stmt(state, stmt->forstmt.body);
+        resolve_stmt(state, stmt->forstmt.post);
         state->func_context.loop_depth--;
 
         state->current_scope = outer_scope;
@@ -1608,14 +1608,14 @@ static void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         stmt->block.scope = state->current_scope;
 
         for (size_t i = 0; i < stmt->block.list.size; i++) {
-            ast_script_stmt_visit(state, stmt->block.list.data[i]);
+            resolve_stmt(state, stmt->block.list.data[i]);
         }
 
         state->current_scope = outer;
         break;
     }
     case STMT_RETURN: {
-        ast_script_expr_visit(state, stmt->ret.result);
+        resolve_expr(state, stmt->ret.result);
 
         Type *expected = state->func_context.return_type;
         Type *actual = stmt->ret.result ? stmt->ret.result->type : NULL;
@@ -1641,16 +1641,16 @@ static void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
     }
 }
 
-bool ast_script_resolve(Arena *compile_arena, ASTScript *script, Scope *global_scope,
-                        ModuleScopeMap *module_scopes, Diagnostics *diagnostics) {
+bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, ModuleScopeMap *module_scopes,
+                  Diagnostics *diagnostics) {
     ResolverState state = {
         .compile_arena = compile_arena,
         .global_scope = global_scope,
         .current_scope = global_scope,
         .module_scopes = module_scopes,
-        .imports = &script->imports,
+        .imports = &unit->imports,
         .module_name =
-            script->module_name.data ? string_from_ref(global_scope->strings, script->module_name) : NULL,
+            unit->module_name.data ? string_from_ref(global_scope->strings, unit->module_name) : NULL,
         .func_context =
             {
                 .return_type = NULL,
@@ -1668,24 +1668,24 @@ bool ast_script_resolve(Arena *compile_arena, ASTScript *script, Scope *global_s
     // Types before functions: a signature names types, no type names a
     // function. This pass resolves signatures only — never a body — so nothing
     // about scoping or block depth depends on it.
-    for (size_t i = 0; i < script->statements.size; i++) {
-        ASTStmt *stmt = script->statements.data[i];
+    for (size_t i = 0; i < unit->statements.size; i++) {
+        ASTStmt *stmt = unit->statements.data[i];
 
         if (stmt && stmt->kind == STMT_STRUCT_DECL) {
             declare_struct(&state, stmt);
         }
     }
 
-    for (size_t i = 0; i < script->statements.size; i++) {
-        ASTStmt *stmt = script->statements.data[i];
+    for (size_t i = 0; i < unit->statements.size; i++) {
+        ASTStmt *stmt = unit->statements.data[i];
 
         if (stmt && stmt->kind == STMT_FUNC_DECL) {
             declare_func(&state, stmt);
         }
     }
 
-    for (size_t i = 0; i < script->statements.size; i++) {
-        ast_script_stmt_visit(&state, script->statements.data[i]);
+    for (size_t i = 0; i < unit->statements.size; i++) {
+        resolve_stmt(&state, unit->statements.data[i]);
     }
 
     return diagnostics_count(diagnostics) == errors_before;

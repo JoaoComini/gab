@@ -106,7 +106,7 @@ static void test_struct_typed_local() {
 }
 
 // The top level runs as frame zero, so execution leaves no frame behind and the
-// VM is reusable for a second script.
+// VM is reusable for a second unit.
 static void test_top_level_runs_as_frame_zero() {
     VM *vm = vm_create();
 
@@ -140,7 +140,7 @@ static void test_types_survive_a_later_compile() {
     size_t size = player->size;
     size_t field_count = player->field_count;
 
-    // Enough of a second script to reuse the memory the first one released.
+    // Enough of a second unit to reuse the memory the first one released.
     compile_and_run(vm,
                     "module test;\n"
                     "func a(x: int, y: int): int { let q: int = x + y; let w: int = q * q; return w; }\n"
@@ -261,13 +261,13 @@ static void test_a_unit_that_fails_to_link_installs_nothing() {
 
     // Codegen succeeds and linking does not: the extern names a body no host
     // registered, which is a question only the link step can ask.
-    FuncPrototype script;
+    FuncPrototype top_level;
     assert(!compile_unit(vm,
                          "module test;\n"
                          "struct Only { a: int }\n"
                          "func second(): int { let p: *Only = new Only; return p.a; }\n"
                          "extern func absent(x: int): int;\n",
-                         &script, &diagnostics));
+                         &top_level, &diagnostics));
 
     assert(diagnostics_has_errors(&diagnostics));
     diagnostics_free(&diagnostics);
@@ -298,17 +298,17 @@ static void test_checking_a_unit_installs_nothing() {
                                "func second(): int { let p: *Only = new Only; return p.a; }\n",
                                vm->env.compile_arena, &vm->env.strings, &diagnostics);
     Parser parser = parser_create(&lexer, &diagnostics);
-    ASTScript *script = ast_script_create();
+    ASTUnit *ast = ast_unit_create();
 
-    assert(parser_parse(&parser, script));
+    assert(parser_parse(&parser, ast));
 
     Scope staging;
     scope_init_staging(&staging, vm->env.arena, &vm->env.strings,
                        environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "dry")));
 
-    assert(ast_script_resolve(vm->env.compile_arena, script, &staging, vm->env.module_scopes, &diagnostics));
+    assert(resolve_unit(vm->env.compile_arena, ast, &staging, vm->env.module_scopes, &diagnostics));
 
-    Unit *unit = codegen_generate(script, vm->env.arena, &vm->env.strings, &diagnostics);
+    Unit *unit = codegen_generate(ast, vm->env.arena, &vm->env.strings, &diagnostics);
     assert(unit);
 
     // Accepts, and having accepted has still changed nothing.
@@ -320,25 +320,25 @@ static void test_checking_a_unit_installs_nothing() {
                                 string_from_cstr(&vm->env.strings, "second")));
 
     unit_free(unit);
-    ast_script_destroy(script);
+    ast_unit_destroy(ast);
     diagnostics_free(&diagnostics);
 
     vm_free(vm);
 }
 
 // The whole point of separating compilation from execution: an engine compiles
-// a script at load time and runs it every frame, without re-parsing.
+// a unit at load time and runs it every frame, without re-parsing.
 static void test_compile_once_run_many() {
     VM *vm = vm_create();
 
     Diagnostics diagnostics;
     diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
 
-    FuncPrototype script;
+    FuncPrototype top_level;
     bool ok = compile_unit(vm,
                            "module test;\n"
                            "func seven(): int { return 7; }\nlet r: int = seven();\n",
-                           &script, &diagnostics);
+                           &top_level, &diagnostics);
     assert(ok);
 
     diagnostics_free(&diagnostics);
@@ -346,7 +346,7 @@ static void test_compile_once_run_many() {
     // Running repeatedly must be safe and must give the same answer each time:
     // a run leaves no frame behind and does not consume the chunk.
     for (int i = 0; i < 3; i++) {
-        interp_run_top_level(vm, &script);
+        interp_run_top_level(vm, &top_level);
 
         assert(vm->frame_count == 0);
         int32_t returned;
@@ -355,7 +355,7 @@ static void test_compile_once_run_many() {
         assert(returned == 7);
     }
 
-    func_proto_free(&script);
+    func_proto_free(&top_level);
 
     vm_free(vm);
 }
@@ -368,11 +368,11 @@ static void test_compile_failure_is_reportable() {
     Diagnostics diagnostics;
     diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
 
-    FuncPrototype script;
+    FuncPrototype top_level;
     bool ok = compile_unit(vm,
                            "module test;\n"
                            "func broken(: int { return",
-                           &script, &diagnostics);
+                           &top_level, &diagnostics);
 
     assert(!ok);
     assert(diagnostics_has_errors(&diagnostics));
@@ -387,19 +387,19 @@ static bool compile_ok(VM *vm, const char *source) {
     Diagnostics diagnostics;
     diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
 
-    FuncPrototype script;
-    bool ok = compile_unit(vm, source, &script, &diagnostics);
+    FuncPrototype top_level;
+    bool ok = compile_unit(vm, source, &top_level, &diagnostics);
 
     diagnostics_free(&diagnostics);
 
     if (ok) {
-        func_proto_free(&script);
+        func_proto_free(&top_level);
     }
 
     return ok;
 }
 
-// The reason modules exist: one script per entity type, each with its own
+// The reason modules exist: one unit per entity type, each with its own
 // on_update. Before per-module scopes this was a hard compile error.
 static void test_modules_isolate_declarations() {
     VM *vm = vm_create();
