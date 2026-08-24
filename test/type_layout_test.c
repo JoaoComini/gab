@@ -38,13 +38,13 @@ typedef struct {
 static Type *resolve_struct(TestContext *ctx, const char *source, const char *name) {
     Lexer lexer = lexer_create(test_in_a_module(source), ctx->arena, &ctx->strings, &ctx->diagnostics);
     Parser parser = parser_create(&lexer, &ctx->diagnostics);
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
 
     Scope global_scope;
     scope_init(&global_scope, ctx->arena, &ctx->strings, NULL);
 
-    if (parser_parse(&parser, script)) {
-        ast_script_resolve(ctx->arena, script, &global_scope, NULL, &ctx->diagnostics);
+    if (parser_parse(&parser, unit)) {
+        resolve_unit(ctx->arena, unit, &global_scope, NULL, &ctx->diagnostics);
     }
 
     if (diagnostics_has_errors(&ctx->diagnostics)) {
@@ -53,7 +53,7 @@ static Type *resolve_struct(TestContext *ctx, const char *source, const char *na
 
     assert(!diagnostics_has_errors(&ctx->diagnostics));
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 
     return scope_type_lookup(&global_scope, string_from_cstr(&ctx->strings, name));
 }
@@ -187,20 +187,20 @@ static void test_unknown_field_type_is_not_registered() {
     Lexer lexer = lexer_create("module test;\nstruct Broken { value: Nope }", ctx.arena, &ctx.strings,
                                &ctx.diagnostics);
     Parser parser = parser_create(&lexer, &ctx.diagnostics);
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
 
     Scope global_scope;
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
 
-    parser_parse(&parser, script);
-    ast_script_resolve(ctx.arena, script, &global_scope, NULL, &ctx.diagnostics);
+    parser_parse(&parser, unit);
+    resolve_unit(ctx.arena, unit, &global_scope, NULL, &ctx.diagnostics);
 
     assert(diagnostics_count(&ctx.diagnostics) == 1);
 
     // A struct that failed to resolve must not become usable as a type.
     assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "Broken")) == NULL);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 

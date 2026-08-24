@@ -25,9 +25,9 @@ static void test_pointer_types_are_interned() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
 
-    bool ok = test_resolve(&ctx, scope, script,
+    bool ok = test_resolve(&ctx, scope, unit,
                            "struct Player { health: int }\n"
                            "let p: *Player;\n"
                            "let q: *Player;\n");
@@ -43,7 +43,7 @@ static void test_pointer_types_are_interned() {
     Type *player = scope_type_lookup(scope, string_from_cstr(&ctx.strings, "Player"));
     assert(p->var.type->pointee == player);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -53,9 +53,9 @@ static void test_pointer_depth_nests() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
 
-    bool ok = test_resolve(&ctx, scope, script, "let p: *int;\nlet q: **int;\n");
+    bool ok = test_resolve(&ctx, scope, unit, "let p: *int;\nlet q: **int;\n");
     assert(ok);
 
     Symbol *p = lookup(&ctx, scope, "p");
@@ -64,7 +64,7 @@ static void test_pointer_depth_nests() {
     assert(q->var.type->pointee == p->var.type);
     assert(p->var.type->pointee == scope_type_lookup(scope, string_from_cstr(&ctx.strings, "int")));
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -75,9 +75,9 @@ static void test_pointer_is_a_word() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
 
-    bool ok = test_resolve(&ctx, scope, script,
+    bool ok = test_resolve(&ctx, scope, unit,
                            "struct Big { a: int, b: int, c: int, d: int }\n"
                            "let p: *Big;\n"
                            "let q: *bool;\n");
@@ -91,7 +91,7 @@ static void test_pointer_is_a_word() {
     assert(q->var.type->size == p->var.type->size);
     assert(q->var.type->alignment == p->var.type->alignment);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -102,9 +102,9 @@ static void test_ref_is_a_distinct_type() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
 
-    bool ok = test_resolve(&ctx, scope, script,
+    bool ok = test_resolve(&ctx, scope, unit,
                            "struct Node { n: int }\n"
                            "let o: *Node;\n"
                            "let b: ref Node;\n");
@@ -123,7 +123,7 @@ static void test_ref_is_a_distinct_type() {
     assert(owning->var.type->pointee == borrow->var.type->pointee);
     assert(borrow->var.type->size == sizeof(void *));
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -133,9 +133,9 @@ static void test_ref_pointers_are_interned() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
 
-    bool ok = test_resolve(&ctx, scope, script,
+    bool ok = test_resolve(&ctx, scope, unit,
                            "struct Node { n: int }\n"
                            "let a: ref Node;\n"
                            "let b: ref Node;\n");
@@ -146,7 +146,7 @@ static void test_ref_pointers_are_interned() {
 
     assert(a->var.type == b->var.type);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 

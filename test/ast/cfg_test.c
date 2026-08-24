@@ -9,43 +9,43 @@
 #include <assert.h>
 #include <stdio.h>
 
-// A resolved script and the arena its nodes live in. The graph points at AST
+// A resolved unit and the arena its nodes live in. The graph points at AST
 // nodes, so both have to outlive the inspection -- which is why this is not
 // built on TestProgram: a full compile is done with the tree by the time it
 // returns.
 typedef struct {
     TestContext ctx;
     Scope *scope;
-    ASTScript *script;
+    ASTUnit *unit;
 } ResolvedScript;
 
 static void resolved_script_init(ResolvedScript *resolved, const char *source) {
     test_context_init(&resolved->ctx);
 
     resolved->scope = scope_create(resolved->ctx.arena, &resolved->ctx.strings, NULL);
-    resolved->script = ast_script_create();
+    resolved->unit = ast_unit_create();
 
-    bool ok = test_resolve(&resolved->ctx, resolved->scope, resolved->script, source);
+    bool ok = test_resolve(&resolved->ctx, resolved->scope, resolved->unit, source);
 
     assert(ok);
 }
 
 static void resolved_script_free(ResolvedScript *resolved) {
-    ast_script_destroy(resolved->script);
+    ast_unit_destroy(resolved->unit);
     test_context_free(&resolved->ctx);
 }
 
-// The graph of the first function the script declares.
+// The graph of the first function the unit declares.
 static CFG *first_func_cfg(ResolvedScript *resolved) {
-    for (size_t i = 0; i < resolved->script->statements.size; i++) {
-        ASTStmt *stmt = resolved->script->statements.data[i];
+    for (size_t i = 0; i < resolved->unit->statements.size; i++) {
+        ASTStmt *stmt = resolved->unit->statements.data[i];
 
         if (stmt && stmt->kind == STMT_FUNC_DECL && stmt->func_decl.body) {
             return cfg_build(resolved->ctx.arena, stmt->func_decl.body);
         }
     }
 
-    assert(false && "the script declares no function with a body");
+    assert(false && "the unit declares no function with a body");
 
     return NULL;
 }

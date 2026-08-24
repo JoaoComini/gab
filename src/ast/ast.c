@@ -2,23 +2,21 @@
 
 #include <stdlib.h>
 
-ASTScript *ast_script_create() {
-    ASTScript *script = malloc(sizeof(ASTScript));
-    script->statements = ast_stmt_list_create();
-    script->module_name = (StringRef){.data = NULL, .length = 0};
-    script->module_span = (Span){0};
-    script->imports = ast_import_list_create();
+ASTUnit *ast_unit_create() {
+    ASTUnit *unit = malloc(sizeof(ASTUnit));
+    unit->statements = ast_stmt_list_create();
+    unit->module_name = (StringRef){.data = NULL, .length = 0};
+    unit->module_span = (Span){0};
+    unit->imports = ast_import_list_create();
 
-    return script;
+    return unit;
 }
 
-void ast_script_destroy(ASTScript *script) {
-    ast_stmt_list_free(&script->statements);
-    ast_import_list_free(&script->imports);
+void ast_unit_destroy(ASTUnit *unit) {
+    ast_stmt_list_free(&unit->statements);
+    ast_import_list_free(&unit->imports);
 
-    free(script);
+    free(unit);
 }
 
-void ast_script_add_statement(ASTScript *script, ASTStmt *stmt) {
-    ast_stmt_list_add(&script->statements, stmt);
-}
+void ast_unit_add_statement(ASTUnit *unit, ASTStmt *stmt) { ast_stmt_list_add(&unit->statements, stmt); }

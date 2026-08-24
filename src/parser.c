@@ -57,7 +57,7 @@ static Span parser_span(Parser *parser) { return token_span(parser->current); }
 // Required because a declaration has to belong to a module that can be named:
 // one that could not be would be reachable only by the host, and unreachable
 // from any other unit.
-static void parse_module_directive(Parser *parser, ASTScript *script) {
+static void parse_module_directive(Parser *parser, ASTUnit *unit) {
     Span span = parser_span(parser);
 
     parser_next_token(parser);
@@ -96,8 +96,8 @@ static void parse_module_directive(Parser *parser, ASTScript *script) {
         return;
     }
 
-    script->module_name = name;
-    script->module_span = span;
+    unit->module_name = name;
+    unit->module_span = span;
 
     if (parser_expect(parser, TOKEN_SEMICOLON, "expected ';' after the module name")) {
         parser_next_token(parser);
@@ -111,7 +111,7 @@ static void parse_module_directive(Parser *parser, ASTScript *script) {
 // A module is named the same way here as in a qualified reference, so the same
 // single-identifier rule applies: 'import A::B;' names nothing this language
 // has.
-static void parse_import_directive(Parser *parser, ASTScript *script) {
+static void parse_import_directive(Parser *parser, ASTUnit *unit) {
     Span span = parser_span(parser);
 
     parser_next_token(parser);
@@ -132,27 +132,27 @@ static void parse_import_directive(Parser *parser, ASTScript *script) {
         return;
     }
 
-    ast_import_list_add(&script->imports, (ASTImport){.name = name, .span = span});
+    ast_import_list_add(&unit->imports, (ASTImport){.name = name, .span = span});
 
     if (parser_expect(parser, TOKEN_SEMICOLON, "expected ';' after the module name")) {
         parser_next_token(parser);
     }
 }
 
-bool parser_parse(Parser *parser, ASTScript *script) {
+bool parser_parse(Parser *parser, ASTUnit *unit) {
     size_t errors_before = diagnostics_count(parser->diagnostics);
 
     parser_next_token(parser);
 
     if (parser->current.type == TOKEN_MODULE) {
-        parse_module_directive(parser, script);
+        parse_module_directive(parser, unit);
     } else {
         diag_error(parser->diagnostics, GAB_ERR_SYNTAX, parser_span(parser),
                    "a unit must name its module: write 'module <name>;' before anything else");
     }
 
     while (parser->current.type == TOKEN_IMPORT) {
-        parse_import_directive(parser, script);
+        parse_import_directive(parser, unit);
     }
 
     while (parser->current.type != TOKEN_EOF) {
@@ -172,7 +172,7 @@ bool parser_parse(Parser *parser, ASTScript *script) {
 
             // Parsed into a throwaway so a misplaced import cannot widen what
             // this unit may name, but still consumed so it does not cascade.
-            ASTScript discarded = *script;
+            ASTUnit discarded = *unit;
             parse_import_directive(parser, &discarded);
             continue;
         }
@@ -181,14 +181,14 @@ bool parser_parse(Parser *parser, ASTScript *script) {
             diag_error(parser->diagnostics, GAB_ERR_SYNTAX, parser_span(parser),
                        "'module' must appear once, before any declaration");
 
-            ASTScript discarded = *script;
+            ASTUnit discarded = *unit;
             parse_module_directive(parser, &discarded);
             continue;
         }
 
         ASTStmt *stmt = parse_decl_statement(parser);
         if (!stmt) {
-            // Recover to the next statement boundary so a script with several
+            // Recover to the next statement boundary so a unit with several
             // syntax errors reports all of them rather than just the first.
             TokenType before = parser->current.type;
             int before_pos = parser->lexer->pos;
@@ -204,7 +204,7 @@ bool parser_parse(Parser *parser, ASTScript *script) {
             continue;
         }
 
-        ast_script_add_statement(script, stmt);
+        ast_unit_add_statement(unit, stmt);
     }
 
     return diagnostics_count(parser->diagnostics) == errors_before;

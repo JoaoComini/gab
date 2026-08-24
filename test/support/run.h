@@ -1,7 +1,7 @@
 #ifndef GAB_TEST_RUN_H
 #define GAB_TEST_RUN_H
 
-// Running a snippet of script and asking what came back. Every feature test
+// Running a snippet of source and asking what came back. Every feature test
 // wants some version of this, so it lives here rather than being copied: a
 // change to what "ran correctly" means -- an extra leak assertion, say --
 // should have exactly one place to be made.
@@ -92,15 +92,15 @@ static inline bool test_run_bool(const char *source) {
 // Compiles as far as resolution and leaves the results in the caller's scope
 // and script, so a test can inspect the symbols and types the front end
 // settled on. The caller owns both, since what is worth inspecting differs.
-static inline bool test_resolve(TestContext *ctx, Scope *scope, ASTScript *script, const char *source) {
+static inline bool test_resolve(TestContext *ctx, Scope *scope, ASTUnit *unit, const char *source) {
     Lexer lexer = lexer_create(test_in_a_module(source), ctx->arena, &ctx->strings, &ctx->diagnostics);
     Parser parser = parser_create(&lexer, &ctx->diagnostics);
 
-    if (!parser_parse(&parser, script)) {
+    if (!parser_parse(&parser, unit)) {
         return false;
     }
 
-    return ast_script_resolve(ctx->arena, script, scope, NULL, &ctx->diagnostics);
+    return resolve_unit(ctx->arena, unit, scope, NULL, &ctx->diagnostics);
 }
 
 // Whether a source compiles at all, for the cases that only care that a bad
@@ -110,11 +110,11 @@ static inline bool test_compiles(const char *source) {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
 
-    bool ok = test_resolve(&ctx, scope, script, source);
+    bool ok = test_resolve(&ctx, scope, unit, source);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
     test_context_free(&ctx);
 
     return ok;
@@ -128,9 +128,9 @@ static inline bool test_diagnostic_mentions(const char *source, const char *need
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
 
-    test_resolve(&ctx, scope, script, source);
+    test_resolve(&ctx, scope, unit, source);
 
     bool found = false;
 
@@ -141,7 +141,7 @@ static inline bool test_diagnostic_mentions(const char *source, const char *need
         }
     }
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
     test_context_free(&ctx);
 
     return found;

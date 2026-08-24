@@ -28,9 +28,9 @@ static void test_method_lands_on_its_receiver_type() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
 
-    bool ok = test_resolve(&ctx, scope, script,
+    bool ok = test_resolve(&ctx, scope, unit,
                            "struct Player { health: int }\n"
                            "func (p: ref Player) damage(n: int): bool { return true; }\n");
     assert(ok);
@@ -45,7 +45,7 @@ static void test_method_lands_on_its_receiver_type() {
     assert(type_is_pointer(damage->func.params[0]));
     assert(damage->func.params[0]->pointee == lookup_type(&ctx, scope, "Player"));
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -56,16 +56,16 @@ static void test_method_is_not_reachable_as_a_bare_name() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
 
-    bool ok = test_resolve(&ctx, scope, script,
+    bool ok = test_resolve(&ctx, scope, unit,
                            "struct Player { health: int }\n"
                            "func (p: ref Player) damage(n: int): bool { return true; }\n");
     assert(ok);
 
     assert(!scope_symbol_lookup(scope, string_from_cstr(&ctx.strings, "damage")));
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -76,9 +76,9 @@ static void test_same_name_on_two_types() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
 
-    bool ok = test_resolve(&ctx, scope, script,
+    bool ok = test_resolve(&ctx, scope, unit,
                            "struct Player { health: int }\n"
                            "struct Enemy { health: int }\n"
                            "func (p: ref Player) update(): int { return 1; }\n"
@@ -90,7 +90,7 @@ static void test_same_name_on_two_types() {
 
     assert(player && enemy && player != enemy);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -100,9 +100,9 @@ static void test_value_receiver() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
 
-    bool ok = test_resolve(&ctx, scope, script,
+    bool ok = test_resolve(&ctx, scope, unit,
                            "struct Player { health: int }\n"
                            "func (p: Player) is_alive(): bool { return true; }\n");
     assert(ok);
@@ -113,7 +113,7 @@ static void test_value_receiver() {
     assert(alive->func.param_count == 1);
     assert(alive->func.params[0] == lookup_type(&ctx, scope, "Player"));
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -123,16 +123,16 @@ static void test_method_declared_above_its_struct() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
 
-    bool ok = test_resolve(&ctx, scope, script,
+    bool ok = test_resolve(&ctx, scope, unit,
                            "func (p: ref Player) health_of(): int { return p.health; }\n"
                            "struct Player { health: int }\n");
     assert(ok);
 
     assert(lookup_method(&ctx, scope, "Player", "health_of"));
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -143,15 +143,15 @@ static void test_receiver_fields_resolve_in_the_body() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
 
-    bool ok = test_resolve(&ctx, scope, script,
+    bool ok = test_resolve(&ctx, scope, unit,
                            "struct Player { health: int }\n"
                            "func (p: ref Player) hp(): int { return p.health; }\n"
                            "func (q: Player) hp2(): int { return q.health; }\n");
     assert(ok);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -160,11 +160,11 @@ static bool fails(const char *source) {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
 
-    bool ok = test_resolve(&ctx, scope, script, source);
+    bool ok = test_resolve(&ctx, scope, unit, source);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
     test_context_free(&ctx);
 
     return !ok;

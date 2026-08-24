@@ -19,6 +19,6 @@
 // 'arena' is where the unit's prototypes are allocated. It must outlive any VM
 // the unit is linked into, because a frame addresses its prototype for as long
 // as it runs.
-Unit *codegen_generate(ASTScript *ast, Arena *arena, StringPool *strings, Diagnostics *diagnostics);
+Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, Diagnostics *diagnostics);
 
 #endif

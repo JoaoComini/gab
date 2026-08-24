@@ -19,6 +19,6 @@ Parser parser_create(Lexer *lexer, Diagnostics *diagnostics);
 
 // Returns false if any syntax error was reported. The diagnostics sink is
 // authoritative; this is a convenience.
-bool parser_parse(Parser *parser, ASTScript *script);
+bool parser_parse(Parser *parser, ASTUnit *unit);
 
 #endif

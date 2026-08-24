@@ -266,9 +266,9 @@ static bool type_is_struct(const Type *type);
 static bool type_moves_as_slots(const Type *type);
 static OpCode field_opcode_for(size_t size, bool load, bool indirect, bool *ok);
 
-// ---- Generating a script ----
+// ---- Generating a unit ----
 
-Unit *codegen_generate(ASTScript *script, Arena *arena, StringPool *strings, Diagnostics *diagnostics) {
+Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, Diagnostics *diagnostics) {
     Unit *unit = calloc(1, sizeof(Unit));
 
     if (!unit) {
@@ -308,16 +308,16 @@ Unit *codegen_generate(ASTScript *script, Arena *arena, StringPool *strings, Dia
     // hoists declarations for the same reason. A body may call a function
     // declared below it, and the OP_CALL it emits needs that function's index
     // before its body has been reached.
-    for (size_t i = 0; i < script->statements.size; i++) {
-        ASTStmt *stmt = script->statements.data[i];
+    for (size_t i = 0; i < ast->statements.size; i++) {
+        ASTStmt *stmt = ast->statements.data[i];
 
         if (stmt && stmt->kind == STMT_FUNC_DECL) {
             codegen_reserve_proto(&state, &stmt->func_decl);
         }
     }
 
-    for (size_t i = 0; i < script->statements.size; i++) {
-        codegen_stmt(&state, script->statements.data[i]);
+    for (size_t i = 0; i < ast->statements.size; i++) {
+        codegen_stmt(&state, ast->statements.data[i]);
     }
 
     // The slots were only ever true of this compile, so they go with it.

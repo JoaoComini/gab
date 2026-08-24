@@ -12,21 +12,21 @@
 #include <stdio.h>
 #include <string.h>
 
-static ASTScript *assert_parse(const char *code) {
+static ASTUnit *assert_parse(const char *code) {
     TestContext ctx;
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
     Lexer lexer = lexer_create(test_in_a_module(code), ctx.arena, &ctx.strings, diagnostics);
     Parser parser = parser_create(&lexer, diagnostics);
-    bool ok = parser_parse(&parser, script);
+    bool ok = parser_parse(&parser, unit);
     assert(ok);
     assert(!diagnostics_has_errors(diagnostics));
 
     test_context_free(&ctx);
 
-    return script;
+    return unit;
 }
 
 static void assert_parse_error(const char *code, const char *expected_error) {
@@ -34,10 +34,10 @@ static void assert_parse_error(const char *code, const char *expected_error) {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
     Lexer lexer = lexer_create(test_in_a_module(code), ctx.arena, &ctx.strings, diagnostics);
     Parser parser = parser_create(&lexer, diagnostics);
-    bool ok = parser_parse(&parser, script);
+    bool ok = parser_parse(&parser, unit);
     assert(!ok);
 
     assert(diagnostics_has_errors(diagnostics));
@@ -59,7 +59,7 @@ static void assert_parse_error(const char *code, const char *expected_error) {
     assert(found);
 
     test_context_free(&ctx);
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 char code_buffer[100];
@@ -69,57 +69,55 @@ static const char *func_wrap(const char *code) {
     return code_buffer;
 }
 
-static ASTStmtList func_unwrap(ASTScript *script) {
-    return script->statements.data[0]->func_decl.body->block.list;
-}
+static ASTStmtList func_unwrap(ASTUnit *unit) { return unit->statements.data[0]->func_decl.body->block.list; }
 
 // --- Test Cases ---
 static void test_single_number() {
-    ASTScript *script = assert_parse(func_wrap("42;"));
+    ASTUnit *unit = assert_parse(func_wrap("42;"));
 
-    ASTStmt *stmt = func_unwrap(script).data[0];
+    ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_EXPR);
     assert(stmt->expr.value->kind == EXPR_LITERAL);
     assert(stmt->expr.value->lit.kind == TYPE_INT);
     assert(stmt->expr.value->lit.as_int == 42);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_booleans() {
-    ASTScript *script = assert_parse(func_wrap("true; false;"));
+    ASTUnit *unit = assert_parse(func_wrap("true; false;"));
 
-    ASTStmt *true_stmt = func_unwrap(script).data[0];
+    ASTStmt *true_stmt = func_unwrap(unit).data[0];
     assert(true_stmt->kind == STMT_EXPR);
     assert(true_stmt->expr.value->kind == EXPR_LITERAL);
     assert(true_stmt->expr.value->lit.kind == TYPE_BOOL);
     assert(true_stmt->expr.value->lit.as_int == 1);
 
-    ASTStmt *false_stmt = func_unwrap(script).data[1];
+    ASTStmt *false_stmt = func_unwrap(unit).data[1];
     assert(false_stmt->kind == STMT_EXPR);
     assert(false_stmt->expr.value->kind == EXPR_LITERAL);
     assert(false_stmt->expr.value->lit.kind == TYPE_BOOL);
     assert(false_stmt->expr.value->lit.as_int == 0);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_multiple_statements() {
-    ASTScript *script = assert_parse(func_wrap("42; 3 + 5;"));
+    ASTUnit *unit = assert_parse(func_wrap("42; 3 + 5;"));
 
-    ASTStmt *first = func_unwrap(script).data[0];
+    ASTStmt *first = func_unwrap(unit).data[0];
     assert(first->kind == STMT_EXPR);
 
-    ASTStmt *second = func_unwrap(script).data[1];
+    ASTStmt *second = func_unwrap(unit).data[1];
     assert(second->kind == STMT_EXPR);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_simple_addition() {
-    ASTScript *script = assert_parse(func_wrap("3 + 4;"));
+    ASTUnit *unit = assert_parse(func_wrap("3 + 4;"));
 
-    ASTStmt *stmt = func_unwrap(script).data[0];
+    ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_EXPR);
     assert(stmt->expr.value->bin_op.op == BIN_OP_ADD);
     assert(stmt->expr.value->bin_op.left->kind == EXPR_LITERAL);
@@ -127,13 +125,13 @@ static void test_simple_addition() {
     assert(stmt->expr.value->bin_op.right->kind == EXPR_LITERAL);
     assert(stmt->expr.value->bin_op.right->lit.as_int == 4);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_operator_precedence() {
-    ASTScript *script = assert_parse(func_wrap("3 + 4 * 2;"));
+    ASTUnit *unit = assert_parse(func_wrap("3 + 4 * 2;"));
 
-    ASTStmt *stmt = func_unwrap(script).data[0];
+    ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_EXPR);
 
     ASTExpr *expr = stmt->expr.value;
@@ -152,13 +150,13 @@ static void test_operator_precedence() {
     assert(rhs->bin_op.right->kind == EXPR_LITERAL);
     assert(rhs->bin_op.right->lit.as_int == 2.0);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_parentheses() {
-    ASTScript *script = assert_parse(func_wrap("(3 + 4) * 2;"));
+    ASTUnit *unit = assert_parse(func_wrap("(3 + 4) * 2;"));
 
-    ASTStmt *stmt = func_unwrap(script).data[0];
+    ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_EXPR);
 
     ASTExpr *expr = stmt->expr.value;
@@ -178,13 +176,13 @@ static void test_parentheses() {
     assert(expr->bin_op.right->kind == EXPR_LITERAL);
     assert(expr->bin_op.right->lit.as_int == 2.0);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_variables() {
-    ASTScript *script = assert_parse(func_wrap("let x = 2; let y = 3; 2 + (x * y);"));
+    ASTUnit *unit = assert_parse(func_wrap("let x = 2; let y = 3; 2 + (x * y);"));
 
-    ASTStmt *stmt = func_unwrap(script).data[2];
+    ASTStmt *stmt = func_unwrap(unit).data[2];
     assert(stmt->kind == STMT_EXPR);
 
     ASTExpr *expr = stmt->expr.value;
@@ -203,13 +201,13 @@ static void test_variables() {
     assert(expr->bin_op.left->kind == EXPR_LITERAL);
     assert(expr->bin_op.left->lit.as_int == 2.0);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_var_declaration() {
-    ASTScript *script = assert_parse(func_wrap("let x = 2 + 3;"));
+    ASTUnit *unit = assert_parse(func_wrap("let x = 2 + 3;"));
 
-    ASTStmt *stmt = func_unwrap(script).data[0];
+    ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_VAR_DECL);
 
     assert(string_ref_equals_cstr(stmt->var_decl.name, "x"));
@@ -227,19 +225,19 @@ static void test_var_declaration() {
     assert(rhs->kind == EXPR_LITERAL);
     assert(rhs->lit.as_int == 3);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_var_uninit_declaration() {
-    ASTScript *script = assert_parse(func_wrap("let x: int;"));
+    ASTUnit *unit = assert_parse(func_wrap("let x: int;"));
 
-    ASTStmt *stmt = func_unwrap(script).data[0];
+    ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_VAR_DECL);
 
     assert(string_ref_equals_cstr(stmt->var_decl.name, "x"));
     assert(stmt->var_decl.initializer == NULL);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_var_untyped_uninti_declaration() {
@@ -247,9 +245,9 @@ static void test_var_untyped_uninti_declaration() {
 }
 
 static void test_struct_declaration() {
-    ASTScript *script = assert_parse("struct Vec3 { x: float, y: float, z: float }");
+    ASTUnit *unit = assert_parse("struct Vec3 { x: float, y: float, z: float }");
 
-    ASTStmt *stmt = script->statements.data[0];
+    ASTStmt *stmt = unit->statements.data[0];
     assert(stmt->kind == STMT_STRUCT_DECL);
     assert(string_ref_equals_cstr(stmt->struct_decl.name, "Vec3"));
 
@@ -261,27 +259,27 @@ static void test_struct_declaration() {
     assert(string_ref_equals_cstr(fields.data[1]->name, "y"));
     assert(string_ref_equals_cstr(fields.data[2]->name, "z"));
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_struct_trailing_comma() {
-    ASTScript *script = assert_parse("struct Pair { a: int, b: int, }");
+    ASTUnit *unit = assert_parse("struct Pair { a: int, b: int, }");
 
-    ASTStmt *stmt = script->statements.data[0];
+    ASTStmt *stmt = unit->statements.data[0];
     assert(stmt->kind == STMT_STRUCT_DECL);
     assert(stmt->struct_decl.fields.size == 2);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_empty_struct_declaration() {
-    ASTScript *script = assert_parse("struct Empty { }");
+    ASTUnit *unit = assert_parse("struct Empty { }");
 
-    ASTStmt *stmt = script->statements.data[0];
+    ASTStmt *stmt = unit->statements.data[0];
     assert(stmt->kind == STMT_STRUCT_DECL);
     assert(stmt->struct_decl.fields.size == 0);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_struct_missing_name() {
@@ -297,11 +295,11 @@ static void test_struct_unterminated() {
 }
 
 static void test_func_declaration() {
-    ASTScript *script = assert_parse("func add(x : int, y : int): int {"
-                                     "    return x + y;"
-                                     "}");
+    ASTUnit *unit = assert_parse("func add(x : int, y : int): int {"
+                                 "    return x + y;"
+                                 "}");
 
-    ASTStmt *stmt = script->statements.data[0];
+    ASTStmt *stmt = unit->statements.data[0];
     assert(stmt->kind == STMT_FUNC_DECL);
 
     assert(string_ref_equals_cstr(stmt->func_decl.name, "add"));
@@ -315,15 +313,15 @@ static void test_func_declaration() {
     assert(body->kind == STMT_BLOCK);
     assert(body->block.list.data[0]->kind == STMT_RETURN);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_unit_func_declaration() {
-    ASTScript *script = assert_parse("func test(x : int, y : int) {"
-                                     "    let a = x + y;"
-                                     "}");
+    ASTUnit *unit = assert_parse("func test(x : int, y : int) {"
+                                 "    let a = x + y;"
+                                 "}");
 
-    ASTStmt *stmt = script->statements.data[0];
+    ASTStmt *stmt = unit->statements.data[0];
     assert(stmt->kind == STMT_FUNC_DECL);
 
     assert(string_ref_equals_cstr(stmt->func_decl.name, "test"));
@@ -337,15 +335,15 @@ static void test_unit_func_declaration() {
     assert(body->kind == STMT_BLOCK);
     assert(body->block.list.data[0]->kind == STMT_VAR_DECL);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_no_params_func_declaration() {
-    ASTScript *script = assert_parse("func test() {"
-                                     "    return true;"
-                                     "}");
+    ASTUnit *unit = assert_parse("func test() {"
+                                 "    return true;"
+                                 "}");
 
-    ASTStmt *stmt = script->statements.data[0];
+    ASTStmt *stmt = unit->statements.data[0];
     assert(stmt->kind == STMT_FUNC_DECL);
     assert(string_ref_equals_cstr(stmt->func_decl.name, "test"));
     assert(stmt->func_decl.return_type == NULL);
@@ -357,12 +355,12 @@ static void test_no_params_func_declaration() {
     assert(body->kind == STMT_BLOCK);
     assert(body->block.list.data[0]->kind == STMT_RETURN);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 static void test_assignment() {
-    ASTScript *script = assert_parse(func_wrap("x = 2;"));
+    ASTUnit *unit = assert_parse(func_wrap("x = 2;"));
 
-    ASTStmt *stmt = func_unwrap(script).data[0];
+    ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_ASSIGN);
 
     ASTExpr *target = stmt->assign.target;
@@ -373,23 +371,23 @@ static void test_assignment() {
     assert(value->kind == EXPR_LITERAL);
     assert(value->lit.as_int == 2.0);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_block() {
-    ASTScript *script = assert_parse(func_wrap("{ let x = 2; x = 1; }"));
+    ASTUnit *unit = assert_parse(func_wrap("{ let x = 2; x = 1; }"));
 
-    ASTStmt *stmt = func_unwrap(script).data[0];
+    ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_BLOCK);
     assert(stmt->block.list.size == 2);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_if() {
-    ASTScript *script = assert_parse(func_wrap("if 2 < 1 { 10; } else { 20; }"));
+    ASTUnit *unit = assert_parse(func_wrap("if 2 < 1 { 10; } else { 20; }"));
 
-    ASTStmt *stmt = func_unwrap(script).data[0];
+    ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_IF);
 
     ASTExpr *condition = stmt->ifstmt.condition;
@@ -403,13 +401,13 @@ static void test_if() {
     assert(else_block->kind == STMT_BLOCK);
     assert(else_block->block.list.data[0]->kind == STMT_EXPR);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_return() {
-    ASTScript *script = assert_parse(func_wrap("return 2;"));
+    ASTUnit *unit = assert_parse(func_wrap("return 2;"));
 
-    ASTStmt *stmt = func_unwrap(script).data[0];
+    ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_RETURN);
 
     ASTExpr *result = stmt->ret.result;
@@ -417,7 +415,7 @@ static void test_return() {
     assert(result->lit.kind == TYPE_INT);
     assert(result->lit.as_int == 2);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_invalid_token() {
@@ -441,19 +439,19 @@ static void test_expression_not_assignable() {
 }
 
 // The directive names the unit's namespace. It is optional, and its absence is
-// what keeps every script written before modules existed parsing unchanged.
+// what keeps every unit written before modules existed parsing unchanged.
 static void test_module_directive() {
-    ASTScript *script = assert_parse("module Player;\nfunc f(): int { return 1; }\n");
+    ASTUnit *unit = assert_parse("module Player;\nfunc f(): int { return 1; }\n");
 
-    assert(script->module_name.data);
-    assert(script->module_name.length == 6);
-    assert(strncmp(script->module_name.data, "Player", 6) == 0);
-    assert(script->module_span.line == 1);
+    assert(unit->module_name.data);
+    assert(unit->module_name.length == 6);
+    assert(strncmp(unit->module_name.data, "Player", 6) == 0);
+    assert(unit->module_span.line == 1);
 
     // The directive is not a statement; it names the unit.
-    assert(script->statements.size == 1);
+    assert(unit->statements.size == 1);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 // A unit must name its module. Built here rather than through assert_parse_error
@@ -463,24 +461,24 @@ static void test_a_unit_must_name_its_module() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    ASTScript *script = ast_script_create();
+    ASTUnit *unit = ast_unit_create();
     Lexer lexer = lexer_create("func f(): int { return 1; }\n", ctx.arena, &ctx.strings, &ctx.diagnostics);
     Parser parser = parser_create(&lexer, &ctx.diagnostics);
 
-    assert(!parser_parse(&parser, script));
+    assert(!parser_parse(&parser, unit));
     assert(diagnostics_has_errors(&ctx.diagnostics));
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
 static void test_module_directive_alone() {
-    ASTScript *script = assert_parse("module Player;\n");
+    ASTUnit *unit = assert_parse("module Player;\n");
 
-    assert(script->module_name.data);
-    assert(script->statements.size == 0);
+    assert(unit->module_name.data);
+    assert(unit->statements.size == 0);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 // Nested names are rejected rather than given a meaning: a '::' would have to
@@ -533,9 +531,9 @@ static void test_function_cannot_be_declared_inside_a_method() {
 
 // 'for' with no clauses is the infinite form, and holds only a body.
 static void test_for_infinite() {
-    ASTScript *script = assert_parse(func_wrap("for { 10; }"));
+    ASTUnit *unit = assert_parse(func_wrap("for { 10; }"));
 
-    ASTStmt *stmt = func_unwrap(script).data[0];
+    ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_FOR);
 
     assert(!stmt->forstmt.init);
@@ -543,50 +541,50 @@ static void test_for_infinite() {
     assert(!stmt->forstmt.post);
     assert(stmt->forstmt.body->kind == STMT_BLOCK);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 // A single expression before the body is the condition, not an initializer.
 static void test_for_condition() {
-    ASTScript *script = assert_parse(func_wrap("for 2 < 1 { 10; }"));
+    ASTUnit *unit = assert_parse(func_wrap("for 2 < 1 { 10; }"));
 
-    ASTStmt *stmt = func_unwrap(script).data[0];
+    ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_FOR);
 
     assert(!stmt->forstmt.init);
     assert(stmt->forstmt.condition->kind == EXPR_BIN_OP);
     assert(!stmt->forstmt.post);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 // The three-clause form fills all three, and each is optional.
 static void test_for_clauses() {
-    ASTScript *script = assert_parse(func_wrap("for let i: int = 0; i < 3; i = i + 1 { 10; }"));
+    ASTUnit *unit = assert_parse(func_wrap("for let i: int = 0; i < 3; i = i + 1 { 10; }"));
 
-    ASTStmt *stmt = func_unwrap(script).data[0];
+    ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_FOR);
 
     assert(stmt->forstmt.init->kind == STMT_VAR_DECL);
     assert(stmt->forstmt.condition->kind == EXPR_BIN_OP);
     assert(stmt->forstmt.post->kind == STMT_ASSIGN);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 
-    script = assert_parse(func_wrap("for ; ; { 10; }"));
-    stmt = func_unwrap(script).data[0];
+    unit = assert_parse(func_wrap("for ; ; { 10; }"));
+    stmt = func_unwrap(unit).data[0];
 
     assert(!stmt->forstmt.init);
     assert(!stmt->forstmt.condition);
     assert(!stmt->forstmt.post);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 static void test_break_and_continue() {
-    ASTScript *script = assert_parse(func_wrap("for { break; continue; }"));
+    ASTUnit *unit = assert_parse(func_wrap("for { break; continue; }"));
 
-    ASTStmtList body = func_unwrap(script).data[0]->forstmt.body->block.list;
+    ASTStmtList body = func_unwrap(unit).data[0]->forstmt.body->block.list;
 
     assert(body.data[0]->kind == STMT_JUMP);
     assert(body.data[0]->jump.is_break);
@@ -594,7 +592,7 @@ static void test_break_and_continue() {
     assert(body.data[1]->kind == STMT_JUMP);
     assert(!body.data[1]->jump.is_break);
 
-    ast_script_destroy(script);
+    ast_unit_destroy(unit);
 }
 
 int main() {

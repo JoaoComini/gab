@@ -15,7 +15,7 @@ typedef struct {
 #define ast_import_list_item_free(item) ((void)(item))
 GAB_LIST(ASTImportList, ast_import_list, ASTImport)
 
-typedef struct ASTScript {
+typedef struct ASTUnit {
     ASTStmtList statements;
 
     // The unit's 'module' directive, which every unit has. The span is kept for
@@ -27,10 +27,10 @@ typedef struct ASTScript {
     // anything else is an error, which is what makes the dependency between two
     // units something written down rather than discovered.
     ASTImportList imports;
-} ASTScript;
+} ASTUnit;
 
-ASTScript *ast_script_create();
-void ast_script_add_statement(ASTScript *script, ASTStmt *stmt);
-void ast_script_destroy(ASTScript *script);
+ASTUnit *ast_unit_create();
+void ast_unit_add_statement(ASTUnit *unit, ASTStmt *stmt);
+void ast_unit_destroy(ASTUnit *unit);
 
 #endif
