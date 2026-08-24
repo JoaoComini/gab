@@ -43,10 +43,6 @@ void diag_error(Diagnostics *diagnostics, DiagKind kind, Span span, const char *
 bool diagnostics_has_errors(const Diagnostics *diagnostics);
 size_t diagnostics_count(const Diagnostics *diagnostics);
 
-// Drops everything reported past 'count'. For a walk done to discover a fact
-// rather than to report one: the resolver walks a loop body twice, and only the
-// second walk -- the one checking against what the back-edge carries -- speaks.
-void diagnostics_truncate(Diagnostics *diagnostics, size_t count);
 const Diagnostic *diagnostics_get(const Diagnostics *diagnostics, size_t index);
 
 const char *diag_kind_name(DiagKind kind);

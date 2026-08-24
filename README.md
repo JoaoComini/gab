@@ -233,7 +233,9 @@ That check follows control flow. What a slot names is tracked per path and
 merged where paths rejoin, so a borrow is judged by what holds on every route
 to its use: a slot given a short-lived borrow on one arm of an `if` is
 short-lived after the join, and a borrow taken at the tail of a loop body is
-checked against the code that reads it at the head of the next iteration. An
+checked against the code that reads it at the head of the next iteration. A
+loop is gone round until what holds at its head stops changing, so a nested one
+is judged by what reaches it on every iteration of every loop enclosing it. An
 arm that cannot fall through — one ending in `return`, `break`, or `continue` —
 is not a route to the join that follows it, so what it left behind constrains
 nothing there. A `break` is still a route out of its loop, though, so what it

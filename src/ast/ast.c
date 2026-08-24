@@ -1,6 +1,6 @@
 #include "ast.h"
 
-#include "ast/flow.h"
+#include "ast/flow_pass.h"
 #include "scope.h"
 #include "string/string.h"
 #include "string/string_ref.h"
@@ -37,16 +37,7 @@ typedef struct {
     Type *return_type;
 
     // Enclosing loops, so 'break' and 'continue' can tell that they have one.
-    // It sits here rather than on the resolver because a function body starts a
-    // fresh count: a loop outside a declaration is not one the body can leave.
     unsigned int loop_depth;
-
-    // What the innermost loop's 'break' edges carry, owned by the STMT_FOR
-    // being walked. A 'break' leaves the loop without passing the condition or
-    // the back-edge, so its state joins the post-loop state directly; merging
-    // only the body's fall-through would lose it and read a slot moved before
-    // a 'break' as live afterwards.
-    Flow *breaks;
 } FuncContext;
 
 typedef struct {
@@ -70,28 +61,6 @@ typedef struct {
     String *module_name;
 
     FuncContext func_context;
-
-    // Per-slot state at the point the walk has reached. Forked and merged at
-    // every join, so what it says about a slot is what holds on every path
-    // that arrives there.
-    Flow flow;
-
-    // Set while the target of an assignment is visited. A plain 'x = v'
-    // writes x rather than reading it, so a dead x is revived by the write
-    // instead of being an error. 'x.f = v' and '*x = v' do read x, and clear
-    // this before visiting what they reach through.
-    bool assigning;
-
-    // Set while the outermost field of an assignment target is visited. 'h.b'
-    // in 'h.b = v' is stored into rather than read, so it is what makes the
-    // field readable; a nested 'h.b' in 'h.b.n = v' clears this and is read.
-    bool assigning_field;
-
-    // Set while a loop body is walked a second time to check it against the
-    // state the back-edge carries. Declarations reuse the symbol the first
-    // walk cached rather than declaring again, so the second walk checks
-    // without disturbing the scope the first one built.
-    bool rechecking;
 
     Diagnostics *diagnostics;
 } ResolverState;
@@ -248,68 +217,6 @@ static const char *bin_op_name(BinOp op) {
     return "?";
 }
 
-// The block depth of what a pointer-valued expression points at, or 0 when it
-// points at nothing known. Comparing depths is what catches a pointer being
-// moved somewhere that outlives its pointee: a smaller depth is a longer life.
-//
-// A variable's depth comes from the flow state, so what this answers is what
-// holds on every path reaching the expression rather than whatever the most
-// recent assignment happened to store.
-static int pointee_depth(ResolverState *state, const ASTExpr *expr) {
-    if (!expr) {
-        return 0;
-    }
-
-    switch (expr->kind) {
-    case EXPR_ADDR_OF: {
-        const Symbol *symbol = expr->unary.target->symbol;
-
-        return symbol ? symbol->scope_depth : 0;
-    }
-    case EXPR_VARIABLE:
-        return expr->symbol ? flow_get(&state->flow, expr->symbol).pointee_depth : 0;
-    case EXPR_NEW:
-        // A heap object outlives every frame, so 0 is the truth here rather
-        // than the "unknown" the default stands for: it can be stored
-        // anywhere, and the depth comparison already says so.
-        return 0;
-    case EXPR_CALL: {
-        // A call handing back a 'ref T' hands back a borrow of something, and
-        // that something can only have come from an argument: the callee's own
-        // locals die with its frame, and returning a borrow of one is already
-        // refused where the callee returns it.
-        //
-        // Which argument is not knowable without a per-function summary, so the
-        // result is treated as borrowing from the shortest-lived of them. That
-        // is conservative in one direction only — it can refuse a borrow of
-        // something longer-lived than the deepest argument, never accept one
-        // that dangles.
-        //
-        // An owned '*T' return is a heap object whatever it was made from, so
-        // it outlives every frame and inherits nothing.
-        if (!expr->type || !expr->type->is_ref) {
-            return 0;
-        }
-
-        int deepest = 0;
-
-        for (size_t i = 0; i < expr->call.args.size; i++) {
-            int depth = pointee_depth(state, expr->call.args.data[i]);
-
-            if (depth > deepest) {
-                deepest = depth;
-            }
-        }
-
-        return deepest;
-    }
-    default:
-        break;
-    }
-
-    return 0;
-}
-
 // The variable an address is ultimately taken from, so that '&v.x' pins v.
 static Symbol *addressed_symbol(ASTExpr *expr) {
     switch (expr->kind) {
@@ -322,66 +229,6 @@ static Symbol *addressed_symbol(ASTExpr *expr) {
     }
 
     return NULL;
-}
-
-// Whether this expression is a struct local's owning pointer field -- 'h.b'
-// where h is a struct variable and b owns. Those are the fields codegen nulls
-// at the declaration, so those are the ones whose written-ness has to be
-// tracked. A field reached through a pointer is excluded: what it belongs to
-// was not declared here, so nothing local says whether it was written.
-//
-// Fills 'out_index' with the field's index in its struct, which is the bit the
-// written-field set uses.
-static bool owning_field_of_local(const ASTExpr *expr, Symbol **out_symbol, unsigned int *out_index) {
-    if (expr->kind != EXPR_FIELD || expr->field.target->kind != EXPR_VARIABLE) {
-        return false;
-    }
-
-    Symbol *symbol = expr->field.target->symbol;
-    const Type *struct_type = expr->field.target->type;
-
-    if (!symbol || symbol->kind != SYMBOL_VAR || !struct_type || struct_type->kind != TYPE_STRUCT) {
-        return false;
-    }
-
-    const TypeField *field = expr->field.field;
-
-    if (!field || !type_is_pointer(field->type) || field->type->is_ref) {
-        return false;
-    }
-
-    size_t index = (size_t)(field - struct_type->fields);
-
-    if (index >= FLOW_MAX_FIELDS) {
-        return false;
-    }
-
-    *out_symbol = symbol;
-    *out_index = (unsigned int)index;
-
-    return true;
-}
-
-// The written-field set a declaration's initializer hands its new variable.
-// Taking a whole struct -- 'let g = move h', or a copy of one -- makes g's
-// fields exactly as written as h's were, so the set travels with the value.
-//
-// Everything else answers all-written. A declaration with no initializer holds
-// the nulls codegen wrote and needs none of its fields marked; every other
-// initializer is a value this frame did not build field by field -- a call
-// result, a 'new' -- and nothing local says one of its fields is unwritten.
-static uint64_t initialized_fields(ResolverState *state, ASTExpr *initializer) {
-    if (!initializer) {
-        return 0;
-    }
-
-    ASTExpr *source = initializer->kind == EXPR_MOVE ? initializer->unary.target : initializer;
-
-    if (source->kind == EXPR_VARIABLE && source->symbol && source->symbol->kind == SYMBOL_VAR) {
-        return flow_get(&state->flow, source->symbol).written_fields;
-    }
-
-    return UINT64_MAX;
 }
 
 // Something with a home in memory whose address can be named: a variable, a
@@ -888,28 +735,6 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         expr->symbol = entry;
         expr->type = entry->var.type;
 
-        // A slot moved out of no longer names what it held, so reading it
-        // would be a second use of something already given away.
-        if (entry->kind == SYMBOL_VAR && !state->assigning) {
-            FlowInit init = flow_get(&state->flow, entry).init;
-
-            if (init == FLOW_MOVED) {
-                char *name = string_ref_to_cstr(expr->var.name);
-                diag_error(state->diagnostics, GAB_ERR_LIFETIME, expr->span,
-                           "'%s' was moved out of and no longer holds a value", name);
-                free(name);
-            } else if (init == FLOW_UNINIT && type_is_pointer(entry->var.type)) {
-                // Only a pointer. An unwritten slot holds whatever the frame
-                // last left there: read as an int that is a wrong answer, read
-                // as a pointer it is an address nothing chose. A struct's own
-                // slots exist from its declaration, so building one field by
-                // field is how a struct is made rather than a use of nothing.
-                char *name = string_ref_to_cstr(expr->var.name);
-                diag_error(state->diagnostics, GAB_ERR_LIFETIME, expr->span,
-                           "'%s' is read before it is given a value", name);
-                free(name);
-            }
-        }
         break;
     }
     case EXPR_CALL: {
@@ -964,11 +789,6 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         break;
     }
     case EXPR_FIELD: {
-        // Only this field is the one being stored into; what it reaches
-        // through is read as usual.
-        bool stored_into = state->assigning_field;
-        state->assigning_field = false;
-
         ast_script_expr_visit(state, expr->field.target);
 
         Type *target_type = expr->field.target->type;
@@ -1008,21 +828,6 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
         // target's symbol and stays assignable through the chain.
         expr->symbol = expr->field.target->symbol;
 
-        // Reaching through an owning field that nothing has written to
-        // dereferences the null the declaration put there. Writing the field
-        // is a store into it, not a read of it, so 'assigning' excludes the
-        // 'h.b = ...' that makes it readable.
-        Symbol *field_owner;
-        unsigned int field_index;
-
-        if (!stored_into && owning_field_of_local(expr, &field_owner, &field_index)) {
-            FlowSlot slot = flow_get(&state->flow, field_owner);
-
-            if (!(slot.written_fields & ((uint64_t)1 << field_index))) {
-                diag_error(state->diagnostics, GAB_ERR_LIFETIME, expr->span,
-                           "'%s' is read before it is given a value", field_name->data);
-            }
-        }
         break;
     }
     case EXPR_MOVE: {
@@ -1049,24 +854,6 @@ void ast_script_expr_visit(ResolverState *state, ASTExpr *expr) {
             break;
         }
 
-        Symbol *source = expr->unary.target->symbol;
-
-        // Moving out of anything but a named slot has nothing to kill: a
-        // temporary already owns what it produced, and no later use can name
-        // it.
-        if (!source || source->kind != SYMBOL_VAR) {
-            break;
-        }
-
-        // The operand is read before it dies, so a slot that is already dead
-        // is caught by the ordinary use check above rather than here.
-        FlowSlot slot = flow_get(&state->flow, source);
-
-        // Only 'init' changes: the slot is dead, but what its fields hold is
-        // what the destination now receives, and is still true of the slot if
-        // an assignment later revives it.
-        slot.init = FLOW_MOVED;
-        flow_set(&state->flow, source, slot);
         break;
     }
     case EXPR_ADDR_OF: {
@@ -1269,30 +1056,6 @@ static void check_implicit_copy(ResolverState *state, ASTExpr *value, Type *dest
                "%s owns what it holds, so binding it needs 'move' to transfer ownership; it declares no "
                "'clone' to duplicate it",
                type_name(state, value->type));
-}
-
-// Rejects a pointer being stored somewhere that outlives what it points at.
-// 'target_depth' is the block depth of the destination; a pointee declared
-// deeper than that is gone by the time the destination can still be read.
-//
-// The rule is block-scoped rather than function-scoped because register reuse
-// reclaims slots at the closing brace, so a pointer into an inner block dangles
-// into a reused slot as soon as that block ends.
-static void check_pointer_lifetime(ResolverState *state, ASTExpr *value, int target_depth, Span span,
-                                   const char *what) {
-    if (!value || !type_is_pointer(value->type)) {
-        return;
-    }
-
-    int depth = pointee_depth(state, value);
-
-    // 0 means the pointee is unknown, which is not evidence of a problem.
-    if (depth == 0 || depth <= target_depth) {
-        return;
-    }
-
-    diag_error(state->diagnostics, GAB_ERR_LIFETIME, span,
-               "this pointer outlives what it points at, so it cannot be %s", what);
 }
 
 // Returns NULL when there is no spec to resolve (an omitted type), and the
@@ -1590,6 +1353,8 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
 // resolved, so this re-resolves each parameter's TypeSpec only to bind its
 // name; the types a caller sees were settled by declare_func.
 static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
+    size_t errors_before = diagnostics_count(state->diagnostics);
+
     resolver_enter_scope(state);
 
     // The receiver is an ordinary local in the body's scope, so 'p.health'
@@ -1626,13 +1391,32 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
 
     state->func_context.return_type = stmt->func_decl.resolved_return_type;
 
-    // A body is outside any loop the declaration sits in, so it has no 'break'
-    // edge to contribute to until one of its own loops opens.
-    state->func_context.breaks = NULL;
-
     ast_script_stmt_visit(state, stmt->func_decl.body);
 
     state->func_context = previous_context;
+
+    // Flow analysis runs over the resolved body rather than during it: the
+    // symbols it reads are the ones just bound, and it iterates the body as
+    // many times as convergence takes, which resolution could not survive.
+    //
+    // Only where the body resolved cleanly. A poisoned tree has nodes with no
+    // symbol and no type, and what the flow rules would say about those is
+    // noise on top of the error that already explains it.
+    if (diagnostics_count(state->diagnostics) == errors_before) {
+        size_t param_count = stmt->func_decl.params.size;
+        Symbol **params = arena_alloc(state->compile_arena, (param_count + 1) * sizeof(Symbol *));
+        size_t count = 0;
+
+        if (receiver) {
+            params[count++] = receiver->symbol;
+        }
+
+        for (size_t i = 0; i < param_count; i++) {
+            params[count++] = stmt->func_decl.params.data[i]->symbol;
+        }
+
+        flow_pass_run(state->compile_arena, stmt->func_decl.body, params, count, state->diagnostics);
+    }
 
     resolver_exit_scope(state);
 }
@@ -1673,9 +1457,7 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
             type = resolver_error_type(state);
         }
 
-        Symbol *var = state->rechecking ? stmt->var_decl.symbol
-                                        : scope_decl_var(state->current_scope,
-                                                         resolver_intern(state, stmt->var_decl.name), type);
+        Symbol *var = scope_decl_var(state->current_scope, resolver_intern(state, stmt->var_decl.name), type);
 
         if (!var) {
             char *name = string_ref_to_cstr(stmt->var_decl.name);
@@ -1686,14 +1468,6 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         }
 
         check_implicit_copy(state, stmt->var_decl.initializer, type, stmt->span);
-
-        // A declaration is always at the current depth, so it can never outlive
-        // its initializer; what it records is the depth, for later assignments
-        // and returns to check against.
-        flow_set(&state->flow, var,
-                 (FlowSlot){.init = stmt->var_decl.initializer ? FLOW_INIT : FLOW_UNINIT,
-                            .pointee_depth = pointee_depth(state, stmt->var_decl.initializer),
-                            .written_fields = initialized_fields(state, stmt->var_decl.initializer)});
 
         stmt->var_decl.symbol = var;
         break;
@@ -1720,19 +1494,7 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         break;
     }
     case STMT_ASSIGN: {
-        // Only a bare name is purely written. Reaching through a field or a
-        // dereference reads the slot first, so those are visited as uses.
-        //
-        // An owning field is the exception in one direction: 'h.b = v' stores
-        // into the field rather than through it, so it is the write that makes
-        // the field readable. 'h.b.n = v' still reaches through h.b and reads
-        // it, which is why this looks at the target itself and not the chain.
-        state->assigning = stmt->assign.target->kind == EXPR_VARIABLE;
-        state->assigning_field = stmt->assign.target->kind == EXPR_FIELD;
         ast_script_expr_visit(state, stmt->assign.target);
-        state->assigning = false;
-        state->assigning_field = false;
-
         ast_script_expr_visit(state, stmt->assign.value);
 
         Type *target_type = stmt->assign.target->type;
@@ -1756,18 +1518,6 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
             // An owning field takes ownership of what is stored in it, exactly
             // as a 'let' does, so a non-copyable value needs a move.
             check_implicit_copy(state, stmt->assign.value, target_type, stmt->span);
-            check_pointer_lifetime(state, stmt->assign.value, 0, stmt->span, "stored here");
-
-            // The field now holds what was stored, so reaching through it is
-            // no longer a null dereference.
-            Symbol *field_owner;
-            unsigned int field_index;
-
-            if (owning_field_of_local(stmt->assign.target, &field_owner, &field_index)) {
-                FlowSlot slot = flow_get(&state->flow, field_owner);
-                slot.written_fields |= (uint64_t)1 << field_index;
-                flow_set(&state->flow, field_owner, slot);
-            }
             break;
         }
 
@@ -1775,13 +1525,6 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
 
         if (target && target->kind == SYMBOL_VAR) {
             check_implicit_copy(state, stmt->assign.value, target_type, stmt->span);
-            check_pointer_lifetime(state, stmt->assign.value, target->scope_depth, stmt->span,
-                                   "assigned here");
-
-            // The variable now points at whatever was just stored in it.
-            flow_set(
-                &state->flow, target,
-                (FlowSlot){.init = FLOW_INIT, .pointee_depth = pointee_depth(state, stmt->assign.value)});
         }
         break;
     }
@@ -1835,24 +1578,8 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
                        "'if' requires a boolean condition, found %s", type_name(state, condition_type));
         }
 
-        // Each arm walks from the state at the branch point, and what holds
-        // after the 'if' is what holds on both arms. An arm that cannot fall
-        // through -- one ending in 'return' -- contributes nothing to the
-        // merge, so the other arm's answer survives it.
-        Flow before;
-        flow_init(&before, state->compile_arena);
-        flow_copy(&before, &state->flow);
-
         ast_script_stmt_visit(state, stmt->ifstmt.then_block);
-
-        Flow after_then;
-        flow_init(&after_then, state->compile_arena);
-        flow_copy(&after_then, &state->flow);
-
-        flow_copy(&state->flow, &before);
         ast_script_stmt_visit(state, stmt->ifstmt.else_block);
-
-        flow_merge(&state->flow, &after_then);
         break;
     }
     case STMT_FOR: {
@@ -1860,12 +1587,8 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
 
         // The initializer's scope encloses the condition, the post clause, and
         // the body, so 'for let i = 0; i < n; i = i + 1' scopes i to the loop.
-        if (state->rechecking) {
-            state->current_scope = stmt->forstmt.scope;
-        } else {
-            resolver_enter_scope(state);
-            stmt->forstmt.scope = state->current_scope;
-        }
+        resolver_enter_scope(state);
+        stmt->forstmt.scope = state->current_scope;
 
         ast_script_stmt_visit(state, stmt->forstmt.init);
 
@@ -1880,64 +1603,13 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
             }
         }
 
-        // The body may run any number of times, so what holds at its head is
-        // what holds on the way in and on the way round alike.
-        //
-        // The first walk resolves the body -- declaring its locals -- and
-        // discovers what the back-edge carries. Merging that into the state
-        // from before the body gives the state at the head of a second
-        // iteration, and the body is then walked again to check against it.
-        // Without the second walk a borrow taken late in one iteration would
-        // never be checked against the code that reads it early in the next.
-        //
-        // The second walk declares nothing: 'rechecking' makes a declaration
-        // reuse the symbol the first walk cached. Only that walk reports, so
-        // the first walk's diagnostics are rolled back and any real error is
-        // reported once, against the merged state that subsumes it.
-        Flow before_body;
-        flow_init(&before_body, state->compile_arena);
-        flow_copy(&before_body, &state->flow);
-
-        size_t reported = diagnostics_count(state->diagnostics);
-
-        // Starts unreachable: no 'break' has been taken, so a loop without one
-        // contributes nothing to the state after it.
-        Flow breaks;
-        flow_init(&breaks, state->compile_arena);
-        breaks.unreachable = true;
-
-        Flow *outer_breaks = state->func_context.breaks;
-        state->func_context.breaks = &breaks;
-
+        // One walk, because this only resolves: what the back-edge carries is
+        // the flow pass's question, and it iterates the graph rather than the
+        // tree.
         state->func_context.loop_depth++;
         ast_script_stmt_visit(state, stmt->forstmt.body);
         ast_script_stmt_visit(state, stmt->forstmt.post);
-
-        diagnostics_truncate(state->diagnostics, reported);
-
-        flow_merge(&state->flow, &before_body);
-
-        // The second walk sees the same 'break's against the merged state that
-        // subsumes the first walk's, so its edges replace rather than join
-        // them: the state after the loop is built from the walk that reports.
-        flow_init(&breaks, state->compile_arena);
-        breaks.unreachable = true;
-
-        state->rechecking = true;
-        ast_script_stmt_visit(state, stmt->forstmt.body);
-
-        // Visited after the body, matching when it runs, though it is the
-        // initializer's scope either way.
-        ast_script_stmt_visit(state, stmt->forstmt.post);
-        state->rechecking = false;
         state->func_context.loop_depth--;
-
-        // The body may run zero times, so the state before it is also a way to
-        // arrive after the loop -- as is every 'break' that left it.
-        flow_merge(&state->flow, &before_body);
-        flow_merge(&state->flow, &breaks);
-
-        state->func_context.breaks = outer_breaks;
 
         state->current_scope = outer_scope;
         break;
@@ -1948,29 +1620,13 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
                        stmt->jump.is_break ? "break" : "continue");
         }
 
-        // Where this jump goes decides which join it feeds. A 'break' arrives
-        // after the loop, so it joins the accumulated break state; a
-        // 'continue' arrives at the back-edge, which the body's own walk
-        // already merges. Either way nothing falls through to the next
-        // statement.
-        if (stmt->jump.is_break && state->func_context.breaks) {
-            flow_merge(state->func_context.breaks, &state->flow);
-        }
-
-        state->flow.unreachable = true;
         break;
     }
     case STMT_BLOCK: {
         Scope *outer = state->current_scope;
 
-        // A recheck walks the block the first walk built, so its locals are
-        // found where they were declared.
-        if (state->rechecking) {
-            state->current_scope = stmt->block.scope;
-        } else {
-            resolver_enter_scope(state);
-            stmt->block.scope = state->current_scope;
-        }
+        resolver_enter_scope(state);
+        stmt->block.scope = state->current_scope;
 
         for (size_t i = 0; i < stmt->block.list.size; i++) {
             ast_script_stmt_visit(state, stmt->block.list.data[i]);
@@ -2001,13 +1657,6 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
             break;
         }
 
-        // A returned pointer outlives the whole frame, so nothing declared
-        // inside the function may be pointed at. Depth 0 is the global scope.
-        check_pointer_lifetime(state, stmt->ret.result, 0, stmt->span, "returned");
-
-        // Nothing after a return runs, so what this state says about a slot
-        // must not reach a merge as though it were one way of arriving there.
-        state->flow.unreachable = true;
         break;
     }
     }
@@ -2029,8 +1678,6 @@ bool ast_script_resolve(Arena *compile_arena, ASTScript *script, Scope *global_s
             },
         .diagnostics = diagnostics,
     };
-
-    flow_init(&state.flow, compile_arena);
 
     size_t errors_before = diagnostics_count(diagnostics);
 
