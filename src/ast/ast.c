@@ -40,6 +40,13 @@ typedef struct {
     // It sits here rather than on the resolver because a function body starts a
     // fresh count: a loop outside a declaration is not one the body can leave.
     unsigned int loop_depth;
+
+    // What the innermost loop's 'break' edges carry, owned by the STMT_FOR
+    // being walked. A 'break' leaves the loop without passing the condition or
+    // the back-edge, so its state joins the post-loop state directly; merging
+    // only the body's fall-through would lose it and read a slot moved before
+    // a 'break' as live afterwards.
+    Flow *breaks;
 } FuncContext;
 
 typedef struct {
@@ -1497,6 +1504,10 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
 
     state->func_context.return_type = stmt->func_decl.resolved_return_type;
 
+    // A body is outside any loop the declaration sits in, so it has no 'break'
+    // edge to contribute to until one of its own loops opens.
+    state->func_context.breaks = NULL;
+
     ast_script_stmt_visit(state, stmt->func_decl.body);
 
     state->func_context = previous_context;
@@ -1748,6 +1759,15 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
 
         size_t reported = diagnostics_count(state->diagnostics);
 
+        // Starts unreachable: no 'break' has been taken, so a loop without one
+        // contributes nothing to the state after it.
+        Flow breaks;
+        flow_init(&breaks, state->compile_arena);
+        breaks.unreachable = true;
+
+        Flow *outer_breaks = state->func_context.breaks;
+        state->func_context.breaks = &breaks;
+
         state->func_context.loop_depth++;
         ast_script_stmt_visit(state, stmt->forstmt.body);
         ast_script_stmt_visit(state, stmt->forstmt.post);
@@ -1755,6 +1775,12 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         diagnostics_truncate(state->diagnostics, reported);
 
         flow_merge(&state->flow, &before_body);
+
+        // The second walk sees the same 'break's against the merged state that
+        // subsumes the first walk's, so its edges replace rather than join
+        // them: the state after the loop is built from the walk that reports.
+        flow_init(&breaks, state->compile_arena);
+        breaks.unreachable = true;
 
         state->rechecking = true;
         ast_script_stmt_visit(state, stmt->forstmt.body);
@@ -1766,8 +1792,11 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         state->func_context.loop_depth--;
 
         // The body may run zero times, so the state before it is also a way to
-        // arrive after the loop.
+        // arrive after the loop -- as is every 'break' that left it.
         flow_merge(&state->flow, &before_body);
+        flow_merge(&state->flow, &breaks);
+
+        state->func_context.breaks = outer_breaks;
 
         state->current_scope = outer_scope;
         break;
@@ -1776,6 +1805,15 @@ void ast_script_stmt_visit(ResolverState *state, ASTStmt *stmt) {
         if (state->func_context.loop_depth == 0) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span, "'%s' is only valid inside a loop",
                        stmt->jump.is_break ? "break" : "continue");
+        }
+
+        // Where this jump goes decides which join it feeds. A 'break' arrives
+        // after the loop, so it joins the accumulated break state; a
+        // 'continue' arrives at the back-edge, which the body's own walk
+        // already merges. Either way nothing falls through to the next
+        // statement.
+        if (stmt->jump.is_break && state->func_context.breaks) {
+            flow_merge(state->func_context.breaks, &state->flow);
         }
 
         state->flow.unreachable = true;
