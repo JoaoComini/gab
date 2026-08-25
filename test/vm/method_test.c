@@ -42,8 +42,8 @@ static void test_method_lands_on_its_receiver_type() {
 
     // The receiver is parameter zero, so a one-parameter method has two.
     assert(damage->func.param_count == 2);
-    assert(type_is_pointer(damage->func.params[0]));
-    assert(damage->func.params[0]->pointee == lookup_type(&ctx, scope, "Player"));
+    assert(type_is_indirect(damage->func.params[0]));
+    assert(damage->func.params[0]->inner == lookup_type(&ctx, scope, "Player"));
 
     ast_unit_destroy(unit);
     test_context_free(&ctx);
@@ -284,7 +284,7 @@ static void test_call_through_a_pointer_receiver() {
                         "let r: int = main();") == 9);
 }
 
-// A value method reached through a pointer copies the pointee in.
+// A value method reached through a pointer copies the inner in.
 static void test_value_method_through_a_pointer() {
     assert(test_run_int("struct Player { health: int }\n"
                         "func (p: Player) hp(): int { return p.health; }\n"
@@ -363,7 +363,7 @@ static void test_call_diagnostics() {
 
 // Resolution rewrites 'recv.m(a)' into 'm(recv', a)', so the three ways a
 // receiver reaches parameter zero all have to survive the rewrite. Each is one
-// adjustment: none, an address taken, a pointee copied in.
+// adjustment: none, an address taken, a inner copied in.
 
 // The receiver already matches parameter zero, so it is passed as written.
 static void test_a_matching_receiver_needs_no_adjustment() {
@@ -391,7 +391,7 @@ static void test_a_value_receiver_has_its_address_taken() {
                         "let r: int = main();") == 55);
 }
 
-// A 'T' method called through a 'box T' copies the pointee in, which the rewrite
+// A 'T' method called through a 'box T' copies the inner in, which the rewrite
 // spells as a '*recv' node.
 static void test_a_pointer_receiver_is_dereferenced() {
     assert(test_run_int("struct Box { n: int }\n"

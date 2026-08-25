@@ -15,7 +15,7 @@ FlowSlot flow_get(const Flow *flow, Symbol *symbol) {
         return *found;
     }
 
-    return (FlowSlot){.init = FLOW_UNREACHED, .pointee_depth = 0, .written_fields = 0};
+    return (FlowSlot){.init = FLOW_UNREACHED, .inner_depth = 0, .written_fields = 0};
 }
 
 void flow_set(Flow *flow, Symbol *symbol, FlowSlot slot) {
@@ -44,7 +44,7 @@ void flow_copy(Flow *into, const Flow *from) {
 }
 
 // A slot's two facts merge in opposite directions, each toward the answer that
-// holds on every path: the deeper pointee, and the weaker initialized-ness.
+// holds on every path: the deeper inner, and the weaker initialized-ness.
 static FlowSlot slot_merge(FlowSlot a, FlowSlot b) {
     if (a.init == FLOW_UNREACHED) {
         return b;
@@ -70,7 +70,7 @@ static FlowSlot slot_merge(FlowSlot a, FlowSlot b) {
 
     return (FlowSlot){
         .init = init,
-        .pointee_depth = a.pointee_depth > b.pointee_depth ? a.pointee_depth : b.pointee_depth,
+        .inner_depth = a.inner_depth > b.inner_depth ? a.inner_depth : b.inner_depth,
 
         // A field is written after the join only where both paths wrote it,
         // which is the intersection.
@@ -104,7 +104,7 @@ bool flow_equals(const Flow *a, const Flow *b) {
     flow_for_each(a->slots, entry) {
         FlowSlot other = flow_get(b, entry->key);
 
-        if (other.init != entry->value.init || other.pointee_depth != entry->value.pointee_depth ||
+        if (other.init != entry->value.init || other.inner_depth != entry->value.inner_depth ||
             other.written_fields != entry->value.written_fields) {
             return false;
         }
@@ -113,7 +113,7 @@ bool flow_equals(const Flow *a, const Flow *b) {
     flow_for_each(b->slots, entry) {
         FlowSlot other = flow_get(a, entry->key);
 
-        if (other.init != entry->value.init || other.pointee_depth != entry->value.pointee_depth ||
+        if (other.init != entry->value.init || other.inner_depth != entry->value.inner_depth ||
             other.written_fields != entry->value.written_fields) {
             return false;
         }

@@ -22,20 +22,31 @@ typedef struct {
 
 GAB_HASH_MAP(TypeMap, type_map, String *, TypeBinding)
 
-// Pointer types are interned on their pointee so that every mention of *T
-// yields the same Type *: the whole type system compares by pointer identity,
-// and a fresh Type per mention would silently break every comparison.
-#define pointer_map_hash(key) (size_t)key
-#define pointer_map_key_equals(key, other) key == other
-#define pointer_map_key_dup(key) key
+// An indirection is interned on what it names, so that every mention of
+// 'box T' yields the same Type *: the whole type system compares by pointer
+// identity, and a fresh Type per mention would silently break every comparison.
+#define indirect_map_hash(key) (size_t)key
+#define indirect_map_key_equals(key, other) key == other
+#define indirect_map_key_dup(key) key
 
-GAB_HASH_MAP(PointerMap, pointer_map, Type *, Type *)
+GAB_HASH_MAP(IndirectMap, indirect_map, Type *, Type *)
 
 typedef struct {
     Type *int_type;
     Type *float_type;
     Type *bool_type;
     Type *string_type;
+
+    // 'ref string'. A distinct interned Type from the owning one, for the
+    // reason every 'ref T' is: ownership is read off the type, and a literal
+    // and a concatenation must not answer it the same way.
+    Type *ref_string_type;
+
+    // The header a string's characters carry. Never nameable: it exists so that
+    // freeing them frees the bytes and stops, rather than reading them back as
+    // a string header naming further characters.
+    Type *characters_type;
+
     Type *error_type;
 } TypeBuiltins;
 
@@ -50,11 +61,11 @@ typedef struct TypeRegistry {
 
     StringPool *strings;
 
-    PointerMap *pointers;
+    IndirectMap *indirects;
 
     // Borrowing 'ref T' types, interned apart from the owning ones so that
     // pointer-identity comparison keeps telling them apart.
-    PointerMap *ref_pointers;
+    IndirectMap *ref_indirects;
     TypeBuiltins builtins;
 } TypeRegistry;
 
@@ -65,12 +76,12 @@ void type_registry_destroy(TypeRegistry *registry);
 Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind type);
 Type *type_registry_error_type(TypeRegistry *registry);
 
-// The interned *pointee. Repeated calls with the same pointee return the same
+// The interned *inner. Repeated calls with the same inner return the same
 // Type *.
-Type *type_registry_pointer_to(TypeRegistry *registry, Type *pointee);
+Type *type_registry_indirect_to(TypeRegistry *registry, Type *inner);
 
-// As type_registry_pointer_to, choosing between the owning and borrowing
-// flavours. A 'ref T' does not own its pointee; the two are distinct types.
-Type *type_registry_pointer_to_kind(TypeRegistry *registry, Type *pointee, bool is_ref);
+// As type_registry_indirect_to, choosing between the owning and borrowing
+// flavours. A 'ref T' does not own its inner; the two are distinct types.
+Type *type_registry_indirect_to_kind(TypeRegistry *registry, Type *inner, bool is_ref);
 
 #endif

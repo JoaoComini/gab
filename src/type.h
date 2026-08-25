@@ -19,7 +19,12 @@ typedef enum {
     // rather than structural, so it is interned once like the other builtins.
     TYPE_STRING,
     TYPE_STRUCT,
-    TYPE_POINTER,
+
+    // An indirection: 'box T' owns what it names, 'ref T' borrows it. One kind
+    // for both, because every operation that reaches through one -- a deref, a
+    // field access, a method receiver -- does the same thing either way. Only
+    // 'is_ref' distinguishes them, and only ownership reads it.
+    TYPE_INDIRECT,
     TYPE_UNKNOWN,
     TYPE_ERROR,
 } TypeKind;
@@ -54,7 +59,7 @@ struct Type {
     TypeKind kind;
 
     // NULL for a type whose identity is structural: a pointer is '*' plus its
-    // pointee and nothing more, so its printable form is derived on demand
+    // inner and nothing more, so its printable form is derived on demand
     // rather than stored. Non-NULL only for nominal types — builtins and
     // structs — where the name is the identity.
     String *name;
@@ -65,18 +70,26 @@ struct Type {
     TypeField *fields;
     size_t field_count;
 
-    // What a TYPE_POINTER points at; NULL for every other kind.
-    Type *pointee;
+    // What a TYPE_INDIRECT names; NULL for every other kind.
+    Type *inner;
 
-    // Whether this pointer borrows rather than owns. A 'ref T' is a distinct
-    // Type from 'box T', interned separately, so that freeing an object can tell
-    // from a field's type alone whether it owns what the field names — which is
-    // what keeps the whole ownership story type-driven.
+    // Whether this type borrows rather than owns what it names. A 'ref T' is a
+    // distinct Type from 'box T', interned separately, so that freeing an
+    // object can tell from a field's type alone whether it owns what the field
+    // names — which is what keeps the whole ownership story type-driven.
+    //
+    // Meaningful on an indirection and on a string, the two kinds that name
+    // memory someone must free. Always false on the rest.
     bool is_ref;
 
     // The methods declared with this type as their receiver. NULL until the
     // first one is, so a struct nobody declares a method on costs nothing.
     MethodMap *methods;
+
+    // For a borrowing type that shares another's identity -- 'ref string' and
+    // 'string' -- the owning one. NULL everywhere else. Method lookup follows
+    // it so that one declaration serves both.
+    Type *owner;
 };
 
 Type *type_create(Arena *arena, TypeKind kind, String *name);
@@ -85,7 +98,19 @@ Type *type_struct_create(Arena *arena, String *name, size_t max_fields);
 void type_add_field(Type *type, String *name, Type *field_type);
 void type_layout_compute(Type *type);
 
-bool type_is_pointer(const Type *type);
+// Whether reaching the value means going through an indirection -- what a
+// deref, an auto-deref, and a field access all ask. Says nothing about
+// ownership: a 'ref T' is as indirect as a 'box T'.
+bool type_is_indirect(const Type *type);
+
+// Whether a value of this type owns memory that must be freed when it dies.
+// True of a 'box T' and of an owning string, false of every 'ref', and true of
+// a struct exactly when some field of it owns.
+//
+// Distinct from type_is_indirect because the two questions came apart once a
+// string could own: a string owns without being an indirection, and a 'ref T'
+// is an indirection that owns nothing.
+bool type_is_owned(const Type *type);
 
 // Whether a value of this type duplicates by copying its bytes, which is true
 // exactly when nothing it holds transitively owns. See the definition.
@@ -99,11 +124,11 @@ const TypeField *type_find_field(const Type *type, const String *name);
 bool type_add_method(Arena *arena, Type *type, String *name, Symbol *method);
 
 // The method this type declares under that name, or NULL. Does not look
-// through a pointer: the caller strips that first, since 'box Player' and
+// through an indirection: the caller strips that first, since 'box Player' and
 // 'Player' share one method set.
 Symbol *type_find_method(const Type *type, const String *name);
 
-// The most pointer levels a type spec may carry, bounded by the bits in
+// The most indirection levels a type spec may carry, bounded by the bits in
 // 'ref_levels' -- every level records its own kind, so the mask is the limit.
 #define TYPE_SPEC_MAX_DEPTH 32
 
@@ -111,7 +136,7 @@ typedef struct {
     StringRef name;
 
     // 0 for T, 1 for 'box T', 2 for 'box box T'.
-    unsigned int pointer_depth;
+    unsigned int indirect_depth;
 
     // Which levels borrow rather than own, bit 0 being the level nearest the
     // name: 'ref box T' is depth 2 with bit 1 set. A flag per level rather than
@@ -119,7 +144,7 @@ typedef struct {
     uint32_t ref_levels;
 } TypeSpec;
 
-TypeSpec *type_spec_create(StringRef name, unsigned int pointer_depth, uint32_t ref_levels);
+TypeSpec *type_spec_create(StringRef name, unsigned int indirect_depth, uint32_t ref_levels);
 void type_spec_destroy(TypeSpec *spec);
 
 #endif

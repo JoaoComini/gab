@@ -430,7 +430,7 @@ static void test_a_scalar_copy_stays_a_single_move() {
 }
 
 // A pointer is two slots on a 64-bit host, so copying one batches for the same
-// reason a struct does. Written in terms of VM_POINTER_SLOTS rather than 2, so
+// reason a struct does. Written in terms of VM_INDIRECT_SLOTS rather than 2, so
 // the claim still reads correctly on a host where a pointer is one slot.
 static void test_a_pointer_copy_batches_when_it_is_wide() {
     TestProgram program = test_compile("func f(): int {\n"
@@ -447,16 +447,16 @@ static void test_a_pointer_copy_batches_when_it_is_wide() {
 
     Instruction copy = test_instruction(chunk, (size_t)addr + 1);
 
-    if (VM_POINTER_SLOTS > 1) {
+    if (VM_INDIRECT_SLOTS > 1) {
         assert(VM_DECODE_OPCODE(copy) == OP_MOVE_N);
-        assert(VM_DECODE_R_R2(copy) == VM_POINTER_SLOTS);
+        assert(VM_DECODE_R_R2(copy) == VM_INDIRECT_SLOTS);
     } else {
         assert(VM_DECODE_OPCODE(copy) == OP_MOVE);
     }
 
     // An 8-byte pointer needs an even slot index to sit at its natural
     // alignment. The odd leading scalar is what would push it off.
-    assert(VM_DECODE_R_RD(copy) % VM_POINTER_SLOTS == 0);
+    assert(VM_DECODE_R_RD(copy) % VM_INDIRECT_SLOTS == 0);
 
     test_program_free(&program);
 }

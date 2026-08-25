@@ -363,6 +363,37 @@ static void test_the_largest_integer_literal_lexes() {
     assert(diagnostics_count(&diagnostics) == 0);
 }
 
+// '..' joins, and a lone '.' still reaches a field.
+static void test_dot_dot_is_one_token() {
+    Lexer lexer = test_lexer("a .. b");
+    assert_identifier(&lexer, "a");
+    assert_token(&lexer, TOKEN_DOT_DOT);
+    assert_identifier(&lexer, "b");
+    assert_token(&lexer, TOKEN_EOF);
+
+    Lexer field = test_lexer("a.b");
+    assert_identifier(&field, "a");
+    assert_token(&field, TOKEN_DOT);
+    assert_identifier(&field, "b");
+    assert_token(&field, TOKEN_EOF);
+}
+
+// A number stops before '..' rather than reading its first dot as a decimal
+// point: '1..2' joins two ints, and lexing it as '1.' and '.2' would make it
+// two floats and no operator.
+static void test_a_number_does_not_eat_a_join() {
+    Lexer lexer = test_lexer("1..2");
+    assert_token(&lexer, TOKEN_INT);
+    assert_token(&lexer, TOKEN_DOT_DOT);
+    assert_token(&lexer, TOKEN_INT);
+    assert_token(&lexer, TOKEN_EOF);
+
+    // A decimal point still binds to the number that follows it.
+    Lexer decimal = test_lexer("1.5");
+    assert_token(&decimal, TOKEN_FLOAT);
+    assert_token(&decimal, TOKEN_EOF);
+}
+
 // A lone '/' is still division.
 static void test_slash_is_division() {
     Lexer lexer = test_lexer("a / b");
@@ -404,6 +435,8 @@ int main(void) {
     test_a_number_token_carries_its_value();
     test_an_out_of_range_integer_is_an_error();
     test_the_largest_integer_literal_lexes();
+    test_dot_dot_is_one_token();
+    test_a_number_does_not_eat_a_join();
     test_slash_is_division();
 
     diagnostics_free(&diagnostics);

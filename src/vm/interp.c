@@ -18,7 +18,7 @@
 // Registers sit at base + r * VM_SLOT_SIZE, so the stack must hold every
 // register the frame can address before it starts executing. 'needed' counts
 // slots. The buffer is never resized, so this only reports whether the frame
-// fits: a pointer into the stack must stay valid for as long as its pointee
+// fits: a pointer into the stack must stay valid for as long as its inner
 // does, which a moving buffer cannot promise.
 static bool vm_reserve_stack(const VM *vm, size_t needed) { return needed <= vm->stack_capacity; }
 
@@ -514,6 +514,39 @@ static void vm_run_loop(VM *vm) {
                 vm_conditional(vm, instruction, vm_greater_thanf);
                 VM_NEXT();
             }
+            VM_CASE(OP_CONCAT) {
+                unsigned int rd = VM_DECODE_R_RD(instruction);
+                unsigned int r1 = VM_DECODE_R_R1(instruction);
+                unsigned int r2 = VM_DECODE_R_R2(instruction);
+
+                GabStringValue left;
+                GabStringValue right;
+
+                memcpy(&left, vm->registers + r1 * VM_SLOT_SIZE, sizeof(left));
+                memcpy(&right, vm->registers + r2 * VM_SLOT_SIZE, sizeof(right));
+
+                size_t total = (size_t)left.length + (size_t)right.length;
+
+                // Typed as characters rather than as a string: what is being
+                // allocated is the bytes themselves, and a string header here
+                // would send the free walk reading them back as one.
+                char *characters = gab_object_alloc_sized(
+                    DEFAULT_ALLOCATOR, vm->env.global_scope.type_registry->builtins.characters_type,
+                    total == 0 ? 1 : total);
+
+                if (!characters) {
+                    vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory concatenating strings");
+                    VM_NEXT();
+                }
+
+                memcpy(characters, left.data, (size_t)left.length);
+                memcpy(characters + left.length, right.data, (size_t)right.length);
+
+                GabStringValue result = {.data = characters, .length = (int32_t)total};
+
+                memcpy(vm->registers + rd * VM_SLOT_SIZE, &result, sizeof(result));
+                VM_NEXT();
+            }
             VM_CASE(OP_CMP_EQS) {
                 vm_conditional(vm, instruction, vm_equals);
                 VM_NEXT();
@@ -786,7 +819,7 @@ static void vm_run_loop(VM *vm) {
                 size_t base = VM_DECODE_R_R1(instruction);
                 size_t offset = VM_DECODE_R_R2(instruction);
 
-                // Addresses are absolute, not frame-relative: the pointee may
+                // Addresses are absolute, not frame-relative: the inner may
                 // outlive the frame the address was taken in, and a caller reading
                 // through the pointer has a different base. The byte offset reaches
                 // a field within the slots, so 'ref v.y' names the field, not v.

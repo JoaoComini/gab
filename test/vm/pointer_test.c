@@ -18,6 +18,15 @@ static Symbol *lookup(TestContext *ctx, Scope *scope, const char *name) {
     return scope_symbol_lookup(scope, string_from_cstr(&ctx->strings, name));
 }
 
+// The type a struct's field was declared with. A field carries a type without
+// owning anything at run time, which is what lets these ask what the registry
+// interned without declaring a top-level variable that owns.
+static Type *field_type(TestContext *ctx, Scope *scope, const char *struct_name, const char *field) {
+    Type *type = scope_type_lookup(scope, string_from_cstr(&ctx->strings, struct_name));
+
+    return type_find_field(type, string_from_cstr(&ctx->strings, field))->type;
+}
+
 // The whole type system compares types by pointer identity, so two mentions of
 // 'box Player' must yield the same Type *.
 static void test_pointer_types_are_interned() {
@@ -29,19 +38,18 @@ static void test_pointer_types_are_interned() {
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Player { health: int }\n"
-                           "let p: box Player;\n"
-                           "let q: box Player;\n");
+                           "struct Holder { p: box Player, q: box Player }\n");
     assert(ok);
 
-    Symbol *p = lookup(&ctx, scope, "p");
-    Symbol *q = lookup(&ctx, scope, "q");
+    Type *p = field_type(&ctx, scope, "Holder", "p");
+    Type *q = field_type(&ctx, scope, "Holder", "q");
 
     assert(p && q);
-    assert(p->var.type == q->var.type);
-    assert(type_is_pointer(p->var.type));
+    assert(p == q);
+    assert(type_is_indirect(p));
 
     Type *player = scope_type_lookup(scope, string_from_cstr(&ctx.strings, "Player"));
-    assert(p->var.type->pointee == player);
+    assert(p->inner == player);
 
     ast_unit_destroy(unit);
     test_context_free(&ctx);
@@ -55,14 +63,14 @@ static void test_pointer_depth_nests() {
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
     ASTUnit *unit = ast_unit_create();
 
-    bool ok = test_resolve(&ctx, scope, unit, "let p: box int;\nlet q: box box int;\n");
+    bool ok = test_resolve(&ctx, scope, unit, "struct Holder { p: box int, q: box box int }\n");
     assert(ok);
 
-    Symbol *p = lookup(&ctx, scope, "p");
-    Symbol *q = lookup(&ctx, scope, "q");
+    Type *p = field_type(&ctx, scope, "Holder", "p");
+    Type *q = field_type(&ctx, scope, "Holder", "q");
 
-    assert(q->var.type->pointee == p->var.type);
-    assert(p->var.type->pointee == scope_type_lookup(scope, string_from_cstr(&ctx.strings, "int")));
+    assert(q->inner == p);
+    assert(p->inner == scope_type_lookup(scope, string_from_cstr(&ctx.strings, "int")));
 
     ast_unit_destroy(unit);
     test_context_free(&ctx);
@@ -79,17 +87,16 @@ static void test_pointer_is_a_word() {
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Big { a: int, b: int, c: int, d: int }\n"
-                           "let p: box Big;\n"
-                           "let q: box bool;\n");
+                           "struct Holder { p: box Big, q: box bool }\n");
     assert(ok);
 
-    Symbol *p = lookup(&ctx, scope, "p");
-    Symbol *q = lookup(&ctx, scope, "q");
+    Type *p = field_type(&ctx, scope, "Holder", "p");
+    Type *q = field_type(&ctx, scope, "Holder", "q");
 
-    assert(p->var.type->size == sizeof(void *));
-    assert(p->var.type->alignment == _Alignof(void *));
-    assert(q->var.type->size == p->var.type->size);
-    assert(q->var.type->alignment == p->var.type->alignment);
+    assert(p->size == sizeof(void *));
+    assert(p->alignment == _Alignof(void *));
+    assert(q->size == p->size);
+    assert(q->alignment == p->alignment);
 
     ast_unit_destroy(unit);
     test_context_free(&ctx);
@@ -106,22 +113,21 @@ static void test_ref_is_a_distinct_type() {
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Node { n: int }\n"
-                           "let o: box Node;\n"
-                           "let b: ref Node;\n");
+                           "struct Holder { o: box Node, b: ref Node }\n");
     assert(ok);
 
-    Symbol *owning = scope_symbol_lookup(scope, string_from_cstr(&ctx.strings, "o"));
-    Symbol *borrow = scope_symbol_lookup(scope, string_from_cstr(&ctx.strings, "b"));
+    Type *owning = field_type(&ctx, scope, "Holder", "o");
+    Type *borrow = field_type(&ctx, scope, "Holder", "b");
 
     assert(owning && borrow);
-    assert(owning->var.type != borrow->var.type);
-    assert(!owning->var.type->is_ref);
-    assert(borrow->var.type->is_ref);
+    assert(owning != borrow);
+    assert(!owning->is_ref);
+    assert(borrow->is_ref);
 
-    // Same pointee, and both are still ordinary pointers: a borrow is the same
-    // address, differing only in who frees the pointee.
-    assert(owning->var.type->pointee == borrow->var.type->pointee);
-    assert(borrow->var.type->size == sizeof(void *));
+    // Same inner, and both are still ordinary addresses: a borrow is the same
+    // address, differing only in who frees the inner.
+    assert(owning->inner == borrow->inner);
+    assert(borrow->size == sizeof(void *));
 
     ast_unit_destroy(unit);
     test_context_free(&ctx);
@@ -164,7 +170,7 @@ static void test_scalar_read_and_write_through_a_pointer() {
                        "let r: float = f();") == 2.5f);
 }
 
-// A field write through a pointer must land in the pointee and disturb nothing
+// A field write through a pointer must land in the inner and disturb nothing
 // beside it.
 static void test_field_write_through_a_pointer() {
     assert(test_run_int("struct Player { health: int, mana: int }\n"

@@ -113,6 +113,8 @@ const char *token_description(TokenType type) {
         return "','";
     case TOKEN_DOT:
         return "'.'";
+    case TOKEN_DOT_DOT:
+        return "'..'";
     case TOKEN_LET:
         return "'let'";
     case TOKEN_FUNC:
@@ -163,7 +165,11 @@ static Token lexer_number(Lexer *lexer) {
     }
 
     TokenType type = TOKEN_INT;
-    if (lexer_peek(lexer) == '.') {
+
+    // Not when the dot begins a '..': the join would otherwise be swallowed as
+    // this number's decimal point and the next one's, leaving two floats where
+    // the source wrote an operator between two ints.
+    if (lexer_peek(lexer) == '.' && lexer->source[lexer->pos + 1] != '.') {
         lexer_eat(lexer);
 
         while (isdigit(lexer_peek(lexer))) {
@@ -565,6 +571,11 @@ Token lexer_next(Lexer *lexer) {
     case ',':
         return token_create(lexer, TOKEN_COMMA);
     case '.':
+        if (lexer_peek(lexer) == '.') {
+            lexer_eat(lexer);
+            return token_create(lexer, TOKEN_DOT_DOT);
+        }
+
         return token_create(lexer, TOKEN_DOT);
     default:
         return lexer_invalid(lexer, ch);

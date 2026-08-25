@@ -1,6 +1,8 @@
 #include "vm/args.h"
 
+#include "object.h"
 #include "symbol_table.h"
+#include "vm/interp.h"
 #include "vm/opcode.h"
 
 #include <assert.h>
@@ -85,7 +87,7 @@ GabStringValue args_string(Args *args, int index) {
 
 void *args_pointer(Args *args, int index) {
     void *pointer;
-    memcpy(&pointer, args_address_of_kind(args, index, TYPE_POINTER), sizeof(pointer));
+    memcpy(&pointer, args_address_of_kind(args, index, TYPE_INDIRECT), sizeof(pointer));
 
     return pointer;
 }
@@ -113,6 +115,30 @@ void args_return_bool(Args *args, bool value) {
 
 void args_return_pointer(Args *args, void *pointer) {
     memcpy(args_return_address(args), &pointer, sizeof(pointer));
+}
+
+bool args_return_string_copy(Args *args, const char *data, int32_t length) {
+    // Typed as characters rather than as a string, for the reason OP_CONCAT
+    // gives: a string header here would send the free walk reading the bytes
+    // back as one.
+    char *characters = gab_object_alloc_sized(
+        DEFAULT_ALLOCATOR, args->vm->env.global_scope.type_registry->builtins.characters_type,
+        length == 0 ? 1 : (size_t)length);
+
+    if (!characters) {
+        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory copying a string");
+        return false;
+    }
+
+    if (length) {
+        memcpy(characters, data, (size_t)length);
+    }
+
+    GabStringValue value = {.data = characters, .length = length};
+
+    memcpy(args_return_address(args), &value, sizeof(value));
+
+    return true;
 }
 
 void args_return_struct(Args *args, const void *data, size_t size) {

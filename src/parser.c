@@ -613,11 +613,11 @@ static ASTField *parse_field(Parser *parser, const char *name_message) {
 
 // A type position, which is a name preceded by any number of 'box' or 'ref'.
 static TypeSpec *parse_type_spec(Parser *parser) {
-    unsigned int pointer_depth = 0;
+    unsigned int indirect_depth = 0;
 
     // 'ref T' is a borrow: a pointer that does not own what it names. It stands
     // in place of the 'box', not before it — 'ref T' and 'box T' are both one
-    // pointer deep, and differ only in who frees the pointee.
+    // pointer deep, and differ only in who frees the inner.
     //
     // The two nest in any order, so each level records its own kind rather than
     // the spec carrying one flag for all of them. Read left to right the levels
@@ -626,19 +626,19 @@ static TypeSpec *parse_type_spec(Parser *parser) {
     bool is_ref[TYPE_SPEC_MAX_DEPTH];
 
     while (parser->current.type == TOKEN_REF || parser->current.type == TOKEN_BOX) {
-        if (pointer_depth == TYPE_SPEC_MAX_DEPTH) {
+        if (indirect_depth == TYPE_SPEC_MAX_DEPTH) {
             parser_error(parser, "too many levels of pointer");
             return NULL;
         }
 
-        is_ref[pointer_depth++] = parser->current.type == TOKEN_REF;
+        is_ref[indirect_depth++] = parser->current.type == TOKEN_REF;
         parser_next_token(parser); // eat 'ref' or 'box'
     }
 
     uint32_t ref_levels = 0;
-    for (unsigned int i = 0; i < pointer_depth; i++) {
+    for (unsigned int i = 0; i < indirect_depth; i++) {
         if (is_ref[i]) {
-            ref_levels |= (uint32_t)1 << (pointer_depth - 1 - i);
+            ref_levels |= (uint32_t)1 << (indirect_depth - 1 - i);
         }
     }
 
@@ -672,7 +672,7 @@ static TypeSpec *parse_type_spec(Parser *parser) {
         }
     }
 
-    return type_spec_create(name, pointer_depth, ref_levels);
+    return type_spec_create(name, indirect_depth, ref_levels);
 }
 
 static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
@@ -1251,13 +1251,17 @@ static int get_precedence(TokenType type) {
     case TOKEN_LEQUAL:
     case TOKEN_GEQUAL:
         return 3;
+    // Looser than arithmetic and tighter than comparison, so '"n: " .. a + b'
+    // joins the sum rather than adding to the label.
+    case TOKEN_DOT_DOT:
+        return 4;
     case TOKEN_PLUS:
     case TOKEN_MINUS:
-        return 4;
+        return 5;
     case TOKEN_MUL:
     case TOKEN_DIV:
     case TOKEN_MOD:
-        return 5;
+        return 6;
     default:
         return 0; // Not a binary operator
     }
@@ -1277,6 +1281,8 @@ static BinOp parse_bin_op(TokenType type) {
         return BIN_OP_LEQUAL;
     case TOKEN_GEQUAL:
         return BIN_OP_GEQUAL;
+    case TOKEN_DOT_DOT:
+        return BIN_OP_CONCAT;
     case TOKEN_PLUS:
         return BIN_OP_ADD;
     case TOKEN_MINUS:

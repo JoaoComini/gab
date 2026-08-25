@@ -580,7 +580,7 @@ static void test_reports_dereferencing_a_non_pointer() {
 }
 
 // Field access reaches through one pointer, so a pointer to a non-struct still
-// has no fields — and the message names what was written, not the pointee.
+// has no fields — and the message names what was written, not the inner.
 static void test_reports_field_access_through_a_non_struct_pointer() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -637,7 +637,7 @@ static void test_reports_a_pointer_escaping_its_block() {
 }
 
 // A heap object outlives every frame, so storing a stack address into one is
-// the escape the rule exists to catch: nothing can save a pointer whose pointee
+// the escape the rule exists to catch: nothing can save a pointer whose inner
 // is a frame slot that has already gone.
 static void test_reports_a_stack_pointer_stored_into_a_heap_object() {
     TestContext ctx;
@@ -658,8 +658,8 @@ static void test_reports_a_stack_pointer_stored_into_a_heap_object() {
     test_context_free(&ctx);
 }
 
-// The restriction is only on outliving the pointee. A pointer that stays at or
-// below its pointee's depth is fine, including one passed to a callee.
+// The restriction is only on outliving the inner. A pointer that stays at or
+// below its inner's depth is fine, including one passed to a callee.
 static void test_accepts_pointers_that_do_not_outlive_their_pointee() {
     TestContext ctx;
     test_context_init(&ctx);

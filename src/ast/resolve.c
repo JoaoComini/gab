@@ -133,7 +133,7 @@ static String *resolver_spec_member(ResolverState *state, StringRef name) {
 // further check involving it silently succeeds rather than cascading.
 static bool is_error_type(Type *type) { return !type || type->kind == TYPE_ERROR; }
 
-// The printable form of a type. A pointer's name is derived from its pointee
+// The printable form of a type. A pointer's name is derived from its inner
 // rather than stored, so 'box box Player' formats without interning two
 // intermediate names. Built in the compile arena: only diagnostics ask, and
 // they are already on the failing path.
@@ -142,16 +142,18 @@ static const char *type_name(ResolverState *state, Type *type) {
         return "none";
     }
 
-    if (type->name) {
+    // A borrowing string keeps the name of what it borrows, so the 'ref' has to
+    // be put back or a mismatch between the two reads as 'string' and 'string'.
+    if (type->name && !(type->kind == TYPE_STRING && type->is_ref)) {
         return type->name->data;
     }
 
-    const char *pointee = type_name(state, type->pointee);
+    const char *inner = type->name ? type->name->data : type_name(state, type->inner);
     const char *prefix = type->is_ref ? "ref " : "box ";
-    size_t length = strlen(prefix) + strlen(pointee) + 1;
+    size_t length = strlen(prefix) + strlen(inner) + 1;
     char *out = arena_alloc(state->compile_arena, length);
 
-    snprintf(out, length, "%s%s", prefix, pointee);
+    snprintf(out, length, "%s%s", prefix, inner);
 
     return out;
 }
@@ -175,6 +177,8 @@ static const char *bin_op_name(BinOp op) {
         return "/";
     case BIN_OP_MOD:
         return "%";
+    case BIN_OP_CONCAT:
+        return "..";
     case BIN_OP_LESS:
         return "<";
     case BIN_OP_GREATER:
@@ -210,6 +214,48 @@ static const char *bin_op_name(BinOp op) {
 //
 // Overflow wraps on the unsigned width, matching what the VM does with the same
 // operands: a fold must not give an answer the unfolded code would not.
+// Joins two string literals into one, interned in the same pool the lexer used.
+// Answers false when either side is not a literal, which is every join whose
+// characters are only known at run time.
+//
+// Separate from fold_bin_op because it needs the pool to intern into, and
+// because a joined literal is the one fold that changes the node's type: the
+// result borrows the arena where the operands did.
+static bool fold_string_concat(ResolverState *state, ASTExpr *expr) {
+    ASTExpr *left = expr->bin_op.left;
+    ASTExpr *right = expr->bin_op.right;
+
+    if (left->kind != EXPR_LITERAL || right->kind != EXPR_LITERAL) {
+        return false;
+    }
+
+    size_t length = left->lit.as_string->length + right->lit.as_string->length;
+    char *joined = malloc(length + 1);
+
+    if (!joined) {
+        return false;
+    }
+
+    memcpy(joined, left->lit.as_string->data, left->lit.as_string->length);
+    memcpy(joined + left->lit.as_string->length, right->lit.as_string->data, right->lit.as_string->length);
+    joined[length] = '\0';
+
+    // Interned by length rather than as a C string: a '\0' is an ordinary
+    // character here, and stopping at the first one would truncate the join.
+    String *result =
+        string_from_ref(state->current_scope->strings, (StringRef){.data = joined, .length = length});
+
+    free(joined);
+
+    ast_expr_free(left);
+    ast_expr_free(right);
+
+    expr->kind = EXPR_LITERAL;
+    expr->lit = (Literal){.kind = TYPE_STRING, .as_string = result};
+
+    return true;
+}
+
 static void fold_bin_op(ASTExpr *expr) {
     ASTExpr *left = expr->bin_op.left;
     ASTExpr *right = expr->bin_op.right;
@@ -321,8 +367,8 @@ static bool is_addressable(const ASTExpr *expr) {
 // A builtin qualifies: methods hang on the Type, and nothing about the map
 // requires the type to be one a unit declared.
 static Type *receiver_base_type(Type *type) {
-    while (type_is_pointer(type)) {
-        type = type->pointee;
+    while (type_is_indirect(type)) {
+        type = type->inner;
     }
 
     return type;
@@ -365,7 +411,7 @@ static void check_call_args(ResolverState *state, ASTExprList *args, Type **para
 
 // Settles how the receiver reaches parameter zero, recording it on the node for
 // codegen. Go's rule: a pointer method on an addressable value takes its
-// address, and a value method through a pointer copies the pointee in. Returns
+// address, and a value method through a pointer copies the inner in. Returns
 // false when neither is possible.
 // Rewrites 'recv.m(a)' into 'm(recv', a)', where recv' is the receiver adjusted
 // to what parameter zero declared: 'ref recv' where the method takes a pointer and
@@ -385,7 +431,7 @@ static void check_call_args(ResolverState *state, ASTExprList *args, Type **para
 // Runs after the call is fully checked, so the diagnostics above all report
 // against what the user wrote rather than against the rewrite.
 // How a receiver reaches parameter zero. A 'box T' method called on a 'T' takes
-// its address; a 'T' method called through a 'box T' copies the pointee in.
+// its address; a 'T' method called through a 'box T' copies the inner in.
 typedef enum {
     RECEIVER_AS_IS,
     RECEIVER_ADDRESS_OF,
@@ -435,12 +481,12 @@ static void lower_method_call(ASTExpr *expr, Symbol *method, ReceiverAdjustment 
         // The stop condition is this level matching, never type_accepts: that
         // one chains, so it is already true at the level furthest out and would
         // emit no hop at all.
-        while (type_is_pointer(receiver->type) && receiver->type != declared &&
-               declared->pointee != receiver->type->pointee) {
-            Type *pointee = receiver->type->pointee;
+        while (type_is_indirect(receiver->type) && receiver->type != declared &&
+               declared->inner != receiver->type->inner) {
+            Type *inner = receiver->type->inner;
 
             receiver = ast_deref_expr_create(span, receiver);
-            receiver->type = pointee;
+            receiver->type = inner;
         }
 
         break;
@@ -475,7 +521,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
         return true;
     }
 
-    if (type_is_pointer(declared) && !type_is_pointer(actual)) {
+    if (type_is_indirect(declared) && !type_is_indirect(actual)) {
         if (!is_addressable(receiver)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "cannot call '%s' on a temporary, since it takes a pointer receiver", name->data);
@@ -493,7 +539,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
         return true;
     }
 
-    if (!type_is_pointer(declared) && type_is_pointer(actual)) {
+    if (!type_is_indirect(declared) && type_is_indirect(actual)) {
         *out = RECEIVER_DEREF;
         return true;
     }
@@ -502,8 +548,8 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
     // a 'ref box T' calling a 'ref T' method reaches the 'box T' inside it,
     // which then lends. Checked before the widening below, since that one only
     // recognises a receiver already at the right level.
-    if (type_is_pointer(actual) && type_is_pointer(actual->pointee) &&
-        type_accepts(declared, actual->pointee)) {
+    if (type_is_indirect(actual) && type_is_indirect(actual->inner) &&
+        type_accepts(declared, actual->inner)) {
         *out = RECEIVER_DEREF;
         return true;
     }
@@ -610,14 +656,21 @@ static bool type_accepts(Type *to, Type *from) {
         return true;
     }
 
-    if (!type_is_pointer(to) || !to->is_ref) {
+    // An owning string lends to a borrow of one. The reverse is refused: the
+    // characters a borrow names belong to someone else, and an owning slot
+    // would free what it never allocated.
+    if (to->kind == TYPE_STRING && from && from->kind == TYPE_STRING) {
+        return to->is_ref;
+    }
+
+    if (!type_is_indirect(to) || !to->is_ref) {
         return false;
     }
 
     // Borrowing: the destination names what 'from' itself sits in. A 'box T'
     // reaching a 'ref box T' takes this arm -- the address of the slot, not the
     // pointer it holds.
-    if (to->pointee == from) {
+    if (to->inner == from) {
         return true;
     }
 
@@ -628,17 +681,17 @@ static bool type_accepts(Type *to, Type *from) {
     //
     // A borrow is walked like an owning level: lending confers no ownership, so
     // reaching through one produces another borrow rather than giving anything
-    // away. What must hold is that the pointee outlives the borrow, which is a
+    // away. What must hold is that the inner outlives the borrow, which is a
     // lifetime question and belongs to the flow pass rather than here.
     //
     // Disjoint from the arm above at every step, since a pointer equal to
-    // 'to->pointee' cannot also have 'to->pointee' as its own pointee.
-    while (type_is_pointer(from)) {
-        if (to->pointee == from->pointee) {
+    // 'to->inner' cannot also have 'to->inner' as its own inner.
+    while (type_is_indirect(from)) {
+        if (to->inner == from->inner) {
             return true;
         }
 
-        from = from->pointee;
+        from = from->inner;
     }
 
     return false;
@@ -647,7 +700,7 @@ static bool type_accepts(Type *to, Type *from) {
 // Whether 'to' accepts 'from' only by taking its address, which is the case
 // needing a node in the tree rather than a widening at the check.
 static bool accepts_by_borrowing(Type *to, Type *from) {
-    return to != from && type_is_pointer(to) && to->is_ref && to->pointee == from;
+    return to != from && type_is_indirect(to) && to->is_ref && to->inner == from;
 }
 
 // Materialises the borrow a 'ref T' destination asks for. Borrowing is implicit,
@@ -657,17 +710,28 @@ static bool accepts_by_borrowing(Type *to, Type *from) {
 //
 // Returns false for a temporary, which has no address to take.
 static bool borrow_into(ResolverState *state, ASTExpr **slot, Type *destination, Span span) {
+    // Only something with a home in memory can be lent. A string that owns and
+    // has no home is a temporary -- a concatenation -- and its characters are
+    // freed where the expression ends, so the borrow would name freed memory.
+    if (destination->kind == TYPE_STRING && destination->is_ref && (*slot)->type &&
+        (*slot)->type->kind == TYPE_STRING && !(*slot)->type->is_ref && !is_addressable(*slot)) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span,
+                   "cannot borrow a string that nothing holds, since its characters are freed where the "
+                   "expression ends");
+        return false;
+    }
+
     // Lending from further out than one level: 'box box T' filling a 'ref T'
     // lends the 'box T' inside it, so the levels above that have to be followed
     // here. type_accepts allows the pair; this is what makes the tree agree with
     // it, and without the hops the callee would receive the outer pointer and
     // read a pointer where the object should be.
-    while (type_is_pointer((*slot)->type) && destination->pointee != (*slot)->type->pointee &&
-           destination->pointee != (*slot)->type) {
-        Type *pointee = (*slot)->type->pointee;
+    while (type_is_indirect((*slot)->type) && destination->inner != (*slot)->type->inner &&
+           destination->inner != (*slot)->type) {
+        Type *inner = (*slot)->type->inner;
 
         ASTExpr *hop = ast_deref_expr_create(span, *slot);
-        hop->type = pointee;
+        hop->type = inner;
         *slot = hop;
     }
 
@@ -721,6 +785,18 @@ static bool bin_op_accepts(ResolverState *state, BinOp op, Type *type, Span span
     const char *op_name = bin_op_name(op);
 
     switch (op) {
+    // Joining is the one operator a string answers beyond equality. Which types
+    // are joinable is the whole rule: an array becomes joinable by saying so
+    // here, and nothing else about '..' has to change.
+    case BIN_OP_CONCAT:
+        if (is_string_type(type)) {
+            return true;
+        }
+
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' requires a joinable type, found %s", op_name,
+                   type_name(state, type));
+        return false;
+
     case BIN_OP_ADD:
     case BIN_OP_SUB:
     case BIN_OP_MUL:
@@ -883,7 +959,12 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
 
         const char *op_name = bin_op_name(expr->bin_op.op);
 
-        if (left_type != right_type) {
+        // Two strings are one operand type however each of them owns: what '..'
+        // and '==' read is the characters, and ownership decides who frees the
+        // result rather than whether the operator applies.
+        bool both_strings = is_string_type(left_type) && is_string_type(right_type);
+
+        if (left_type != right_type && !both_strings) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot apply '%s' to %s and %s",
                        op_name, type_name(state, left_type), type_name(state, right_type));
             expr->type = resolver_error_type(state);
@@ -892,6 +973,21 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
 
         if (!bin_op_accepts(state, expr->bin_op.op, left_type, expr->span)) {
             expr->type = resolver_error_type(state);
+            break;
+        }
+
+        if (both_strings && expr->bin_op.op == BIN_OP_CONCAT) {
+            // Two literals are joined where they are written, into a literal
+            // interned like any other. It borrows the arena, so the join costs
+            // no allocation and no instruction.
+            if (fold_string_concat(state, expr)) {
+                expr->type = state->current_scope->type_registry->builtins.ref_string_type;
+                break;
+            }
+
+            // Otherwise the characters are built at run time, so the result
+            // owns them: the slot it lands in is the one that frees them.
+            expr->type = state->current_scope->type_registry->builtins.string_type;
             break;
         }
 
@@ -985,8 +1081,8 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         // Go and C's '->'. Every level, since the search is what bounds it: a
         // 'ref box Player' is two hops from the struct, and stopping short would
         // only report a pointer as having no fields.
-        while (type_is_pointer(target_type)) {
-            target_type = target_type->pointee;
+        while (type_is_indirect(target_type)) {
+            target_type = target_type->inner;
         }
 
         if (target_type->kind != TYPE_STRUCT) {
@@ -1069,7 +1165,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         // through one would free the caller's old object from inside the callee,
         // an owning slot changing owner mid-call. Returning ownership says the
         // same thing with the transfer visible at the call site.
-        if (type_is_pointer(target_type) && !target_type->is_ref) {
+        if (type_is_indirect(target_type) && !target_type->is_ref) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "cannot take the address of an owning pointer; return ownership instead of "
                        "repointing it through a borrow");
@@ -1091,7 +1187,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         // Typing it 'box T' would make one type mean two things: an address of
         // something, and ownership of a heap object. Nothing could then tell
         // them apart from the type alone.
-        expr->type = type_registry_pointer_to_kind(state->current_scope->type_registry, target_type, true);
+        expr->type = type_registry_indirect_to_kind(state->current_scope->type_registry, target_type, true);
         break;
     }
     case EXPR_DEREF: {
@@ -1104,14 +1200,14 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
             break;
         }
 
-        if (!type_is_pointer(target_type)) {
+        if (!type_is_indirect(target_type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot dereference %s",
                        type_name(state, target_type));
             expr->type = resolver_error_type(state);
             break;
         }
 
-        expr->type = target_type->pointee;
+        expr->type = target_type->inner;
 
         // The address itself lives in the target's slots, so a deref stays
         // assignable through whatever the target was.
@@ -1177,9 +1273,11 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
 
         // A struct has a layout to allocate, and so does a pointer: 'new box T'
         // is a heap slot holding an owning pointer, which is what makes a
-        // 'box box T' fillable rather than merely declarable. A scalar is
-        // neither -- 'new int' would be a boxed scalar, a different feature.
-        if (type->kind != TYPE_STRUCT && !type_is_pointer(type)) {
+        // 'box box T' fillable rather than merely declarable. A string is a
+        // header with a layout of its own, and zeroed it is the empty string.
+        // A scalar is none of these -- 'new int' would be a boxed scalar, a
+        // different feature.
+        if (type->kind != TYPE_STRUCT && type->kind != TYPE_STRING && !type_is_indirect(type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "cannot allocate %s; 'new' takes a struct or a pointer", type_name(state, type));
             expr->type = resolver_error_type(state);
@@ -1188,7 +1286,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
 
         // A borrow has no owner to name, so a heap slot holding one would
         // outlive whatever it borrows with nothing tracking that.
-        if (type_is_pointer(type) && type->is_ref) {
+        if (type_is_indirect(type) && type->is_ref) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "cannot allocate %s; a heap slot cannot hold a borrow", type_name(state, type));
             expr->type = resolver_error_type(state);
@@ -1196,11 +1294,18 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         }
 
         expr->new_expr.type = type;
-        expr->type = type_registry_pointer_to(state->current_scope->type_registry, type);
+        expr->type = type_registry_indirect_to(state->current_scope->type_registry, type);
         break;
     }
     case EXPR_LITERAL: {
-        expr->type = type_registry_get_builtin(state->current_scope->type_registry, expr->lit.kind);
+        TypeRegistry *registry = state->current_scope->type_registry;
+
+        // A string literal names characters the unit's arena holds, which
+        // outlive every value that reads them and are freed with the unit. So
+        // it borrows: nothing in a frame allocated them, and nothing there may
+        // free them.
+        expr->type = expr->lit.kind == TYPE_STRING ? registry->builtins.ref_string_type
+                                                   : type_registry_get_builtin(registry, expr->lit.kind);
         break;
     }
     default:
@@ -1277,15 +1382,23 @@ static Type *resolve_type_spec(ResolverState *state, TypeSpec *spec, Span span) 
         return resolver_error_type(state);
     }
 
-    // Interned in the one shared registry whichever scope named the pointee,
+    // Interned in the one shared registry whichever scope named the inner,
     // so 'box Config' is one type however many modules mention it.
     //
     // Built from the name outward, which is the order the mask records: bit i is
     // the level wrapped on the i'th time round, so 'ref box T' owns first and
     // borrows that.
-    for (unsigned int i = 0; i < spec->pointer_depth; i++) {
+    // A string carries its own borrow bit rather than being wrapped, because
+    // its characters hang off the value itself: 'ref string' is the same two
+    // slots as 'string', borrowed. Wrapping would put an indirection in front
+    // of a header that is already one.
+    if (type->kind == TYPE_STRING && spec->indirect_depth == 1 && (spec->ref_levels & 1)) {
+        return state->current_scope->type_registry->builtins.ref_string_type;
+    }
+
+    for (unsigned int i = 0; i < spec->indirect_depth; i++) {
         bool is_ref = (spec->ref_levels >> i) & 1;
-        type = type_registry_pointer_to_kind(state->current_scope->type_registry, type, is_ref);
+        type = type_registry_indirect_to_kind(state->current_scope->type_registry, type, is_ref);
     }
 
     return type;
@@ -1341,7 +1454,7 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
         // The struct is registered only after its fields resolve, so a
         // self-reference would otherwise surface as "unknown type". A
         // pointer to self is not containment, so only depth 0 is rejected.
-        if (field->type_spec->pointer_depth == 0 &&
+        if (field->type_spec->indirect_depth == 0 &&
             string_ref_equals_ref(field->type_spec->name, stmt->struct_decl.name)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, field->span, "struct '%s' cannot contain itself",
                        struct_name->data);
@@ -1421,7 +1534,7 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
     // 'ref T' is the form that says what is true. A receiver by value stays
     // available as 'T', which copies; the two axes are separate, and only this
     // one is about ownership.
-    if (type_is_pointer(receiver_type) && !receiver_type->is_ref) {
+    if (type_is_indirect(receiver_type) && !receiver_type->is_ref) {
         diag_error(
             state->diagnostics, GAB_ERR_TYPE, receiver->span,
             "a method borrows its receiver rather than owning it, so write 'ref %s' instead of 'box %s'",
@@ -1641,6 +1754,19 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
 
                 if (!is_error_type(decl_type) && !is_error_type(init_type) &&
                     !type_accepts(decl_type, init_type)) {
+                    // A borrow reaching an owning string is the one mismatch
+                    // with a remedy to name: the characters belong to the
+                    // arena, and 'clone()' is what copies them into a string
+                    // this slot may free.
+                    if (decl_type->kind == TYPE_STRING && init_type->kind == TYPE_STRING) {
+                        diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->var_decl.initializer->span,
+                                   "a %s borrows characters it does not own, so a 'string' cannot take it; "
+                                   "write 'ref string', or '.clone()' to copy them",
+                                   type_name(state, init_type));
+                        decl_type = resolver_error_type(state);
+                        break;
+                    }
+
                     diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->var_decl.initializer->span,
                                "cannot initialize a variable of type %s with a value of type %s",
                                type_name(state, decl_type), type_name(state, init_type));
@@ -1655,6 +1781,18 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         } else if (stmt->var_decl.initializer) {
             type = stmt->var_decl.initializer->type;
         } else {
+            type = resolver_error_type(state);
+        }
+
+        // Nothing frees a top-level slot: the unit's chunk ends in a return
+        // that closes no block, so a value that owns would live until the VM
+        // dies and be leaked rather than released. A borrow is fine -- it frees
+        // nothing wherever it lives.
+        if (state->current_scope == state->global_scope && type_is_owned(type)) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
+                       "a top-level variable may not own, since no scope closes to free it; %s belongs in a "
+                       "function body",
+                       type_name(state, type));
             type = resolver_error_type(state);
         }
 
@@ -1765,7 +1903,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         assert(!bin_op_yields_bool(stmt->compound_assign.op) &&
                "a compound assignment must yield its target's type");
 
-        // Nothing here tracks pointee depth or ownership the way plain
+        // Nothing here tracks inner depth or ownership the way plain
         // assignment does: the operators this node carries are arithmetic, so
         // the target is an int or a float and never names an object.
         break;

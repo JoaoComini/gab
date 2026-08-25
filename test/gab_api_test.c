@@ -1150,7 +1150,7 @@ static void test_a_host_pointer_reaches_a_script() {
     gab_vm_free(vm);
 }
 
-// The pointee is checked rather than trusted: a 'box Enemy' where 'box Player' was
+// The inner is checked rather than trusted: a 'box Enemy' where 'box Player' was
 // declared is the one mistake the shared-layout story cannot survive.
 static void test_a_pointer_argument_checks_its_pointee() {
     GabVM *vm = gab_vm_new();

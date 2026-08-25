@@ -45,6 +45,7 @@ typedef enum {
     TOKEN_COLON_COLON, // '::'
     TOKEN_COMMA,       // ','
     TOKEN_DOT,         // '.'
+    TOKEN_DOT_DOT,     // '..'
                        // BEGIN KEYWORDS
     TOKEN_LET,         // 'let'
     TOKEN_FUNC,        // 'func'

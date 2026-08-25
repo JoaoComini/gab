@@ -44,7 +44,7 @@ static void flow_report(FlowPass *pass, Span span, const char *format, const cha
 // A variable's depth comes from the flow state, so what this answers is what
 // holds on every path reaching the expression rather than whatever the most
 // recent assignment happened to store.
-static int pointee_depth(FlowPass *pass, const ASTExpr *expr) {
+static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
     if (!expr) {
         return 0;
     }
@@ -56,7 +56,7 @@ static int pointee_depth(FlowPass *pass, const ASTExpr *expr) {
         return symbol ? symbol->scope_depth : 0;
     }
     case EXPR_VARIABLE:
-        return expr->symbol ? flow_get(pass->flow, expr->symbol).pointee_depth : 0;
+        return expr->symbol ? flow_get(pass->flow, expr->symbol).inner_depth : 0;
     case EXPR_NEW:
         // A heap object outlives every frame, so 0 is the truth here rather
         // than the "unknown" the default stands for.
@@ -74,7 +74,7 @@ static int pointee_depth(FlowPass *pass, const ASTExpr *expr) {
         int deepest = 0;
 
         for (size_t i = 0; i < expr->call.args.size; i++) {
-            int depth = pointee_depth(pass, expr->call.args.data[i]);
+            int depth = inner_depth(pass, expr->call.args.data[i]);
 
             if (depth > deepest) {
                 deepest = depth;
@@ -84,7 +84,7 @@ static int pointee_depth(FlowPass *pass, const ASTExpr *expr) {
         return deepest;
     }
     case EXPR_FIELD:
-        return pointee_depth(pass, expr->field.target);
+        return inner_depth(pass, expr->field.target);
     case EXPR_DEREF:
         // Reading through a borrow reaches no further than the borrow does: what
         // '*s' names lives as long as whatever 's' was made from, so the hops a
@@ -92,12 +92,12 @@ static int pointee_depth(FlowPass *pass, const ASTExpr *expr) {
         //
         // An owning pointer is the exception -- what it names is a heap object,
         // which outlives every frame however the pointer was reached.
-        if (expr->unary.target->type && type_is_pointer(expr->unary.target->type) &&
+        if (expr->unary.target->type && type_is_indirect(expr->unary.target->type) &&
             !expr->unary.target->type->is_ref) {
             return 0;
         }
 
-        return pointee_depth(pass, expr->unary.target);
+        return inner_depth(pass, expr->unary.target);
     default:
         return 0;
     }
@@ -120,7 +120,7 @@ static bool owning_field_of_local(const ASTExpr *expr, Symbol **out_symbol, unsi
 
     const TypeField *field = expr->field.field;
 
-    if (!field || !type_is_pointer(field->type) || field->type->is_ref) {
+    if (!field || !type_is_indirect(field->type) || field->type->is_ref) {
         return false;
     }
 
@@ -138,7 +138,7 @@ static bool owning_field_of_local(const ASTExpr *expr, Symbol **out_symbol, unsi
             break;
         }
 
-        if (type_is_pointer(other->type) && !other->type->is_ref) {
+        if (type_is_indirect(other->type) && !other->type->is_ref) {
             index++;
         }
     }
@@ -171,17 +171,17 @@ static uint64_t initialized_fields(FlowPass *pass, ASTExpr *initializer) {
 }
 
 // Rejects a pointer being stored somewhere that outlives what it points at.
-// 'target_depth' is the block depth of the destination; a pointee declared
+// 'target_depth' is the block depth of the destination; a inner declared
 // deeper than that is gone by the time the destination can still be read.
 static void check_pointer_lifetime(FlowPass *pass, ASTExpr *value, int target_depth, Span span,
                                    const char *what) {
-    if (!value || !value->type || !type_is_pointer(value->type)) {
+    if (!value || !value->type || !type_is_indirect(value->type)) {
         return;
     }
 
-    int depth = pointee_depth(pass, value);
+    int depth = inner_depth(pass, value);
 
-    // 0 means the pointee is unknown, which is not evidence of a problem.
+    // 0 means the inner is unknown, which is not evidence of a problem.
     if (depth == 0 || depth <= target_depth) {
         return;
     }
@@ -214,7 +214,7 @@ static void flow_pass_expr(FlowPass *pass, ASTExpr *expr) {
             char *name = string_ref_to_cstr(expr->var.name);
             flow_report(pass, expr->span, "'%s' was moved out of and no longer holds a value", name);
             free(name);
-        } else if (init == FLOW_UNINIT && entry->var.type && type_is_pointer(entry->var.type)) {
+        } else if (init == FLOW_UNINIT && entry->var.type && type_is_indirect(entry->var.type)) {
             // Only a pointer. An unwritten slot holds whatever the frame last
             // left there: read as an int that is a wrong answer, read as a
             // pointer it is an address nothing chose.
@@ -323,7 +323,7 @@ static void flow_pass_stmt(FlowPass *pass, ASTStmt *stmt) {
 
         flow_set(pass->flow, var,
                  (FlowSlot){.init = stmt->var_decl.initializer ? FLOW_INIT : FLOW_UNINIT,
-                            .pointee_depth = pointee_depth(pass, stmt->var_decl.initializer),
+                            .inner_depth = inner_depth(pass, stmt->var_decl.initializer),
                             .written_fields = initialized_fields(pass, stmt->var_decl.initializer)});
         break;
     }
@@ -369,7 +369,7 @@ static void flow_pass_stmt(FlowPass *pass, ASTStmt *stmt) {
             // declaration.
             flow_set(pass->flow, target,
                      (FlowSlot){.init = FLOW_INIT,
-                                .pointee_depth = pointee_depth(pass, stmt->assign.value),
+                                .inner_depth = inner_depth(pass, stmt->assign.value),
                                 .written_fields =
                                     stmt->assign.value->type && stmt->assign.value->type->kind == TYPE_STRUCT
                                         ? initialized_fields(pass, stmt->assign.value)
@@ -414,7 +414,7 @@ void flow_pass_run(Arena *arena, ASTStmt *body, Symbol **params, size_t param_co
     for (size_t i = 0; i < param_count; i++) {
         if (params[i]) {
             flow_set(&entries[cfg->entry->index], params[i],
-                     (FlowSlot){.init = FLOW_INIT, .pointee_depth = 0, .written_fields = UINT64_MAX});
+                     (FlowSlot){.init = FLOW_INIT, .inner_depth = 0, .written_fields = UINT64_MAX});
         }
     }
 
@@ -426,7 +426,7 @@ void flow_pass_run(Arena *arena, ASTStmt *body, Symbol **params, size_t param_co
     // changes no entry is the fixpoint.
     //
     // It terminates because every merge is monotone: 'init' only ever weakens,
-    // 'pointee_depth' only ever deepens, and 'written_fields' only ever loses
+    // 'inner_depth' only ever deepens, and 'written_fields' only ever loses
     // bits, over a finite set of slots.
     bool changed = true;
 

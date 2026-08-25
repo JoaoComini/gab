@@ -694,19 +694,19 @@ bool gab_arg_struct(GabCall *call, int index, const void *data, size_t size) {
     return true;
 }
 
-bool gab_arg_pointer(GabCall *call, int index, void *pointer, const GabType *pointee) {
-    // The pointee is checked before the slot is claimed, so a rejected pointer
+bool gab_arg_pointer(GabCall *call, int index, void *pointer, const GabType *inner) {
+    // The inner is checked before the slot is claimed, so a rejected pointer
     // leaves the parameter unset rather than counting as supplied. Pointer types
     // are interned, so this is a pointer compare rather than a structural one.
     if (call && index >= 0 && (size_t)index < call->fn->sig_param_count) {
         const Type *param = call->fn->sig_params[index];
 
-        if (param && param->kind == TYPE_POINTER && param->pointee != (const Type *)pointee) {
+        if (param && param->kind == TYPE_INDIRECT && param->inner != (const Type *)inner) {
             return false;
         }
     }
 
-    uint8_t *slot = gab_arg_slot(call, index, TYPE_POINTER);
+    uint8_t *slot = gab_arg_slot(call, index, TYPE_INDIRECT);
     if (!slot) {
         return false;
     }
