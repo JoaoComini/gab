@@ -328,6 +328,19 @@ static void test_refusing_a_borrow_names_the_remedy() {
     assert(test_compiles("func f(): int { let a: ref string = \"hi\"; return 0; }\n"));
 }
 
+// A borrow may be returned when its characters outlive the frame. A parameter's
+// were allocated by the caller and a literal's belong to the unit's arena, so
+// neither dies at the closing brace.
+static void test_a_returnable_borrow_outlives_its_frame() {
+    assert(test_compiles("func f(a: ref string): ref string { return a; }\n"));
+
+    assert(test_compiles("func f(): ref string { return \"hi\"; }\n"));
+
+    assert(test_run_bool("func f(a: ref string): ref string { return a; }\n"
+                         "func g(): bool { return f(\"hi\") == \"hi\"; }\n"
+                         "let r: bool = g();") == true);
+}
+
 // A literal borrows the characters its unit's arena holds, so it types as
 // 'ref string' and nothing frees it.
 static void test_a_literal_borrows() {
@@ -371,6 +384,7 @@ int main(void) {
     test_an_owning_string_slot_refuses_a_borrow();
     test_a_join_owns_even_between_literals();
     test_refusing_a_borrow_names_the_remedy();
+    test_a_returnable_borrow_outlives_its_frame();
     test_a_literal_borrows();
     test_an_owning_string_refuses_a_borrow();
 

@@ -636,6 +636,66 @@ static void test_reports_a_pointer_escaping_its_block() {
     test_context_free(&ctx);
 }
 
+// A string borrow names characters some slot owns, so it is bound by that
+// slot's life exactly as a pointer is: returning one whose characters die with
+// the frame hands the caller a borrow of freed memory.
+static void test_reports_returning_a_string_borrow_of_a_local() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "func test(a: ref string): ref string { let s: string = a .. \"b\"; return s; }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_LIFETIME);
+    assert(strcmp(diagnostic->message, "this pointer outlives what it points at, so it cannot be returned") ==
+           0);
+
+    test_context_free(&ctx);
+}
+
+// A string borrow assigned outward from an inner block names characters that
+// die at the closing brace, so the outer name would read freed memory.
+static void test_reports_a_string_borrow_escaping_its_block() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "func test(a: ref string) { let p: ref string; { let s: string = a .. \"b\"; p = s; } }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_LIFETIME);
+    assert(strcmp(diagnostic->message,
+                  "this pointer outlives what it points at, so it cannot be assigned here") == 0);
+
+    test_context_free(&ctx);
+}
+
+// A heap object outlives every frame, so a borrowing string field of one may
+// not name characters a frame slot owns.
+static void test_reports_a_string_borrow_stored_into_a_heap_object() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "struct Doc { body: ref string }\n"
+                  "func test(a: ref string) { let d: box Doc = new Doc; let s: string = a .. \"b\"; "
+                  "d.body = s; }");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_LIFETIME);
+    assert(strcmp(diagnostic->message,
+                  "this pointer outlives what it points at, so it cannot be stored here") == 0);
+
+    test_context_free(&ctx);
+}
+
 // A heap object outlives every frame, so storing a stack address into one is
 // the escape the rule exists to catch: nothing can save a pointer whose inner
 // is a frame slot that has already gone.
@@ -714,6 +774,9 @@ int main(void) {
     test_reports_field_access_through_a_non_struct_pointer();
     test_reports_returning_a_pointer_to_a_local();
     test_reports_a_pointer_escaping_its_block();
+    test_reports_returning_a_string_borrow_of_a_local();
+    test_reports_a_string_borrow_escaping_its_block();
+    test_reports_a_string_borrow_stored_into_a_heap_object();
     test_reports_a_stack_pointer_stored_into_a_heap_object();
     test_accepts_pointers_that_do_not_outlive_their_pointee();
 

@@ -15,6 +15,11 @@ typedef struct {
     Arena *arena;
     Diagnostics *diagnostics;
 
+    // What a 'return' is checked against. Held here because a returned borrow
+    // is not always visible in the returned expression's type: a 'ref string'
+    // is a header copy, so no address-of node marks it.
+    Type *return_type;
+
     // Set on the last round only. The lattice is iterated to a fixpoint, so an
     // intermediate round can see a state a later one refutes; reporting from
     // those would produce errors that the converged answer does not support.
@@ -56,7 +61,19 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
         return symbol ? symbol->scope_depth : 0;
     }
     case EXPR_VARIABLE:
-        return expr->symbol ? flow_get(pass->flow, expr->symbol).inner_depth : 0;
+        if (!expr->symbol) {
+            return 0;
+        }
+
+        // An owning string holds its characters in its own slot, so they live
+        // exactly as long as the variable does. A pointer variable is the other
+        // case: what it names was decided wherever it was assigned, which is
+        // what the lattice carries.
+        if (expr->type && expr->type->kind == TYPE_STRING && !expr->type->is_ref) {
+            return expr->symbol->scope_depth;
+        }
+
+        return flow_get(pass->flow, expr->symbol).inner_depth;
     case EXPR_NEW:
         // A heap object outlives every frame, so 0 is the truth here rather
         // than the "unknown" the default stands for.
@@ -170,12 +187,24 @@ static uint64_t initialized_fields(FlowPass *pass, ASTExpr *initializer) {
     return UINT64_MAX;
 }
 
+// Whether a value names memory it does not own, so that how long that memory
+// lives is this pass's business. True of a 'ref T' and of a 'ref string': the
+// two are different representations -- one an address, one a header carrying
+// one -- and the lifetime question is the same for both.
+static bool borrows_memory(const Type *type) {
+    if (!type) {
+        return false;
+    }
+
+    return type_is_indirect(type) || (type->kind == TYPE_STRING && type->is_ref);
+}
+
 // Rejects a pointer being stored somewhere that outlives what it points at.
 // 'target_depth' is the block depth of the destination; a inner declared
 // deeper than that is gone by the time the destination can still be read.
-static void check_pointer_lifetime(FlowPass *pass, ASTExpr *value, int target_depth, Span span,
-                                   const char *what) {
-    if (!value || !value->type || !type_is_indirect(value->type)) {
+static void check_borrow_lifetime(FlowPass *pass, ASTExpr *value, int target_depth, Span span,
+                                  const char *what) {
+    if (!value) {
         return;
     }
 
@@ -187,6 +216,19 @@ static void check_pointer_lifetime(FlowPass *pass, ASTExpr *value, int target_de
     }
 
     flow_report(pass, span, "this pointer outlives what it points at, so it cannot be %s", what);
+}
+
+// As check_borrow_lifetime, for a destination whose type says whether a borrow
+// is formed. Reading the destination rather than the value is what catches a
+// string: 'ref string' takes an owning 'string' by copying its header, so the
+// value still reads as owning and only the destination shows a borrow was made.
+static void check_stored_lifetime(FlowPass *pass, ASTExpr *value, const Type *destination, int target_depth,
+                                  Span span, const char *what) {
+    if (!borrows_memory(destination)) {
+        return;
+    }
+
+    check_borrow_lifetime(pass, value, target_depth, span, what);
 }
 
 static void flow_pass_expr_list(FlowPass *pass, ASTExprList *list) {
@@ -310,7 +352,12 @@ static void flow_pass_stmt(FlowPass *pass, ASTStmt *stmt) {
 
         // A returned pointer outlives the whole frame, so nothing declared
         // inside the function may be pointed at. Depth 0 is the global scope.
-        check_pointer_lifetime(pass, stmt->ret.result, 0, stmt->span, "returned");
+        //
+        // Checked against the declared return type rather than the returned
+        // expression's: returning an owning string where a 'ref string' was
+        // declared forms a borrow that outlives the slot holding the
+        // characters, and the expression alone still reads as owning.
+        check_stored_lifetime(pass, stmt->ret.result, pass->return_type, 0, stmt->span, "returned");
         break;
     case STMT_VAR_DECL: {
         flow_pass_expr(pass, stmt->var_decl.initializer);
@@ -342,7 +389,8 @@ static void flow_pass_stmt(FlowPass *pass, ASTStmt *stmt) {
         // frame does not bound, so only a pointer to something equally
         // long-lived may be stored there.
         if (stmt->assign.target->kind == EXPR_FIELD || stmt->assign.target->kind == EXPR_DEREF) {
-            check_pointer_lifetime(pass, stmt->assign.value, 0, stmt->span, "stored here");
+            check_stored_lifetime(pass, stmt->assign.value, stmt->assign.target->type, 0, stmt->span,
+                                  "stored here");
 
             Symbol *field_owner;
             unsigned int field_index;
@@ -359,8 +407,8 @@ static void flow_pass_stmt(FlowPass *pass, ASTStmt *stmt) {
         Symbol *target = stmt->assign.target->symbol;
 
         if (target && target->kind == SYMBOL_VAR) {
-            check_pointer_lifetime(pass, stmt->assign.value, target->scope_depth, stmt->span,
-                                   "assigned here");
+            check_stored_lifetime(pass, stmt->assign.value, stmt->assign.target->type, target->scope_depth,
+                                  stmt->span, "assigned here");
 
             FlowSlot slot = flow_get(pass->flow, target);
 
@@ -393,7 +441,7 @@ static void flow_pass_block(FlowPass *pass, CFGBlock *block) {
     }
 }
 
-void flow_pass_run(Arena *arena, ASTStmt *body, Symbol **params, size_t param_count,
+void flow_pass_run(Arena *arena, ASTStmt *body, Symbol **params, size_t param_count, Type *return_type,
                    Diagnostics *diagnostics) {
     CFG *cfg = cfg_build(arena, body);
 
@@ -418,7 +466,8 @@ void flow_pass_run(Arena *arena, ASTStmt *body, Symbol **params, size_t param_co
         }
     }
 
-    FlowPass pass = {.arena = arena, .diagnostics = diagnostics, .reporting = false};
+    FlowPass pass = {
+        .arena = arena, .diagnostics = diagnostics, .reporting = false, .return_type = return_type};
 
     // Iterate until nothing changes. Each round recomputes every block's exit
     // from its entry and merges that into its successors' entries; a merge

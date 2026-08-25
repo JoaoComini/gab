@@ -1678,7 +1678,8 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
             params[count++] = stmt->func_decl.params.data[i]->symbol;
         }
 
-        flow_pass_run(state->compile_arena, stmt->func_decl.body, params, count, state->diagnostics);
+        flow_pass_run(state->compile_arena, stmt->func_decl.body, params, count,
+                      stmt->func_decl.resolved_return_type, state->diagnostics);
     }
 
     resolver_exit_scope(state);
