@@ -417,13 +417,13 @@ void *gab_new(GabVM *handle, const GabType *type) {
         return NULL;
     }
 
-    return gab_object_alloc(DEFAULT_ALLOCATOR, (const Type *)type);
+    return object_alloc(DEFAULT_ALLOCATOR, (const Type *)type);
 }
 
 void gab_free(GabVM *handle, void *object) {
     (void)handle;
 
-    gab_object_free(DEFAULT_ALLOCATOR, object);
+    object_free(DEFAULT_ALLOCATOR, object);
 }
 
 // --- Calling ---------------------------------------------------------------

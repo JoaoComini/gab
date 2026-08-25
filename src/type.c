@@ -21,6 +21,7 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->methods = NULL;
     type->is_ref = false;
     type->owner = NULL;
+    type->drop = NULL;
 
     return type;
 }
@@ -100,12 +101,13 @@ bool type_is_owned(const Type *type) {
         return false;
     }
 
-    if (type->kind == TYPE_INDIRECT || type->kind == TYPE_STRING) {
+    if (type->kind == TYPE_INDIRECT) {
         return true;
     }
 
     // A struct is not itself an owner: it owns through whichever fields do, and
-    // is freed field by field rather than as one value.
+    // is freed field by field rather than as one value. A string answers here
+    // too, through the field naming its characters.
     for (size_t i = 0; i < type->field_count; i++) {
         if (type_is_owned(type->fields[i].type)) {
             return true;
@@ -129,8 +131,9 @@ bool type_is_copyable(const Type *type) {
     }
 
     // Exactly the values that own: copying one would make a second owner of
-    // memory only one of them may free.
-    if (type->kind == TYPE_INDIRECT || type->kind == TYPE_STRING) {
+    // memory only one of them may free. A string reaches the field walk, where
+    // the field naming its characters answers the same question.
+    if (type->kind == TYPE_INDIRECT) {
         return type->is_ref;
     }
 

@@ -3,17 +3,17 @@
 #include <assert.h>
 #include <string.h>
 
-ObjectHeader *gab_object_of(void *payload) {
+ObjectHeader *object_of(void *payload) {
     assert(payload && "a header is only meaningful for a live object");
 
     return (ObjectHeader *)payload - 1;
 }
 
-void *gab_object_alloc(Allocator allocator, const Type *type) {
-    return gab_object_alloc_sized(allocator, type, type ? type->size : 0);
+void *object_alloc(Allocator allocator, const Type *type) {
+    return object_alloc_sized(allocator, type, type ? type->size : 0);
 }
 
-void *gab_object_alloc_sized(Allocator allocator, const Type *type, size_t size) {
+void *object_alloc_sized(Allocator allocator, const Type *type, size_t size) {
     assert(type && "an object needs a type; freeing it walks its fields");
 
     ObjectHeader *header = allocator.alloc(allocator.ctx, sizeof(ObjectHeader) + size);
@@ -33,94 +33,57 @@ void *gab_object_alloc_sized(Allocator allocator, const Type *type, size_t size)
     return payload;
 }
 
-// Frees the objects a payload's fields own, so that freeing an object frees the
-// tree beneath it. Driven by the Type rather than by a tag on each value: the
-// compiler already knows which fields are pointers, so a struct of four ints
-// walks four fields and frees nothing.
-static void free_fields(Allocator allocator, const Type *type, char *payload) {
-    // A payload that is itself an owning pointer -- what 'new box T' allocates.
-    // It has no fields to walk, so the whole of what it owns is the one pointer
-    // sitting in it, and skipping this would leak everything beneath it.
-    if (type_is_indirect(type)) {
-        if (type->is_ref) {
-            return;
-        }
+// Frees what an owning indirection names -- what 'new box T' allocates, and
+// what every owning pointer field holds.
+static void drop_box(Allocator allocator, const Type *type, void *value) {
+    (void)type;
 
-        void *owned;
-        memcpy(&owned, payload, sizeof(owned));
+    void *owned;
+    memcpy(&owned, value, sizeof(owned));
 
-        gab_object_free(allocator, owned);
-        return;
-    }
+    object_free(allocator, owned);
+}
 
-    // A payload that is itself an owning string -- what 'new string' allocates.
-    // Its characters are a heap object of their own, and the header sitting
-    // here is what names them.
-    //
-    // The address is safe to free because nothing borrowed can reach here: an
-    // owning string accepts only an owned value, so its characters were either
-    // allocated by a join or are NULL from the zeroing this allocation did.
-    // A literal's arena characters would have no header to walk back to.
-    if (type->kind == TYPE_STRING) {
-        if (type->is_ref) {
-            return;
-        }
-
-        GabStringValue string;
-        memcpy(&string, payload, sizeof(string));
-
-        gab_object_free(allocator, (void *)string.data);
-        return;
-    }
-
+// Frees what a value's fields own, so that freeing an object frees the tree
+// beneath it. A field that owns nothing has no drop function and is skipped,
+// so a struct of four ints walks four fields and calls nothing -- and a 'ref'
+// field is skipped by the same test, having never owned what it names.
+//
+// An inline struct or string field is reached through its own function rather
+// than being flattened into this walk, which is what keeps the offsets it
+// needs its own business.
+static void drop_fields(Allocator allocator, const Type *type, void *value) {
     for (size_t i = 0; i < type->field_count; i++) {
         const TypeField *field = &type->fields[i];
 
-        if (type_is_indirect(field->type)) {
-            // A 'ref T' field borrows: something else owns what it names, and
-            // following it here would free an object still in use.
-            if (field->type->is_ref) {
-                continue;
-            }
-
-            void *owned;
-            memcpy(&owned, payload + field->offset, sizeof(owned));
-
-            gab_object_free(allocator, owned);
-            continue;
-        }
-
-        // A string field is stored inline like a struct, and what it owns is
-        // the characters its header names rather than anything at the offset.
-        if (field->type->kind == TYPE_STRING) {
-            if (field->type->is_ref) {
-                continue;
-            }
-
-            GabStringValue string;
-            memcpy(&string, payload + field->offset, sizeof(string));
-
-            gab_object_free(allocator, (void *)string.data);
-            continue;
-        }
-
-        // A struct field is stored inline, so its own pointer fields are part
-        // of this payload and are freed here rather than by a separate object's
-        // teardown.
-        if (field->type->kind == TYPE_STRUCT) {
-            free_fields(allocator, field->type, payload + field->offset);
+        if (field->type->drop) {
+            field->type->drop(allocator, field->type, (char *)value + field->offset);
         }
     }
 }
 
-void gab_object_free(Allocator allocator, void *payload) {
+void object_select_drop(Type *type) {
+    // Asked of the type rather than of its kind, so that a struct earns a drop
+    // exactly when some field of it owns, and every 'ref' is excluded here
+    // rather than being tested again on each free.
+    if (!type_is_owned(type)) {
+        type->drop = NULL;
+        return;
+    }
+
+    type->drop = type->kind == TYPE_INDIRECT ? drop_box : drop_fields;
+}
+
+void object_free(Allocator allocator, void *payload) {
     if (!payload) {
         return;
     }
 
-    ObjectHeader *header = gab_object_of(payload);
+    ObjectHeader *header = object_of(payload);
 
-    free_fields(allocator, header->type, (char *)payload);
+    if (header->type->drop) {
+        header->type->drop(allocator, header->type, payload);
+    }
 
     allocator.free(allocator.ctx, header);
 }

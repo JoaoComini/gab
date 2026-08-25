@@ -119,11 +119,10 @@ void args_return_pointer(Args *args, void *pointer) {
 
 bool args_return_string_copy(Args *args, const char *data, int32_t length) {
     // Typed as characters rather than as a string, for the reason OP_CONCAT
-    // gives: a string header here would send the free walk reading the bytes
-    // back as one.
-    char *characters = gab_object_alloc_sized(
-        DEFAULT_ALLOCATOR, args->vm->env.global_scope.type_registry->builtins.characters_type,
-        length == 0 ? 1 : (size_t)length);
+    // gives: the bytes are what is allocated, and they own nothing further.
+    char *characters = object_alloc_sized(DEFAULT_ALLOCATOR,
+                                          args->vm->env.global_scope.type_registry->builtins.characters_type,
+                                          length == 0 ? 1 : (size_t)length);
 
     if (!characters) {
         vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory copying a string");

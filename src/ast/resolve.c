@@ -1,6 +1,7 @@
 #include "ast/resolve.h"
 
 #include "ast/flow_pass.h"
+#include "object.h"
 #include "scope.h"
 #include "string/string.h"
 #include "string/string_ref.h"
@@ -1433,6 +1434,7 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
     }
 
     type_layout_compute(type);
+    object_select_drop(type);
 
     stmt->struct_decl.type = type;
 }
