@@ -34,6 +34,21 @@ void *gab_object_alloc(Allocator allocator, const Type *type) {
 // compiler already knows which fields are pointers, so a struct of four ints
 // walks four fields and frees nothing.
 static void free_fields(Allocator allocator, const Type *type, char *payload) {
+    // A payload that is itself an owning pointer -- what 'new box T' allocates.
+    // It has no fields to walk, so the whole of what it owns is the one pointer
+    // sitting in it, and skipping this would leak everything beneath it.
+    if (type_is_pointer(type)) {
+        if (type->is_ref) {
+            return;
+        }
+
+        void *owned;
+        memcpy(&owned, payload, sizeof(owned));
+
+        gab_object_free(allocator, owned);
+        return;
+    }
+
     for (size_t i = 0; i < type->field_count; i++) {
         const TypeField *field = &type->fields[i];
 

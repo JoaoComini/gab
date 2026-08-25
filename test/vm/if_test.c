@@ -33,7 +33,7 @@ static void test_a_non_bool_condition_is_rejected() {
     assert(!test_compiles("func f(): float { let x: float = 1.0; if x { return 1.0; } return 0.0; }\n"));
 
     assert(!test_compiles(
-        "func f(): int { let x: int = 1; let p: ref int = &x; if p { return 1; } return 0; }\n"));
+        "func f(): int { let x: int = 1; let p: ref int = x; if p { return 1; } return 0; }\n"));
 
     assert(!test_compiles("struct V { x: int }\n"
                           "func f(): int { let v: V; if v { return 1; } return 0; }\n"));

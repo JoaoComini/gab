@@ -53,7 +53,7 @@ Type *type_registry_pointer_to(TypeRegistry *registry, Type *pointee) {
 }
 
 Type *type_registry_pointer_to_kind(TypeRegistry *registry, Type *pointee, bool is_ref) {
-    // Two maps rather than a composite key: 'ref T' and '*T' are different
+    // Two maps rather than a composite key: 'ref T' and 'box T' are different
     // types, and the whole type system compares by pointer identity, so they
     // must never collide in one table.
     PointerMap *map = is_ref ? registry->ref_pointers : registry->pointers;

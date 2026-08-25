@@ -61,7 +61,7 @@ static void test_negates_a_call_result() {
 }
 
 static void test_negates_through_a_deref() {
-    assert(test_run_int("func f(): int { let x: int = 9; let p: ref int = &x; return -*p; }\n"
+    assert(test_run_int("func f(): int { let x: int = 9; let p: ref int = x; return -*p; }\n"
                         "let r: int = f();\n") == -9);
 }
 
@@ -94,13 +94,13 @@ static void test_negation_is_typed_numeric() {
     assert(!test_compiles("func f(): bool { let b: bool = true; return -b; }\n"));
 
     // Nor is a pointer, which would otherwise be an int-shaped thing.
-    assert(!test_compiles("func f(): int { let x: int = 1; let p: ref int = &x; return -p; }\n"));
+    assert(!test_compiles("func f(): int { let x: int = 1; let p: ref int = x; return -p; }\n"));
 }
 
 // '-x' is a fresh value, so it has no address and no home to assign into.
 static void test_negation_is_a_temporary() {
     assert(!test_compiles("func f(): int { let x: int = 1; -x = 2; return x; }\n"));
-    assert(!test_compiles("func f(): int { let x: int = 1; let p: ref int = &-x; return *p; }\n"));
+    assert(!test_compiles("func f(): int { let x: int = 1; let p: ref int = -x; return *p; }\n"));
 }
 
 int main() {

@@ -24,7 +24,7 @@ static void test_a_type_owning_nothing_copies_implicitly() {
 // owning pointer owns transitively, so it is not copyable.
 static void test_a_type_holding_an_owning_pointer_does_not_copy() {
     assert(!test_compiles("struct Box { n: int }\n"
-                          "struct Holder { b: *Box }\n"
+                          "struct Holder { b: box Box }\n"
                           "func main(): int {\n"
                           "    let h: Holder;\n"
                           "    let other = h;\n"
@@ -47,7 +47,7 @@ static void test_a_type_holding_a_borrow_still_copies() {
 static void test_move_transfers_ownership() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
-                        "    let a: *Box = new Box;\n"
+                        "    let a: box Box = new Box;\n"
                         "    a.n = 7;\n"
                         "    let b = move a;\n"
                         "    return b.n;\n"
@@ -60,7 +60,7 @@ static void test_move_transfers_ownership() {
 static void test_a_moved_from_slot_is_dead() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let a: *Box = new Box;\n"
+                          "    let a: box Box = new Box;\n"
                           "    let b = move a;\n"
                           "    return a.n;\n"
                           "}\n"));
@@ -71,7 +71,7 @@ static void test_a_moved_from_slot_is_dead() {
 static void test_assigning_to_a_dead_slot_revives_it() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
-                        "    let a: *Box = new Box;\n"
+                        "    let a: box Box = new Box;\n"
                         "    let b = move a;\n"
                         "    a = new Box;\n"
                         "    a.n = 5;\n"
@@ -85,7 +85,7 @@ static void test_assigning_to_a_dead_slot_revives_it() {
 static void test_a_slot_moved_on_one_arm_is_dead_after_the_join() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let a: *Box = new Box;\n"
+                          "    let a: box Box = new Box;\n"
                           "    if 1 < 2 { let b = move a; } else { }\n"
                           "    return a.n;\n"
                           "}\n"));
@@ -96,7 +96,7 @@ static void test_a_slot_moved_on_one_arm_is_dead_after_the_join() {
 static void test_moving_the_same_slot_each_iteration_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let a: *Box = new Box;\n"
+                          "    let a: box Box = new Box;\n"
                           "    for let i = 0; i < 2; i = i + 1 {\n"
                           "        let b = move a;\n"
                           "    }\n"
@@ -109,7 +109,7 @@ static void test_moving_the_same_slot_each_iteration_is_refused() {
 static void test_the_implicit_copy_error_names_the_remedies() {
     const char *source = "struct Box { n: int }\n"
                          "func main(): int {\n"
-                         "    let a: *Box = new Box;\n"
+                         "    let a: box Box = new Box;\n"
                          "    let b = a;\n"
                          "    return 0;\n"
                          "}\n";

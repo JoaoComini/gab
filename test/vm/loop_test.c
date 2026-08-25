@@ -77,7 +77,7 @@ static void test_break_outside_a_loop_is_rejected() {
 static void test_a_slot_moved_before_a_break_is_dead_after_the_loop() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let a: *Box = new Box;\n"
+                          "    let a: box Box = new Box;\n"
                           "    for let i = 0; i < 2; i = i + 1 {\n"
                           "        if i == 1 { let b = move a; break; }\n"
                           "    }\n"
@@ -92,7 +92,7 @@ static void test_a_slot_moved_before_a_break_is_dead_after_the_loop() {
 static void test_a_move_in_a_nested_loop_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let a: *Box = new Box;\n"
+                          "    let a: box Box = new Box;\n"
                           "    for let i = 0; i < 2; i = i + 1 {\n"
                           "        for let j = 0; j < 2; j = j + 1 {\n"
                           "            let b = move a;\n"

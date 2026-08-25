@@ -32,7 +32,7 @@ typedef struct Symbol {
     // whether it is looking at its own work — a duplicate declaration — or at
     // an earlier compile's, which it is entitled to replace.
 
-    // Set when '&x' is taken. A pinned variable's slot must survive its whole
+    // Set when 'ref x' is taken. A pinned variable's slot must survive its whole
     // block, so codegen may not reclaim it at the end of a statement.
     bool pinned;
 

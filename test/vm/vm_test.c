@@ -265,7 +265,7 @@ static void test_a_unit_that_fails_to_link_installs_nothing() {
     assert(!compile_unit(vm,
                          "module test;\n"
                          "struct Only { a: int }\n"
-                         "func second(): int { let p: *Only = new Only; return p.a; }\n"
+                         "func second(): int { let p: box Only = new Only; return p.a; }\n"
                          "extern func absent(x: int): int;\n",
                          &top_level, &diagnostics));
 
@@ -295,7 +295,7 @@ static void test_checking_a_unit_installs_nothing() {
 
     Lexer lexer = lexer_create("module dry;\n"
                                "struct Only { a: int }\n"
-                               "func second(): int { let p: *Only = new Only; return p.a; }\n",
+                               "func second(): int { let p: box Only = new Only; return p.a; }\n",
                                vm->env.compile_arena, &vm->env.strings, &diagnostics);
     Parser parser = parser_create(&lexer, &diagnostics);
     ASTUnit *ast = ast_unit_create();
@@ -448,13 +448,13 @@ static void test_module_scope_does_not_change_pointer_lifetimes() {
 
     const char *takes_address = "func f(): int {\n"
                                 "  let x: int = 1;\n"
-                                "  let p: ref int = &x;\n"
+                                "  let p: ref int = x;\n"
                                 "  return *p;\n"
                                 "}\n";
 
     const char *escapes = "func g(): int {\n"
-                          "  let outer: *int;\n"
-                          "  { let inner: int = 1; outer = &inner; }\n"
+                          "  let outer: box int;\n"
+                          "  { let inner: int = 1; outer = inner; }\n"
                           "  return 0;\n"
                           "}\n";
 

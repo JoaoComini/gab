@@ -54,7 +54,7 @@ void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope 
 // A module scope: parented to the root for symbol and type fallback, but held
 // at depth 0, since its declarations are a unit's top level and not a nested
 // block. Depth drives the pointer-lifetime rule, where 0 means 'outlives
-// everything' — depth 1 would make '&top_level_var' look like a pointer into a
+// everything' — depth 1 would make 'ref top_level_var' look like a pointer into a
 // block. Unlike a block scope it gets its own type registry, so the types a
 // module declares are namespaced by the registry rather than by their name.
 void scope_init_module(Scope *scope, Arena *arena, StringPool *strings, Scope *parent);

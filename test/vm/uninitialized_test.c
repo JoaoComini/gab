@@ -12,7 +12,7 @@
 static void test_reading_an_uninitialized_owning_pointer_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let a: *Box;\n"
+                          "    let a: box Box;\n"
                           "    return a.n;\n"
                           "}\n"));
 }
@@ -31,7 +31,7 @@ static void test_reading_an_uninitialized_borrow_is_refused() {
 static void test_a_pointer_assigned_before_use_is_accepted() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
-                        "    let a: *Box;\n"
+                        "    let a: box Box;\n"
                         "    a = new Box;\n"
                         "    a.n = 5;\n"
                         "    return a.n;\n"
@@ -44,7 +44,7 @@ static void test_a_pointer_assigned_before_use_is_accepted() {
 static void test_a_pointer_assigned_on_one_arm_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let a: *Box;\n"
+                          "    let a: box Box;\n"
                           "    if 1 < 2 { a = new Box; }\n"
                           "    return a.n;\n"
                           "}\n"));
@@ -54,7 +54,7 @@ static void test_a_pointer_assigned_on_one_arm_is_refused() {
 static void test_a_pointer_assigned_on_both_arms_is_accepted() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
-                        "    let a: *Box;\n"
+                        "    let a: box Box;\n"
                         "    if 1 < 2 { a = new Box; } else { a = new Box; }\n"
                         "    a.n = 6;\n"
                         "    return a.n;\n"
@@ -87,7 +87,7 @@ static void test_an_uninitialized_int_is_accepted() {
 // reaching through one before anything is stored in it dereferences null.
 static void test_reading_through_an_unwritten_owning_field_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
-                          "struct Holder { b: *Box }\n"
+                          "struct Holder { b: box Box }\n"
                           "func main(): int {\n"
                           "    let h: Holder;\n"
                           "    return h.b.n;\n"
@@ -98,7 +98,7 @@ static void test_reading_through_an_unwritten_owning_field_is_refused() {
 // readable from there on.
 static void test_an_owning_field_written_before_use_is_accepted() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "struct Holder { b: *Box }\n"
+                        "struct Holder { b: box Box }\n"
                         "func main(): int {\n"
                         "    let h: Holder;\n"
                         "    h.b = new Box;\n"
@@ -112,7 +112,7 @@ static void test_an_owning_field_written_before_use_is_accepted() {
 // reaching the use, so it is refused after the join.
 static void test_an_owning_field_written_on_one_arm_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
-                          "struct Holder { b: *Box }\n"
+                          "struct Holder { b: box Box }\n"
                           "func main(): int {\n"
                           "    let h: Holder;\n"
                           "    if 1 < 2 { h.b = new Box; }\n"
@@ -133,7 +133,7 @@ static void test_an_owning_field_past_the_scalars_is_still_tracked() {
     }
 
     snprintf(source + written, sizeof source - (size_t)written,
-             "    b: *Box\n"
+             "    b: box Box\n"
              "}\n"
              "func main(): int {\n"
              "    let w: Wide;\n"
@@ -147,7 +147,7 @@ static void test_an_owning_field_past_the_scalars_is_still_tracked() {
 // another: the second is still unwritten after the first is stored into.
 static void test_writing_one_owning_field_leaves_the_other_unwritten() {
     assert(!test_compiles("struct Box { n: int }\n"
-                          "struct Pair { a: *Box, b: *Box }\n"
+                          "struct Pair { a: box Box, b: box Box }\n"
                           "func main(): int {\n"
                           "    let p: Pair;\n"
                           "    p.a = new Box;\n"
@@ -155,7 +155,7 @@ static void test_writing_one_owning_field_leaves_the_other_unwritten() {
                           "}\n"));
 
     assert(test_run_int("struct Box { n: int }\n"
-                        "struct Pair { a: *Box, b: *Box }\n"
+                        "struct Pair { a: box Box, b: box Box }\n"
                         "func main(): int {\n"
                         "    let p: Pair;\n"
                         "    p.a = new Box;\n"

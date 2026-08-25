@@ -41,7 +41,7 @@ typedef struct {
 
 // Interning, not naming. One registry per VM holds the builtins and every
 // pointer type, because the type system compares types by pointer identity: a
-// second 'int' or a second '*Player' would silently break every comparison.
+// second 'int' or a second 'box Player' would silently break every comparison.
 //
 // Which type names are visible where is a scoping question, so the name map
 // belongs to Scope, which already owns the parent chain that answers it.

@@ -200,7 +200,7 @@ static void test_a_counter_written_through_a_pointer_is_not_fused() {
     TestProgram program = test_compile("func run(n: int): int {\n"
                                        "    let c: int = 0;\n"
                                        "    for let i: int = 0; i < n; i += 1 {\n"
-                                       "        let p: ref int = &i;\n"
+                                       "        let p: ref int = i;\n"
                                        "        *p += 1;\n"
                                        "        c += 1;\n"
                                        "    }\n"
@@ -216,7 +216,7 @@ static void test_a_counter_written_through_a_pointer_is_not_fused() {
 static void test_a_counter_written_through_a_pointer_still_works() {
     assert(test_run_int("func f(): int { let c: int = 0; let n: int = 10;\n"
                         "                for let i: int = 0; i < n; i += 1 {\n"
-                        "                    let p: ref int = &i;\n"
+                        "                    let p: ref int = i;\n"
                         "                    *p += 1;\n"
                         "                    c += 1;\n"
                         "                }\n"

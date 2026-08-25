@@ -42,7 +42,7 @@ typedef enum {
 } FlowInit;
 
 // How many owning fields of one struct the written-field set can name. Only
-// owning fields take a bit, so a struct of scalars holding a single '*T' spends
+// owning fields take a bit, so a struct of scalars holding a single 'box T' spends
 // one however far down it sits; what fills the set is a struct with more than
 // FLOW_MAX_FIELDS pointers of its own.
 //
@@ -85,7 +85,7 @@ typedef struct {
     // Set where control cannot fall through to the next statement: after a
     // 'return', a 'break', or a 'continue'. A merge with an unreachable state
     // keeps the other side untouched, which is what makes
-    // 'if c { return } else { x = &local }' report against the else alone.
+    // 'if c { return } else { x = ref local }' report against the else alone.
     bool unreachable;
 } Flow;
 

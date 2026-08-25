@@ -57,7 +57,7 @@ typedef struct {
 typedef struct {
     StringRef name;
 
-    // 'func (p: *Player) damage(...)' — NULL for a free function. A receiver is
+    // 'func (p: box Player) damage(...)' — NULL for a free function. A receiver is
     // a parameter in every respect, so it reuses ASTField, and the resolver
     // makes it parameter zero of the symbol it declares.
     ASTField *receiver;

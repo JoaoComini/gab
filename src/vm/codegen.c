@@ -104,7 +104,7 @@ typedef struct {
     // against its own, and the outer one's slots are not visible in it.
     SlotMap *slots;
 
-    // Slots holding an owned '*T', innermost block last. Released where the
+    // Slots holding an owned 'box T', innermost block last. Released where the
     // block that declared them closes, rather than where the frame pops:
     // sibling blocks reuse slots, so a per-frame table could say a slot is
     // sometimes a pointer but never when, and a pop after the reuse would
@@ -1518,12 +1518,12 @@ static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node) {
 static unsigned int codegen_addr_of_expr(CodegenState *state, ASTExpr *node) {
     ASTExpr *inner = node->unary.target;
 
-    // '&*p' is just p: the deref would only load what the address already is.
+    // 'ref *p' is just p: the deref would only load what the address already is.
     if (inner->kind == EXPR_DEREF) {
         return codegen_expr(state, inner->unary.target);
     }
 
-    // '&p' where p is a pointer names p itself, so the chain must stop at it
+    // 'ref p' where p is a pointer names p itself, so the chain must stop at it
     // rather than reach through.
     FieldTarget target = codegen_resolve_field_target(state, inner, false);
 
@@ -1681,7 +1681,7 @@ static unsigned int codegen_cast_expr(CodegenState *state, ASTExpr *node) {
     return rd;
 }
 
-// 'new T' allocates and leaves an owned '*T' in a pointer-sized destination.
+// 'new T' allocates and leaves an owned 'box T' in a pointer-sized destination.
 // The type travels by index because a Type * is 8 bytes and cannot ride in an
 // instruction; the list is interned by pointer identity, which the type system
 // already guarantees.
@@ -1722,7 +1722,7 @@ static unsigned int codegen_new_expr(CodegenState *state, ASTExpr *node) {
 //
 // 'auto_deref' says whether a pointer at the bottom of the chain is reached
 // through or addressed. Field access reaches through it — that is 'p.health'
-// where p is a '*Player' — but '&p' wants the address of p itself.
+// where p is a 'box Player' — but 'ref p' wants the address of p itself.
 static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *node, bool auto_deref) {
     if (node->kind == EXPR_FIELD) {
         ASTExpr *inner = node->field.target;
@@ -1755,6 +1755,24 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
     if (node->kind == EXPR_DEREF) {
         unsigned int base = codegen_expr(state, node->unary.target);
 
+        // A pointer to a pointer ends the chain the same way a pointer-typed
+        // field does: what '*s' names is itself an address, so reaching past it
+        // means loading it and following that. Summing an offset onto the outer
+        // pointer would address the inner one's own slot as if the struct were
+        // inline in it.
+        const Type *reached = node->type;
+
+        while (auto_deref && type_is_pointer(reached)) {
+            base = codegen_load_indirect_struct(state, node, reached,
+                                                (FieldTarget){
+                                                    .base = base,
+                                                    .offset = 0,
+                                                    .indirect = true,
+                                                },
+                                                type_slot_count(reached));
+            reached = reached->pointee;
+        }
+
         return (FieldTarget){
             .base = base,
             .offset = 0,
@@ -1774,10 +1792,23 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
 
     bool indirect = auto_deref && type_is_pointer(node->type);
 
-    // Only a pointer actually reached through needs checking. '&w' names the
-    // slot rather than following it, and is fine whether or not the object is
-    // still there.
+    // Each level above the last is loaded and followed: the innermost pointer is
+    // what the field is addressed from, and the ones outside it only say where
+    // that pointer lives. 'ref box Player' is the two-level case -- the borrow
+    // names the slot, the slot names the object.
     if (indirect) {
+        const Type *reached = node->type;
+
+        while (type_is_pointer(reached->pointee)) {
+            base = codegen_load_indirect_struct(state, node, reached->pointee,
+                                                (FieldTarget){
+                                                    .base = base,
+                                                    .offset = 0,
+                                                    .indirect = true,
+                                                },
+                                                type_slot_count(reached->pointee));
+            reached = reached->pointee;
+        }
     }
 
     return (FieldTarget){
@@ -1916,13 +1947,13 @@ static void codegen_store_deref(CodegenState *state, ASTExpr *node, unsigned int
     chunk_add_instruction(state->chunk, VM_ENCODE_R(op, target.base, src, 0));
 }
 
-// '&x' materialises the address of whatever slots the target occupies. The
+// 'ref x' materialises the address of whatever slots the target occupies. The
 // target is addressable by construction: the resolver rejected anything else.
 // The address of 'inner' written into 'rd'. Split from codegen_addr_of_expr so
 // a method call can put a receiver's address straight into the argument slot it
 // reserved, rather than into a slot of this function's choosing.
 static void codegen_addr_of_into(CodegenState *state, ASTExpr *inner, unsigned int rd, Span span) {
-    // '&p' where p is a pointer names p itself, so the chain must stop at it
+    // 'ref p' where p is a pointer names p itself, so the chain must stop at it
     // rather than reach through.
     FieldTarget target = codegen_resolve_field_target(state, inner, false);
 
@@ -2186,7 +2217,7 @@ static void codegen_emit_loop(CodegenState *state, size_t target) {
 static bool type_is_owned(const Type *type) { return type_is_pointer(type); }
 
 // Whether an expression hands its caller a reference to own, or merely lends
-// one it keeps. 'new' and a call returning '*T' produce a fresh reference the
+// one it keeps. 'new' and a call returning 'box T' produce a fresh reference the
 // receiver is responsible for; reading a variable or a field does not, since
 // the variable or the object still holds it.
 //

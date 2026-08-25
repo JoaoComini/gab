@@ -5,7 +5,7 @@
 #include "type.h"
 
 /*
-    A heap object is a header immediately followed by its payload, and a '*T'
+    A heap object is a header immediately followed by its payload, and a 'box T'
     is the address of the *payload* — never of the header. That is what makes a
     heap pointer byte-identical to a stack one: every opcode that moves, loads,
     or stores a pointer works on both without knowing which it has, and only
@@ -30,7 +30,7 @@ typedef struct {
 
 typedef struct ObjectHeader {
     // What the payload is, and the only thing the header carries. Freeing a
-    // Player means freeing the objects its '*T' fields own, and only the Type
+    // Player means freeing the objects its 'box T' fields own, and only the Type
     // says where those are. A Type is pointer-stable and outlives every
     // compile, so holding one costs nothing.
     //
@@ -54,7 +54,7 @@ ObjectHeader *gab_object_of(void *payload);
 // fails.
 void *gab_object_alloc(Allocator allocator, const Type *type);
 
-// Frees a payload and everything it owns. NULL-tolerant, because a '*T' that
+// Frees a payload and everything it owns. NULL-tolerant, because a 'box T' that
 // was never assigned is NULL and every free path would otherwise need the same
 // guard.
 //

@@ -142,11 +142,11 @@ Symbol *type_find_method(const Type *type, const String *name) {
     return found ? *found : NULL;
 }
 
-TypeSpec *type_spec_create(StringRef name, unsigned int pointer_depth, bool is_ref) {
+TypeSpec *type_spec_create(StringRef name, unsigned int pointer_depth, uint32_t ref_levels) {
     TypeSpec *spec = malloc(sizeof(TypeSpec));
     spec->name = name;
     spec->pointer_depth = pointer_depth;
-    spec->is_ref = is_ref;
+    spec->ref_levels = ref_levels;
 
     return spec;
 }
