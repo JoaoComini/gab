@@ -39,11 +39,10 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     registry->builtins.float_type = register_builtin(registry, TYPE_FLOAT, "float", 4, 4);
     registry->builtins.bool_type = register_builtin(registry, TYPE_BOOL, "bool", 1, 1);
 
-    // The characters a string names. Nameless in any scope -- no script writes
-    // it -- and owning nothing itself: freeing them frees the bytes and stops.
-    registry->builtins.characters_type = type_create(registry->arena, TYPE_UNKNOWN, NULL);
-    registry->builtins.characters_type->size = 1;
-    registry->builtins.characters_type->alignment = 1;
+    // What a string's characters are a buffer of.
+    registry->builtins.byte_type = register_builtin(registry, TYPE_BYTE, "byte", 1, 1);
+
+    registry->builtins.characters_type = type_registry_buffer_of(registry, registry->builtins.byte_type);
 
     // A struct in its layout and a builtin in its semantics: the fields are
     // where its size, its alignment and what it owns all come from, while
@@ -73,6 +72,7 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     registry->indirects = indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->ref_indirects =
         indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->buffers = indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
     registry->strings = strings;
     type_registry_register_builtins(registry);
@@ -83,10 +83,39 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
 void type_registry_destroy(TypeRegistry *registry) {
     indirect_map_destroy(registry->indirects);
     indirect_map_destroy(registry->ref_indirects);
+    indirect_map_destroy(registry->buffers);
 }
 
 Type *type_registry_indirect_to(TypeRegistry *registry, Type *inner) {
     return type_registry_indirect_to_kind(registry, inner, false);
+}
+
+Type *type_registry_buffer_of(TypeRegistry *registry, Type *element) {
+    Type **existing = indirect_map_lookup(registry->buffers, element);
+    if (existing) {
+        return *existing;
+    }
+
+    // No name, for the reason an indirection has none: it is structural, and a
+    // diagnostic derives its printed form from the element.
+    Type *type = type_create(registry->arena, TYPE_UNKNOWN, NULL);
+
+    // The element's width, which is the stride a walk over the block advances
+    // by. Not the block's own size: how many elements are there is the count in
+    // whichever header names it, and no two buffers of one element differ.
+    type->size = element->size;
+    type->alignment = element->alignment;
+    type->inner = element;
+
+    // Never its own dropper, however the element answers. Only the header that
+    // names the block knows how many of its elements are live -- the rest is
+    // memory nobody has written yet, and dropping it would walk uninitialised
+    // slots.
+    type->drop = NULL;
+
+    indirect_map_insert(registry->buffers, element, type);
+
+    return type;
 }
 
 Type *type_registry_indirect_to_kind(TypeRegistry *registry, Type *inner, bool is_ref) {
@@ -131,6 +160,8 @@ Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind kind) {
         return registry->builtins.bool_type;
     case TYPE_STRING:
         return registry->builtins.string_type;
+    case TYPE_BYTE:
+        return registry->builtins.byte_type;
     default:
         break;
     }

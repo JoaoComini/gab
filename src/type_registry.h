@@ -42,8 +42,13 @@ typedef struct {
     // and a concatenation must not answer it the same way.
     Type *ref_string_type;
 
-    // The header a string's characters carry. Never nameable: it owns nothing,
-    // so freeing them frees the bytes and stops.
+    // The element a string's characters are a buffer of. A byte: the width the
+    // stride of a walk over those characters advances by.
+    Type *byte_type;
+
+    // 'buffer byte', held rather than looked up: it is what every concatenation
+    // and every string a host returns allocates, and interning it once keeps
+    // that off a hash lookup.
     Type *characters_type;
 
     Type *error_type;
@@ -65,6 +70,11 @@ typedef struct TypeRegistry {
     // Borrowing 'ref T' types, interned apart from the owning ones so that
     // pointer-identity comparison keeps telling them apart.
     IndirectMap *ref_indirects;
+
+    // 'buffer T' types, interned on the element. No owning and borrowing pair
+    // here as there is for an indirection: nothing holds a buffer by value, so
+    // whether the block is owned is asked of the 'box' or 'ref' reaching it.
+    IndirectMap *buffers;
     TypeBuiltins builtins;
 } TypeRegistry;
 
@@ -78,6 +88,12 @@ Type *type_registry_error_type(TypeRegistry *registry);
 // The interned *inner. Repeated calls with the same inner return the same
 // Type *.
 Type *type_registry_indirect_to(TypeRegistry *registry, Type *inner);
+
+// The interned 'buffer inner': a run of elements of one type, which is what a
+// pointer to many of something reaches. Never a value in its own right -- it
+// is always named through a 'box' or a 'ref' -- so it carries the element's
+// width as its stride and no ownership of its own.
+Type *type_registry_buffer_of(TypeRegistry *registry, Type *element);
 
 // As type_registry_indirect_to, choosing between the owning and borrowing
 // flavours. A 'ref T' does not own its inner; the two are distinct types.
