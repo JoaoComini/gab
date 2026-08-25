@@ -68,7 +68,7 @@ struct Type {
     Type *pointee;
 
     // Whether this pointer borrows rather than owns. A 'ref T' is a distinct
-    // Type from '*T', interned separately, so that freeing an object can tell
+    // Type from 'box T', interned separately, so that freeing an object can tell
     // from a field's type alone whether it owns what the field names — which is
     // what keeps the whole ownership story type-driven.
     bool is_ref;
@@ -98,7 +98,7 @@ const TypeField *type_find_field(const Type *type, const String *name);
 bool type_add_method(Arena *arena, Type *type, String *name, Symbol *method);
 
 // The method this type declares under that name, or NULL. Does not look
-// through a pointer: the caller strips that first, since '*Player' and
+// through a pointer: the caller strips that first, since 'box Player' and
 // 'Player' share one method set.
 Symbol *type_find_method(const Type *type, const String *name);
 

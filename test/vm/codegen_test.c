@@ -321,7 +321,7 @@ static void test_a_scalar_copy_stays_a_single_move() {
 static void test_a_pointer_copy_batches_when_it_is_wide() {
     TestProgram program = test_compile("func f(): int {\n"
                                        "    let x: int = 1;\n"
-                                       "    let p: ref int = &x;\n"
+                                       "    let p: ref int = ref x;\n"
                                        "    return *p;\n"
                                        "}\n");
 
@@ -371,7 +371,7 @@ static void test_a_struct_read_through_a_pointer_is_one_instruction() {
     TestProgram program = test_compile("struct Vec { x: int, y: int, z: int }\n"
                                        "func f() {\n"
                                        "    let a: Vec;\n"
-                                       "    let p: ref Vec = &a;\n"
+                                       "    let p: ref Vec = ref a;\n"
                                        "    let b: Vec = *p;\n"
                                        "}\n");
 
@@ -391,7 +391,7 @@ static void test_a_struct_write_through_a_pointer_is_one_instruction() {
                                        "func f() {\n"
                                        "    let a: Vec;\n"
                                        "    let b: Vec;\n"
-                                       "    let p: ref Vec = &a;\n"
+                                       "    let p: ref Vec = ref a;\n"
                                        "    *p = b;\n"
                                        "}\n");
 
@@ -411,7 +411,7 @@ static void test_a_struct_write_through_a_pointer_is_one_instruction() {
 static void test_break_releases_what_the_body_owns() {
     TestProgram program = test_compile("struct Node { n: int }\n"
                                        "func f(): int {\n"
-                                       "    for { let p: *Node = new Node; break; }\n"
+                                       "    for { let p: box Node = new Node; break; }\n"
                                        "    return 0;\n"
                                        "}\n");
     Chunk *chunk = test_func_chunk(&program, 0);
@@ -539,7 +539,7 @@ static void test_a_chunk_past_the_index_bound_falls_back() {
 static void test_new_encodes_the_type_index_the_vm_holds() {
     TestProgram program = test_compile("module M;\n"
                                        "struct Wide { a: int, b: int, c: int, d: int }\n"
-                                       "func first(): int { let p: *Wide = new Wide; return p.a; }\n");
+                                       "func first(): int { let p: box Wide = new Wide; return p.a; }\n");
 
     // Its own type first, so this unit numbers 'Wide' second while the VM
     // already holds it first: the two orderings disagree, and the operand is
@@ -547,8 +547,8 @@ static void test_new_encodes_the_type_index_the_vm_holds() {
     test_compile_next(&program, "module M;\n"
                                 "struct Narrow { a: int }\n"
                                 "func second(): int {\n"
-                                "    let n: *Narrow = new Narrow;\n"
-                                "    let w: *Wide = new Wide;\n"
+                                "    let n: box Narrow = new Narrow;\n"
+                                "    let w: box Wide = new Wide;\n"
                                 "    return n.a + w.a;\n"
                                 "}\n");
 

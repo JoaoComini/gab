@@ -28,7 +28,7 @@
 
 // The stack never moves, so it is sized for the worst case up front: every
 // frame to the call-depth limit addressing every register it can name. That is
-// a few hundred kilobytes, and it is what makes '&local' sound — an address
+// a few hundred kilobytes, and it is what makes 'ref local' sound — an address
 // into a buffer realloc could move would dangle, and untagged slots give the
 // VM no way to find live pointers and rebase them.
 #define VM_STACK_SIZE (VM_MAX_CALL_DEPTH * VM_MAX_REGISTERS)

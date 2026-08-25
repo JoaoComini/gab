@@ -147,7 +147,7 @@ static const char *type_name(ResolverState *state, Type *type) {
     }
 
     const char *pointee = type_name(state, type->pointee);
-    const char *prefix = type->is_ref ? "ref " : "*";
+    const char *prefix = type->is_ref ? "ref " : "box ";
     size_t length = strlen(prefix) + strlen(pointee) + 1;
     char *out = arena_alloc(state->compile_arena, length);
 
@@ -196,7 +196,7 @@ static const char *bin_op_name(BinOp op) {
     return "?";
 }
 
-// The variable an address is ultimately taken from, so that '&v.x' pins v.
+// The variable an address is ultimately taken from, so that 'ref v.x' pins v.
 static Symbol *addressed_symbol(ASTExpr *expr) {
     switch (expr->kind) {
     case EXPR_VARIABLE:
@@ -226,7 +226,7 @@ static bool is_addressable(const ASTExpr *expr) {
     }
 }
 
-// The type a receiver names, looking through one level of pointer. '*Player' and
+// The type a receiver names, looking through one level of pointer. 'box Player' and
 // 'Player' share a method set, so both land on the same Type.
 //
 // A builtin qualifies: methods hang on the Type, and nothing about the map
@@ -254,7 +254,7 @@ static void check_call_args(ResolverState *state, ASTExprList *args, Type **para
             continue;
         }
 
-        // type_accepts rather than identity, so an owned '*T' fills a 'ref T'
+        // type_accepts rather than identity, so an owned 'box T' fills a 'ref T'
         // parameter: lending is what a borrow parameter asks for, and the
         // caller goes on owning what it lent.
         if (!type_accepts(param_type, arg->type)) {
@@ -274,7 +274,7 @@ static void check_call_args(ResolverState *state, ASTExprList *args, Type **para
 // address, and a value method through a pointer copies the pointee in. Returns
 // false when neither is possible.
 // Rewrites 'recv.m(a)' into 'm(recv', a)', where recv' is the receiver adjusted
-// to what parameter zero declared: '&recv' where the method takes a pointer and
+// to what parameter zero declared: 'ref recv' where the method takes a pointer and
 // the receiver is a value, '*recv' the other way round.
 //
 // After this there is no method call left in the tree — only a call whose first
@@ -284,14 +284,14 @@ static void check_call_args(ResolverState *state, ASTExprList *args, Type **para
 // among them without knowing to look for it.
 //
 // The adjustment is a real node rather than a flag because the tree is the only
-// place it can be honestly recorded: '&recv' is an expression, and every pass
+// place it can be honestly recorded: 'ref recv' is an expression, and every pass
 // that walks expressions should see it as one. Rust and Go both lower method
 // calls this way, and for this reason.
 //
 // Runs after the call is fully checked, so the diagnostics above all report
 // against what the user wrote rather than against the rewrite.
-// How a receiver reaches parameter zero. A '*T' method called on a 'T' takes
-// its address; a 'T' method called through a '*T' copies the pointee in.
+// How a receiver reaches parameter zero. A 'box T' method called on a 'T' takes
+// its address; a 'T' method called through a 'box T' copies the pointee in.
 typedef enum {
     RECEIVER_AS_IS,
     RECEIVER_ADDRESS_OF,
@@ -309,7 +309,7 @@ typedef enum {
 // about arguments sees the receiver among them without knowing to look.
 //
 // The adjustment is a real node rather than a flag because the tree is the only
-// place it can be honestly recorded: '&recv' is an expression, and every pass
+// place it can be honestly recorded: 'ref recv' is an expression, and every pass
 // that walks expressions should see it as one. Rust and Go both lower method
 // calls this way, and for this reason.
 //
@@ -373,7 +373,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
         }
 
         // The address is loose for the duration of the call, so the slot it
-        // names must survive the whole block — exactly as for '&x'.
+        // names must survive the whole block — exactly as for 'ref x'.
         Symbol *addressed = addressed_symbol(receiver);
         if (addressed) {
             addressed->pinned = true;
@@ -388,7 +388,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
         return true;
     }
 
-    // An owned '*T' calling a 'ref T' method, which is the only pointer-to-
+    // An owned 'box T' calling a 'ref T' method, which is the only pointer-to-
     // pointer case left: a receiver is declared 'ref T' or it is not a pointer
     // at all, so 'declared' is never an owning pointer here.
     //
@@ -433,7 +433,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         return;
     }
 
-    // '*Player' and 'Player' share one method set, so the lookup and every
+    // 'box Player' and 'Player' share one method set, so the lookup and every
     // message below name the type itself rather than what was written.
     Type *base = receiver_base_type(receiver_type);
 
@@ -478,11 +478,11 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 }
 
 // Whether a value of 'from' may be stored where 'to' is expected. Identity for
-// everything except the one conversion the language allows: an owned '*T' may
+// everything except the one conversion the language allows: an owned 'box T' may
 // be stored where a 'ref T' is expected, since giving something up to be named
 // costs nothing and is how a borrowing field is ever populated.
 //
-// The reverse is deliberately absent: promoting 'ref T' to '*T' would hand out
+// The reverse is deliberately absent: promoting 'ref T' to 'box T' would hand out
 // ownership nobody granted, and the object already has an owner that will free
 // it.
 static bool type_accepts(Type *to, Type *from) {
@@ -777,7 +777,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
             break;
         }
 
-        // 'p.health' where p is a '*Player' reaches through the pointer, as in
+        // 'p.health' where p is a 'box Player' reaches through the pointer, as in
         // Go and C's '->'. One level only: a '**Player' has to be written out.
         if (type_is_pointer(target_type)) {
             target_type = target_type->pointee;
@@ -852,8 +852,8 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
             break;
         }
 
-        // '&o' where 'o' owns would be a borrow of an owning pointer, and
-        // 'ref *T' cannot be written: 'ref' does not combine with '*'. Producing
+        // 'ref o' where 'o' owns would be a borrow of an owning pointer, and
+        // 'ref box T' cannot be written: 'ref' does not combine with 'box'. Producing
         // a value nothing can name is worse than refusing it here, where the
         // mistake is.
         //
@@ -878,11 +878,11 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
             addressed->pinned = true;
         }
 
-        // '&x' is a borrow, and 'ref T' is what a borrow is spelled. The slot it
+        // 'ref x' is a borrow, and 'ref T' is what a borrow is spelled. The slot it
         // names is owned by whoever declared it — a stack local owns itself, and
         // freeing through this address would free something 'new' never made.
         //
-        // Typing it '*T' would make one type mean two things: an address of
+        // Typing it 'box T' would make one type mean two things: an address of
         // something, and ownership of a heap object. Nothing could then tell
         // them apart from the type alone.
         expr->type = type_registry_pointer_to_kind(state->current_scope->type_registry, target_type, true);
@@ -1061,10 +1061,10 @@ static Type *resolve_type_spec(ResolverState *state, TypeSpec *spec, Span span) 
     }
 
     // Interned in the one shared registry whichever scope named the pointee,
-    // so '*Config' is one type however many modules mention it.
+    // so 'box Config' is one type however many modules mention it.
     //
     // Every level is a borrow or none is, since the parser rejects the two
-    // spellings mixed: 'ref ref T' is a borrow of a borrow, and '**T' an owning
+    // spellings mixed: 'ref ref T' is a borrow of a borrow, and 'box box T' an owning
     // pointer to an owning pointer.
     for (unsigned int i = 0; i < spec->pointer_depth; i++) {
         type = type_registry_pointer_to_kind(state->current_scope->type_registry, type, spec->is_ref);
@@ -1098,7 +1098,7 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
 
     // Registered under its name *before* its fields resolve, so that a field
     // pointing at the struct being declared finds it. A scene graph is exactly
-    // this shape — 'struct Node { parent: ref Node, child: *Node }' — and
+    // this shape — 'struct Node { parent: ref Node, child: box Node }' — and
     // without this it fails with "unknown type", which the containment check
     // below was already written expecting not to happen.
     //
@@ -1159,7 +1159,7 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
 // pre-pass can declare a whole unit's top level before resolving any of it,
 // Resolves one parameter's declared type.
 //
-// A parameter spells ownership the way a local and a field do: bare '*T' owns
+// A parameter spells ownership the way a local and a field do: bare 'box T' owns
 // what it is given and frees it when the call ends, 'ref T' borrows and frees
 // nothing. Which one a signature declares is what a call site reads to know
 // whether it must move, so the two may not be written interchangeably.
@@ -1197,16 +1197,17 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
 
     // A method never owns its receiver. A parameter may, but only because a
     // call site can say 'move' where it hands one over; a receiver has no such
-    // spelling -- 'p.consume()' gives no place to mark the transfer -- so '*T'
-    // here would be an ownership nothing could grant.
+    // spelling -- 'p.consume()' gives no place to mark the transfer -- so
+    // 'box T' here would be an ownership nothing could grant.
     //
     // 'ref T' is the form that says what is true. A receiver by value stays
     // available as 'T', which copies; the two axes are separate, and only this
     // one is about ownership.
     if (type_is_pointer(receiver_type) && !receiver_type->is_ref) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, receiver->span,
-                   "a method borrows its receiver rather than owning it, so write 'ref %s' instead of '*%s'",
-                   base->name->data, base->name->data);
+        diag_error(
+            state->diagnostics, GAB_ERR_TYPE, receiver->span,
+            "a method borrows its receiver rather than owning it, so write 'ref %s' instead of 'box %s'",
+            base->name->data, base->name->data);
         return;
     }
 
@@ -1338,7 +1339,7 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
 
     // The receiver is an ordinary local in the body's scope, so 'p.health'
     // resolves through the existing field path — including the auto-deref that
-    // a '*Player' receiver needs.
+    // a 'box Player' receiver needs.
     ASTField *receiver = stmt->func_decl.receiver;
 
     if (receiver) {
@@ -1488,10 +1489,10 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         }
 
         // Storing through a pointer reaches something whose lifetime this frame
-        // does not bound — a heap object outlives every frame, and a '*T'
+        // does not bound — a heap object outlives every frame, and a 'box T'
         // parameter may point at a caller's. Depth 0 is that bound: "outlives
         // everything", so only a pointer to something equally long-lived may be
-        // stored there. Without this, '&local' escapes into a heap object and
+        // stored there. Without this, 'ref local' escapes into a heap object and
         // dangles the moment the frame returns, ownership notwithstanding.
         if (stmt->assign.target->kind == EXPR_FIELD || stmt->assign.target->kind == EXPR_DEREF) {
             // An owning field takes ownership of what is stored in it, exactly
@@ -1625,7 +1626,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         bool poisoned = (expected && expected->kind == TYPE_ERROR) || (actual && actual->kind == TYPE_ERROR);
 
         // type_accepts once both are present, so a function declaring 'ref T'
-        // may return an owned '*T' — it lends what it was given rather than
+        // may return an owned 'box T' — it lends what it was given rather than
         // handing ownership out. A NULL on either side is "no value", which
         // only identity settles.
         bool accepted = actual && expected ? type_accepts(expected, actual) : actual == expected;

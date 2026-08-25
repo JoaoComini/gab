@@ -107,7 +107,7 @@ bool gab_arg_get_bool(GabArgs *args, int index);
 // extern's ABI can be got wrong.
 void gab_arg_get_struct(GabArgs *args, int index, void *out, size_t size);
 
-// The address a pointer argument holds, for a '*T' or 'ref T' parameter. The
+// The address a pointer argument holds, for a 'box T' or 'ref T' parameter. The
 // object belongs to the caller for the duration of the call: an extern reads
 // and writes through it and frees nothing.
 
@@ -235,13 +235,13 @@ bool gab_arg_struct(GabCall *call, int index, const void *data, size_t size);
 
 // Stages a pointer argument. 'pointee' is what the parameter must point at, as
 // returned by gab_find_type — the pointee is checked rather than trusted, since
-// a '*Player' where '*Enemy' was declared is exactly the mistake the layout
+// a 'box Player' where 'box Enemy' was declared is exactly the mistake the layout
 // story cannot survive.
 //
 // A parameter is a borrow whichever way it is declared: the callee neither
 // takes ownership on entry nor frees it on return, so the object must outlive
 // the call and the host goes on owning it. What the callee may do with it
-// differs — an owning '*T' parameter may be stored into a field, which hands
+// differs — an owning 'box T' parameter may be stored into a field, which hands
 // ownership to that object; a 'ref T' one may not.
 //
 // Returns false if the index is out of range, the parameter is not a pointer,
@@ -252,7 +252,7 @@ bool gab_arg_pointer(GabCall *call, int index, void *pointer, const GabType *poi
 // 'ret' may be NULL for a function that returns nothing; otherwise it receives
 // the return type's size in bytes, so a struct return works the same way.
 //
-// A function returning '*T' hands over ownership: the object is the host's to
+// A function returning 'box T' hands over ownership: the object is the host's to
 // gab_free once it is done. A 'ref T' return does not — it names something the
 // script still owns, and freeing it would be a double free.
 GabStatus gab_call(GabVM *vm, GabCall *call, void *ret, GabError *err);

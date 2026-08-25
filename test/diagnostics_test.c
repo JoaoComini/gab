@@ -536,7 +536,7 @@ static void test_reports_address_of_a_temporary() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test() { let p: ref int = &1; }");
+    compile(&ctx, "func test() { let p: ref int = ref 1; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -554,7 +554,7 @@ static void test_reports_address_of_a_call_result() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func g(): int { return 1; }\nfunc test() { let p: ref int = &g(); }");
+    compile(&ctx, "func g(): int { return 1; }\nfunc test() { let p: ref int = ref g(); }");
 
     assert(diagnostics_count(diagnostics) == 1);
     assert(strcmp(diagnostics_get(diagnostics, 0)->message, "cannot take the address of a temporary") == 0);
@@ -585,7 +585,7 @@ static void test_reports_field_access_through_a_non_struct_pointer() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test() { let x: int = 1; let p: ref int = &x; let y: int = p.field; }");
+    compile(&ctx, "func test() { let x: int = 1; let p: ref int = ref x; let y: int = p.field; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -603,7 +603,7 @@ static void test_reports_returning_a_pointer_to_a_local() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test(): ref int { let x: int = 1; return &x; }");
+    compile(&ctx, "func test(): ref int { let x: int = 1; return ref x; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -623,7 +623,7 @@ static void test_reports_a_pointer_escaping_its_block() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test() { let p: ref int; { let x: int = 1; p = &x; } }");
+    compile(&ctx, "func test() { let p: ref int; { let x: int = 1; p = ref x; } }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -645,7 +645,7 @@ static void test_reports_a_stack_pointer_stored_into_a_heap_object() {
 
     compile(&ctx, "struct Inner { n: int }\n"
                   "struct Outer { child: ref Inner }\n"
-                  "func test() { let o: *Outer = new Outer; let local: Inner; o.child = &local; }");
+                  "func test() { let o: box Outer = new Outer; let local: Inner; o.child = ref local; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -666,9 +666,9 @@ static void test_accepts_pointers_that_do_not_outlive_their_pointee() {
     compile(&ctx, "func take(p: ref int): int { return *p; }\n"
                   "func test(): int {\n"
                   "let x: int = 1;\n"
-                  "let p: ref int = &x;\n"
-                  "{ let inner: ref int = &x; }\n"
-                  "return take(&x) + *p;\n"
+                  "let p: ref int = ref x;\n"
+                  "{ let inner: ref int = ref x; }\n"
+                  "return take(ref x) + *p;\n"
                   "}");
 
     assert(diagnostics_count(&ctx.diagnostics) == 0);

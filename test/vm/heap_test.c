@@ -13,7 +13,7 @@
 static void test_new_allocates_a_usable_object() {
     assert(test_run_int("struct Player { health: int }\n"
                         "func main(): int {\n"
-                        "    let p: *Player = new Player;\n"
+                        "    let p: box Player = new Player;\n"
                         "    p.health = 42;\n"
                         "    return p.health;\n"
                         "}\n"
@@ -25,7 +25,7 @@ static void test_new_allocates_a_usable_object() {
 static void test_new_zeroes_the_payload() {
     assert(test_run_int("struct Player { health: int, mana: int }\n"
                         "func main(): int {\n"
-                        "    let p: *Player = new Player;\n"
+                        "    let p: box Player = new Player;\n"
                         "    return p.health + p.mana;\n"
                         "}\n"
                         "let r: int = main();") == 0);
@@ -35,12 +35,12 @@ static void test_new_zeroes_the_payload() {
 // returning '&local' is not.
 static void test_a_heap_pointer_may_be_returned() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func make(): *Box {\n"
-                        "    let b: *Box = new Box;\n"
+                        "func make(): box Box {\n"
+                        "    let b: box Box = new Box;\n"
                         "    b.n = 7;\n"
                         "    return b;\n"
                         "}\n"
-                        "func main(): int { let b: *Box = make(); return b.n; }\n"
+                        "func main(): int { let b: box Box = make(); return b.n; }\n"
                         "let r: int = main();") == 7);
 }
 
@@ -49,8 +49,8 @@ static void test_a_heap_pointer_may_be_returned() {
 static void test_two_objects_are_distinct() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
-                        "    let a: *Box = new Box;\n"
-                        "    let b: *Box = new Box;\n"
+                        "    let a: box Box = new Box;\n"
+                        "    let b: box Box = new Box;\n"
                         "    a.n = 1;\n"
                         "    b.n = 2;\n"
                         "    return a.n * 10 + b.n;\n"
@@ -65,7 +65,7 @@ static void test_method_on_a_heap_object() {
         test_run_int("struct Player { health: int }\n"
                      "func (p: ref Player) hurt(n: int): int { p.health = p.health - n; return p.health; }\n"
                      "func main(): int {\n"
-                     "    let p: *Player = new Player;\n"
+                     "    let p: box Player = new Player;\n"
                      "    p.health = 50;\n"
                      "    return p.hurt(8);\n"
                      "}\n"
@@ -76,9 +76,9 @@ static void test_method_on_a_heap_object() {
 // other, which is what release will later walk.
 static void test_an_object_can_hold_another() {
     assert(test_run_int("struct Inner { n: int }\n"
-                        "struct Outer { child: *Inner }\n"
+                        "struct Outer { child: box Inner }\n"
                         "func main(): int {\n"
-                        "    let o: *Outer = new Outer;\n"
+                        "    let o: box Outer = new Outer;\n"
                         "    o.child = new Inner;\n"
                         "    o.child.n = 9;\n"
                         "    return o.child.n;\n"
@@ -91,7 +91,7 @@ static void test_an_object_can_hold_another() {
 static void test_an_alias_is_borrowed_not_owned() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
-                        "    let a: *Box = new Box;\n"
+                        "    let a: box Box = new Box;\n"
                         "    a.n = 5;\n"
                         "    let b: ref Box = a;\n"
                         "    return b.n;\n"
@@ -102,8 +102,8 @@ static void test_an_alias_is_borrowed_not_owned() {
     // takes a 'move' -- and then the first name is dead.
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let a: *Box = new Box;\n"
-                          "    let b: *Box = a;\n"
+                          "    let a: box Box = new Box;\n"
+                          "    let b: box Box = a;\n"
                           "    return b.n;\n"
                           "}\n"));
 }
@@ -114,7 +114,7 @@ static void test_released_at_the_end_of_its_block() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
                         "    let t: int = 0;\n"
-                        "    { let a: *Box = new Box; a.n = 3; t = a.n; }\n"
+                        "    { let a: box Box = new Box; a.n = 3; t = a.n; }\n"
                         "    return t;\n"
                         "}\n"
                         "let r: int = main();") == 3);
@@ -126,7 +126,7 @@ static void test_released_at_the_end_of_its_block() {
 static void test_a_reused_slot_is_not_released_twice() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
-                        "    { let a: *Box = new Box; a.n = 1; }\n"
+                        "    { let a: box Box = new Box; a.n = 1; }\n"
                         "    { let x: int = 7; let y: int = 8; return x + y; }\n"
                         "}\n"
                         "let r: int = main();") == 15);
@@ -152,7 +152,7 @@ static void test_an_abnormal_unwind_frees_what_it_held() {
                         "module test;\n"
                         "struct Node { n: int }\n"
                         "func deep(n: int): int { return deep(n + 1); }\n"
-                        "func main(): int { let p: *Node = new Node; return deep(0); }\n"
+                        "func main(): int { let p: box Node = new Node; return deep(0); }\n"
                         "let r: int = main();",
                         &script, &diagnostics));
 
@@ -169,10 +169,10 @@ static void test_an_abnormal_unwind_frees_what_it_held() {
 // with two owners — the field and the slot — each releasing it independently.
 static void test_storing_a_borrowed_reference_into_a_field_is_refused() {
     assert(!test_codegens("struct Inner { n: int }\n"
-                          "struct Outer { child: *Inner }\n"
+                          "struct Outer { child: box Inner }\n"
                           "func main(): int {\n"
-                          "    let o: *Outer = new Outer;\n"
-                          "    let i: *Inner = new Inner;\n"
+                          "    let o: box Outer = new Outer;\n"
+                          "    let i: box Inner = new Inner;\n"
                           "    i.n = 6;\n"
                           "    o.child = i;\n"
                           "    return o.child.n;\n"
@@ -184,7 +184,7 @@ static void test_storing_a_borrowed_reference_into_a_field_is_refused() {
 // reason. This is the case that would otherwise outlive its caller's ownership.
 static void test_storing_a_parameter_into_a_field_is_refused() {
     assert(!test_codegens("struct Inner { n: int }\n"
-                          "struct Outer { child: *Inner }\n"
+                          "struct Outer { child: box Inner }\n"
                           "func adopt(o: ref Outer, i: ref Inner): int {\n"
                           "    o.child = i;\n"
                           "    return 0;\n"
@@ -196,14 +196,14 @@ static void test_storing_a_parameter_into_a_field_is_refused() {
 // exactly what a field may be given, and a call is one.
 static void test_storing_a_call_result_into_a_field_is_allowed() {
     assert(test_run_int("struct Inner { n: int }\n"
-                        "struct Outer { child: *Inner }\n"
-                        "func make(): *Inner {\n"
-                        "    let i: *Inner = new Inner;\n"
+                        "struct Outer { child: box Inner }\n"
+                        "func make(): box Inner {\n"
+                        "    let i: box Inner = new Inner;\n"
                         "    i.n = 6;\n"
                         "    return i;\n"
                         "}\n"
                         "func main(): int {\n"
-                        "    let o: *Outer = new Outer;\n"
+                        "    let o: box Outer = new Outer;\n"
                         "    o.child = make();\n"
                         "    return o.child.n;\n"
                         "}\n"
@@ -239,7 +239,7 @@ static void test_a_borrowed_argument_is_not_freed_by_the_call_site() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func take(b: ref Box): int { return b.n; }\n"
                         "func main(): int {\n"
-                        "    let b: *Box = new Box;\n"
+                        "    let b: box Box = new Box;\n"
                         "    b.n = 5;\n"
                         "    take(b);\n"
                         "    return b.n;\n"
@@ -251,9 +251,9 @@ static void test_a_borrowed_argument_is_not_freed_by_the_call_site() {
 // first object leaks with nothing left naming it.
 static void test_overwriting_a_field_releases_the_old_value() {
     assert(test_run_int("struct Inner { n: int }\n"
-                        "struct Outer { child: *Inner }\n"
+                        "struct Outer { child: box Inner }\n"
                         "func main(): int {\n"
-                        "    let o: *Outer = new Outer;\n"
+                        "    let o: box Outer = new Outer;\n"
                         "    o.child = new Inner;\n"
                         "    o.child.n = 1;\n"
                         "    o.child = new Inner;\n"
@@ -267,7 +267,7 @@ static void test_overwriting_a_field_releases_the_old_value() {
 static void test_reassigning_a_variable_releases_the_old_value() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
-                        "    let p: *Box = new Box;\n"
+                        "    let p: box Box = new Box;\n"
                         "    p.n = 1;\n"
                         "    p = new Box;\n"
                         "    p.n = 9;\n"
@@ -283,9 +283,9 @@ static void test_reassigning_a_variable_releases_the_old_value() {
 // being solved.
 static void test_field_self_assignment_is_refused() {
     assert(!test_codegens("struct Inner { n: int }\n"
-                          "struct Outer { child: *Inner }\n"
+                          "struct Outer { child: box Inner }\n"
                           "func main(): int {\n"
-                          "    let o: *Outer = new Outer;\n"
+                          "    let o: box Outer = new Outer;\n"
                           "    o.child = new Inner;\n"
                           "    o.child.n = 5;\n"
                           "    o.child = o.child;\n"
@@ -300,7 +300,7 @@ static void test_field_self_assignment_is_refused() {
 // itself is not expressible.
 static void test_variable_self_assignment_is_refused() {
     assert(!test_codegens("struct Box { n: int }\n"
-                          "func main(): int { let p: *Box = new Box; p.n = 3; p = p; return p.n; }\n"
+                          "func main(): int { let p: box Box = new Box; p.n = 3; p = p; return p.n; }\n"
                           "let r: int = main();"));
 }
 
@@ -309,7 +309,7 @@ static void test_variable_self_assignment_is_refused() {
 static void test_reassigning_an_owning_variable_frees_the_old_object() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
-                        "    let p: *Box = new Box;\n"
+                        "    let p: box Box = new Box;\n"
                         "    p.n = 1;\n"
                         "    p = new Box;\n"
                         "    p.n = 9;\n"

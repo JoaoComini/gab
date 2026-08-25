@@ -95,7 +95,7 @@ typedef struct ASTExpr {
             const TypeField *field;
         } field;
 
-        // '&target', '*target', '-target' and '!target'. All are prefix forms
+        // 'ref target', '*target', '-target' and '!target'. All are prefix forms
         // over a single operand, so they share a shape.
         struct {
             ASTExpr *target;
@@ -108,7 +108,7 @@ typedef struct ASTExpr {
             ASTExpr *operand;
         } cast;
 
-        // 'new T' — a heap allocation yielding an owned '*T'. Names a type
+        // 'new T' — a heap allocation yielding an owned 'box T'. Names a type
         // rather than taking an operand, so it carries a TypeSpec the way a
         // declaration does rather than an expression.
         struct {

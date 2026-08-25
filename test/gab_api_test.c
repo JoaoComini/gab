@@ -625,14 +625,14 @@ static void test_builtins_are_shared_across_modules(void) {
     bool player = gab_load(vm, "player.gab",
                            "module Player;\n"
                            "struct Config { health: int }\n"
-                           "func player_size(): int { let p: *Config; return 1; }\n",
+                           "func player_size(): int { let p: box Config; return 1; }\n",
                            &err);
     assert(player);
 
     bool enemy = gab_load(vm, "enemy.gab",
                           "module Enemy;\n"
                           "struct Config { hp: int }\n"
-                          "func enemy_size(): int { let p: *Config; return 1; }\n",
+                          "func enemy_size(): int { let p: box Config; return 1; }\n",
                           &err);
     assert(enemy);
 

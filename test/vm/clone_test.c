@@ -12,7 +12,7 @@
 // other, which is the whole point of cloning rather than borrowing.
 static void test_a_clone_yields_an_independent_object() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "struct Holder { b: *Box }\n"
+                        "struct Holder { b: box Box }\n"
                         "func (h: ref Holder) clone(): Holder {\n"
                         "    let out: Holder;\n"
                         "    out.b = new Box;\n"
@@ -34,7 +34,7 @@ static void test_a_clone_yields_an_independent_object() {
 // live afterwards -- the difference from 'move'.
 static void test_the_source_of_a_clone_stays_live() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "struct Holder { b: *Box }\n"
+                        "struct Holder { b: box Box }\n"
                         "func (h: ref Holder) clone(): Holder {\n"
                         "    let out: Holder;\n"
                         "    out.b = new Box;\n"
@@ -56,7 +56,7 @@ static void test_the_source_of_a_clone_stays_live() {
 // where a caller is surprised by it.
 static void test_a_clone_returning_another_type_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
-                          "struct Holder { b: *Box }\n"
+                          "struct Holder { b: box Box }\n"
                           "func (h: ref Holder) clone(): int {\n"
                           "    return 0;\n"
                           "}\n"));
@@ -65,7 +65,7 @@ static void test_a_clone_returning_another_type_is_refused() {
 // Duplicating takes nothing but the receiver.
 static void test_a_clone_taking_parameters_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
-                          "struct Holder { b: *Box }\n"
+                          "struct Holder { b: box Box }\n"
                           "func (h: ref Holder) clone(deep: bool): Holder {\n"
                           "    let out: Holder;\n"
                           "    out.b = new Box;\n"
@@ -77,7 +77,7 @@ static void test_a_clone_taking_parameters_is_refused() {
 // stays visible at the point it happens.
 static void test_a_type_with_a_clone_still_refuses_an_implicit_copy() {
     assert(!test_compiles("struct Box { n: int }\n"
-                          "struct Holder { b: *Box }\n"
+                          "struct Holder { b: box Box }\n"
                           "func (h: ref Holder) clone(): Holder {\n"
                           "    let out: Holder;\n"
                           "    out.b = new Box;\n"
@@ -96,7 +96,7 @@ static void test_a_type_with_a_clone_still_refuses_an_implicit_copy() {
 // call a method it does not have.
 static void test_the_copy_diagnostic_names_clone_only_where_one_exists() {
     const char *without = "struct Box { n: int }\n"
-                          "struct Holder { b: *Box }\n"
+                          "struct Holder { b: box Box }\n"
                           "func main(): int {\n"
                           "    let h: Holder;\n"
                           "    let g: Holder = h;\n"

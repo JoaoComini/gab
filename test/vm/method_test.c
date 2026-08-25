@@ -278,7 +278,7 @@ static void test_call_through_a_pointer_receiver() {
                         "func main(): int {\n"
                         "    let p: Player;\n"
                         "    p.health = 9;\n"
-                        "    let q: ref Player = &p;\n"
+                        "    let q: ref Player = ref p;\n"
                         "    return q.hp();\n"
                         "}\n"
                         "let r: int = main();") == 9);
@@ -291,7 +291,7 @@ static void test_value_method_through_a_pointer() {
                         "func main(): int {\n"
                         "    let p: Player;\n"
                         "    p.health = 13;\n"
-                        "    let q: ref Player = &p;\n"
+                        "    let q: ref Player = ref p;\n"
                         "    return q.hp();\n"
                         "}\n"
                         "let r: int = main();") == 13);
@@ -370,7 +370,7 @@ static void test_a_matching_receiver_needs_no_adjustment() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func (b: ref Box) get(): int { return b.n; }\n"
                         "func main(): int {\n"
-                        "    let b: *Box = new Box;\n"
+                        "    let b: box Box = new Box;\n"
                         "    b.n = 7;\n"
                         "    return b.get();\n"
                         "}\n"
@@ -397,7 +397,7 @@ static void test_a_pointer_receiver_is_dereferenced() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func (b: Box) peek(): int { return b.n; }\n"
                         "func main(): int {\n"
-                        "    let b: *Box = new Box;\n"
+                        "    let b: box Box = new Box;\n"
                         "    b.n = 9;\n"
                         "    return b.peek();\n"
                         "}\n"
@@ -410,7 +410,7 @@ static void test_a_method_on_a_ref_receiver() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func (b: ref Box) get(): int { return b.n; }\n"
                         "func main(): int {\n"
-                        "    let owner: *Box = new Box;\n"
+                        "    let owner: box Box = new Box;\n"
                         "    owner.n = 6;\n"
                         "    let borrowed: ref Box = owner;\n"
                         "    return borrowed.get();\n"
@@ -424,7 +424,7 @@ static void test_a_method_through_a_ref_mutates_the_owned_object() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func (b: ref Box) bump(): int { b.n = b.n + 1; return b.n; }\n"
                         "func main(): int {\n"
-                        "    let owner: *Box = new Box;\n"
+                        "    let owner: box Box = new Box;\n"
                         "    owner.n = 4;\n"
                         "    let borrowed: ref Box = owner;\n"
                         "    borrowed.bump();\n"
@@ -438,7 +438,7 @@ static void test_a_method_through_a_ref_mutates_the_owned_object() {
 // identically. 'ref T' is the one form, and 'T' by value the other.
 static void test_an_owning_receiver_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
-                          "func (b: *Box) peek(): int { return b.n; }\n"));
+                          "func (b: box Box) peek(): int { return b.n; }\n"));
 }
 
 // A method on a temporary that takes a pointer receiver has no address to take,
@@ -456,7 +456,7 @@ static void test_arity_errors_exclude_the_receiver() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func (b: ref Box) add(x: int): int { return b.n + x; }\n"
                           "func main(): int {\n"
-                          "    let b: *Box = new Box;\n"
+                          "    let b: box Box = new Box;\n"
                           "    return b.add(1, 2);\n"
                           "}\n"));
 }
@@ -466,7 +466,7 @@ static void test_arity_errors_exclude_the_receiver() {
 static void test_an_unknown_method_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let b: *Box = new Box;\n"
+                          "    let b: box Box = new Box;\n"
                           "    return b.nope();\n"
                           "}\n"));
 }

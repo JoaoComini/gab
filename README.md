@@ -89,7 +89,7 @@ Four properties are worth knowing before you build against it:
 - **Objects have one owner.** `gab_new` hands the host the only reference to an
   object, and `gab_free` gives it back. A pointer staged with
   `gab_arg_pointer` is borrowed for the call, so the host goes on owning it; a
-  function returning `*T` hands ownership over, and the host frees it.
+  function returning `box T` hands ownership over, and the host frees it.
 
 ## The language
 
@@ -117,44 +117,44 @@ func (p: ref Player) is_alive(): bool {
 ```
 
 Field access reaches through a pointer the way `->` does in C, so `p.health`
-works whether `p` is a `Player`, a `*Player`, or a `ref Player`.
+works whether `p` is a `Player`, a `box Player`, or a `ref Player`.
 
-A parameter spells ownership the way a local and a field do: bare `*T` owns what
+A parameter spells ownership the way a local and a field do: bare `box T` owns what
 it is given and frees it when the call ends, `ref T` borrows and frees nothing,
 and `T` is by value, which copies. Ownership is therefore part of the signature,
 and a call site can tell from the declaration alone whether it must move:
 
 ```
-func consume(b: *Box): int { ... }   // owns; freed when the call ends
+func consume(b: box Box): int { ... }   // owns; freed when the call ends
 func peek(b: ref Box): int { ... }   // borrows; the caller goes on owning
 
 consume(move a);                     // required: 'a' is dead afterwards
 peek(a);                             // no move: nothing changes hands
 ```
 
-An owned `*T` is lent to a `ref T` parameter without a move, since lending is
+An owned `box T` is lent to a `ref T` parameter without a move, since lending is
 all a borrow asks for. Ownership moved into a parameter may be handed back out
 as an owned return — the caller gave it up, so returning it transfers rather
-than duplicating — while a `ref T` may not become a `*T` return, which would
+than duplicating — while a `ref T` may not become a `box T` return, which would
 hand out ownership nobody granted.
 
 A receiver is `T` or `ref T` — by value, which copies, or by borrow, which
-mutates what the caller holds. Never `*T`: a method is handed its receiver for
+mutates what the caller holds. Never `box T`: a method is handed its receiver for
 the duration of the call, and there is no call-site spelling that would give
 that ownership away.
 
-`&x` yields `ref T`, because taking an address borrows: the slot it names is
+`ref x` yields `ref T`, because taking an address borrows: the slot it names is
 owned by whoever declared it. `ref ref T` is a borrow of a borrow, which is what
-`&` applied twice produces.
+`ref` applied twice produces.
 
-Taking the address of an *owning* pointer is refused. It would be a `ref *T` — a
+Taking the address of an *owning* pointer is refused. It would be a `ref box T` — a
 borrow of the variable rather than of the object — which is what an out-parameter
 needs, and assigning through one would free the caller's old object from inside
 the callee. Return ownership instead; the transfer is then visible at the call
 site. Writing *through* a borrow is unaffected, so a callee filling in a struct
 the caller owns works as it always did.
 
-Memory is uniquely owned. `new T` yields a `*T` that exactly one slot owns and
+Memory is uniquely owned. `new T` yields a `box T` that exactly one slot owns and
 that is freed where that slot goes out of scope; freeing an object frees what
 its fields own. `ref T` is how something is named without being owned, as a
 child names its parent.
@@ -162,7 +162,7 @@ child names its parent.
 Copying is the default and is implicit, and a type is copyable exactly when
 nothing it holds transitively owns. That is derived from the type rather than
 declared on it: a struct of `int`s copies, and so does one holding a `ref`,
-while one holding a `*T` does not — the moment a field owns, the struct does.
+while one holding a `box T` does not — the moment a field owns, the struct does.
 
 A non-copyable value needs an explicit `move`, which transfers ownership:
 
@@ -213,9 +213,9 @@ Whether a slot is dead follows control flow the way a borrow's lifetime does. A
 slot moved on one arm of an `if` is dead after the join, and moving in a loop
 body is refused because the back-edge would move the same slot twice.
 
-The rule behind all of this: **`*T` marks a slot that can free what it holds.**
+The rule behind all of this: **`box T` marks a slot that can free what it holds.**
 That is a `let`, a struct field, a parameter, and a return type — each is where
-a free may be emitted. A receiver is not one, so it takes `ref T`; `&x` is an
+a free may be emitted. A receiver is not one, so it takes `ref T`; `ref x` is an
 address rather than an allocation, so it yields one too.
 
 There is no reference count and no runtime liveness check: a `ref T` whose
@@ -262,11 +262,11 @@ more or less, and a second spelling would say nothing the first does not.
 
 | | |
 | --- | --- |
-| Types | `int` (32-bit), `float` (32-bit), `bool`, structs, pointers `*T`, borrows `ref T` |
+| Types | `int` (32-bit), `float` (32-bit), `bool`, structs, pointers `box T`, borrows `ref T` |
 | Declarations | `let` with inferred or annotated type, `func`, `struct`, `module` |
 | Functions | Parameters and returns of any type, structs by value, methods with a receiver, recursion, forward references |
 | Control flow | `if` / `else`, `for` in three forms, `break`, `continue`, `return`, nested blocks with shadowing |
-| Operators | `+` `-` `*` `/` `%`, unary `-` `!`, `==` `!=` `<` `>` `<=` `>=`, `&&` `||`, `&` and `*`, field access |
+| Operators | `+` `-` `*` `/` `%`, unary `-` `!`, `==` `!=` `<` `>` `<=` `>=`, `&&` `||`, `ref` and `*`, field access |
 | Conversions | `int(x)` and `float(x)`; nothing converts implicitly |
 | Assignment | `=`, and compound `+=` `-=` `*=` `/=` `%=` on any assignable target |
 | Memory | Unique ownership, `new`, `ref` borrows, implicit copy, explicit `move`, user-declared `clone`, scope-based free |

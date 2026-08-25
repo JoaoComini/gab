@@ -610,17 +610,16 @@ static ASTField *parse_field(Parser *parser, const char *name_message) {
     return ast_field_create(span, name, type);
 }
 
-// A type position, which is a name preceded by any number of '*'. Prefix
-// '*' is the same token as multiplication; position is what tells them apart.
+// A type position, which is a name preceded by any number of 'box' or 'ref'.
 static TypeSpec *parse_type_spec(Parser *parser) {
     unsigned int pointer_depth = 0;
 
     // 'ref T' is a borrow: a pointer that does not own what it names. It stands
-    // in place of the '*', not before it — 'ref T' and '*T' are both one
+    // in place of the 'box', not before it — 'ref T' and 'box T' are both one
     // pointer deep, and differ only in who frees the pointee.
-    // 'ref T' is a borrow, and 'ref ref T' a borrow of one — which is what '&'
-    // applied twice produces. Each 'ref' is one level of pointer, so they count
-    // the same way stars do.
+    // 'ref ref T' is a borrow of a borrow, which is what 'ref' applied twice
+    // produces. Each one is a level of pointer, so they count the same way
+    // 'box' does.
     bool is_ref = parser->current.type == TOKEN_REF;
 
     while (parser->current.type == TOKEN_REF) {
@@ -629,15 +628,15 @@ static TypeSpec *parse_type_spec(Parser *parser) {
     }
 
     // Every level is a borrow or none is: mixing them would need a flag per
-    // level, and nothing yet wants '*ref T' — an owning pointer to a borrow.
-    if (is_ref && parser->current.type == TOKEN_MUL) {
-        parser_error(parser, "'ref' does not combine with '*', as 'ref T' or 'ref ref T'");
+    // level, and nothing yet wants 'box ref T' — an owning pointer to a borrow.
+    if (is_ref && parser->current.type == TOKEN_BOX) {
+        parser_error(parser, "'ref' does not combine with 'box', as 'ref T' or 'ref ref T'");
         return NULL;
     }
 
-    while (parser->current.type == TOKEN_MUL) {
+    while (parser->current.type == TOKEN_BOX) {
         pointer_depth++;
-        parser_next_token(parser); // eat '*'
+        parser_next_token(parser); // eat 'box'
     }
 
     if (!parser_expect(parser, TOKEN_IDENT, "expected a type")) {
@@ -741,7 +740,7 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
     parser_next_token(parser); // eat "func"
 
-    // 'func (p: *Player) damage(...)' — an optional receiver clause makes this
+    // 'func (p: box Player) damage(...)' — an optional receiver clause makes this
     // a method on that type rather than a free function. Written with a colon
     // like every other binding in the language, unlike Go's 'p *Player'.
     ASTField *receiver = NULL;
@@ -1063,7 +1062,7 @@ static ASTExpr *parse_method_call_expr(Parser *parser, ASTExpr *receiver, String
 
 // A primary with its postfixes, or a prefix form over one of those. Prefix '&'
 // and '*' bind tighter than any binary operator but looser than a postfix, so
-// '&p.x' takes the address of the field and '*p.x' dereferences it.
+// 'ref p.x' takes the address of the field and '*p.x' dereferences it.
 static ASTExpr *parse_unary(Parser *parser) {
     Span span = parser_span(parser);
 
@@ -1094,15 +1093,15 @@ static ASTExpr *parse_unary(Parser *parser) {
         return ast_move_expr_create(span, target);
     }
 
-    // Most of these share a token with a binary operator -- '*' with
+    // Some of these share a token with a binary operator -- '*' with
     // multiplication, '-' with subtraction -- and only its position tells the
     // two apart. Recursing into parse_unary is what makes them stack, so
     // '--x' and '-*p' both parse.
-    if (parser->current.type == TOKEN_AMP || parser->current.type == TOKEN_MUL ||
+    if (parser->current.type == TOKEN_REF || parser->current.type == TOKEN_MUL ||
         parser->current.type == TOKEN_MINUS || parser->current.type == TOKEN_NOT) {
         TokenType prefix = parser->current.type;
 
-        parser_next_token(parser); // eat '&', '*', '-' or '!'
+        parser_next_token(parser); // eat 'ref', '*', '-' or '!'
 
         ASTExpr *target = parse_unary(parser);
         if (!target) {
@@ -1110,7 +1109,7 @@ static ASTExpr *parse_unary(Parser *parser) {
         }
 
         switch (prefix) {
-        case TOKEN_AMP:
+        case TOKEN_REF:
             return ast_addr_of_expr_create(span, target);
         case TOKEN_MUL:
             return ast_deref_expr_create(span, target);

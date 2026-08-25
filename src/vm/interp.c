@@ -714,7 +714,7 @@ static void vm_run_loop(VM *vm) {
                 // Addresses are absolute, not frame-relative: the pointee may
                 // outlive the frame the address was taken in, and a caller reading
                 // through the pointer has a different base. The byte offset reaches
-                // a field within the slots, so '&v.y' names the field, not v.
+                // a field within the slots, so 'ref v.y' names the field, not v.
                 vm_write_ptr(vm, rd, vm->registers + base * VM_SLOT_SIZE + offset);
                 VM_NEXT();
             }

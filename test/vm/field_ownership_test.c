@@ -10,7 +10,7 @@
 // initializes it has no previous occupant to free.
 static void test_a_fresh_owning_field_keeps_what_is_stored() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "struct Holder { b: *Box }\n"
+                        "struct Holder { b: box Box }\n"
                         "func main(): int {\n"
                         "    let h: Holder;\n"
                         "    h.b = new Box;\n"
@@ -23,10 +23,10 @@ static void test_a_fresh_owning_field_keeps_what_is_stored() {
 // Ownership moved out of a local lands in the field and stays readable there.
 static void test_a_move_into_an_owning_field_keeps_the_object() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "struct Holder { b: *Box }\n"
+                        "struct Holder { b: box Box }\n"
                         "func main(): int {\n"
                         "    let h: Holder;\n"
-                        "    let a: *Box = new Box;\n"
+                        "    let a: box Box = new Box;\n"
                         "    a.n = 7;\n"
                         "    h.b = move a;\n"
                         "    return h.b.n;\n"
@@ -38,7 +38,7 @@ static void test_a_move_into_an_owning_field_keeps_the_object() {
 // new one.
 static void test_storing_over_an_owning_field_keeps_the_new_object() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "struct Holder { b: *Box }\n"
+                        "struct Holder { b: box Box }\n"
                         "func main(): int {\n"
                         "    let h: Holder;\n"
                         "    h.b = new Box;\n"
@@ -54,7 +54,7 @@ static void test_storing_over_an_owning_field_keeps_the_new_object() {
 // itself lives. One release per owning field, emitted where the block closes.
 static void test_a_struct_local_frees_what_its_fields_own() {
     TestProgram program = test_compile("struct Box { n: int }\n"
-                                       "struct Holder { b: *Box }\n"
+                                       "struct Holder { b: box Box }\n"
                                        "func main(): int { let h: Holder; h.b = new Box; return 0; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
@@ -70,7 +70,7 @@ static void test_a_struct_local_frees_what_its_fields_own() {
 // fields are freed too.
 static void test_a_nested_struct_frees_through_its_inner_fields() {
     TestProgram program = test_compile("struct Box { n: int }\n"
-                                       "struct Inner { b: *Box }\n"
+                                       "struct Inner { b: box Box }\n"
                                        "struct Outer { inner: Inner }\n"
                                        "func main(): int { let o: Outer; o.inner.b = new Box; return 0; }\n");
 
@@ -98,7 +98,7 @@ static void test_a_ref_field_is_not_freed() {
 // frees nothing. One instruction per field, whatever a pointer's width.
 static void test_an_owning_field_is_nulled_at_its_declaration() {
     TestProgram program = test_compile("struct Box { n: int }\n"
-                                       "struct Holder { b: *Box }\n"
+                                       "struct Holder { b: box Box }\n"
                                        "func main(): int { let h: Holder; return 0; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
@@ -126,10 +126,10 @@ static void test_a_ref_field_is_not_nulled() {
 // is refused -- and the refusal names the two ways to say what was meant.
 static void test_an_owning_field_refuses_a_value_another_slot_owns() {
     const char *source = "struct Box { n: int }\n"
-                         "struct Holder { b: *Box }\n"
+                         "struct Holder { b: box Box }\n"
                          "func main(): int {\n"
                          "    let h: Holder;\n"
-                         "    let a: *Box = new Box;\n"
+                         "    let a: box Box = new Box;\n"
                          "    h.b = a;\n"
                          "    return 0;\n"
                          "}\n";
@@ -144,7 +144,7 @@ static void test_an_owning_field_refuses_a_value_another_slot_owns() {
 // says, so the diagnostic points at moving the whole thing.
 static void test_moving_a_field_is_refused() {
     const char *source = "struct Box { n: int }\n"
-                         "struct Holder { b: *Box }\n"
+                         "struct Holder { b: box Box }\n"
                          "func main(): int {\n"
                          "    let g: Holder;\n"
                          "    let h: Holder;\n"
@@ -160,7 +160,7 @@ static void test_moving_a_field_is_refused() {
 // The struct itself still moves, which is what replaces moving a field.
 static void test_a_whole_struct_still_moves() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "struct Holder { b: *Box }\n"
+                        "struct Holder { b: box Box }\n"
                         "func main(): int {\n"
                         "    let h: Holder;\n"
                         "    h.b = new Box;\n"

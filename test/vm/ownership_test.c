@@ -9,10 +9,10 @@
 // A struct may name its own type through a field, which is what lets a child
 // know its parent without owning it.
 static void test_a_self_referential_struct_declares() {
-    assert(test_compiles("struct Node { parent: ref Node, child: *Node }\n"));
+    assert(test_compiles("struct Node { parent: ref Node, child: box Node }\n"));
 
     // A pointer to self is not containment, borrowed or owned.
-    assert(test_compiles("struct Node { child: *Node }\n"));
+    assert(test_compiles("struct Node { child: box Node }\n"));
 
     // Containing itself by value still is.
     assert(!test_compiles("struct Node { self: Node }\n"));
@@ -23,13 +23,13 @@ static void test_a_self_referential_struct_declares() {
 // granted, so it is refused.
 static void test_conversion_is_owned_to_ref_only() {
     assert(test_compiles("struct Node { n: int }\n"
-                         "func f(): int { let o: *Node = new Node; let b: ref Node = o; return 0; }\n"));
+                         "func f(): int { let o: box Node = new Node; let b: ref Node = o; return 0; }\n"));
 
     assert(!test_compiles("struct Node { n: int }\n"
                           "func f(): int {\n"
-                          "    let owner: *Node = new Node;\n"
+                          "    let owner: box Node = new Node;\n"
                           "    let b: ref Node = owner;\n"
-                          "    let o: *Node = b;\n"
+                          "    let o: box Node = b;\n"
                           "    return 0;\n"
                           "}\n"));
 }
@@ -45,8 +45,8 @@ static void test_ref_does_not_combine_with_a_star() {
 static void test_a_ref_field_reads_and_writes() {
     assert(test_run_int("struct Node { n: int, parent: ref Node }\n"
                         "func main(): int {\n"
-                        "    let a: *Node = new Node;\n"
-                        "    let b: *Node = new Node;\n"
+                        "    let a: box Node = new Node;\n"
+                        "    let b: box Node = new Node;\n"
                         "    a.n = 7;\n"
                         "    b.parent = a;\n"
                         "    return b.parent.n;\n"
@@ -60,7 +60,7 @@ static void test_a_ref_passes_to_a_ref_parameter() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func peek(b: ref Box): int { return b.n; }\n"
                         "func main(): int {\n"
-                        "    let owner: *Box = new Box;\n"
+                        "    let owner: box Box = new Box;\n"
                         "    owner.n = 8;\n"
                         "    let borrowed: ref Box = owner;\n"
                         "    return peek(borrowed);\n"
@@ -74,7 +74,7 @@ static void test_an_owned_pointer_passes_to_a_ref_parameter() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func peek(b: ref Box): int { return b.n; }\n"
                         "func main(): int {\n"
-                        "    let owner: *Box = new Box;\n"
+                        "    let owner: box Box = new Box;\n"
                         "    owner.n = 3;\n"
                         "    return peek(owner);\n"
                         "}\n"
@@ -87,7 +87,7 @@ static void test_a_call_returning_a_ref_is_not_freed() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func borrow(b: ref Box): ref Box { return b; }\n"
                         "func main(): int {\n"
-                        "    let owner: *Box = new Box;\n"
+                        "    let owner: box Box = new Box;\n"
                         "    owner.n = 2;\n"
                         "    let got: ref Box = borrow(owner);\n"
                         "    return got.n + owner.n;\n"
@@ -106,7 +106,7 @@ static void test_a_ref_to_a_local_cannot_be_returned() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func bad(): ref Box {\n"
                           "    let local: Box;\n"
-                          "    return &local;\n"
+                          "    return ref local;\n"
                           "}\n"));
 }
 
@@ -122,7 +122,7 @@ static void test_a_ref_returned_from_a_call_cannot_outlive_its_argument() {
                           "func borrow(b: ref Box): ref Box { return b; }\n"
                           "func main(): int {\n"
                           "    let escaped: ref Box;\n"
-                          "    { let inner: Box; escaped = borrow(&inner); }\n"
+                          "    { let inner: Box; escaped = borrow(ref inner); }\n"
                           "    return escaped.n;\n"
                           "}\n"));
 }
@@ -134,7 +134,7 @@ static void test_a_ref_declared_from_a_call_carries_the_argument_lifetime() {
                           "func borrow(b: ref Box): ref Box { return b; }\n"
                           "func leak(): ref Box {\n"
                           "    let local: Box;\n"
-                          "    let got: ref Box = borrow(&local);\n"
+                          "    let got: ref Box = borrow(ref local);\n"
                           "    return got;\n"
                           "}\n"));
 }
@@ -145,7 +145,7 @@ static void test_a_ref_borrowed_from_a_heap_object_is_accepted() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func borrow(b: ref Box): ref Box { return b; }\n"
                         "func main(): int {\n"
-                        "    let owner: *Box = new Box;\n"
+                        "    let owner: box Box = new Box;\n"
                         "    owner.n = 5;\n"
                         "    let got: ref Box = borrow(owner);\n"
                         "    return got.n;\n"
@@ -157,14 +157,14 @@ static void test_a_ref_borrowed_from_a_heap_object_is_accepted() {
 // so it outlives every frame and the argument's lifetime does not follow it.
 static void test_an_owned_return_does_not_inherit_argument_lifetimes() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func make(seed: ref Box): *Box {\n"
-                        "    let fresh: *Box = new Box;\n"
+                        "func make(seed: ref Box): box Box {\n"
+                        "    let fresh: box Box = new Box;\n"
                         "    fresh.n = seed.n + 1;\n"
                         "    return fresh;\n"
                         "}\n"
                         "func main(): int {\n"
-                        "    let out: *Box = new Box;\n"
-                        "    { let tmp: *Box = new Box; tmp.n = 1; out = make(tmp); }\n"
+                        "    let out: box Box = new Box;\n"
+                        "    { let tmp: box Box = new Box; tmp.n = 1; out = make(tmp); }\n"
                         "    return out.n;\n"
                         "}\n"
                         "let r: int = main();") == 2);
@@ -173,12 +173,12 @@ static void test_an_owned_return_does_not_inherit_argument_lifetimes() {
 // An owned return is how a function hands ownership out.
 static void test_an_owned_return_is_still_allowed() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func make(): *Box {\n"
-                        "    let b: *Box = new Box;\n"
+                        "func make(): box Box {\n"
+                        "    let b: box Box = new Box;\n"
                         "    b.n = 4;\n"
                         "    return b;\n"
                         "}\n"
-                        "func main(): int { let b: *Box = make(); return b.n; }\n"
+                        "func main(): int { let b: box Box = make(); return b.n; }\n"
                         "let r: int = main();") == 4);
 }
 
@@ -198,8 +198,8 @@ static void test_taking_the_address_of_an_owning_pointer_is_refused() {
     // would not say which rule caught it.
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let o: *Box = new Box;\n"
-                          "    &o;\n"
+                          "    let o: box Box = new Box;\n"
+                          "    ref o;\n"
                           "    return 0;\n"
                           "}\n"));
 
@@ -207,8 +207,8 @@ static void test_taking_the_address_of_an_owning_pointer_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func replace(slot: ref ref Box): int { return 0; }\n"
                           "func main(): int {\n"
-                          "    let o: *Box = new Box;\n"
-                          "    return replace(&o);\n"
+                          "    let o: box Box = new Box;\n"
+                          "    return replace(ref o);\n"
                           "}\n"));
 }
 
@@ -217,8 +217,8 @@ static void test_taking_the_address_of_an_owning_pointer_is_refused() {
 static void test_taking_the_address_of_a_borrow_is_allowed() {
     assert(test_run_int("func f(): int {\n"
                         "    let x: int = 5;\n"
-                        "    let p: ref int = &x;\n"
-                        "    let q: ref ref int = &p;\n"
+                        "    let p: ref int = ref x;\n"
+                        "    let q: ref ref int = ref p;\n"
                         "    **q = 11;\n"
                         "    return x;\n"
                         "}\n"
@@ -231,7 +231,7 @@ static void test_a_ref_parameter_is_an_out_parameter_for_values() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func fill(b: ref Box): int { b.n = 42; return 0; }\n"
                         "func main(): int {\n"
-                        "    let o: *Box = new Box;\n"
+                        "    let o: box Box = new Box;\n"
                         "    fill(o);\n"
                         "    return o.n;\n"
                         "}\n"
@@ -277,12 +277,12 @@ static void test_a_field_read_from_an_owned_temporary_does_not_leak() {
 static void test_a_branch_join_takes_the_shorter_lived_borrow() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let heap: *Box = new Box;\n"
+                          "    let heap: box Box = new Box;\n"
                           "    let out: ref Box = heap;\n"
                           "    {\n"
                           "        let inner: Box;\n"
                           "        let a: ref Box = heap;\n"
-                          "        if 1 < 2 { a = &inner; } else { a = heap; }\n"
+                          "        if 1 < 2 { a = ref inner; } else { a = heap; }\n"
                           "        out = a;\n"
                           "    }\n"
                           "    return 0;\n"
@@ -292,7 +292,7 @@ static void test_a_branch_join_takes_the_shorter_lived_borrow() {
     // out of the block is accepted.
     assert(test_compiles("struct Box { n: int }\n"
                          "func main(): int {\n"
-                         "    let heap: *Box = new Box;\n"
+                         "    let heap: box Box = new Box;\n"
                          "    let out: ref Box = heap;\n"
                          "    {\n"
                          "        let inner: Box;\n"
@@ -310,14 +310,14 @@ static void test_a_branch_join_takes_the_shorter_lived_borrow() {
 static void test_a_borrow_taken_late_in_a_loop_reaches_the_next_iteration() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let heap: *Box = new Box;\n"
+                          "    let heap: box Box = new Box;\n"
                           "    let out: ref Box = heap;\n"
                           "    {\n"
                           "        let inner: Box;\n"
                           "        let a: ref Box = heap;\n"
                           "        for let i = 0; i < 2; i = i + 1 {\n"
                           "            out = a;\n"
-                          "            a = &inner;\n"
+                          "            a = ref inner;\n"
                           "        }\n"
                           "    }\n"
                           "    return 0;\n"
@@ -329,11 +329,11 @@ static void test_a_borrow_taken_late_in_a_loop_reaches_the_next_iteration() {
 static void test_reassigning_a_borrow_replaces_what_it_names() {
     assert(test_compiles("struct Box { n: int }\n"
                          "func main(): int {\n"
-                         "    let heap: *Box = new Box;\n"
+                         "    let heap: box Box = new Box;\n"
                          "    let out: ref Box = heap;\n"
                          "    {\n"
                          "        let inner: Box;\n"
-                         "        let a: ref Box = &inner;\n"
+                         "        let a: ref Box = ref inner;\n"
                          "        a = heap;\n"
                          "        out = a;\n"
                          "    }\n"
@@ -344,11 +344,11 @@ static void test_reassigning_a_borrow_replaces_what_it_names() {
     // refused.
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let heap: *Box = new Box;\n"
+                          "    let heap: box Box = new Box;\n"
                           "    let out: ref Box = heap;\n"
                           "    {\n"
                           "        let inner: Box;\n"
-                          "        let a: ref Box = &inner;\n"
+                          "        let a: ref Box = ref inner;\n"
                           "        out = a;\n"
                           "    }\n"
                           "    return 0;\n"
@@ -360,12 +360,12 @@ static void test_reassigning_a_borrow_replaces_what_it_names() {
 static void test_an_arm_that_returns_does_not_reach_the_join() {
     assert(test_compiles("struct Box { n: int }\n"
                          "func main(): int {\n"
-                         "    let heap: *Box = new Box;\n"
+                         "    let heap: box Box = new Box;\n"
                          "    let out: ref Box = heap;\n"
                          "    {\n"
                          "        let inner: Box;\n"
                          "        let a: ref Box = heap;\n"
-                         "        if 1 < 2 { a = &inner; return 0; } else { a = heap; }\n"
+                         "        if 1 < 2 { a = ref inner; return 0; } else { a = heap; }\n"
                          "        out = a;\n"
                          "    }\n"
                          "    return 0;\n"
@@ -374,12 +374,12 @@ static void test_an_arm_that_returns_does_not_reach_the_join() {
     // The same arm falling through does reach it, and is refused.
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let heap: *Box = new Box;\n"
+                          "    let heap: box Box = new Box;\n"
                           "    let out: ref Box = heap;\n"
                           "    {\n"
                           "        let inner: Box;\n"
                           "        let a: ref Box = heap;\n"
-                          "        if 1 < 2 { a = &inner; } else { a = heap; }\n"
+                          "        if 1 < 2 { a = ref inner; } else { a = heap; }\n"
                           "        out = a;\n"
                           "    }\n"
                           "    return 0;\n"

@@ -75,10 +75,10 @@ static void test_compound_assign_reaches_a_field() {
 }
 
 static void test_compound_assign_reaches_through_a_pointer() {
-    assert(test_run_int("func f(): int { let a: int = 4; let p: ref int = &a; *p += 3; return a; }\n"
+    assert(test_run_int("func f(): int { let a: int = 4; let p: ref int = ref a; *p += 3; return a; }\n"
                         "let r: int = f();\n") == 7);
 
-    assert(test_run_int("func f(): int { let a: int = 10; let p: ref int = &a; *p -= 4; return a; }\n"
+    assert(test_run_int("func f(): int { let a: int = 10; let p: ref int = ref a; *p -= 4; return a; }\n"
                         "let r: int = f();\n") == 6);
 }
 
@@ -103,7 +103,7 @@ static void test_div_assign_by_zero_traps() {
 static void test_the_target_is_evaluated_once() {
     assert(test_run_int("func bump(n: ref int, p: ref int): ref int { *n += 1; return p; }\n"
                         "func f(): int { let seen: int = 0; let a: int = 4;\n"
-                        "                *bump(&seen, &a) += 3;\n"
+                        "                *bump(ref seen, ref a) += 3;\n"
                         "                return seen; }\n"
                         "let r: int = f();\n") == 1);
 }
@@ -112,7 +112,7 @@ static void test_the_target_is_evaluated_once() {
 // right number of calls.
 static void test_a_call_in_the_target_still_assigns() {
     assert(test_run_int("func pick(p: ref int): ref int { return p; }\n"
-                        "func f(): int { let a: int = 4; *pick(&a) += 3; return a; }\n"
+                        "func f(): int { let a: int = 4; *pick(ref a) += 3; return a; }\n"
                         "let r: int = f();\n") == 7);
 }
 
