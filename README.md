@@ -177,17 +177,18 @@ allocate and joining always does, and which happened should be readable without
 knowing the operand types. `..` binds looser than arithmetic and tighter than
 comparison, and it is the operator an array will join with too.
 
-Two literals joined are joined where they are written, into a literal interned
-like any other — so `"hello, " .. "world"` borrows the arena, costs no
-allocation, and emits no instruction. A join reaches run time only when one
-side is not known until then.
+A join always allocates, whatever its operands are: `"hello, " .. "world"` owns
+its characters exactly as a join with a runtime operand does. What a join may
+initialise is decided by how it was written rather than by what the compiler
+could evaluate early, so a literal is the only string that borrows the arena.
 
 `clone()` copies the characters a borrow names into a string that owns them,
 which is how anything arena-backed becomes something a `string` slot may hold:
 
 ```
-let borrowed: ref string = "a" .. "b";   // folded; borrows the arena
-let owned: string = ("a" .. "b").clone();
+let borrowed: ref string = "ab";         // borrows the arena
+let owned: string = "a" .. "b";          // allocates; the slot frees it
+let copied: string = "ab".clone();       // copies the arena's characters
 ```
 
 `new string` allocates a heap slot holding a header, which zeroed is the empty

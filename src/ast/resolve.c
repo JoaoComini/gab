@@ -214,48 +214,6 @@ static const char *bin_op_name(BinOp op) {
 //
 // Overflow wraps on the unsigned width, matching what the VM does with the same
 // operands: a fold must not give an answer the unfolded code would not.
-// Joins two string literals into one, interned in the same pool the lexer used.
-// Answers false when either side is not a literal, which is every join whose
-// characters are only known at run time.
-//
-// Separate from fold_bin_op because it needs the pool to intern into, and
-// because a joined literal is the one fold that changes the node's type: the
-// result borrows the arena where the operands did.
-static bool fold_string_concat(ResolverState *state, ASTExpr *expr) {
-    ASTExpr *left = expr->bin_op.left;
-    ASTExpr *right = expr->bin_op.right;
-
-    if (left->kind != EXPR_LITERAL || right->kind != EXPR_LITERAL) {
-        return false;
-    }
-
-    size_t length = left->lit.as_string->length + right->lit.as_string->length;
-    char *joined = malloc(length + 1);
-
-    if (!joined) {
-        return false;
-    }
-
-    memcpy(joined, left->lit.as_string->data, left->lit.as_string->length);
-    memcpy(joined + left->lit.as_string->length, right->lit.as_string->data, right->lit.as_string->length);
-    joined[length] = '\0';
-
-    // Interned by length rather than as a C string: a '\0' is an ordinary
-    // character here, and stopping at the first one would truncate the join.
-    String *result =
-        string_from_ref(state->current_scope->strings, (StringRef){.data = joined, .length = length});
-
-    free(joined);
-
-    ast_expr_free(left);
-    ast_expr_free(right);
-
-    expr->kind = EXPR_LITERAL;
-    expr->lit = (Literal){.kind = TYPE_STRING, .as_string = result};
-
-    return true;
-}
-
 static void fold_bin_op(ASTExpr *expr) {
     ASTExpr *left = expr->bin_op.left;
     ASTExpr *right = expr->bin_op.right;
@@ -977,16 +935,10 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         }
 
         if (both_strings && expr->bin_op.op == BIN_OP_CONCAT) {
-            // Two literals are joined where they are written, into a literal
-            // interned like any other. It borrows the arena, so the join costs
-            // no allocation and no instruction.
-            if (fold_string_concat(state, expr)) {
-                expr->type = state->current_scope->type_registry->builtins.ref_string_type;
-                break;
-            }
-
-            // Otherwise the characters are built at run time, so the result
-            // owns them: the slot it lands in is the one that frees them.
+            // '..' allocates the characters it yields, so the result owns
+            // them however its operands were written. Two literals are not
+            // joined here: the result would still have to be copied into a
+            // slot that owns, which is what OP_CONCAT already does.
             expr->type = state->current_scope->type_registry->builtins.string_type;
             break;
         }

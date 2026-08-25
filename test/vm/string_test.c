@@ -290,32 +290,32 @@ static void test_an_owning_string_slot_refuses_a_borrow() {
         !test_compiles("func f(a: ref string): int { let s: box string = new string; *s = a; return 0; }\n"));
 }
 
-// Joining two literals is answered where they are written: the characters are
-// interned like any other literal, so the result borrows the arena and no
-// instruction runs for it.
-static void test_two_literals_join_at_compile_time() {
-    assert(test_compiles("func f(): int { let s: ref string = \"a\" .. \"b\"; return 0; }\n"));
+// '..' yields a string that owns its characters however its operands were
+// written. Two literals are joined at run time like any other pair, so what a
+// join may initialise is decided by how it was written rather than by what the
+// compiler could evaluate early.
+static void test_a_join_owns_even_between_literals() {
+    assert(test_compiles("func f(): int { let s: string = \"a\" .. \"b\"; return 0; }\n"));
 
-    assert(test_run_bool("func f(): bool { let s: ref string = \"ab\" .. \"cd\"; return s == \"abcd\"; }\n"
+    assert(!test_compiles("func f(): int { let s: ref string = \"a\" .. \"b\"; return 0; }\n"));
+
+    assert(test_run_bool("func f(): bool { let s: string = \"ab\" .. \"cd\"; return s == \"abcd\"; }\n"
                          "let r: bool = f();") == true);
 
-    // A chain folds whole: the first join yields a literal, which the second
-    // then has two literals to work with.
-    assert(
-        test_run_bool("func f(): bool { let s: ref string = \"a\" .. \"b\" .. \"c\"; return s == \"abc\"; }\n"
-                      "let r: bool = f();") == true);
+    assert(test_run_bool("func f(): bool { let s: string = \"a\" .. \"b\" .. \"c\"; return s == \"abc\"; }\n"
+                         "let r: bool = f();") == true);
 
-    // A '\0' is an ordinary character, so a join is interned by its length
-    // rather than stopping where C would.
-    assert(test_run_int("func f(): int { let s: ref string = \"a\\0b\" .. \"c\"; return s.len(); }\n"
+    // A '\0' is an ordinary character, so a join copies by length rather than
+    // stopping where C would.
+    assert(test_run_int("func f(): int { let s: string = \"a\\0b\" .. \"c\"; return s.len(); }\n"
                         "let r: int = f();") == 4);
 
-    TestProgram program = test_compile("func f(): int { let s: ref string = \"a\" .. \"b\"; return 0; }\n");
+    TestProgram program = test_compile("func f(): int { let s: string = \"a\" .. \"b\"; return 0; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
-    assert(test_count_opcode(chunk, OP_CONCAT) == 0);
-    assert(test_count_opcode(chunk, OP_RELEASE) == 0);
+    assert(test_count_opcode(chunk, OP_CONCAT) == 1);
+    assert(test_count_opcode(chunk, OP_RELEASE) == 1);
 
     test_program_free(&program);
 }
@@ -323,9 +323,9 @@ static void test_two_literals_join_at_compile_time() {
 // Refusing a borrow where a string owns names the two ways to say what was
 // meant, since neither is guessable from the mismatch alone.
 static void test_refusing_a_borrow_names_the_remedy() {
-    assert(!test_compiles("func f(): int { let a: string = \"a\" .. \"b\"; return 0; }\n"));
+    assert(!test_compiles("func f(): int { let a: string = \"hi\"; return 0; }\n"));
 
-    assert(test_compiles("func f(): int { let a: ref string = \"a\" .. \"b\"; return 0; }\n"));
+    assert(test_compiles("func f(): int { let a: ref string = \"hi\"; return 0; }\n"));
 }
 
 // A literal borrows the characters its unit's arena holds, so it types as
@@ -369,7 +369,7 @@ int main(void) {
     test_a_boxed_string_holds_what_is_stored_through_it();
     test_a_heap_struct_frees_its_string_field();
     test_an_owning_string_slot_refuses_a_borrow();
-    test_two_literals_join_at_compile_time();
+    test_a_join_owns_even_between_literals();
     test_refusing_a_borrow_names_the_remedy();
     test_a_literal_borrows();
     test_an_owning_string_refuses_a_borrow();

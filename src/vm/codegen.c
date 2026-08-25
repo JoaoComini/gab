@@ -1571,7 +1571,24 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
         if (expr_yields_owned(arg) && !param_owns(node->symbol, i)) {
             assert(owned_arg_count < VM_MAX_FRAME_SLOTS && "more owned arguments than a frame has slots");
 
-            owned_args[owned_arg_count++] = dest + offset;
+            // The callee's frame is based at dest, so its return writes over
+            // the low end of the argument block. An argument the return
+            // reaches has to survive somewhere else to be released after the
+            // call; one it does not is released where it was passed.
+            unsigned int owner = dest + offset;
+
+            if (offset < return_slots) {
+                owner = codegen_alloc_slots(state, slots, 1, arg->span);
+
+                codegen_copy_slots(state, owner, arg_reg, slots);
+            }
+
+            owned_args[owned_arg_count++] = owner;
+
+            // That slot is the only owner now: an expression that
+            // registered its result as a statement temporary -- a join does --
+            // would otherwise be freed both here and where the statement ends.
+            codegen_drop_temporary(state, arg_reg);
         }
 
         offset += slots;
