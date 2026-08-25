@@ -85,6 +85,19 @@ static int pointee_depth(FlowPass *pass, const ASTExpr *expr) {
     }
     case EXPR_FIELD:
         return pointee_depth(pass, expr->field.target);
+    case EXPR_DEREF:
+        // Reading through a borrow reaches no further than the borrow does: what
+        // '*s' names lives as long as whatever 's' was made from, so the hops a
+        // lend inserts carry that depth rather than resetting it to 0.
+        //
+        // An owning pointer is the exception -- what it names is a heap object,
+        // which outlives every frame however the pointer was reached.
+        if (expr->unary.target->type && type_is_pointer(expr->unary.target->type) &&
+            !expr->unary.target->type->is_ref) {
+            return 0;
+        }
+
+        return pointee_depth(pass, expr->unary.target);
     default:
         return 0;
     }

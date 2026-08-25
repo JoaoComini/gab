@@ -8,6 +8,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 typedef enum {
     TYPE_INT,
@@ -102,19 +103,23 @@ bool type_add_method(Arena *arena, Type *type, String *name, Symbol *method);
 // 'Player' share one method set.
 Symbol *type_find_method(const Type *type, const String *name);
 
+// The most pointer levels a type spec may carry, bounded by the bits in
+// 'ref_levels' -- every level records its own kind, so the mask is the limit.
+#define TYPE_SPEC_MAX_DEPTH 32
+
 typedef struct {
     StringRef name;
 
-    // 0 for T, 1 for *T, 2 for **T.
+    // 0 for T, 1 for 'box T', 2 for 'box box T'.
     unsigned int pointer_depth;
 
-    // 'ref T': the pointer borrows rather than owns. Always with
-    // pointer_depth == 1, since 'ref' stands in place of the '*' rather than
-    // qualifying it.
-    bool is_ref;
+    // Which levels borrow rather than own, bit 0 being the level nearest the
+    // name: 'ref box T' is depth 2 with bit 1 set. A flag per level rather than
+    // one for the spec, since the two spellings nest in any order.
+    uint32_t ref_levels;
 } TypeSpec;
 
-TypeSpec *type_spec_create(StringRef name, unsigned int pointer_depth, bool is_ref);
+TypeSpec *type_spec_create(StringRef name, unsigned int pointer_depth, uint32_t ref_levels);
 void type_spec_destroy(TypeSpec *spec);
 
 #endif

@@ -448,13 +448,13 @@ static void test_module_scope_does_not_change_pointer_lifetimes() {
 
     const char *takes_address = "func f(): int {\n"
                                 "  let x: int = 1;\n"
-                                "  let p: ref int = ref x;\n"
+                                "  let p: ref int = x;\n"
                                 "  return *p;\n"
                                 "}\n";
 
     const char *escapes = "func g(): int {\n"
                           "  let outer: box int;\n"
-                          "  { let inner: int = 1; outer = ref inner; }\n"
+                          "  { let inner: int = 1; outer = inner; }\n"
                           "  return 0;\n"
                           "}\n";
 

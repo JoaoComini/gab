@@ -134,7 +134,7 @@ static String *resolver_spec_member(ResolverState *state, StringRef name) {
 static bool is_error_type(Type *type) { return !type || type->kind == TYPE_ERROR; }
 
 // The printable form of a type. A pointer's name is derived from its pointee
-// rather than stored, so '**Player' formats without interning two
+// rather than stored, so 'box box Player' formats without interning two
 // intermediate names. Built in the compile arena: only diagnostics ask, and
 // they are already on the failing path.
 static const char *type_name(ResolverState *state, Type *type) {
@@ -196,7 +196,7 @@ static const char *bin_op_name(BinOp op) {
     return "?";
 }
 
-// The variable an address is ultimately taken from, so that 'ref v.x' pins v.
+// The variable an address is ultimately taken from, so that borrowing 'v.x' pins v.
 static Symbol *addressed_symbol(ASTExpr *expr) {
     switch (expr->kind) {
     case EXPR_VARIABLE:
@@ -226,13 +226,13 @@ static bool is_addressable(const ASTExpr *expr) {
     }
 }
 
-// The type a receiver names, looking through one level of pointer. 'box Player' and
+// The type a receiver names, looking through every level of pointer. 'box Player' and
 // 'Player' share a method set, so both land on the same Type.
 //
 // A builtin qualifies: methods hang on the Type, and nothing about the map
 // requires the type to be one a unit declared.
 static Type *receiver_base_type(Type *type) {
-    if (type_is_pointer(type)) {
+    while (type_is_pointer(type)) {
         type = type->pointee;
     }
 
@@ -243,6 +243,7 @@ static Type *receiver_base_type(Type *type) {
 // by both call forms, which differ only in where their parameter list starts:
 // a method's skips the receiver.
 static bool type_accepts(Type *to, Type *from);
+static bool borrow_into(ResolverState *state, ASTExpr **slot, Type *destination, Span span);
 static void check_implicit_copy(ResolverState *state, ASTExpr *value, Type *destination, Span span);
 
 static void check_call_args(ResolverState *state, ASTExprList *args, Type **params) {
@@ -255,17 +256,21 @@ static void check_call_args(ResolverState *state, ASTExprList *args, Type **para
         }
 
         // type_accepts rather than identity, so an owned 'box T' fills a 'ref T'
-        // parameter: lending is what a borrow parameter asks for, and the
-        // caller goes on owning what it lent.
+        // parameter and so does a 'T': lending is what a borrow parameter asks
+        // for, and the caller goes on owning what it lent.
         if (!type_accepts(param_type, arg->type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, arg->span, "argument %zu is %s, but %s was declared",
                        i + 1, type_name(state, arg->type), type_name(state, param_type));
             continue;
         }
 
+        if (!borrow_into(state, &args->data[i], param_type, arg->span)) {
+            continue;
+        }
+
         // An owning parameter takes ownership, so the argument is bound into it
         // exactly as it would be into a 'let': a non-copyable one needs a move.
-        check_implicit_copy(state, arg, param_type, arg->span);
+        check_implicit_copy(state, args->data[i], param_type, arg->span);
     }
 }
 
@@ -331,10 +336,26 @@ static void lower_method_call(ASTExpr *expr, Symbol *method, ReceiverAdjustment 
         receiver = ast_addr_of_expr_create(span, receiver);
         receiver->type = method->func.params[0];
         break;
-    case RECEIVER_DEREF:
-        receiver = ast_deref_expr_create(span, receiver);
-        receiver->type = method->func.params[0];
+    case RECEIVER_DEREF: {
+        // One hop per level between the receiver and what parameter zero
+        // accepts. Usually one -- a 'T' method reached through a 'box T' -- but
+        // a 'ref box T' receiver is two away from the struct, and the last hop
+        // is the one whose type the parameter settles.
+        Type *declared = method->func.params[0];
+
+        // The stop condition is this level matching, never type_accepts: that
+        // one chains, so it is already true at the level furthest out and would
+        // emit no hop at all.
+        while (type_is_pointer(receiver->type) && receiver->type != declared &&
+               declared->pointee != receiver->type->pointee) {
+            Type *pointee = receiver->type->pointee;
+
+            receiver = ast_deref_expr_create(span, receiver);
+            receiver->type = pointee;
+        }
+
         break;
+    }
     case RECEIVER_AS_IS:
         break;
     }
@@ -388,6 +409,16 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
         return true;
     }
 
+    // A pointer receiver still a level or more away from what the method takes:
+    // a 'ref box T' calling a 'ref T' method reaches the 'box T' inside it,
+    // which then lends. Checked before the widening below, since that one only
+    // recognises a receiver already at the right level.
+    if (type_is_pointer(actual) && type_is_pointer(actual->pointee) &&
+        type_accepts(declared, actual->pointee)) {
+        *out = RECEIVER_DEREF;
+        return true;
+    }
+
     // An owned 'box T' calling a 'ref T' method, which is the only pointer-to-
     // pointer case left: a receiver is declared 'ref T' or it is not a pointer
     // at all, so 'declared' is never an owning pointer here.
@@ -401,7 +432,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
         return true;
     }
 
-    // A '**Player', or some other shape no coercion bridges.
+    // A 'box box Player', or some other shape no coercion bridges.
     diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot call '%s' on %s", name->data,
                type_name(state, actual));
     return false;
@@ -477,10 +508,10 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     expr->type = method->func.return_type;
 }
 
-// Whether a value of 'from' may be stored where 'to' is expected. Identity for
-// everything except the one conversion the language allows: an owned 'box T' may
-// be stored where a 'ref T' is expected, since giving something up to be named
-// costs nothing and is how a borrowing field is ever populated.
+// Whether a value of 'from' may be stored where 'to' is expected. Identity plus
+// the two ways a borrow is produced, since a borrow is never spelled: an owned
+// 'box T' may be stored where a 'ref T' is expected, and so may a 'T' itself,
+// whose address is taken to make one.
 //
 // The reverse is deliberately absent: promoting 'ref T' to 'box T' would hand out
 // ownership nobody granted, and the object already has an owner that will free
@@ -490,8 +521,89 @@ static bool type_accepts(Type *to, Type *from) {
         return true;
     }
 
-    return type_is_pointer(to) && type_is_pointer(from) && to->is_ref && !from->is_ref &&
-           to->pointee == from->pointee;
+    if (!type_is_pointer(to) || !to->is_ref) {
+        return false;
+    }
+
+    // Borrowing: the destination names what 'from' itself sits in. A 'box T'
+    // reaching a 'ref box T' takes this arm -- the address of the slot, not the
+    // pointer it holds.
+    if (to->pointee == from) {
+        return true;
+    }
+
+    // Lending what is already a pointer. Chained through every level, so a
+    // 'box box T' reaches a 'ref T' by way of the 'box T' it holds, and stops at
+    // the first level that matches -- which is what keeps the nearer destination
+    // winning when both are declarable.
+    //
+    // A borrow is walked like an owning level: lending confers no ownership, so
+    // reaching through one produces another borrow rather than giving anything
+    // away. What must hold is that the pointee outlives the borrow, which is a
+    // lifetime question and belongs to the flow pass rather than here.
+    //
+    // Disjoint from the arm above at every step, since a pointer equal to
+    // 'to->pointee' cannot also have 'to->pointee' as its own pointee.
+    while (type_is_pointer(from)) {
+        if (to->pointee == from->pointee) {
+            return true;
+        }
+
+        from = from->pointee;
+    }
+
+    return false;
+}
+
+// Whether 'to' accepts 'from' only by taking its address, which is the case
+// needing a node in the tree rather than a widening at the check.
+static bool accepts_by_borrowing(Type *to, Type *from) {
+    return to != from && type_is_pointer(to) && to->is_ref && to->pointee == from;
+}
+
+// Materialises the borrow a 'ref T' destination asks for. Borrowing is implicit,
+// so nothing in the source says to take an address -- but every later pass reads
+// the tree, so the address-of has to be in it. The same reasoning as the receiver
+// adjustment, and the same shape: a real node, typed as the destination.
+//
+// Returns false for a temporary, which has no address to take.
+static bool borrow_into(ResolverState *state, ASTExpr **slot, Type *destination, Span span) {
+    // Lending from further out than one level: 'box box T' filling a 'ref T'
+    // lends the 'box T' inside it, so the levels above that have to be followed
+    // here. type_accepts allows the pair; this is what makes the tree agree with
+    // it, and without the hops the callee would receive the outer pointer and
+    // read a pointer where the object should be.
+    while (type_is_pointer((*slot)->type) && destination->pointee != (*slot)->type->pointee &&
+           destination->pointee != (*slot)->type) {
+        Type *pointee = (*slot)->type->pointee;
+
+        ASTExpr *hop = ast_deref_expr_create(span, *slot);
+        hop->type = pointee;
+        *slot = hop;
+    }
+
+    if (!accepts_by_borrowing(destination, (*slot)->type)) {
+        return true;
+    }
+
+    if (!is_addressable(*slot)) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span,
+                   "cannot borrow a temporary; bind it to a variable first");
+        return false;
+    }
+
+    // The slot must survive the whole block now that its address is loose, so
+    // codegen may not reclaim it at the end of the statement.
+    Symbol *addressed = addressed_symbol(*slot);
+    if (addressed) {
+        addressed->pinned = true;
+    }
+
+    ASTExpr *borrow = ast_addr_of_expr_create(span, *slot);
+    borrow->type = destination;
+    *slot = borrow;
+
+    return true;
 }
 
 bool is_numeric_type(Type *t) { return t->kind == TYPE_INT || t->kind == TYPE_FLOAT; }
@@ -778,8 +890,10 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         }
 
         // 'p.health' where p is a 'box Player' reaches through the pointer, as in
-        // Go and C's '->'. One level only: a '**Player' has to be written out.
-        if (type_is_pointer(target_type)) {
+        // Go and C's '->'. Every level, since the search is what bounds it: a
+        // 'ref box Player' is two hops from the struct, and stopping short would
+        // only report a pointer as having no fields.
+        while (type_is_pointer(target_type)) {
             target_type = target_type->pointee;
         }
 
@@ -845,6 +959,11 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
             break;
         }
 
+        // No syntax makes one of these: an address-of is synthesized where a
+        // 'ref T' destination asks for a borrow, and both places that build one
+        // type it themselves rather than resolving it again. The checks below
+        // therefore guard a path nothing currently walks, and are kept because
+        // they state what the node requires rather than what reaches it.
         if (!is_addressable(expr->unary.target)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "cannot take the address of a temporary");
@@ -852,17 +971,12 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
             break;
         }
 
-        // 'ref o' where 'o' owns would be a borrow of an owning pointer, and
-        // 'ref box T' cannot be written: 'ref' does not combine with 'box'. Producing
-        // a value nothing can name is worse than refusing it here, where the
-        // mistake is.
-        //
-        // That type is what an out-parameter would need — a borrow of the
-        // caller's variable rather than of the object, so the callee could
-        // repoint it. Which is more than a spelling: assigning through one would
-        // free the caller's old object from inside the callee, an owning slot
-        // changing owner mid-call. Returning ownership says the same thing with
-        // the transfer visible at the call site.
+        // A borrow of an owning pointer is what an out-parameter would need — a
+        // borrow of the caller's variable rather than of the object, so the
+        // callee could repoint it. Which is more than a spelling: assigning
+        // through one would free the caller's old object from inside the callee,
+        // an owning slot changing owner mid-call. Returning ownership says the
+        // same thing with the transfer visible at the call site.
         if (type_is_pointer(target_type) && !target_type->is_ref) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "cannot take the address of an owning pointer; return ownership instead of "
@@ -878,9 +992,9 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
             addressed->pinned = true;
         }
 
-        // 'ref x' is a borrow, and 'ref T' is what a borrow is spelled. The slot it
-        // names is owned by whoever declared it — a stack local owns itself, and
-        // freeing through this address would free something 'new' never made.
+        // An address is a borrow: the slot it names is owned by whoever declared
+        // it — a stack local owns itself, and freeing through this address would
+        // free something 'new' never made.
         //
         // Typing it 'box T' would make one type mean two things: an address of
         // something, and ownership of a heap object. Nothing could then tell
@@ -969,11 +1083,22 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
             break;
         }
 
-        // Only a struct has a layout to allocate. 'new int' would be a boxed
-        // scalar, which is a different feature and not this one.
-        if (type->kind != TYPE_STRUCT) {
+        // A struct has a layout to allocate, and so does a pointer: 'new box T'
+        // is a heap slot holding an owning pointer, which is what makes a
+        // 'box box T' fillable rather than merely declarable. A scalar is
+        // neither -- 'new int' would be a boxed scalar, a different feature.
+        if (type->kind != TYPE_STRUCT && !type_is_pointer(type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                       "cannot allocate %s; 'new' takes a struct", type_name(state, type));
+                       "cannot allocate %s; 'new' takes a struct or a pointer", type_name(state, type));
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        // A borrow has no owner to name, so a heap slot holding one would
+        // outlive whatever it borrows with nothing tracking that.
+        if (type_is_pointer(type) && type->is_ref) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                       "cannot allocate %s; a heap slot cannot hold a borrow", type_name(state, type));
             expr->type = resolver_error_type(state);
             break;
         }
@@ -1063,11 +1188,12 @@ static Type *resolve_type_spec(ResolverState *state, TypeSpec *spec, Span span) 
     // Interned in the one shared registry whichever scope named the pointee,
     // so 'box Config' is one type however many modules mention it.
     //
-    // Every level is a borrow or none is, since the parser rejects the two
-    // spellings mixed: 'ref ref T' is a borrow of a borrow, and 'box box T' an owning
-    // pointer to an owning pointer.
+    // Built from the name outward, which is the order the mask records: bit i is
+    // the level wrapped on the i'th time round, so 'ref box T' owns first and
+    // borrows that.
     for (unsigned int i = 0; i < spec->pointer_depth; i++) {
-        type = type_registry_pointer_to_kind(state->current_scope->type_registry, type, spec->is_ref);
+        bool is_ref = (spec->ref_levels >> i) & 1;
+        type = type_registry_pointer_to_kind(state->current_scope->type_registry, type, is_ref);
     }
 
     return type;
@@ -1427,6 +1553,9 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
                                "cannot initialize a variable of type %s with a value of type %s",
                                type_name(state, decl_type), type_name(state, init_type));
                     decl_type = resolver_error_type(state);
+                } else if (!borrow_into(state, &stmt->var_decl.initializer, decl_type,
+                                        stmt->var_decl.initializer->span)) {
+                    decl_type = resolver_error_type(state);
                 }
             }
 
@@ -1485,6 +1614,11 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                        "cannot assign a value of type %s to a target of type %s",
                        type_name(state, value_type), type_name(state, target_type));
+            break;
+        }
+
+        if (!is_error_type(target_type) && !is_error_type(value_type) &&
+            !borrow_into(state, &stmt->assign.value, target_type, stmt->span)) {
             break;
         }
 
@@ -1635,6 +1769,12 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span, "returns %s, but %s was declared",
                        type_name(state, actual), type_name(state, expected));
             break;
+        }
+
+        // The borrow has to reach the tree here too, or the lifetime pass sees a
+        // value being returned and never learns an address escaped the frame.
+        if (!poisoned && accepted && actual) {
+            borrow_into(state, &stmt->ret.result, expected, stmt->span);
         }
 
         break;

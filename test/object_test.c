@@ -72,7 +72,7 @@ static void test_alloc_and_free_are_one_allocation() {
     test_context_free(&ctx);
 }
 
-// The payload follows the header immediately, which is what makes a '*T' the
+// The payload follows the header immediately, which is what makes a 'box T' the
 // address of the payload and byte-identical to a stack pointer.
 static void test_the_payload_follows_the_header() {
     TestContext ctx;
@@ -198,7 +198,7 @@ static void test_freeing_does_not_follow_a_ref_field() {
     test_context_free(&ctx);
 }
 
-// A NULL '*T' is what an unassigned pointer field holds, so every free path
+// A NULL 'box T' is what an unassigned pointer field holds, so every free path
 // would otherwise need the same guard.
 static void test_freeing_null_is_a_no_op() {
     AllocCounts counts = {0};

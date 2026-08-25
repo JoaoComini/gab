@@ -7,6 +7,7 @@
 
 #include <assert.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -617,26 +618,28 @@ static TypeSpec *parse_type_spec(Parser *parser) {
     // 'ref T' is a borrow: a pointer that does not own what it names. It stands
     // in place of the 'box', not before it — 'ref T' and 'box T' are both one
     // pointer deep, and differ only in who frees the pointee.
-    // 'ref ref T' is a borrow of a borrow, which is what 'ref' applied twice
-    // produces. Each one is a level of pointer, so they count the same way
-    // 'box' does.
-    bool is_ref = parser->current.type == TOKEN_REF;
+    //
+    // The two nest in any order, so each level records its own kind rather than
+    // the spec carrying one flag for all of them. Read left to right the levels
+    // arrive outermost first, and the mask counts from the name outward, so
+    // each bit is set at its distance from the far end once the depth is known.
+    bool is_ref[TYPE_SPEC_MAX_DEPTH];
 
-    while (parser->current.type == TOKEN_REF) {
-        pointer_depth++;
-        parser_next_token(parser); // eat 'ref'
+    while (parser->current.type == TOKEN_REF || parser->current.type == TOKEN_BOX) {
+        if (pointer_depth == TYPE_SPEC_MAX_DEPTH) {
+            parser_error(parser, "too many levels of pointer");
+            return NULL;
+        }
+
+        is_ref[pointer_depth++] = parser->current.type == TOKEN_REF;
+        parser_next_token(parser); // eat 'ref' or 'box'
     }
 
-    // Every level is a borrow or none is: mixing them would need a flag per
-    // level, and nothing yet wants 'box ref T' — an owning pointer to a borrow.
-    if (is_ref && parser->current.type == TOKEN_BOX) {
-        parser_error(parser, "'ref' does not combine with 'box', as 'ref T' or 'ref ref T'");
-        return NULL;
-    }
-
-    while (parser->current.type == TOKEN_BOX) {
-        pointer_depth++;
-        parser_next_token(parser); // eat 'box'
+    uint32_t ref_levels = 0;
+    for (unsigned int i = 0; i < pointer_depth; i++) {
+        if (is_ref[i]) {
+            ref_levels |= (uint32_t)1 << (pointer_depth - 1 - i);
+        }
     }
 
     if (!parser_expect(parser, TOKEN_IDENT, "expected a type")) {
@@ -669,7 +672,7 @@ static TypeSpec *parse_type_spec(Parser *parser) {
         }
     }
 
-    return type_spec_create(name, pointer_depth, is_ref);
+    return type_spec_create(name, pointer_depth, ref_levels);
 }
 
 static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
@@ -1097,11 +1100,11 @@ static ASTExpr *parse_unary(Parser *parser) {
     // multiplication, '-' with subtraction -- and only its position tells the
     // two apart. Recursing into parse_unary is what makes them stack, so
     // '--x' and '-*p' both parse.
-    if (parser->current.type == TOKEN_REF || parser->current.type == TOKEN_MUL ||
-        parser->current.type == TOKEN_MINUS || parser->current.type == TOKEN_NOT) {
+    if (parser->current.type == TOKEN_MUL || parser->current.type == TOKEN_MINUS ||
+        parser->current.type == TOKEN_NOT) {
         TokenType prefix = parser->current.type;
 
-        parser_next_token(parser); // eat 'ref', '*', '-' or '!'
+        parser_next_token(parser); // eat '*', '-' or '!'
 
         ASTExpr *target = parse_unary(parser);
         if (!target) {
@@ -1109,8 +1112,6 @@ static ASTExpr *parse_unary(Parser *parser) {
         }
 
         switch (prefix) {
-        case TOKEN_REF:
-            return ast_addr_of_expr_create(span, target);
         case TOKEN_MUL:
             return ast_deref_expr_create(span, target);
         case TOKEN_NOT:

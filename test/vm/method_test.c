@@ -278,7 +278,7 @@ static void test_call_through_a_pointer_receiver() {
                         "func main(): int {\n"
                         "    let p: Player;\n"
                         "    p.health = 9;\n"
-                        "    let q: ref Player = ref p;\n"
+                        "    let q: ref Player = p;\n"
                         "    return q.hp();\n"
                         "}\n"
                         "let r: int = main();") == 9);
@@ -291,7 +291,7 @@ static void test_value_method_through_a_pointer() {
                         "func main(): int {\n"
                         "    let p: Player;\n"
                         "    p.health = 13;\n"
-                        "    let q: ref Player = ref p;\n"
+                        "    let q: ref Player = p;\n"
                         "    return q.hp();\n"
                         "}\n"
                         "let r: int = main();") == 13);
@@ -377,8 +377,8 @@ static void test_a_matching_receiver_needs_no_adjustment() {
                         "let r: int = main();") == 7);
 }
 
-// A '*T' method called on a 'T' takes the receiver's address, which the rewrite
-// spells as a real '&recv' node.
+// A 'ref T' method called on a 'T' takes the receiver's address, which the rewrite
+// spells as a real address-of node.
 static void test_a_value_receiver_has_its_address_taken() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func (b: ref Box) bump(): int { b.n = b.n + 1; return b.n; }\n"
@@ -391,7 +391,7 @@ static void test_a_value_receiver_has_its_address_taken() {
                         "let r: int = main();") == 55);
 }
 
-// A 'T' method called through a '*T' copies the pointee in, which the rewrite
+// A 'T' method called through a 'box T' copies the pointee in, which the rewrite
 // spells as a '*recv' node.
 static void test_a_pointer_receiver_is_dereferenced() {
     assert(test_run_int("struct Box { n: int }\n"
@@ -433,7 +433,7 @@ static void test_a_method_through_a_ref_mutates_the_owned_object() {
                         "let r: int = main();") == 5);
 }
 
-// A method never owns its receiver, so declaring one '*T' spells an ownership
+// A method never owns its receiver, so declaring one 'box T' spells an ownership
 // it cannot have -- and would let one method be written two ways that behave
 // identically. 'ref T' is the one form, and 'T' by value the other.
 static void test_an_owning_receiver_is_refused() {

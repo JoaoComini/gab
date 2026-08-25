@@ -1,5 +1,5 @@
 // A parameter may own what it is given, and only when the call site said so.
-// Bare '*T' owns, 'ref T' borrows -- the same spelling locals and fields use --
+// Bare 'box T' owns, 'ref T' borrows -- the same spelling locals and fields use --
 // so a call site can tell from the declaration alone whether a move is needed.
 
 #include "support/run.h"
@@ -7,12 +7,12 @@
 #include <assert.h>
 #include <stdio.h>
 
-// An owning parameter is declared '*T', and the call site moves into it.
+// An owning parameter is declared 'box T', and the call site moves into it.
 static void test_an_owning_parameter_takes_a_moved_argument() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func consume(b: *Box): int { return b.n; }\n"
+                        "func consume(b: box Box): int { return b.n; }\n"
                         "func main(): int {\n"
-                        "    let a: *Box = new Box;\n"
+                        "    let a: box Box = new Box;\n"
                         "    a.n = 6;\n"
                         "    return consume(move a);\n"
                         "}\n"
@@ -24,9 +24,9 @@ static void test_an_owning_parameter_takes_a_moved_argument() {
 // teaches the same remedies a binding does.
 static void test_an_owning_parameter_refuses_an_unmoved_argument() {
     const char *source = "struct Box { n: int }\n"
-                         "func consume(b: *Box): int { return b.n; }\n"
+                         "func consume(b: box Box): int { return b.n; }\n"
                          "func main(): int {\n"
-                         "    let a: *Box = new Box;\n"
+                         "    let a: box Box = new Box;\n"
                          "    return consume(a);\n"
                          "}\n";
 
@@ -37,9 +37,9 @@ static void test_an_owning_parameter_refuses_an_unmoved_argument() {
 // The argument is dead after the call, exactly as it would be after any move.
 static void test_a_moved_argument_is_dead_after_the_call() {
     assert(!test_compiles("struct Box { n: int }\n"
-                          "func consume(b: *Box): int { return b.n; }\n"
+                          "func consume(b: box Box): int { return b.n; }\n"
                           "func main(): int {\n"
-                          "    let a: *Box = new Box;\n"
+                          "    let a: box Box = new Box;\n"
                           "    consume(move a);\n"
                           "    return a.n;\n"
                           "}\n"));
@@ -51,17 +51,30 @@ static void test_a_ref_parameter_still_borrows() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func peek(b: ref Box): int { return b.n; }\n"
                         "func main(): int {\n"
-                        "    let a: *Box = new Box;\n"
+                        "    let a: box Box = new Box;\n"
                         "    a.n = 4;\n"
                         "    return peek(a) + a.n;\n"
                         "}\n"
                         "let r: int = main();") == 8);
 }
 
+// A borrow is taken from a value by naming it: a 'ref T' parameter asks for a
+// pointer, and passing a 'T' takes its address without spelling one.
+static void test_a_value_reaches_a_ref_parameter_by_address() {
+    assert(test_run_int("struct Box { n: int }\n"
+                        "func peek(b: ref Box): int { return b.n; }\n"
+                        "func main(): int {\n"
+                        "    let a: Box;\n"
+                        "    a.n = 6;\n"
+                        "    return peek(a);\n"
+                        "}\n"
+                        "let r: int = main();") == 6);
+}
+
 // The callee frees what it was given, so an owned argument dies with the call.
 static void test_an_owning_parameter_frees_what_it_was_given() {
     TestProgram program = test_compile("struct Box { n: int }\n"
-                                       "func consume(b: *Box): int { return b.n; }\n");
+                                       "func consume(b: box Box): int { return b.n; }\n");
 
     assert(test_count_opcode(test_func_chunk(&program, 0), OP_RELEASE) == 1);
 
@@ -82,9 +95,9 @@ static void test_a_ref_parameter_frees_nothing() {
 // too: exactly one release covers it, and it is the callee's.
 static void test_only_the_callee_frees_an_owned_argument() {
     TestProgram program = test_compile("struct Box { n: int }\n"
-                                       "func consume(b: *Box): int { return b.n; }\n"
+                                       "func consume(b: box Box): int { return b.n; }\n"
                                        "func main(): int {\n"
-                                       "    let a: *Box = new Box;\n"
+                                       "    let a: box Box = new Box;\n"
                                        "    return consume(move a);\n"
                                        "}\n");
 
@@ -97,11 +110,11 @@ static void test_only_the_callee_frees_an_owned_argument() {
 // returning it transfers rather than duplicating.
 static void test_an_owned_parameter_may_be_returned() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func through(b: *Box): *Box { return b; }\n"
+                        "func through(b: box Box): box Box { return b; }\n"
                         "func main(): int {\n"
-                        "    let a: *Box = new Box;\n"
+                        "    let a: box Box = new Box;\n"
                         "    a.n = 9;\n"
-                        "    let back: *Box = through(move a);\n"
+                        "    let back: box Box = through(move a);\n"
                         "    return back.n;\n"
                         "}\n"
                         "let r: int = main();") == 9);
@@ -110,23 +123,23 @@ static void test_an_owned_parameter_may_be_returned() {
 // A borrow still cannot become an owned return: nobody gave that ownership up.
 static void test_a_borrow_cannot_be_laundered_into_an_owned_return() {
     assert(!test_compiles("struct Box { n: int }\n"
-                          "func launder(b: ref Box): *Box { return b; }\n"));
+                          "func launder(b: ref Box): box Box { return b; }\n"));
 }
 
 // A method borrows its receiver. Ownership of the receiver is not something a
-// call site can spell, so '*T' there stays refused.
+// call site can spell, so 'box T' there stays refused.
 static void test_a_method_receiver_still_cannot_own() {
     assert(!test_compiles("struct Box { n: int }\n"
-                          "func (b: *Box) get(): int { return b.n; }\n"));
+                          "func (b: box Box) get(): int { return b.n; }\n"));
 }
 
 // A method's own parameters are parameters like any other, so one may own.
 static void test_a_method_parameter_may_own() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func (b: ref Box) adopt(other: *Box): int { return other.n; }\n"
+                        "func (b: ref Box) adopt(other: box Box): int { return other.n; }\n"
                         "func main(): int {\n"
-                        "    let host: *Box = new Box;\n"
-                        "    let gift: *Box = new Box;\n"
+                        "    let host: box Box = new Box;\n"
+                        "    let gift: box Box = new Box;\n"
                         "    gift.n = 3;\n"
                         "    return host.adopt(move gift);\n"
                         "}\n"
@@ -138,6 +151,7 @@ int main(void) {
     test_an_owning_parameter_refuses_an_unmoved_argument();
     test_a_moved_argument_is_dead_after_the_call();
     test_a_ref_parameter_still_borrows();
+    test_a_value_reaches_a_ref_parameter_by_address();
     test_an_owning_parameter_frees_what_it_was_given();
     test_a_ref_parameter_frees_nothing();
     test_only_the_callee_frees_an_owned_argument();

@@ -321,7 +321,7 @@ static void test_a_scalar_copy_stays_a_single_move() {
 static void test_a_pointer_copy_batches_when_it_is_wide() {
     TestProgram program = test_compile("func f(): int {\n"
                                        "    let x: int = 1;\n"
-                                       "    let p: ref int = ref x;\n"
+                                       "    let p: ref int = x;\n"
                                        "    return *p;\n"
                                        "}\n");
 
@@ -371,7 +371,7 @@ static void test_a_struct_read_through_a_pointer_is_one_instruction() {
     TestProgram program = test_compile("struct Vec { x: int, y: int, z: int }\n"
                                        "func f() {\n"
                                        "    let a: Vec;\n"
-                                       "    let p: ref Vec = ref a;\n"
+                                       "    let p: ref Vec = a;\n"
                                        "    let b: Vec = *p;\n"
                                        "}\n");
 
@@ -391,7 +391,7 @@ static void test_a_struct_write_through_a_pointer_is_one_instruction() {
                                        "func f() {\n"
                                        "    let a: Vec;\n"
                                        "    let b: Vec;\n"
-                                       "    let p: ref Vec = ref a;\n"
+                                       "    let p: ref Vec = a;\n"
                                        "    *p = b;\n"
                                        "}\n");
 

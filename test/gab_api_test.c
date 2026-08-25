@@ -615,7 +615,7 @@ static void test_two_modules_can_share_a_type_name(void) {
 }
 
 // Namespacing types per registry must not give each module its own 'int' or
-// its own '*Player': the type system compares by pointer identity, so builtins
+// its own 'box Player': the type system compares by pointer identity, so builtins
 // and interned pointers stay the root's however many modules exist.
 static void test_builtins_are_shared_across_modules(void) {
     GabVM *vm = gab_vm_new();
@@ -643,7 +643,7 @@ static void test_builtins_are_shared_across_modules(void) {
     assert(player_int);
     assert(player_int == enemy_int);
 
-    // Each module still resolved '*Config' against its own Config.
+    // Each module still resolved 'box Config' against its own Config.
     GabFunc *player_size = gab_lookup(vm, "Player", "player_size", &err);
     GabFunc *enemy_size = gab_lookup(vm, "Enemy", "enemy_size", &err);
 
@@ -1150,7 +1150,7 @@ static void test_a_host_pointer_reaches_a_script() {
     gab_vm_free(vm);
 }
 
-// The pointee is checked rather than trusted: a '*Enemy' where '*Player' was
+// The pointee is checked rather than trusted: a 'box Enemy' where 'box Player' was
 // declared is the one mistake the shared-layout story cannot survive.
 static void test_a_pointer_argument_checks_its_pointee() {
     GabVM *vm = gab_vm_new();

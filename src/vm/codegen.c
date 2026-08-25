@@ -1755,6 +1755,24 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
     if (node->kind == EXPR_DEREF) {
         unsigned int base = codegen_expr(state, node->unary.target);
 
+        // A pointer to a pointer ends the chain the same way a pointer-typed
+        // field does: what '*s' names is itself an address, so reaching past it
+        // means loading it and following that. Summing an offset onto the outer
+        // pointer would address the inner one's own slot as if the struct were
+        // inline in it.
+        const Type *reached = node->type;
+
+        while (auto_deref && type_is_pointer(reached)) {
+            base = codegen_load_indirect_struct(state, node, reached,
+                                                (FieldTarget){
+                                                    .base = base,
+                                                    .offset = 0,
+                                                    .indirect = true,
+                                                },
+                                                type_slot_count(reached));
+            reached = reached->pointee;
+        }
+
         return (FieldTarget){
             .base = base,
             .offset = 0,
@@ -1774,10 +1792,23 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
 
     bool indirect = auto_deref && type_is_pointer(node->type);
 
-    // Only a pointer actually reached through needs checking. 'ref w' names the
-    // slot rather than following it, and is fine whether or not the object is
-    // still there.
+    // Each level above the last is loaded and followed: the innermost pointer is
+    // what the field is addressed from, and the ones outside it only say where
+    // that pointer lives. 'ref box Player' is the two-level case -- the borrow
+    // names the slot, the slot names the object.
     if (indirect) {
+        const Type *reached = node->type;
+
+        while (type_is_pointer(reached->pointee)) {
+            base = codegen_load_indirect_struct(state, node, reached->pointee,
+                                                (FieldTarget){
+                                                    .base = base,
+                                                    .offset = 0,
+                                                    .indirect = true,
+                                                },
+                                                type_slot_count(reached->pointee));
+            reached = reached->pointee;
+        }
     }
 
     return (FieldTarget){

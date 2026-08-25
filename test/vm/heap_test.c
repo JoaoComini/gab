@@ -8,7 +8,7 @@
 
 #include <stdio.h>
 
-// 'new T' yields a '*T' into the heap: writing through it and reading back is
+// 'new T' yields a 'box T' into the heap: writing through it and reading back is
 // what proves the allocation is real and the pointer addresses the payload.
 static void test_new_allocates_a_usable_object() {
     assert(test_run_int("struct Player { health: int }\n"
@@ -72,7 +72,7 @@ static void test_method_on_a_heap_object() {
                      "let r: int = main();") == 42);
 }
 
-// A heap object holding a pointer to another: the field is a '*T' like any
+// A heap object holding a pointer to another: the field is a 'box T' like any
 // other, which is what release will later walk.
 static void test_an_object_can_hold_another() {
     assert(test_run_int("struct Inner { n: int }\n"
