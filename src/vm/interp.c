@@ -267,6 +267,25 @@ void vm_conditional(VM *vm, Instruction instruction, bool (*func)(VM *, size_t, 
     vm_write_i32(vm, rd, func(vm, r1, r2));
 }
 
+// The float comparisons whose right operand is a pool constant. As
+// vm_arithmeticfk is to vm_arithmeticf: the operands are values here rather than
+// register indices, since one of them is already in hand.
+static bool vm_less_than_floats(float a, float b) { return a < b; }
+static bool vm_greater_than_floats(float a, float b) { return a > b; }
+static bool vm_less_equal_floats(float a, float b) { return a <= b; }
+static bool vm_greater_equal_floats(float a, float b) { return a >= b; }
+static bool vm_equal_floats(float a, float b) { return a == b; }
+static bool vm_not_equal_floats(float a, float b) { return a != b; }
+
+static void vm_conditionalfk(VM *vm, Instruction instruction, const Chunk *chunk,
+                             bool (*func)(float, float)) {
+    size_t rd = VM_DECODE_R_RD(instruction);
+    size_t r1 = VM_DECODE_R_R1(instruction);
+    Constant constant = constpool_get(chunk->const_pool, VM_DECODE_R_R2(instruction));
+
+    vm_write_i32(vm, rd, func(vm_read_f32(vm, r1), constant.as_float));
+}
+
 static void vm_load_field(VM *vm, Instruction instruction, size_t width) {
     size_t rd = VM_DECODE_R_RD(instruction);
     size_t base = VM_DECODE_R_R1(instruction);
@@ -274,9 +293,14 @@ static void vm_load_field(VM *vm, Instruction instruction, size_t width) {
 
     const uint8_t *source = vm->registers + base * VM_SLOT_SIZE + offset;
 
-    // The destination is a whole slot, so a narrow field is widened rather
-    // than left beside stale bytes.
-    vm_write_i32(vm, rd, 0);
+    // The destination is a whole slot, so a narrow field is widened rather than
+    // left beside stale bytes. A 4-byte one fills the low word exactly, and the
+    // zeroing would only be overwritten -- 'width' is a literal at every call
+    // site, so this costs nothing to decide.
+    if (width < 4) {
+        vm_write_i32(vm, rd, 0);
+    }
+
     memcpy(vm_reg_at(vm, rd), source, width);
 }
 
@@ -301,7 +325,14 @@ static void vm_load_field_ptr(VM *vm, Instruction instruction, size_t width) {
 
     const uint8_t *source = vm_read_ptr(vm, base) + offset;
 
-    vm_write_i32(vm, rd, 0);
+    // A 4-byte field fills the destination's low word exactly, so the zeroing a
+    // narrower one needs would be written and then overwritten in full. Four is
+    // the common width -- an int, a float, every pointer field's payload -- so
+    // the branch buys a store on most executions.
+    if (width < 4) {
+        vm_write_i32(vm, rd, 0);
+    }
+
     memcpy(vm_reg_at(vm, rd), source, width);
 }
 
@@ -380,6 +411,7 @@ static bool vm_check_divisor(VM *vm, Instruction instruction, const char *zero_m
 // function it is invoking, so there is exactly one interpreter either way.
 static void vm_run_loop(VM *vm) {
     CallFrame *frame;
+    ptrdiff_t ip = 0;
     Chunk *chunk;
     Instruction instruction;
     OpCode op;
@@ -506,6 +538,30 @@ static void vm_run_loop(VM *vm) {
                 vm_conditional(vm, instruction, vm_greater_equalf);
                 VM_NEXT();
             }
+            VM_CASE(OP_CMP_LTFK) {
+                vm_conditionalfk(vm, instruction, chunk, vm_less_than_floats);
+                VM_NEXT();
+            }
+            VM_CASE(OP_CMP_GTFK) {
+                vm_conditionalfk(vm, instruction, chunk, vm_greater_than_floats);
+                VM_NEXT();
+            }
+            VM_CASE(OP_CMP_LEFK) {
+                vm_conditionalfk(vm, instruction, chunk, vm_less_equal_floats);
+                VM_NEXT();
+            }
+            VM_CASE(OP_CMP_GEFK) {
+                vm_conditionalfk(vm, instruction, chunk, vm_greater_equal_floats);
+                VM_NEXT();
+            }
+            VM_CASE(OP_CMP_EQFK) {
+                vm_conditionalfk(vm, instruction, chunk, vm_equal_floats);
+                VM_NEXT();
+            }
+            VM_CASE(OP_CMP_NEFK) {
+                vm_conditionalfk(vm, instruction, chunk, vm_not_equal_floats);
+                VM_NEXT();
+            }
             VM_CASE(OP_ADDI) {
                 vm_arithmetici(vm, instruction, vm_addi);
                 VM_NEXT();
@@ -521,7 +577,8 @@ static void vm_run_loop(VM *vm) {
             VM_CASE(OP_DIVI) {
                 if (!vm_check_divisor(vm, instruction, "divided by zero",
                                       "divided the most negative int by -1")) {
-                    VM_NEXT();
+                    // The guard unwound, so a different frame is running now.
+                    VM_RETRY();
                 }
 
                 vm_arithmetici(vm, instruction, vm_divi);
@@ -544,10 +601,24 @@ static void vm_run_loop(VM *vm) {
             VM_CASE(OP_MODI) {
                 if (!vm_check_divisor(vm, instruction, "took the remainder of a division by zero",
                                       "took the remainder of the most negative int and -1")) {
-                    VM_NEXT();
+                    // The guard unwound, so a different frame is running now.
+                    VM_RETRY();
                 }
 
                 vm_arithmetici(vm, instruction, vm_modi);
+                VM_NEXT();
+            }
+            VM_CASE(OP_NEGI) {
+                // On the unsigned width, so INT32_MIN wraps rather than
+                // overflowing -- defined, and what the folder computes for the
+                // same operand.
+                int32_t value = vm_read_i32(vm, VM_DECODE_R_R1(instruction));
+
+                vm_write_i32(vm, VM_DECODE_R_RD(instruction), (int32_t)(0u - (uint32_t)value));
+                VM_NEXT();
+            }
+            VM_CASE(OP_NEGF) {
+                vm_write_f32(vm, VM_DECODE_R_RD(instruction), -vm_read_f32(vm, VM_DECODE_R_R1(instruction)));
                 VM_NEXT();
             }
             VM_CASE(OP_CMP_LTI) {
@@ -589,7 +660,7 @@ static void vm_run_loop(VM *vm) {
 
                     vm_unwind(vm);
 
-                    VM_NEXT();
+                    VM_RETRY();
                 }
 
                 // A pointer spans two slots at an even index, which codegen has
@@ -631,14 +702,14 @@ static void vm_run_loop(VM *vm) {
                 // arguments the caller already placed above dest.
                 size_t base = frame->base + dest * VM_SLOT_SIZE;
 
-                if (!vm_push_frame(vm, proto, base, vm->instruction_pointer + 1, dest)) {
+                if (!vm_push_frame(vm, proto, base, ip + 1, dest)) {
                     // Unwinding here is what makes the failure safe; the reason is
                     // left on the VM because the loop has no caller to return to.
                     vm_fail(vm, VM_RUN_ERR_CALL_DEPTH, "call depth exceeded");
 
                     vm_unwind(vm);
 
-                    VM_NEXT();
+                    VM_RETRY();
                 }
 
                 VM_RETRY();
@@ -651,6 +722,10 @@ static void vm_run_loop(VM *vm) {
 
                 if (!vm_call_extern(vm, proto, frame->base + dest * VM_SLOT_SIZE)) {
                     vm_unwind(vm);
+
+                    // The unwind left a different frame running, so where to
+                    // carry on is not one past this instruction.
+                    VM_RETRY();
                 }
 
                 VM_NEXT();
@@ -772,34 +847,38 @@ static void vm_run_loop(VM *vm) {
                 vm_write_i32(vm, VM_DECODE_R_RD(instruction), next);
 
                 if (next < vm_read_i32(vm, VM_DECODE_R_R1(instruction))) {
-                    vm->instruction_pointer += VM_DECODE_R_SIMM(instruction);
+                    ip += VM_DECODE_R_SIMM(instruction);
                 }
 
-                VM_NEXT();
+                ip += 1;
+                VM_JUMPED();
             }
             VM_CASE(OP_JMP) {
-                vm->instruction_pointer += VM_DECODE_I_SIMM(instruction);
-                VM_NEXT();
+                ip += VM_DECODE_I_SIMM(instruction);
+                ip += 1;
+                VM_JUMPED();
             }
             VM_CASE(OP_JMP_IF_FALSE) {
                 size_t reg = VM_DECODE_I_RD(instruction);
 
                 bool cond = vm_read_i32(vm, reg);
                 if (!cond) {
-                    vm->instruction_pointer += VM_DECODE_I_SIMM(instruction);
+                    ip += VM_DECODE_I_SIMM(instruction);
                 }
 
-                VM_NEXT();
+                ip += 1;
+                VM_JUMPED();
             }
             VM_CASE(OP_JMP_IF_TRUE) {
                 size_t reg = VM_DECODE_I_RD(instruction);
 
                 bool cond = vm_read_i32(vm, reg);
                 if (cond) {
-                    vm->instruction_pointer += VM_DECODE_I_SIMM(instruction);
+                    ip += VM_DECODE_I_SIMM(instruction);
                 }
 
-                VM_NEXT();
+                ip += 1;
+                VM_JUMPED();
             }
 
             // Not an instruction, so nothing encodes it, and the 7-bit opcode

@@ -146,6 +146,34 @@ static void test_float_divide_by_zero_is_not_a_trap() {
                            "let r: float = f();\n") == VM_RUN_OK);
 }
 
+// A constant expression is computed by the compiler rather than the VM, so what
+// it computes has to be what the VM would have. Wrapping and the traps are where
+// the two could disagree, so those are what is checked.
+static void test_a_folded_constant_computes_what_the_vm_would() {
+    assert(test_run_int("let r: int = 2 + 3 * 4;\n") == 14);
+    assert(test_run_int("let r: int = (7 - 2) * 3;\n") == 15);
+    assert(test_run_int("let r: int = 7 / 2;\n") == 3);
+    assert(test_run_int("let r: int = 7 % 2;\n") == 1);
+    assert(test_run_int("let r: int = -7 / 2;\n") == -3);
+    assert(test_run_int("let r: int = -7 % 2;\n") == -1);
+
+    // Wraps rather than trapping, which is what the VM does with the same
+    // operands.
+    assert(test_run_int("let r: int = 2147483647 + 1;\n") == -2147483647 - 1);
+
+    assert(test_run_float("let r: float = 1.5 * 2.0;\n") == 3.0f);
+    assert(test_run_float("let r: float = 0.0 - 9.8;\n") == -9.8f);
+}
+
+// The traps stay traps: a constant divisor of zero is a runtime failure, not a
+// compile-time one, so the program fails where it runs.
+static void test_a_folded_division_by_zero_still_traps() {
+    assert(test_run_status("func f(): int { return 1 / 0; }\nlet r: int = f();\n") ==
+           VM_RUN_ERR_DIVIDE_BY_ZERO);
+    assert(test_run_status("func f(): int { return 1 % 0; }\nlet r: int = f();\n") ==
+           VM_RUN_ERR_DIVIDE_BY_ZERO);
+}
+
 int main() {
     test_int_add();
     test_int_subtract();
@@ -164,6 +192,9 @@ int main() {
     test_int_divide_overflow_traps();
     test_divisions_near_the_trap_are_unaffected();
     test_float_divide_by_zero_is_not_a_trap();
+
+    test_a_folded_constant_computes_what_the_vm_would();
+    test_a_folded_division_by_zero_still_traps();
 
     printf("arithmetic_test: all tests passed\n");
     return 0;

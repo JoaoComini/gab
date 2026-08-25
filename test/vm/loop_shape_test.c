@@ -112,6 +112,65 @@ static void test_a_counting_loop_is_one_instruction_per_iteration() {
     test_program_free(&program);
 }
 
+// 'i = i + 1' steps the counter exactly as 'i += 1' does, so it is the same
+// loop and takes the same instruction. The compound form is a spelling, not a
+// different operation, and recognising only that one would make the fused
+// instruction depend on how the step was written.
+static void test_a_counting_loop_is_recognised_however_the_step_is_spelled() {
+    TestProgram program = test_compile("func run(n: int): int {\n"
+                                       "    let acc: int = 0;\n"
+                                       "    for let i: int = 0; i < n; i = i + 1 { acc = i; }\n"
+                                       "    return acc;\n"
+                                       "}\n");
+
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    assert(test_count_opcode(chunk, OP_FOR_LOOP) == 1);
+    assert(test_count_opcode(chunk, OP_JMP) == 0);
+
+    test_program_free(&program);
+}
+
+// '1 + i' is the same step written the other way round, and addition commutes.
+static void test_a_counting_loop_takes_the_step_from_either_side() {
+    TestProgram program = test_compile("func run(n: int): int {\n"
+                                       "    let acc: int = 0;\n"
+                                       "    for let i: int = 0; i < n; i = 1 + i { acc = i; }\n"
+                                       "    return acc;\n"
+                                       "}\n");
+
+    assert(test_count_opcode(test_func_chunk(&program, 0), OP_FOR_LOOP) == 1);
+
+    test_program_free(&program);
+}
+
+// A step of something other than one is not this shape, whichever way it is
+// written: the fused instruction steps by one and nothing else.
+static void test_a_loop_stepping_by_more_than_one_keeps_the_general_form() {
+    TestProgram program = test_compile("func run(n: int): int {\n"
+                                       "    let acc: int = 0;\n"
+                                       "    for let i: int = 0; i < n; i = i + 2 { acc = i; }\n"
+                                       "    return acc;\n"
+                                       "}\n");
+
+    assert(test_count_opcode(test_func_chunk(&program, 0), OP_FOR_LOOP) == 0);
+
+    test_program_free(&program);
+}
+
+// A plain assignment that is not a step at all must not be read as one.
+static void test_a_loop_assigning_something_else_keeps_the_general_form() {
+    TestProgram program = test_compile("func run(n: int, m: int): int {\n"
+                                       "    let acc: int = 0;\n"
+                                       "    for let i: int = 0; i < n; i = m + 1 { acc = i; }\n"
+                                       "    return acc;\n"
+                                       "}\n");
+
+    assert(test_count_opcode(test_func_chunk(&program, 0), OP_FOR_LOOP) == 0);
+
+    test_program_free(&program);
+}
+
 // A loop whose condition is not the counting shape keeps the general form, so
 // the fused instruction never has to stand for something it cannot express.
 static void test_a_general_loop_keeps_the_compare_and_jump() {
@@ -253,6 +312,10 @@ int main() {
     test_a_counter_written_through_a_pointer_still_works();
     test_a_body_that_writes_the_counter_is_not_fused();
     test_a_counting_loop_is_one_instruction_per_iteration();
+    test_a_counting_loop_is_recognised_however_the_step_is_spelled();
+    test_a_counting_loop_takes_the_step_from_either_side();
+    test_a_loop_stepping_by_more_than_one_keeps_the_general_form();
+    test_a_loop_assigning_something_else_keeps_the_general_form();
     test_a_general_loop_keeps_the_compare_and_jump();
     test_a_local_loop_body_loads_no_constants();
     test_a_field_loop_body_loads_and_stores_each_access();

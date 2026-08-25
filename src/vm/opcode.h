@@ -38,6 +38,16 @@ typedef enum {
     // operand pairs, since it is computed by the same instruction.
     OP_MODI,
 
+    // Negation, rd = -r1. A unary form rather than a subtraction from zero,
+    // which would spend a register and a load on the zero -- and does so on
+    // every execution, where a literal operand folds at compile time and never
+    // reaches here at all.
+    //
+    // OP_NEGI wraps INT32_MIN rather than overflowing, computing on the
+    // unsigned width for the same reason the folder does.
+    OP_NEGI,
+    OP_NEGF,
+
     // Numeric conversion. Neither can fail: OP_FTOI clamps a float that does not
     // fit to the nearest end of the int range, so every operand has an answer.
     OP_ITOF,
@@ -82,6 +92,17 @@ typedef enum {
     OP_CMP_NEF,
     OP_CMP_LEF,
     OP_CMP_GEF,
+
+    // The float comparisons with the right operand read from the constant pool,
+    // as the arithmetic K forms do. 'p.y < 0.0' is the shape that wants them:
+    // comparing against a literal is most of what a float comparison is, and
+    // without these each one costs a load of its own.
+    OP_CMP_LTFK,
+    OP_CMP_GTFK,
+    OP_CMP_LEFK,
+    OP_CMP_GEFK,
+    OP_CMP_EQFK,
+    OP_CMP_NEFK,
     OP_JMP,
     OP_JMP_IF_FALSE,
     OP_JMP_IF_TRUE,

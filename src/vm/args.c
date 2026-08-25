@@ -122,6 +122,7 @@ void args_return_struct(Args *args, const void *data, size_t size) {
 
     assert(return_type && return_type->size == size &&
            "a struct was returned at a size the declared return type does not have");
+    (void)return_type;
     (void)size;
 
     memcpy(args_return_address(args), data, size);
