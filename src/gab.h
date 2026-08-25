@@ -113,9 +113,14 @@ void gab_arg_get_struct(GabArgs *args, int index, void *out, size_t size);
 
 // A string argument's characters and their count. Borrowed for the call: the
 // characters belong to whoever allocated them -- the unit's arena for a
-// literal -- so an extern reads them and frees nothing. Not NUL-terminated in
-// general, since a '\0' is an ordinary character, so the length is what says
-// where the string ends.
+// literal, a script slot for a concatenation -- so an extern reads them and
+// frees nothing. Not NUL-terminated in general, since a '\0' is an ordinary
+// character, so the length is what says where the string ends.
+//
+// A struct field a host declares is a 'ref string': the host allocated those
+// characters and goes on owning them, and the script frees nothing it was lent.
+// The host must outlive the script's use of them, as for every borrow it hands
+// in.
 const char *gab_arg_get_string(GabArgs *args, int index, int32_t *out_length);
 void *gab_arg_get_pointer(GabArgs *args, int index);
 
@@ -233,8 +238,8 @@ bool gab_arg_bool(GabCall *call, int index, bool value);
 // the one place a host can get the ABI wrong, so it is checked, not trusted.
 bool gab_arg_struct(GabCall *call, int index, const void *data, size_t size);
 
-// Stages a pointer argument. 'pointee' is what the parameter must point at, as
-// returned by gab_find_type — the pointee is checked rather than trusted, since
+// Stages a pointer argument. 'inner' is what the parameter must point at, as
+// returned by gab_find_type — the inner is checked rather than trusted, since
 // a 'box Player' where 'box Enemy' was declared is exactly the mistake the layout
 // story cannot survive.
 //
@@ -245,8 +250,8 @@ bool gab_arg_struct(GabCall *call, int index, const void *data, size_t size);
 // ownership to that object; a 'ref T' one may not.
 //
 // Returns false if the index is out of range, the parameter is not a pointer,
-// or its pointee is not this type.
-bool gab_arg_pointer(GabCall *call, int index, void *pointer, const GabType *pointee);
+// or its inner is not this type.
+bool gab_arg_pointer(GabCall *call, int index, void *pointer, const GabType *inner);
 
 // Calls the function with whatever the setters left in the call's buffer.
 // 'ret' may be NULL for a function that returns nothing; otherwise it receives

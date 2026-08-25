@@ -27,6 +27,20 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     registry->builtins.string_type =
         register_builtin(registry, TYPE_STRING, "string", sizeof(GabStringValue), _Alignof(GabStringValue));
 
+    // Same layout and same name: 'ref' is spelled in the type spec rather than
+    // being a type a script can name, so this one is never registered under a
+    // name of its own.
+    registry->builtins.ref_string_type =
+        type_create(registry->arena, TYPE_STRING, registry->builtins.string_type->name);
+    registry->builtins.ref_string_type->size = sizeof(GabStringValue);
+    registry->builtins.ref_string_type->alignment = _Alignof(GabStringValue);
+    registry->builtins.ref_string_type->is_ref = true;
+    registry->builtins.ref_string_type->owner = registry->builtins.string_type;
+
+    // Characters own nothing, so this is a plain sized payload: TYPE_UNKNOWN
+    // reaches neither the string branch of the free walk nor the field loop.
+    registry->builtins.characters_type = type_create(registry->arena, TYPE_UNKNOWN, NULL);
+
     // Poison type. Deliberately never given a name in any scope: no script can
     // name it, it only arises from a failed resolution.
     registry->builtins.error_type = register_builtin(registry, TYPE_ERROR, "<error>", 0, 1);
@@ -34,8 +48,9 @@ void type_registry_register_builtins(TypeRegistry *registry) {
 
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
-    registry->pointers = pointer_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
-    registry->ref_pointers = pointer_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->indirects = indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->ref_indirects =
+        indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
     registry->strings = strings;
     type_registry_register_builtins(registry);
@@ -44,38 +59,38 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
 }
 
 void type_registry_destroy(TypeRegistry *registry) {
-    pointer_map_destroy(registry->pointers);
-    pointer_map_destroy(registry->ref_pointers);
+    indirect_map_destroy(registry->indirects);
+    indirect_map_destroy(registry->ref_indirects);
 }
 
-Type *type_registry_pointer_to(TypeRegistry *registry, Type *pointee) {
-    return type_registry_pointer_to_kind(registry, pointee, false);
+Type *type_registry_indirect_to(TypeRegistry *registry, Type *inner) {
+    return type_registry_indirect_to_kind(registry, inner, false);
 }
 
-Type *type_registry_pointer_to_kind(TypeRegistry *registry, Type *pointee, bool is_ref) {
+Type *type_registry_indirect_to_kind(TypeRegistry *registry, Type *inner, bool is_ref) {
     // Two maps rather than a composite key: 'ref T' and 'box T' are different
     // types, and the whole type system compares by pointer identity, so they
     // must never collide in one table.
-    PointerMap *map = is_ref ? registry->ref_pointers : registry->pointers;
+    IndirectMap *map = is_ref ? registry->ref_indirects : registry->indirects;
 
-    Type **existing = pointer_map_lookup(map, pointee);
+    Type **existing = indirect_map_lookup(map, inner);
     if (existing) {
         return *existing;
     }
 
     // No name: a pointer type is structural, so its printable form is derived
-    // from the pointee when a diagnostic asks. See Type::name.
-    Type *type = type_create(registry->arena, TYPE_POINTER, NULL);
+    // from the inner when a diagnostic asks. See Type::name.
+    Type *type = type_create(registry->arena, TYPE_INDIRECT, NULL);
 
     // Always a raw address to the payload, so a stack pointer and a heap one
     // are byte-identical; only the resolver knows which is which. A 'ref T' is
-    // the same address too — what differs is who frees the pointee.
+    // the same address too — what differs is who frees the inner.
     type->size = sizeof(void *);
     type->alignment = _Alignof(void *);
-    type->pointee = pointee;
+    type->inner = inner;
     type->is_ref = is_ref;
 
-    pointer_map_insert(map, pointee, type);
+    indirect_map_insert(map, inner, type);
 
     return type;
 }

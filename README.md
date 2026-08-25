@@ -154,8 +154,53 @@ mutates what the caller holds. Never `box T`: a method is handed its receiver fo
 the duration of the call, and there is no call-site spelling that would give
 that ownership away.
 
-Only something with a home in memory can be borrowed. A literal or a call result
-is a temporary with no address to name, so it must be bound to a variable first.
+Only something with a home in memory can be borrowed. A call result is a
+temporary with no address to name, so it must be bound to a variable first. A
+string literal is the exception: its characters live in the unit's arena, which
+outlives every value that reads them, so a literal *is* a `ref string`.
+
+A `string` owns its characters and a `ref string` borrows them, which is the
+same distinction `box T` and `ref T` draw and is read off the type the same way.
+A literal borrows the arena; `..` joins, allocating a `string` that the slot it
+lands in frees:
+
+```
+func greet(name: ref string): string {
+    return "hello, " .. name;     // allocates; the caller owns what comes back
+}
+
+let banner: ref string = "gab";   // borrows the arena, frees nothing
+```
+
+Joining has its own operator rather than overloading `+`. Arithmetic does not
+allocate and joining always does, and which happened should be readable without
+knowing the operand types. `..` binds looser than arithmetic and tighter than
+comparison, and it is the operator an array will join with too.
+
+A join always allocates, whatever its operands are: `"hello, " .. "world"` owns
+its characters exactly as a join with a runtime operand does. What a join may
+initialise is decided by how it was written rather than by what the compiler
+could evaluate early, so a literal is the only string that borrows the arena.
+
+`clone()` copies the characters a borrow names into a string that owns them,
+which is how anything arena-backed becomes something a `string` slot may hold:
+
+```
+let borrowed: ref string = "ab";         // borrows the arena
+let owned: string = "a" .. "b";          // allocates; the slot frees it
+let copied: string = "ab".clone();       // copies the arena's characters
+```
+
+`new string` allocates a heap slot holding a header, which zeroed is the empty
+string — the same thing `new Player` does for a struct's layout. Only an owned
+value may be stored where a string owns, so a `box string` takes a join and
+refuses a literal: the slot frees what it holds, and a borrow names characters
+it did not allocate.
+
+A host struct holds a `ref string`: the host allocated those characters and goes
+on owning them, so the script reads them and frees nothing. That is what keeps a
+string field two words the host can lay out with `offsetof`, and it carries the
+same caveat every borrow does — the host must outlive the script's use of it.
 
 `ref` and `box` each qualify the one level they spell, so they nest in either
 order and to any depth. A `ref box T` is the interesting one: a borrow of the
@@ -213,7 +258,8 @@ slot revives it — deadness is about what the slot holds, not a mark the name
 carries forever.
 
 A type may say how it is duplicated by declaring a `clone` method, which takes
-nothing but its receiver and returns another of its own type:
+nothing but its receiver and returns another of its own type. `string` ships
+with one, and a struct declares its own:
 
 ```
 func (h: ref Holder) clone(): Holder { ... }
@@ -299,14 +345,14 @@ more or less, and a second spelling would say nothing the first does not.
 
 | | |
 | --- | --- |
-| Types | `int` (32-bit), `float` (32-bit), `bool`, structs, pointers `box T`, borrows `ref T` |
+| Types | `int` (32-bit), `float` (32-bit), `bool`, `string`, structs, owning `box T`, borrows `ref T` |
 | Declarations | `let` with inferred or annotated type, `func`, `struct`, `module` |
 | Functions | Parameters and returns of any type, structs by value, methods with a receiver, recursion, forward references |
 | Control flow | `if` / `else`, `for` in three forms, `break`, `continue`, `return`, nested blocks with shadowing |
-| Operators | `+` `-` `*` `/` `%`, unary `-` `!`, `==` `!=` `<` `>` `<=` `>=`, `&&` `||`, unary `*`, field access |
+| Operators | `+` `-` `*` `/` `%`, unary `-` `!`, `==` `!=` `<` `>` `<=` `>=`, `&&` `||`, unary `*`, field access, `..` joins |
 | Conversions | `int(x)` and `float(x)`; nothing converts implicitly |
 | Assignment | `=`, and compound `+=` `-=` `*=` `/=` `%=` on any assignable target |
-| Memory | Unique ownership, `new`, `ref` borrows, implicit copy, explicit `move`, user-declared `clone`, scope-based free |
+| Memory | Unique ownership, `new`, `ref` borrows, implicit copy, explicit `move`, user-declared `clone`, scope-based free. A top-level variable may not own: nothing closes over it to free what it holds |
 | Modules | `module` names the namespace a unit declares into, `import` the ones it may name |
 | Externs | `extern func` declares a host body, bound by name at load |
 | Comments | `// line` and `/* block */`, which do not nest |
@@ -315,7 +361,7 @@ Not yet implemented:
 
 | | |
 | --- | --- |
-| Strings | No string type or literals |
+| Strings | No interpolation, no `substring` or case conversion |
 | Arrays | No array type or indexing |
 | Operators | Bitwise |
 | Literals | No struct literals (`V{x: 1}`) |

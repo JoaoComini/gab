@@ -88,6 +88,12 @@ typedef enum {
     // would never be interned, so identity alone would answer wrongly.
     OP_CMP_EQS,
     OP_CMP_NES,
+
+    // Joins two strings into a freshly allocated one, whose characters are the
+    // payload of a heap object the destination slot then owns. Allocating is
+    // what makes the result owning: neither operand's characters can grow in
+    // place, and the arena's belong to the unit rather than to a frame.
+    OP_CONCAT,
     OP_CMP_EQF,
     OP_CMP_NEF,
     OP_CMP_LEF,
@@ -211,10 +217,14 @@ typedef enum {
     As VM_ENCODE_R, plus the spare k bit. Every field is masked: an
     out-of-range value would otherwise smear into its neighbours — including
     the opcode — and produce an instruction that matches no case.
+
+    The masks are unsigned because the opcode field reaches bit 31: an int
+    shifted that far is undefined once the opcode passes 63, which is a limit
+    the table would otherwise hit silently as it grows.
 */
 #define VM_ENCODE_RK(op, rd, r1, r2, k)                                                                      \
-    ((((op) & 0x7F) << 25) | (((rd) & 0xFF) << 17) | (((r1) & 0xFF) << 9) | (((r2) & 0xFF) << 1) |           \
-     ((k) & 0x1))
+    ((((uint32_t)(op) & 0x7Fu) << 25) | (((uint32_t)(rd) & 0xFFu) << 17) | (((uint32_t)(r1) & 0xFFu) << 9) | \
+     (((uint32_t)(r2) & 0xFFu) << 1) | ((uint32_t)(k) & 0x1u))
 
 #define VM_DECODE_R_RD(instr) (((instr) >> 17) & 0xFF) // Destination register
 #define VM_DECODE_R_R1(instr) (((instr) >> 9) & 0xFF)  // First source register
@@ -247,7 +257,8 @@ typedef enum {
     prototype index. R-type's three 8-bit fields suit an instruction whose
     operands are all register indices; this suits the rest.
 */
-#define VM_ENCODE_I(op, rd, kx) ((((op) & 0x7F) << 25) | (((rd) & 0xFF) << 17) | ((kx) & 0x1FFFF))
+#define VM_ENCODE_I(op, rd, kx)                                                                              \
+    ((((uint32_t)(op) & 0x7Fu) << 25) | (((uint32_t)(rd) & 0xFFu) << 17) | ((uint32_t)(kx) & 0x1FFFFu))
 
 #define VM_DECODE_I_RD(instr) (((instr) >> 17) & 0xFF) // Destination register
 #define VM_DECODE_I_KX(instr) ((instr) & 0x1FFFF)      // 17-bit constant/index
@@ -321,7 +332,7 @@ typedef enum {
 
 // A pointer is a raw address, so it spans two slots and wants an even slot
 // index to sit at its natural alignment.
-#define VM_POINTER_SLOTS ((unsigned int)(sizeof(void *) / VM_SLOT_SIZE))
+#define VM_INDIRECT_SLOTS ((unsigned int)(sizeof(void *) / VM_SLOT_SIZE))
 
 // Sentinel value for registers
 #define VM_INVALID_REGISTER VM_MAX_REGISTERS + 1

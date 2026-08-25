@@ -223,7 +223,6 @@ static void codegen_emit_loop(CodegenState *state, size_t target);
 // Whether a value of this type carries a reference that has to be released. A
 // scalar never does, which is why an int costs nothing at runtime: the question
 // is settled at compile time from the static type.
-static bool type_is_owned(const Type *type);
 // Whether an expression hands its caller a reference to own, or merely lends
 // one it keeps.
 static bool expr_yields_owned(const ASTExpr *expr);
@@ -245,6 +244,11 @@ static void codegen_release_owned(CodegenState *state, unsigned int keep_depth, 
 // Forgets that a slot owns, without emitting a release: for 'move', whose
 // destination now holds the reference.
 static void codegen_disown_slot(CodegenState *state, unsigned int slot);
+
+// Forgets a temporary whose value has been bound to a slot that now owns it.
+// Without this the statement's end would release the register the value was
+// copied out of, freeing what the binding is holding.
+static void codegen_drop_temporary(CodegenState *state, unsigned int slot);
 
 // Emits a release for every owned slot deeper than keep_depth without dropping
 // the entries, for a jump that leaves those blocks early.
@@ -359,6 +363,18 @@ Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, Diagnost
 // Frees every unbound owned value the statement produced. Emitted at the end of
 // the statement rather than where each was created: an operand may still be
 // reaching into the object while the rest of the expression is evaluated.
+static void codegen_drop_temporary(CodegenState *state, unsigned int slot) {
+    for (size_t i = 0; i < state->temporaries.size; i++) {
+        if (state->temporaries.data[i].slot != slot) {
+            continue;
+        }
+
+        state->temporaries.data[i] = state->temporaries.data[state->temporaries.size - 1];
+        state->temporaries.size--;
+        return;
+    }
+}
+
 static void codegen_release_temporaries(CodegenState *state) {
     while (state->temporaries.size > 0) {
         OwnedSlot temporary = state->temporaries.data[--state->temporaries.size];
@@ -447,6 +463,10 @@ static void codegen_return_stmt(CodegenState *state, ASTReturnStmt *ast) {
         return;
     }
 
+    // Ownership of the result passes to the caller, so a value computed into a
+    // temporary here is no longer this frame's to free.
+    codegen_drop_temporary(state, reg);
+
     // A temporary is the innermost thing alive, so it goes first. The returned
     // value has already been copied into its own slot, so nothing released here
     // is what is being returned.
@@ -491,7 +511,10 @@ typedef enum {
 // an owner.
 static void codegen_walk_owning_slots(CodegenState *state, const Type *type, unsigned int base,
                                       OwningSlotAction action) {
-    if (type_is_pointer(type)) {
+    // An owning string is one slot's worth of owner -- its characters -- inside
+    // a value several slots wide. The base slot is where they hang, so it is
+    // the slot that owns and the rest are along for the ride.
+    if (type_is_indirect(type) || (type && type->kind == TYPE_STRING)) {
         if (type->is_ref) {
             return;
         }
@@ -583,6 +606,9 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
     // the struct itself rather than anything it holds.
     if (!is_ref && expr_yields_owned(ast->initializer)) {
         codegen_walk_owning_slots(state, ast->symbol->var.type, slot, OWNING_SLOT_OWN);
+
+        // The value was copied out of r1 into this slot, which owns it now.
+        codegen_drop_temporary(state, r1);
     }
 
     codegen_release_registers(state, saved);
@@ -650,9 +676,14 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
         unsigned int held = ast->target->kind == EXPR_FIELD ? codegen_field_expr(state, ast->target)
                                                             : codegen_deref_expr(state, ast->target);
 
-        unsigned int old = codegen_alloc_slots(state, VM_POINTER_SLOTS, VM_POINTER_SLOTS, ast->target->span);
+        // As wide as the value being replaced: a string is a header of several
+        // slots, and copying only the first would leave the release reading a
+        // length that belongs to whatever the store wrote.
+        unsigned int width = type_slot_count(ast->target->type);
+        unsigned int old =
+            codegen_alloc_slots(state, width, type_align_slots(ast->target->type), ast->target->span);
 
-        codegen_copy_slots(state, old, held, VM_POINTER_SLOTS);
+        codegen_copy_slots(state, old, held, width);
 
         unsigned int src = codegen_expr(state, ast->value);
 
@@ -661,6 +692,10 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
         } else {
             codegen_store_deref(state, ast->target, src);
         }
+
+        // The field owns what was stored, so the statement's end must not also
+        // release the register it was computed in.
+        codegen_drop_temporary(state, src);
 
         chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE, old, 0, 0));
         return;
@@ -699,10 +734,20 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
     if (!target_is_ref && type_is_owned(ast->target->type) && codegen_slot_is_owned(state, rd)) {
         // The value is one nothing else owns: the resolver refuses a borrow
         // here, naming the move or the duplicate that was meant.
-        unsigned int old = codegen_alloc_slots(state, VM_POINTER_SLOTS, VM_POINTER_SLOTS, ast->target->span);
+        // As wide as what is being replaced: a string is a header of several
+        // slots, and saving only the first would release a pointer paired with
+        // whatever length the new value wrote.
+        unsigned int width = type_slot_count(ast->target->type);
+        unsigned int old =
+            codegen_alloc_slots(state, width, type_align_slots(ast->target->type), ast->target->span);
 
-        codegen_copy_slots(state, old, rd, VM_POINTER_SLOTS);
-        codegen_copy_slots(state, rd, r1, VM_POINTER_SLOTS);
+        codegen_copy_slots(state, old, rd, width);
+        codegen_copy_slots(state, rd, r1, width);
+
+        // The variable owns what was just stored, so the statement's end must
+        // not also release the register it was computed in.
+        codegen_drop_temporary(state, r1);
+
         chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE, old, 0, 0));
         return;
     }
@@ -1356,7 +1401,7 @@ static unsigned int codegen_string_literal(CodegenState *state, ASTExpr *node) {
     // Decoded and interned by the lexer, so the node already holds the String *.
     String *text = node->lit.as_string;
 
-    unsigned int rd = codegen_alloc_slots(state, VM_STRING_SLOTS, VM_POINTER_SLOTS, node->span);
+    unsigned int rd = codegen_alloc_slots(state, VM_STRING_SLOTS, VM_INDIRECT_SLOTS, node->span);
 
     // Interned within the unit, as a type index is: the index means nothing
     // until linking gives the unit its base. See codegen_new_expr.
@@ -1526,7 +1571,24 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
         if (expr_yields_owned(arg) && !param_owns(node->symbol, i)) {
             assert(owned_arg_count < VM_MAX_FRAME_SLOTS && "more owned arguments than a frame has slots");
 
-            owned_args[owned_arg_count++] = dest + offset;
+            // The callee's frame is based at dest, so its return writes over
+            // the low end of the argument block. An argument the return
+            // reaches has to survive somewhere else to be released after the
+            // call; one it does not is released where it was passed.
+            unsigned int owner = dest + offset;
+
+            if (offset < return_slots) {
+                owner = codegen_alloc_slots(state, slots, 1, arg->span);
+
+                codegen_copy_slots(state, owner, arg_reg, slots);
+            }
+
+            owned_args[owned_arg_count++] = owner;
+
+            // That slot is the only owner now: an expression that
+            // registered its result as a statement temporary -- a join does --
+            // would otherwise be freed both here and where the statement ends.
+            codegen_drop_temporary(state, arg_reg);
         }
 
         offset += slots;
@@ -1585,7 +1647,7 @@ static unsigned int codegen_addr_of_expr(CodegenState *state, ASTExpr *node) {
     // rather than reach through.
     FieldTarget target = codegen_resolve_field_target(state, inner, false);
 
-    unsigned int rd = codegen_alloc_slots(state, VM_POINTER_SLOTS, VM_POINTER_SLOTS, node->span);
+    unsigned int rd = codegen_alloc_slots(state, VM_INDIRECT_SLOTS, VM_INDIRECT_SLOTS, node->span);
 
     if (target.offset > VM_MAX_FIELD_OFFSET) {
         if (!state->failed) {
@@ -1737,7 +1799,7 @@ static unsigned int codegen_cast_expr(CodegenState *state, ASTExpr *node) {
 // already guarantees.
 
 static unsigned int codegen_new_expr(CodegenState *state, ASTExpr *node) {
-    unsigned int rd = codegen_alloc_slots(state, VM_POINTER_SLOTS, VM_POINTER_SLOTS, node->span);
+    unsigned int rd = codegen_alloc_slots(state, VM_INDIRECT_SLOTS, VM_INDIRECT_SLOTS, node->span);
 
     // Interned within the unit, not across the VM: an index means nothing until
     // linking gives the unit its base, so a type an earlier unit registered is
@@ -1780,12 +1842,12 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
         // A pointer-typed field ends the chain rather than extending it: from
         // there the struct lives wherever that pointer says, so the pointer has
         // to be loaded and followed. Summing the offset instead would address
-        // the pointer's own slot as if its pointee were inline in it.
+        // the pointer's own slot as if its inner were inline in it.
         //
         // Reachable only since a struct could hold a pointer, which is why
         // 'o.child.n' is the first expression to need this: it loads o.child,
         // then addresses n from there.
-        if (inner->kind == EXPR_FIELD && type_is_pointer(inner->type)) {
+        if (inner->kind == EXPR_FIELD && type_is_indirect(inner->type)) {
             unsigned int base = codegen_field_expr(state, inner);
 
             return (FieldTarget){
@@ -1812,7 +1874,7 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
         // inline in it.
         const Type *reached = node->type;
 
-        while (auto_deref && type_is_pointer(reached)) {
+        while (auto_deref && type_is_indirect(reached)) {
             base = codegen_load_indirect_struct(state, node, reached,
                                                 (FieldTarget){
                                                     .base = base,
@@ -1820,7 +1882,7 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
                                                     .indirect = true,
                                                 },
                                                 type_slot_count(reached));
-            reached = reached->pointee;
+            reached = reached->inner;
         }
 
         return (FieldTarget){
@@ -1840,7 +1902,7 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
         codegen_record_frame_ref(state, base);
     }
 
-    bool indirect = auto_deref && type_is_pointer(node->type);
+    bool indirect = auto_deref && type_is_indirect(node->type);
 
     // Each level above the last is loaded and followed: the innermost pointer is
     // what the field is addressed from, and the ones outside it only say where
@@ -1849,15 +1911,15 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
     if (indirect) {
         const Type *reached = node->type;
 
-        while (type_is_pointer(reached->pointee)) {
-            base = codegen_load_indirect_struct(state, node, reached->pointee,
+        while (type_is_indirect(reached->inner)) {
+            base = codegen_load_indirect_struct(state, node, reached->inner,
                                                 (FieldTarget){
                                                     .base = base,
                                                     .offset = 0,
                                                     .indirect = true,
                                                 },
-                                                type_slot_count(reached->pointee));
-            reached = reached->pointee;
+                                                type_slot_count(reached->inner));
+            reached = reached->inner;
         }
     }
 
@@ -1914,7 +1976,7 @@ static unsigned int codegen_load_indirect_struct(CodegenState *state, ASTExpr *n
     unsigned int address = target.base;
 
     if (target.offset > 0) {
-        address = codegen_alloc_slots(state, VM_POINTER_SLOTS, VM_POINTER_SLOTS, node->span);
+        address = codegen_alloc_slots(state, VM_INDIRECT_SLOTS, VM_INDIRECT_SLOTS, node->span);
         chunk_add_instruction(state->chunk,
                               VM_ENCODE_R(OP_ADD_PTR, address, target.base, (unsigned int)target.offset));
     }
@@ -1940,7 +2002,7 @@ static void codegen_store_indirect(CodegenState *state, ASTExpr *node, FieldTarg
     unsigned int address = target.base;
 
     if (target.offset > 0) {
-        address = codegen_alloc_slots(state, VM_POINTER_SLOTS, VM_POINTER_SLOTS, node->span);
+        address = codegen_alloc_slots(state, VM_INDIRECT_SLOTS, VM_INDIRECT_SLOTS, node->span);
         chunk_add_instruction(state->chunk,
                               VM_ENCODE_R(OP_ADD_PTR, address, target.base, (unsigned int)target.offset));
     }
@@ -2253,6 +2315,27 @@ static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node) {
         break;
     }
 
+    // A concatenation lands in a string's worth of slots rather than one, and
+    // its result owns, so it takes neither the immediate encoding nor the
+    // single-register destination the arithmetic path allocates.
+    if (node->bin_op.op == BIN_OP_CONCAT) {
+        unsigned int left = codegen_expr(state, node->bin_op.left);
+        unsigned int right = codegen_expr(state, node->bin_op.right);
+        unsigned int result = codegen_alloc_slots(state, VM_STRING_SLOTS, VM_INDIRECT_SLOTS, node->span);
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_CONCAT, result, left, right));
+
+        // Whoever consumes this may bind it -- a 'let' takes ownership of the
+        // slot -- but an operand position does not, and nothing else would free
+        // it. Recorded as a temporary, which the statement's end releases and
+        // binding disowns.
+        owned_list_add(&state->temporaries,
+                       (OwnedSlot){.slot = result, .depth = state->depth, .type = node->type});
+        codegen_record_frame_ref(state, result);
+
+        return result;
+    }
+
     unsigned int lhs = codegen_expr(state, node->bin_op.left);
 
     RhsKind rhs_kind = RHS_REGISTER;
@@ -2307,8 +2390,6 @@ static void codegen_emit_loop(CodegenState *state, size_t target) {
 
 // ---- Reference ownership ----
 
-static bool type_is_owned(const Type *type) { return type_is_pointer(type); }
-
 // Whether an expression hands its caller a reference to own, or merely lends
 // one it keeps. 'new' and a call returning 'box T' produce a fresh reference the
 // receiver is responsible for; reading a variable or a field does not, since
@@ -2327,6 +2408,11 @@ static bool expr_yields_owned(const ASTExpr *expr) {
     }
 
     switch (expr->kind) {
+    // A concatenation allocates the characters it yields; every other binary op
+    // answers with a value that owns nothing.
+    case EXPR_BIN_OP:
+        return expr->bin_op.op == BIN_OP_CONCAT;
+
     case EXPR_NEW:
     case EXPR_CALL:
 
@@ -2566,7 +2652,7 @@ static bool type_is_struct(const Type *type) { return type && type->kind == TYPE
 // A string is a header of several slots, so it moves as one run like a struct
 // rather than as a single slot.
 static bool type_moves_as_slots(const Type *type) {
-    return type_is_struct(type) || type_is_pointer(type) || (type && type->kind == TYPE_STRING);
+    return type_is_struct(type) || type_is_indirect(type) || (type && type->kind == TYPE_STRING);
 }
 
 // The field's width is known at compile time, so it picks the opcode instead

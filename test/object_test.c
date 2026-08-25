@@ -139,7 +139,7 @@ static void test_freeing_an_object_frees_what_it_owns() {
     Type *inner = make_struct(&ctx, "Inner", inner_names, inner_types, 1);
 
     const char *outer_names[] = {"child"};
-    Type *outer_types[] = {type_registry_pointer_to(registry, inner)};
+    Type *outer_types[] = {type_registry_indirect_to(registry, inner)};
     Type *outer = make_struct(&ctx, "Outer", outer_names, outer_types, 1);
 
     AllocCounts counts = {0};
@@ -161,7 +161,7 @@ static void test_freeing_an_object_frees_what_it_owns() {
 }
 
 // A 'ref T' field names something it does not own, so freeing the holder must
-// leave the pointee alone. Freeing it here would be a double free the moment
+// leave the inner alone. Freeing it here would be a double free the moment
 // its real owner went.
 static void test_freeing_does_not_follow_a_ref_field() {
     TestContext ctx;
@@ -175,7 +175,7 @@ static void test_freeing_does_not_follow_a_ref_field() {
     Type *inner = make_struct(&ctx, "Inner", inner_names, inner_types, 1);
 
     const char *outer_names[] = {"borrowed"};
-    Type *outer_types[] = {type_registry_pointer_to_kind(registry, inner, true)};
+    Type *outer_types[] = {type_registry_indirect_to_kind(registry, inner, true)};
     Type *outer = make_struct(&ctx, "Outer", outer_names, outer_types, 1);
 
     AllocCounts counts = {0};

@@ -109,10 +109,22 @@ static void string_count(Args *args) {
     args_return_int(args, total);
 }
 
+// 's.clone()'. The characters a borrow names, copied into a string that owns
+// them. The one string method that allocates, and the way anything arena-backed
+// -- a literal, or the join of two -- becomes something a 'string' slot may
+// hold.
+static void string_clone(Args *args) {
+    GabStringValue string = args_string(args, 0);
+
+    args_return_string_copy(args, string.data, string.length);
+}
+
 void builtin_register_string(VM *vm) {
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
-    Type *string_type = registry->builtins.string_type;
+    // Every method here reads its receiver and allocates nothing, so it takes a
+    // borrow: an owning string lends to one, and a literal already is one.
+    Type *string_type = registry->builtins.ref_string_type;
     Type *int_type = registry->builtins.int_type;
     Type *bool_type = registry->builtins.bool_type;
 
@@ -127,4 +139,8 @@ void builtin_register_string(VM *vm) {
     builtin_register_method(vm, string_type, "contains", string_contains, bool_type, string_param, 1);
     builtin_register_method(vm, string_type, "index_of", string_index_of, int_type, string_param, 1);
     builtin_register_method(vm, string_type, "count", string_count, int_type, string_param, 1);
+
+    // Returns the owning string, not the borrowed one every other method takes:
+    // what a clone hands back is a fresh allocation the caller frees.
+    builtin_register_method(vm, string_type, "clone", string_clone, registry->builtins.string_type, NULL, 0);
 }

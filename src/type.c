@@ -17,9 +17,10 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->alignment = 1;
     type->fields = NULL;
     type->field_count = 0;
-    type->pointee = NULL;
+    type->inner = NULL;
     type->methods = NULL;
     type->is_ref = false;
+    type->owner = NULL;
 
     return type;
 }
@@ -87,10 +88,35 @@ bool type_field_offset(const Type *type, const String *name, size_t *out_offset)
     return true;
 }
 
-bool type_is_pointer(const Type *type) { return type && type->kind == TYPE_POINTER; }
+bool type_is_indirect(const Type *type) { return type && type->kind == TYPE_INDIRECT; }
+
+bool type_is_owned(const Type *type) {
+    if (!type) {
+        return false;
+    }
+
+    // A 'ref' names memory without owning it, whatever kind it qualifies.
+    if (type->is_ref) {
+        return false;
+    }
+
+    if (type->kind == TYPE_INDIRECT || type->kind == TYPE_STRING) {
+        return true;
+    }
+
+    // A struct is not itself an owner: it owns through whichever fields do, and
+    // is freed field by field rather than as one value.
+    for (size_t i = 0; i < type->field_count; i++) {
+        if (type_is_owned(type->fields[i].type)) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 // Whether a value of this type can be duplicated by copying its bytes. An
-// owning pointer cannot: two slots holding it would both free it. Anything
+// owning value cannot: two slots holding it would both free it. Anything
 // reaching one transitively inherits that, so a struct is copyable exactly
 // when every field is.
 //
@@ -102,7 +128,9 @@ bool type_is_copyable(const Type *type) {
         return true;
     }
 
-    if (type->kind == TYPE_POINTER) {
+    // Exactly the values that own: copying one would make a second owner of
+    // memory only one of them may free.
+    if (type->kind == TYPE_INDIRECT || type->kind == TYPE_STRING) {
         return type->is_ref;
     }
 
@@ -120,6 +148,12 @@ bool type_is_copyable(const Type *type) {
 #define METHOD_MAP_INITIAL_CAPACITY 4
 
 bool type_add_method(Arena *arena, Type *type, String *name, Symbol *method) {
+    // Declared on the owning type, which is where lookup reads: a borrow shares
+    // the method set of what it borrows rather than keeping one of its own.
+    if (type->owner) {
+        type = type->owner;
+    }
+
     if (!type->methods) {
         type->methods = method_map_create_alloc(arena_allocator(arena), METHOD_MAP_INITIAL_CAPACITY);
     }
@@ -133,7 +167,19 @@ bool type_add_method(Arena *arena, Type *type, String *name, Symbol *method) {
 }
 
 Symbol *type_find_method(const Type *type, const String *name) {
-    if (!type || !type->methods) {
+    if (!type) {
+        return NULL;
+    }
+
+    // A borrow shares the method set of what it borrows: 'ref string' and
+    // 'string' are one type in two ownership states, and a method that only
+    // reads its receiver is meaningful on both. Declaring lands on the owning
+    // type, which is where 'owner' points.
+    if (type->owner) {
+        type = type->owner;
+    }
+
+    if (!type->methods) {
         return NULL;
     }
 
@@ -142,10 +188,10 @@ Symbol *type_find_method(const Type *type, const String *name) {
     return found ? *found : NULL;
 }
 
-TypeSpec *type_spec_create(StringRef name, unsigned int pointer_depth, uint32_t ref_levels) {
+TypeSpec *type_spec_create(StringRef name, unsigned int indirect_depth, uint32_t ref_levels) {
     TypeSpec *spec = malloc(sizeof(TypeSpec));
     spec->name = name;
-    spec->pointer_depth = pointer_depth;
+    spec->indirect_depth = indirect_depth;
     spec->ref_levels = ref_levels;
 
     return spec;

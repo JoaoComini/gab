@@ -54,4 +54,10 @@ void args_return_bool(Args *args, bool value);
 void args_return_pointer(Args *args, void *pointer);
 void args_return_struct(Args *args, const void *data, size_t size);
 
+// Writes a string result whose characters the caller's slot then owns. The
+// bytes are copied into a heap object of their own, so a body may return
+// characters it borrowed -- which is what makes 'clone' possible at all.
+// Fails the run and returns false if the allocation does not succeed.
+bool args_return_string_copy(Args *args, const char *data, int32_t length);
+
 #endif

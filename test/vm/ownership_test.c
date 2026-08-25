@@ -34,12 +34,22 @@ static void test_conversion_is_owned_to_ref_only() {
                           "}\n"));
 }
 
+// Nothing closes over the top level, so a value that owns would be freed by no
+// one. Owning belongs where a scope ends.
+static void test_a_top_level_variable_may_not_own() {
+    assert(!test_compiles("struct Node { n: int }\nlet n: box Node = new Node;\n"));
+    assert(!test_compiles("let s: string = \"a\" .. \"b\";\n"));
+
+    // A borrow frees nothing, so it is at home there.
+    assert(test_compiles("let s: ref string = \"hi\";\n"));
+}
+
 // 'ref' and 'box' each qualify the one level they spell, so they nest in either
 // order and to any depth.
 static void test_ref_and_box_nest_in_any_order() {
-    assert(test_compiles("struct Node { n: int }\nlet a: ref box Node;\n"));
-    assert(test_compiles("struct Node { n: int }\nlet b: box ref Node;\n"));
-    assert(test_compiles("struct Node { n: int }\nlet c: ref box ref Node;\n"));
+    assert(test_compiles("struct Node { n: int }\nfunc f(): int { let a: ref box Node; return 0; }\n"));
+    assert(test_compiles("struct Node { n: int }\nfunc f(): int { let b: box ref Node; return 0; }\n"));
+    assert(test_compiles("struct Node { n: int }\nfunc f(): int { let c: ref box ref Node; return 0; }\n"));
 }
 
 // 'new' allocates anything with a layout to fill, which is a struct or an owning
@@ -111,7 +121,7 @@ static void test_lending_reaches_through_a_borrow() {
 }
 
 // What a borrow reaches is no longer-lived than the borrow itself, so lending
-// through one cannot launder a frame-bound pointee into something returnable.
+// through one cannot launder a frame-bound inner into something returnable.
 static void test_lending_through_a_borrow_keeps_its_lifetime() {
     assert(!test_compiles("struct Node { n: int }\n"
                           "func bad(): ref Node {\n"
@@ -294,7 +304,7 @@ static void test_a_ref_to_a_local_cannot_be_returned() {
 // so the result is treated as borrowing from the shortest-lived of them --
 // which is what makes this checkable at all.
 //
-// Here the borrow outlives its pointee: 'inner' dies at the brace and 'escaped'
+// Here the borrow outlives its inner: 'inner' dies at the brace and 'escaped'
 // is declared outside it.
 static void test_a_ref_returned_from_a_call_cannot_outlive_its_argument() {
     assert(!test_compiles("struct Box { n: int }\n"
@@ -576,6 +586,7 @@ int main(void) {
     test_a_field_read_from_an_owned_temporary_does_not_leak();
     test_an_owned_temporary_in_an_assignment_does_not_leak();
     test_conversion_is_owned_to_ref_only();
+    test_a_top_level_variable_may_not_own();
     test_ref_and_box_nest_in_any_order();
     test_new_allocates_a_struct_or_an_owning_pointer();
     test_freeing_an_owning_pointer_frees_beneath_it();

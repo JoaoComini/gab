@@ -23,7 +23,7 @@
 //
 // They merge in opposite directions, which is the whole reason a lattice is
 // needed rather than a field. A depth merges to the deeper -- the
-// shorter-lived pointee -- because a borrow is safe only if it is safe on every
+// shorter-lived inner -- because a borrow is safe only if it is safe on every
 // path that reaches its use. Initialized-ness merges to the *less* initialized,
 // because a slot only definitely holds a value if it does on every such path.
 
@@ -56,7 +56,7 @@ typedef struct {
 
     // The block depth of what this slot points at, or 0 for "outlives
     // everything" -- a heap object, a global, or a non-pointer.
-    int pointee_depth;
+    int inner_depth;
 
     // Which of a struct's owning pointer fields have been written, by field
     // index. Codegen nulls exactly those at the declaration, so one that has

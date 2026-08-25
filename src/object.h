@@ -54,6 +54,14 @@ ObjectHeader *gab_object_of(void *payload);
 // fails.
 void *gab_object_alloc(Allocator allocator, const Type *type);
 
+// As gab_object_alloc, for a payload whose size is not the type's: a string's
+// characters are counted at run time, so 'size' says how many bytes follow the
+// header rather than the type doing.
+//
+// The type still says how to free it, which for a string is 'nothing beyond the
+// payload' -- the characters are the payload rather than something it points at.
+void *gab_object_alloc_sized(Allocator allocator, const Type *type, size_t size);
+
 // Frees a payload and everything it owns. NULL-tolerant, because a 'box T' that
 // was never assigned is NULL and every free path would otherwise need the same
 // guard.
