@@ -16,6 +16,11 @@ typedef enum {
     TYPE_FLOAT,
     TYPE_BOOL,
 
+    // The element a string's characters are a buffer of. Named so that a
+    // diagnostic can print what it is, but declared into no scope: nothing in
+    // the language reads or writes one, so no script can name it.
+    TYPE_BYTE,
+
     // A header by value: the address of the characters and their count. Nominal
     // rather than structural, so it is interned once like the other builtins.
     TYPE_STRING,

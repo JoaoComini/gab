@@ -1,4 +1,5 @@
 #include "object.h"
+#include "support/run.h"
 #include "support/test_context.h"
 #include "type.h"
 #include "type_registry.h"
@@ -74,6 +75,68 @@ static void test_a_type_that_owns_nothing_has_no_drop() {
 
     assert(make_struct(&ctx, "Borrower", held, borrowed_field, 1)->drop == NULL);
     assert(make_struct(&ctx, "Owner", held, owned_field, 1)->drop != NULL);
+
+    test_context_free(&ctx);
+}
+
+// A byte is a named type of its own so that a diagnostic can print what a
+// string's characters are a buffer of. Not declared into any scope: nothing in
+// the language reads or writes one, so no script can name it.
+static void test_a_byte_is_named_but_unwritable() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope scope;
+    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+
+    Type *byte = scope.type_registry->builtins.byte_type;
+
+    assert(byte->kind == TYPE_BYTE);
+    assert(byte->size == 1 && byte->alignment == 1);
+    assert(byte->name == string_from_cstr(&ctx.strings, "byte"));
+
+    // Named, but not declared anywhere a type name is looked up.
+    assert(!test_compiles("func f(b: byte): int { return 0; }\n"));
+
+    test_context_free(&ctx);
+}
+
+// A buffer names a run of elements of one type: the block a pointer reaches,
+// never a value anything holds. Interned on the element, since the type system
+// compares by pointer identity.
+static void test_a_buffer_is_interned_on_its_element() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    TypeRegistry *registry = type_registry_create(ctx.arena, &ctx.strings);
+    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+    Type *bool_type = type_registry_get_builtin(registry, TYPE_BOOL);
+
+    assert(type_registry_buffer_of(registry, int_type) == type_registry_buffer_of(registry, int_type));
+    assert(type_registry_buffer_of(registry, int_type) != type_registry_buffer_of(registry, bool_type));
+
+    // The element's width is the stride a walk over the block advances by.
+    Type *buffer = type_registry_buffer_of(registry, int_type);
+
+    assert(buffer->size == int_type->size);
+    assert(buffer->alignment == int_type->alignment);
+
+    test_context_free(&ctx);
+}
+
+// A buffer never drops itself, even when its elements own. How many of them are
+// live is the count in the header that names the block, not anything the block
+// records, so only that header's own drop can walk them.
+static void test_a_buffer_does_not_drop_its_elements() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    TypeRegistry *registry = type_registry_create(ctx.arena, &ctx.strings);
+    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+    Type *owning = type_registry_indirect_to_kind(registry, int_type, false);
+
+    assert(type_registry_buffer_of(registry, int_type)->drop == NULL);
+    assert(type_registry_buffer_of(registry, owning)->drop == NULL);
 
     test_context_free(&ctx);
 }
@@ -244,6 +307,9 @@ static void test_freeing_null_is_a_no_op() {
 }
 
 int main(void) {
+    test_a_byte_is_named_but_unwritable();
+    test_a_buffer_is_interned_on_its_element();
+    test_a_buffer_does_not_drop_its_elements();
     test_a_type_that_owns_nothing_has_no_drop();
     test_alloc_and_free_are_one_allocation();
     test_the_payload_follows_the_header();
