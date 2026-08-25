@@ -610,8 +610,7 @@ static void test_reports_returning_a_pointer_to_a_local() {
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_LIFETIME);
-    assert(strcmp(diagnostic->message, "this pointer outlives what it points at, so it cannot be returned") ==
-           0);
+    assert(strcmp(diagnostic->message, "this borrow outlives what it names, so it cannot be returned") == 0);
 
     test_context_free(&ctx);
 }
@@ -630,8 +629,8 @@ static void test_reports_a_pointer_escaping_its_block() {
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_LIFETIME);
-    assert(strcmp(diagnostic->message,
-                  "this pointer outlives what it points at, so it cannot be assigned here") == 0);
+    assert(strcmp(diagnostic->message, "this borrow outlives what it names, so it cannot be assigned here") ==
+           0);
 
     test_context_free(&ctx);
 }
@@ -650,8 +649,7 @@ static void test_reports_returning_a_string_borrow_of_a_local() {
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_LIFETIME);
-    assert(strcmp(diagnostic->message, "this pointer outlives what it points at, so it cannot be returned") ==
-           0);
+    assert(strcmp(diagnostic->message, "this borrow outlives what it names, so it cannot be returned") == 0);
 
     test_context_free(&ctx);
 }
@@ -669,8 +667,8 @@ static void test_reports_a_string_borrow_escaping_its_block() {
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_LIFETIME);
-    assert(strcmp(diagnostic->message,
-                  "this pointer outlives what it points at, so it cannot be assigned here") == 0);
+    assert(strcmp(diagnostic->message, "this borrow outlives what it names, so it cannot be assigned here") ==
+           0);
 
     test_context_free(&ctx);
 }
@@ -690,8 +688,8 @@ static void test_reports_a_string_borrow_stored_into_a_heap_object() {
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_LIFETIME);
-    assert(strcmp(diagnostic->message,
-                  "this pointer outlives what it points at, so it cannot be stored here") == 0);
+    assert(strcmp(diagnostic->message, "this borrow outlives what it names, so it cannot be stored here") ==
+           0);
 
     test_context_free(&ctx);
 }
@@ -712,8 +710,8 @@ static void test_reports_a_stack_pointer_stored_into_a_heap_object() {
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_LIFETIME);
-    assert(strcmp(diagnostic->message,
-                  "this pointer outlives what it points at, so it cannot be stored here") == 0);
+    assert(strcmp(diagnostic->message, "this borrow outlives what it names, so it cannot be stored here") ==
+           0);
 
     test_context_free(&ctx);
 }

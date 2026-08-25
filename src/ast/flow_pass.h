@@ -8,7 +8,7 @@
 // Runs the flow analysis over one resolved function body and reports what it
 // finds: a slot read after being moved out of, a pointer read before it holds
 // anything, an owning field reached through before it is written, and a
-// pointer stored somewhere that outlives what it points at.
+// borrow stored somewhere that outlives what it names.
 //
 // Separate from resolution because the two want opposite things from the tree.
 // Resolution declares symbols and enters scopes, so it must run exactly once;

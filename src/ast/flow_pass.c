@@ -199,7 +199,7 @@ static bool borrows_memory(const Type *type) {
     return type_is_indirect(type) || (type->kind == TYPE_STRING && type->is_ref);
 }
 
-// Rejects a pointer being stored somewhere that outlives what it points at.
+// Rejects a borrow being stored somewhere that outlives what it names.
 // 'target_depth' is the block depth of the destination; a inner declared
 // deeper than that is gone by the time the destination can still be read.
 static void check_borrow_lifetime(FlowPass *pass, ASTExpr *value, int target_depth, Span span,
@@ -215,7 +215,7 @@ static void check_borrow_lifetime(FlowPass *pass, ASTExpr *value, int target_dep
         return;
     }
 
-    flow_report(pass, span, "this pointer outlives what it points at, so it cannot be %s", what);
+    flow_report(pass, span, "this borrow outlives what it names, so it cannot be %s", what);
 }
 
 // As check_borrow_lifetime, for a destination whose type says whether a borrow
