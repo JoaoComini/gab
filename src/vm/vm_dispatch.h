@@ -1,6 +1,8 @@
 #ifndef GAB_VM_DISPATCH_H
 #define GAB_VM_DISPATCH_H
 
+#include <assert.h>
+
 #include "vm/opcode.h"
 
 /*
@@ -56,8 +58,20 @@
 #define VM_COMPUTED_GOTO 0
 #endif
 
+// The instruction pointer lives in a local for the length of the loop, because
+// a field of *vm has to be reloaded and stored on every instruction: nothing
+// tells the compiler that the writes a handler makes through 'vm' cannot be the
+// pointer itself. Read once where a frame starts running and written back where
+// one stops, which is the only place anything else can observe it.
+//
+// 'ip' is the local; VM_SAVE_IP and VM_LOAD_IP move it across that boundary.
+#define VM_SAVE_IP() (vm->instruction_pointer = ip)
+#define VM_LOAD_IP() (ip = vm->instruction_pointer)
+
 // Reloads what the running frame's bytecode is, for the handlers that change
-// which frame that is: a call, a return, or an unwind.
+// which frame that is: a call, a return, or an unwind. The pointer comes back
+// with it: the frame that is running now is not the one whose pointer the local
+// held.
 #define VM_RELOAD()                                                                                          \
     do {                                                                                                     \
         if (vm->frame_count > 0) {                                                                           \
@@ -66,6 +80,8 @@
             code = chunk->instructions.data;                                                                 \
             code_size = chunk->instructions.size;                                                            \
         }                                                                                                    \
+                                                                                                             \
+        VM_LOAD_IP();                                                                                        \
     } while (0)
 
 // Reads the instruction the pointer names, leaving the loop once it has run
@@ -74,12 +90,32 @@
 // a normal end of function.
 #define VM_FETCH()                                                                                           \
     do {                                                                                                     \
-        if (vm->frame_count == 0 || vm->instruction_pointer < 0 ||                                           \
-            vm->instruction_pointer >= (ptrdiff_t)code_size) {                                               \
+        if (vm->frame_count == 0 || ip < 0 || ip >= (ptrdiff_t)code_size) {                                  \
             goto vm_done;                                                                                    \
         }                                                                                                    \
                                                                                                              \
-        instruction = code[vm->instruction_pointer];                                                         \
+        instruction = code[ip];                                                                              \
+        op = VM_DECODE_OPCODE(instruction);                                                                  \
+    } while (0)
+
+// As VM_FETCH, for a step that cannot have left the chunk: the pointer moved by
+// one within a frame nothing changed, and every chunk ends in a return, so the
+// instruction it lands on is always one of that chunk's.
+//
+// Worth spelling apart because every instruction pays what VM_FETCH costs and
+// almost all of them are this case. The three conditions it drops are each
+// somewhere else: a frame change goes through VM_RETRY, a jump through
+// VM_JUMPED, and the end of a chunk through the return that codegen guarantees.
+//
+// Asserted rather than assumed in a debug build, so a handler that moves the
+// pointer and reaches here anyway is caught where it happens rather than
+// reading whatever follows the chunk.
+#define VM_FETCH_NEXT()                                                                                      \
+    do {                                                                                                     \
+        assert(vm->frame_count > 0 && ip >= 0 && ip < (ptrdiff_t)code_size &&                                \
+               "a straight-line step left the chunk; it needed VM_JUMPED or VM_RETRY");                      \
+                                                                                                             \
+        instruction = code[ip];                                                                              \
         op = VM_DECODE_OPCODE(instruction);                                                                  \
     } while (0)
 
@@ -105,7 +141,16 @@
 // never gone back around.
 #define VM_NEXT()                                                                                            \
     do {                                                                                                     \
-        vm->instruction_pointer += 1;                                                                        \
+        ip += 1;                                                                                             \
+        VM_FETCH_NEXT();                                                                                     \
+        VM_DISPATCH(op)                                                                                      \
+    } while (0)
+
+// For a handler that has already moved the pointer somewhere of its own
+// choosing: the offset comes from the instruction, so where it lands is not
+// something this loop can assume.
+#define VM_JUMPED()                                                                                          \
+    do {                                                                                                     \
         VM_FETCH();                                                                                          \
         VM_DISPATCH(op)                                                                                      \
     } while (0)
@@ -130,7 +175,13 @@
 // that instead, and the handler would fall through into the case below it.
 #define VM_NEXT()                                                                                            \
     {                                                                                                        \
-        vm->instruction_pointer += 1;                                                                        \
+        ip += 1;                                                                                             \
+        break;                                                                                               \
+    }
+
+// The loop's own fetch is the checked one, so a jump has nothing to add here.
+#define VM_JUMPED()                                                                                          \
+    {                                                                                                        \
         break;                                                                                               \
     }
 
@@ -165,6 +216,8 @@
         [OP_MULI] = &&OP_MULI_label,                                                                         \
         [OP_DIVI] = &&OP_DIVI_label,                                                                         \
         [OP_MODI] = &&OP_MODI_label,                                                                         \
+        [OP_NEGI] = &&OP_NEGI_label,                                                                         \
+        [OP_NEGF] = &&OP_NEGF_label,                                                                         \
         [OP_ITOF] = &&OP_ITOF_label,                                                                         \
         [OP_FTOI] = &&OP_FTOI_label,                                                                         \
         [OP_CMP_LTI] = &&OP_CMP_LTI_label,                                                                   \
@@ -189,6 +242,12 @@
         [OP_CMP_NEF] = &&OP_CMP_NEF_label,                                                                   \
         [OP_CMP_LEF] = &&OP_CMP_LEF_label,                                                                   \
         [OP_CMP_GEF] = &&OP_CMP_GEF_label,                                                                   \
+        [OP_CMP_LTFK] = &&OP_CMP_LTFK_label,                                                                 \
+        [OP_CMP_GTFK] = &&OP_CMP_GTFK_label,                                                                 \
+        [OP_CMP_LEFK] = &&OP_CMP_LEFK_label,                                                                 \
+        [OP_CMP_GEFK] = &&OP_CMP_GEFK_label,                                                                 \
+        [OP_CMP_EQFK] = &&OP_CMP_EQFK_label,                                                                 \
+        [OP_CMP_NEFK] = &&OP_CMP_NEFK_label,                                                                 \
         [OP_JMP] = &&OP_JMP_label,                                                                           \
         [OP_JMP_IF_FALSE] = &&OP_JMP_IF_FALSE_label,                                                         \
         [OP_JMP_IF_TRUE] = &&OP_JMP_IF_TRUE_label,                                                           \

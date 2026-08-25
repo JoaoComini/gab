@@ -17,6 +17,76 @@
 #include <assert.h>
 #include <stdio.h>
 
+// An arithmetic operator over two literals is computed once, here, rather than
+// once per execution. Everything a constant expression needs is known now, so
+// leaving it for the VM spends an instruction each time round a loop.
+static void test_a_constant_expression_folds_to_one_load() {
+    TestProgram program = test_compile("let x: int = 2 + 3;\n");
+    Chunk *chunk = test_top_chunk(&program);
+
+    assert(test_count_opcode(chunk, OP_LOAD_CONST) == 1);
+    assert(test_count_opcode(chunk, OP_ADDI) == 0);
+
+    assert(chunk->const_pool->count == 1);
+    assert(chunk->const_pool->constants[0].as_int == 5);
+
+    test_program_free(&program);
+}
+
+// The same for floats, which reach the pool rather than an immediate and so
+// take a different path to the same place.
+static void test_a_constant_float_expression_folds() {
+    TestProgram program = test_compile("let x: float = 0.0 - 9.8;\n");
+    Chunk *chunk = test_top_chunk(&program);
+
+    assert(test_count_opcode(chunk, OP_LOAD_CONST) == 1);
+    assert(test_count_opcode(chunk, OP_SUBF) == 0);
+    assert(test_count_opcode(chunk, OP_SUBFK) == 0);
+
+    assert(chunk->const_pool->count == 1);
+    assert(chunk->const_pool->constants[0].as_float == -9.8f);
+
+    test_program_free(&program);
+}
+
+// Folding runs with resolution, so it happens bottom-up: an inner fold makes its
+// parent foldable in turn, and a whole constant tree collapses to one load
+// rather than only its innermost operator.
+static void test_a_nested_constant_expression_folds_wholly() {
+    TestProgram program = test_compile("let x: int = 2 + 3 * 4;\n"
+                                       "let y: float = 1.0 + 2.0 + 3.0;\n");
+
+    Chunk *chunk = test_top_chunk(&program);
+
+    assert(test_count_opcode(chunk, OP_ADDI) == 0);
+    assert(test_count_opcode(chunk, OP_MULI) == 0);
+    assert(test_count_opcode(chunk, OP_ADDF) == 0);
+    assert(test_count_opcode(chunk, OP_ADDFK) == 0);
+
+    test_program_free(&program);
+}
+
+// Folding stops where a value is not known: an operand that is a variable makes
+// the expression a runtime one however constant the other side is.
+static void test_a_variable_operand_does_not_fold() {
+    TestProgram program = test_compile("let a: int = 2;\n"
+                                       "let x: int = a + 3;\n");
+
+    assert(test_count_opcode(test_top_chunk(&program), OP_ADDI) == 1);
+
+    test_program_free(&program);
+}
+
+// Division by zero has no value to fold to, so it stays an instruction and
+// traps at runtime as it always did.
+static void test_a_constant_division_by_zero_does_not_fold() {
+    TestProgram program = test_compile("func f(): int { return 1 / 0; }\n");
+
+    assert(test_count_opcode(test_func_chunk(&program, 0), OP_DIVI) == 1);
+
+    test_program_free(&program);
+}
+
 // A literal negation folds into a single constant load rather than emitting a
 // zero, a load, and a subtraction.
 static void test_negated_literal_folds_to_one_load() {
@@ -32,14 +102,56 @@ static void test_negated_literal_folds_to_one_load() {
     test_program_free(&program);
 }
 
-// Negating anything else cannot fold, so it does emit the subtraction. Checked
-// alongside the fold so that a change disabling the fold entirely would show
-// up as one test failing rather than both passing vacuously.
-static void test_negating_a_variable_emits_a_subtraction() {
+// Negating anything else cannot fold, so it emits the instruction. One
+// instruction and no constant: a subtraction from zero would need the zero
+// loaded into a register first, since only a second operand may be immediate.
+//
+// Checked alongside the fold so that a change disabling the fold entirely would
+// show up as one test failing rather than both passing vacuously.
+static void test_negating_a_variable_emits_one_instruction() {
     TestProgram program = test_compile("let a: int = 42;\n"
                                        "let x: int = -a;\n");
 
-    assert(test_count_opcode(test_top_chunk(&program), OP_SUBI) == 1);
+    Chunk *chunk = test_top_chunk(&program);
+
+    assert(test_count_opcode(chunk, OP_NEGI) == 1);
+    assert(test_count_opcode(chunk, OP_SUBI) == 0);
+
+    // Only the 42: the zero the old lowering needed is gone.
+    assert(chunk->const_pool->count == 1);
+
+    test_program_free(&program);
+}
+
+// The float operand takes its own opcode, so a change touching one type does
+// not silently leave the other emitting a subtraction.
+static void test_negating_a_float_variable_emits_one_instruction() {
+    TestProgram program = test_compile("let a: float = 1.5;\n"
+                                       "let x: float = -a;\n");
+
+    Chunk *chunk = test_top_chunk(&program);
+
+    assert(test_count_opcode(chunk, OP_NEGF) == 1);
+    assert(test_count_opcode(chunk, OP_SUBF) == 0);
+
+    test_program_free(&program);
+}
+
+// A float compared against a literal reads it from the constant pool rather
+// than loading it into a register first, which is what 'p.y < 0.0' costs on
+// every iteration of a loop without the K form.
+static void test_a_float_compared_to_a_literal_uses_the_constant_form() {
+    TestProgram program = test_compile("func f(a: float): bool { return a < 0.0; }\n");
+
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    assert(test_count_opcode(chunk, OP_CMP_LTFK) == 1);
+    assert(test_count_opcode(chunk, OP_CMP_LTF) == 0);
+
+    // The literal reaches the instruction as a pool index, so the k bit stays
+    // clear -- that bit means an inline integer.
+    long at = test_find_opcode(chunk, OP_CMP_LTFK);
+    assert(VM_DECODE_R_K(test_instruction(chunk, (size_t)at)) == 0);
 
     test_program_free(&program);
 }
@@ -241,11 +353,13 @@ static void test_if_else_jumps_over_the_else_block() {
     test_program_free(&program);
 }
 
-// A function compiles into its own chunk, leaving nothing in the script's.
+// A function compiles into its own chunk, leaving nothing in the script's but
+// the return every chunk ends with.
 static void test_a_function_compiles_into_its_own_chunk() {
     TestProgram program = test_compile("func add(a: int, b: int): int { return a + b; }\n");
 
-    assert(test_top_chunk(&program)->instructions.size == 0);
+    assert(test_top_chunk(&program)->instructions.size == 1);
+    assert(test_count_opcode(test_top_chunk(&program), OP_RETURN) == 1);
 
     assert(test_func_count(&program) == 1);
     assert(test_func_proto(&program, 0)->arity == 2);
@@ -591,9 +705,36 @@ static void test_a_signature_too_wide_for_a_frame_is_refused(void) {
 
     assert(!test_codegens(source));
 }
+// Every chunk ends in a return, the top level included. The interpreter reads
+// that as its guarantee that stepping one instruction stays inside the chunk,
+// so a chunk ending any other way would run off the end of it.
+static void test_every_chunk_ends_in_a_return() {
+    TestProgram program = test_compile("func f(): int { return 1; }\n"
+                                       "let a: int = 1;\n"
+                                       "let b: int = f();\n");
+
+    Chunk *top = test_top_chunk(&program);
+    Chunk *body = test_func_chunk(&program, 0);
+
+    assert(top->instructions.size > 0);
+    assert(VM_DECODE_OPCODE(instruction_list_back(&top->instructions)) == OP_RETURN);
+
+    assert(body->instructions.size > 0);
+    assert(VM_DECODE_OPCODE(instruction_list_back(&body->instructions)) == OP_RETURN);
+
+    test_program_free(&program);
+}
+
 int main() {
+    test_a_constant_expression_folds_to_one_load();
+    test_a_constant_float_expression_folds();
+    test_a_nested_constant_expression_folds_wholly();
+    test_a_variable_operand_does_not_fold();
+    test_a_constant_division_by_zero_does_not_fold();
     test_negated_literal_folds_to_one_load();
-    test_negating_a_variable_emits_a_subtraction();
+    test_negating_a_variable_emits_one_instruction();
+    test_negating_a_float_variable_emits_one_instruction();
+    test_a_float_compared_to_a_literal_uses_the_constant_form();
     test_a_binary_op_reads_its_operands();
     test_a_small_literal_becomes_an_immediate();
     test_a_compound_assignment_takes_an_immediate();
@@ -609,6 +750,7 @@ int main() {
     test_assignment_computes_into_its_target();
     test_if_jumps_past_its_then_block();
     test_if_else_jumps_over_the_else_block();
+    test_every_chunk_ends_in_a_return();
     test_a_function_compiles_into_its_own_chunk();
     test_a_method_counts_its_receiver();
     test_break_releases_what_the_body_owns();

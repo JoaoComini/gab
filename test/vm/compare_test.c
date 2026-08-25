@@ -5,8 +5,8 @@
 // Every operator is checked below its boundary, above it, and on equality. An
 // inverted comparison still agrees with the correct one on one of those three,
 // so fewer points would let a swapped operator pass.
-#include "support/run.h"
 #include "slot.h"
+#include "support/run.h"
 #include "vm/vm.h"
 
 #include <assert.h>
@@ -120,6 +120,34 @@ static void test_immediate_operand_compares_the_same() {
                          "let r: bool = f();\n"));
 }
 
+// A float literal on the right of an arithmetic operator rides in the constant
+// pool, but the comparisons have no such opcode. Comparing against one is the
+// case that has to fall back to loading it into a register.
+static void test_a_float_literal_compares_the_same() {
+    assert(test_run_bool("func f(): bool { let a: float = 1.5; return a < 2.5; }\n"
+                         "let r: bool = f();\n"));
+
+    assert(!test_run_bool("func f(): bool { let a: float = 3.5; return a < 2.5; }\n"
+                          "let r: bool = f();\n"));
+
+    // Each comparison separately: they share the fallback, and one opcode
+    // reaching for the constant form is enough to have no instruction.
+    assert(test_run_bool("func f(): bool { let a: float = 1.5; return a > 0.5; }\n"
+                         "let r: bool = f();\n"));
+
+    assert(test_run_bool("func f(): bool { let a: float = 1.5; return a <= 1.5; }\n"
+                         "let r: bool = f();\n"));
+
+    assert(test_run_bool("func f(): bool { let a: float = 1.5; return a >= 1.5; }\n"
+                         "let r: bool = f();\n"));
+
+    assert(test_run_bool("func f(): bool { let a: float = 1.5; return a == 1.5; }\n"
+                         "let r: bool = f();\n"));
+
+    assert(test_run_bool("func f(): bool { let a: float = 1.5; return a != 2.5; }\n"
+                         "let r: bool = f();\n"));
+}
+
 int main() {
     test_int_less();
     test_int_greater();
@@ -136,6 +164,7 @@ int main() {
     test_float_not_equal();
 
     test_immediate_operand_compares_the_same();
+    test_a_float_literal_compares_the_same();
 
     printf("compare_test: all tests passed\n");
     return 0;

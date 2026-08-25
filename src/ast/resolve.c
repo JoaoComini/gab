@@ -196,6 +196,95 @@ static const char *bin_op_name(BinOp op) {
     return "?";
 }
 
+// Replaces an arithmetic operator over two literals with the literal it
+// computes. Runs bottom-up with resolution, so an inner fold makes its parent
+// foldable in turn and '2 + 3 * 4' reaches codegen as one constant.
+//
+// Here rather than in codegen because the tree is where a rewrite belongs: every
+// pass after this one sees a literal, and neither of the two codegen paths into
+// a binary op has to know that folding exists.
+//
+// Arithmetic only. A comparison yields a bool, which has no literal form for the
+// result, and a string operand names an interned object rather than a value this
+// can combine. Both are left as instructions.
+//
+// Overflow wraps on the unsigned width, matching what the VM does with the same
+// operands: a fold must not give an answer the unfolded code would not.
+static void fold_bin_op(ASTExpr *expr) {
+    ASTExpr *left = expr->bin_op.left;
+    ASTExpr *right = expr->bin_op.right;
+
+    if (left->kind != EXPR_LITERAL || right->kind != EXPR_LITERAL) {
+        return;
+    }
+
+    if (left->lit.kind != right->lit.kind) {
+        return;
+    }
+
+    Literal folded = {.kind = left->lit.kind};
+
+    if (left->lit.kind == TYPE_FLOAT) {
+        float a = left->lit.as_float;
+        float b = right->lit.as_float;
+
+        switch (expr->bin_op.op) {
+        case BIN_OP_ADD:
+            folded.as_float = a + b;
+            break;
+        case BIN_OP_SUB:
+            folded.as_float = a - b;
+            break;
+        case BIN_OP_MUL:
+            folded.as_float = a * b;
+            break;
+        case BIN_OP_DIV:
+            // A float divided by zero is an infinity rather than a trap, and
+            // one the VM would produce too, so it folds like any other.
+            folded.as_float = a / b;
+            break;
+        default:
+            return;
+        }
+    } else if (left->lit.kind == TYPE_INT) {
+        int32_t a = left->lit.as_int;
+        int32_t b = right->lit.as_int;
+
+        switch (expr->bin_op.op) {
+        case BIN_OP_ADD:
+            folded.as_int = (int32_t)((uint32_t)a + (uint32_t)b);
+            break;
+        case BIN_OP_SUB:
+            folded.as_int = (int32_t)((uint32_t)a - (uint32_t)b);
+            break;
+        case BIN_OP_MUL:
+            folded.as_int = (int32_t)((uint32_t)a * (uint32_t)b);
+            break;
+        case BIN_OP_DIV:
+        case BIN_OP_MOD:
+            // The two traps the VM reports: a zero divisor, and the one pair
+            // whose quotient has no representation. Left as instructions so the
+            // program fails where it runs rather than where it compiles.
+            if (b == 0 || (a == INT32_MIN && b == -1)) {
+                return;
+            }
+
+            folded.as_int = expr->bin_op.op == BIN_OP_DIV ? a / b : a % b;
+            break;
+        default:
+            return;
+        }
+    } else {
+        return;
+    }
+
+    ast_expr_free(left);
+    ast_expr_free(right);
+
+    expr->kind = EXPR_LITERAL;
+    expr->lit = folded;
+}
+
 // The variable an address is ultimately taken from, so that borrowing 'v.x' pins v.
 static Symbol *addressed_symbol(ASTExpr *expr) {
     switch (expr->kind) {
@@ -809,6 +898,9 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         expr->type = bin_op_yields_bool(expr->bin_op.op)
                          ? type_registry_get_builtin(state->current_scope->type_registry, TYPE_BOOL)
                          : left_type;
+
+        fold_bin_op(expr);
+
         break;
     }
     case EXPR_VARIABLE: {

@@ -102,6 +102,43 @@ static void test_a_move_in_a_nested_loop_is_refused() {
                           "}\n"));
 }
 
+// The two spellings of a counting step run the same loop, which is what lets
+// codegen fuse either into one instruction. Checked as behaviour because the
+// fusion is only sound if the two really are the same.
+static void test_both_spellings_of_a_step_count_alike() {
+    assert(test_run_int("func run(n: int): int {\n"
+                        "    let acc: int = 0;\n"
+                        "    for let i: int = 0; i < n; i = i + 1 { acc = acc + i; }\n"
+                        "    return acc;\n"
+                        "}\n"
+                        "let r: int = run(5);\n") == 10);
+
+    assert(test_run_int("func run(n: int): int {\n"
+                        "    let acc: int = 0;\n"
+                        "    for let i: int = 0; i < n; i += 1 { acc = acc + i; }\n"
+                        "    return acc;\n"
+                        "}\n"
+                        "let r: int = run(5);\n") == 10);
+
+    assert(test_run_int("func run(n: int): int {\n"
+                        "    let acc: int = 0;\n"
+                        "    for let i: int = 0; i < n; i = 1 + i { acc = acc + i; }\n"
+                        "    return acc;\n"
+                        "}\n"
+                        "let r: int = run(5);\n") == 10);
+}
+
+// A body that steps the counter itself is not the fused shape, and must still
+// run as written: the extra step is what the loop does.
+static void test_a_body_that_steps_the_counter_still_runs_as_written() {
+    assert(test_run_int("func run(n: int): int {\n"
+                        "    let acc: int = 0;\n"
+                        "    for let i: int = 0; i < n; i = i + 1 { acc = acc + 1; i = i + 1; }\n"
+                        "    return acc;\n"
+                        "}\n"
+                        "let r: int = run(6);\n") == 3);
+}
+
 int main(void) {
     test_a_condition_loop_runs_until_it_is_false();
     test_a_false_condition_skips_the_body();
@@ -112,6 +149,9 @@ int main(void) {
     test_break_outside_a_loop_is_rejected();
     test_a_slot_moved_before_a_break_is_dead_after_the_loop();
     test_a_move_in_a_nested_loop_is_refused();
+
+    test_both_spellings_of_a_step_count_alike();
+    test_a_body_that_steps_the_counter_still_runs_as_written();
 
     printf("loop tests passed\n");
     return 0;

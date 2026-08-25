@@ -201,7 +201,8 @@ static void codegen_addr_of_into(CodegenState *state, ASTExpr *inner, unsigned i
 // Binary operators: which instruction an operator calls for, and how its right
 // operand is encoded.
 static bool expr_is_immediate_operand(const ASTExpr *node, unsigned int *out);
-static unsigned int codegen_rhs(CodegenState *state, ASTExpr *rhs, const Type *left_type, RhsKind *kind);
+static unsigned int codegen_rhs(CodegenState *state, BinOp op, ASTExpr *rhs, const Type *left_type,
+                                RhsKind *kind);
 static OpCode bin_op_opcode_for(BinOp op, const Type *left_type, RhsKind kind);
 static OpCode bin_op_to_float_op(BinOp bin_op);
 static OpCode bin_op_to_int_op(BinOp bin_op);
@@ -318,6 +319,19 @@ Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, Diagnost
 
     for (size_t i = 0; i < ast->statements.size; i++) {
         codegen_stmt(&state, ast->statements.data[i]);
+    }
+
+    // The top level ends in a return like any other body, so every chunk ends by
+    // saying so rather than by the interpreter noticing it has run out of
+    // instructions. That is what lets a straight-line step skip the bounds
+    // check: the last instruction it can reach is a return, which leaves through
+    // the frame path instead.
+    OpCode last = state.chunk->instructions.size > 0
+                      ? VM_DECODE_OPCODE(instruction_list_back(&state.chunk->instructions))
+                      : OP_LOAD_CONST;
+
+    if (state.chunk->instructions.size == 0 || (last != OP_RETURN && last != OP_RETURN_N)) {
+        chunk_add_instruction(state.chunk, VM_ENCODE_R(OP_RETURN, 0, 0, 0));
     }
 
     // The slots were only ever true of this compile, so they go with it.
@@ -727,7 +741,7 @@ static void codegen_compound_assign_stmt(CodegenState *state, ASTCompoundAssignS
         unsigned int rd = codegen_expr(state, ast->target);
 
         RhsKind rhs_kind = RHS_REGISTER;
-        unsigned int rhs = codegen_rhs(state, ast->value, ast->target->type, &rhs_kind);
+        unsigned int rhs = codegen_rhs(state, ast->op, ast->value, ast->target->type, &rhs_kind);
 
         OpCode op_code = bin_op_opcode_for(ast->op, ast->target->type, rhs_kind);
 
@@ -759,7 +773,7 @@ static void codegen_compound_assign_stmt(CodegenState *state, ASTCompoundAssignS
                           VM_ENCODE_R(load_op, value, target.base, (unsigned int)target.offset));
 
     RhsKind rhs_kind = RHS_REGISTER;
-    unsigned int rhs = codegen_rhs(state, ast->value, ast->target->type, &rhs_kind);
+    unsigned int rhs = codegen_rhs(state, ast->op, ast->value, ast->target->type, &rhs_kind);
 
     OpCode op_code = bin_op_opcode_for(ast->op, ast->target->type, rhs_kind);
 
@@ -842,6 +856,58 @@ static bool stmt_may_assign(const ASTStmt *stmt, const Symbol *symbol) {
 // bound are plain variables, so 'may assign' is a search for their symbol
 // rather than an aliasing question -- taking a pointer to either would make
 // this unsound, which is why an addressed counter is refused too.
+// Whether this literal is the integer one, which is the only step the fused
+// instruction takes.
+static bool is_one(const ASTExpr *expr) {
+    return expr->kind == EXPR_LITERAL && expr->lit.kind == TYPE_INT && expr->lit.as_int == 1;
+}
+
+// Whether a statement steps 'counter' by one. Two spellings reach here: the
+// compound 'i += 1', and the plain 'i = i + 1' it stands for -- including
+// '1 + i', since addition commutes and the two say the same thing.
+static bool for_step_is_one(const ASTStmt *post, const Symbol *counter) {
+    if (post->kind == STMT_COMPOUND_ASSIGN) {
+        const ASTCompoundAssignStmt *step = &post->compound_assign;
+
+        if (step->op != BIN_OP_ADD || step->target->kind != EXPR_VARIABLE ||
+            step->target->symbol != counter) {
+            return false;
+        }
+
+        return is_one(step->value);
+    }
+
+    if (post->kind != STMT_ASSIGN) {
+        return false;
+    }
+
+    const ASTExpr *target = post->assign.target;
+    const ASTExpr *value = post->assign.value;
+
+    if (target->kind != EXPR_VARIABLE || target->symbol != counter) {
+        return false;
+    }
+
+    if (value->kind != EXPR_BIN_OP || value->bin_op.op != BIN_OP_ADD) {
+        return false;
+    }
+
+    // The counter on one side and the literal one on the other, either way
+    // round. Anything else assigns something that is not this counter stepped.
+    const ASTExpr *lhs = value->bin_op.left;
+    const ASTExpr *rhs = value->bin_op.right;
+
+    if (lhs->kind == EXPR_VARIABLE && lhs->symbol == counter) {
+        return is_one(rhs);
+    }
+
+    if (rhs->kind == EXPR_VARIABLE && rhs->symbol == counter) {
+        return is_one(lhs);
+    }
+
+    return false;
+}
+
 static bool for_is_countable(const ASTForStmt *ast, const Symbol **counter, const Symbol **bound) {
     if (!ast->condition || !ast->post || !ast->body) {
         return false;
@@ -863,19 +929,11 @@ static bool for_is_countable(const ASTForStmt *ast, const Symbol **counter, cons
         return false;
     }
 
-    // 'i += 1' on the same variable the condition tests.
-    if (ast->post->kind != STMT_COMPOUND_ASSIGN || ast->post->compound_assign.op != BIN_OP_ADD) {
-        return false;
-    }
-
-    const ASTCompoundAssignStmt *step = &ast->post->compound_assign;
-
-    if (step->target->kind != EXPR_VARIABLE || step->target->symbol != left->symbol) {
-        return false;
-    }
-
-    if (step->value->kind != EXPR_LITERAL || step->value->lit.kind != TYPE_INT ||
-        step->value->lit.as_int != 1) {
+    // The step, on the same variable the condition tests. Both spellings of it:
+    // 'i += 1', and the 'i = i + 1' it is shorthand for. They are one operation,
+    // so recognising only the shorter one would make the fused instruction
+    // depend on how the step was written rather than on what it does.
+    if (!for_step_is_one(ast->post, left->symbol)) {
         return false;
     }
 
@@ -1576,12 +1634,10 @@ static unsigned int codegen_deref_expr(CodegenState *state, ASTExpr *node) {
     return rd;
 }
 
-// Negation lowers to a subtraction from zero rather than earning an opcode:
-// that is exactly what it is on the machine, and a dedicated OP_NEG would add
-// a dispatch case per numeric type without saving an instruction.
-//
-// The zero has to live in a register. Only the second operand of an arithmetic
-// instruction may be immediate, and the zero here is the first.
+// Negation is its own opcode rather than a subtraction from zero. The zero
+// would have to live in a register -- only the second operand of an arithmetic
+// instruction may be immediate, and the zero there is the first -- so lowering
+// it that way spends a load and a register on every execution.
 static unsigned int codegen_neg_expr(CodegenState *state, ASTExpr *node) {
     ASTExpr *inner = node->unary.target;
 
@@ -1611,16 +1667,10 @@ static unsigned int codegen_neg_expr(CodegenState *state, ASTExpr *node) {
 
     bool is_float = node->type->kind == TYPE_FLOAT;
 
-    Constant zero_value = is_float ? (Constant){.as_float = 0.0f} : (Constant){.as_int = 0};
-    unsigned int zero_index = constpool_add(state->chunk->const_pool, zero_value);
-
-    unsigned int zero = codegen_alloc_register(state, node->span);
-    chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_LOAD_CONST, zero, zero_index));
-
     unsigned int operand = codegen_expr(state, inner);
     unsigned int rd = codegen_alloc_register(state, node->span);
 
-    chunk_add_instruction(state->chunk, VM_ENCODE_R(is_float ? OP_SUBF : OP_SUBI, rd, zero, operand));
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(is_float ? OP_NEGF : OP_NEGI, rd, operand, 0));
 
     return rd;
 }
@@ -1996,6 +2046,27 @@ static bool expr_is_immediate_operand(const ASTExpr *node, unsigned int *out) {
     return true;
 }
 
+// Whether this operator has a constant-operand opcode. Only the arithmetic
+// four do, so this is what keeps codegen_rhs from choosing a form
+// bin_op_opcode_for has no instruction for.
+static bool bin_op_has_constant_form(BinOp op) {
+    switch (op) {
+    case BIN_OP_ADD:
+    case BIN_OP_SUB:
+    case BIN_OP_MUL:
+    case BIN_OP_DIV:
+    case BIN_OP_LESS:
+    case BIN_OP_GREATER:
+    case BIN_OP_LEQUAL:
+    case BIN_OP_GEQUAL:
+    case BIN_OP_EQUAL:
+    case BIN_OP_NEQUAL:
+        return true;
+    default:
+        return false;
+    }
+}
+
 // The right operand of a binary op: a register, the value itself, or the pool
 // index of the value. Reports which through 'kind', so the caller knows what
 // instruction to emit.
@@ -2003,13 +2074,18 @@ static bool expr_is_immediate_operand(const ASTExpr *node, unsigned int *out) {
 // Generating it is what may allocate a register, so this runs before the result
 // register is allocated -- the order the original codegen used, and the one the
 // register numbering in the tests reflects.
-static unsigned int codegen_rhs(CodegenState *state, ASTExpr *rhs, const Type *left_type, RhsKind *kind) {
+static unsigned int codegen_rhs(CodegenState *state, BinOp op, ASTExpr *rhs, const Type *left_type,
+                                RhsKind *kind) {
     unsigned int value = 0;
 
     if (left_type->kind == TYPE_FLOAT) {
         // A float literal is reached by index rather than by value: the operand
         // field is eight bits, and no float fits those.
-        if (rhs->kind == EXPR_LITERAL && rhs->lit.kind == TYPE_FLOAT) {
+        //
+        // Only for an operator that has the form. The comparisons have no 'K'
+        // opcode, so one reaching for it would have no instruction to name --
+        // they take the register path below and load the literal first.
+        if (bin_op_has_constant_form(op) && rhs->kind == EXPR_LITERAL && rhs->lit.kind == TYPE_FLOAT) {
             size_t index = constpool_add(state->chunk->const_pool, value_from_literal(rhs->lit));
 
             // Past what the field addresses, so this one is loaded as before.
@@ -2053,11 +2129,26 @@ static OpCode bin_op_opcode_for(BinOp op, const Type *left_type, RhsKind kind) {
         return OP_MULFK;
     case BIN_OP_DIV:
         return OP_DIVFK;
+    case BIN_OP_LESS:
+        return OP_CMP_LTFK;
+    case BIN_OP_GREATER:
+        return OP_CMP_GTFK;
+    case BIN_OP_LEQUAL:
+        return OP_CMP_LEFK;
+    case BIN_OP_GEQUAL:
+        return OP_CMP_GEFK;
+    case BIN_OP_EQUAL:
+        return OP_CMP_EQFK;
+    case BIN_OP_NEQUAL:
+        return OP_CMP_NEFK;
     default:
         break;
     }
 
-    assert(0 && "only the arithmetic operators have a constant form");
+    // Unreachable: codegen_rhs chooses RHS_CONSTANT only for the operators
+    // above, so the two switches state the same set and this is what catches
+    // them drifting apart rather than a case a program can reach.
+    assert(0 && "this operator has no constant form");
     abort();
 }
 
@@ -2145,7 +2236,8 @@ static unsigned int codegen_bin_op_into(CodegenState *state, ASTExpr *node, unsi
     unsigned int lhs = codegen_expr(state, node->bin_op.left);
 
     RhsKind rhs_kind = RHS_REGISTER;
-    unsigned int rhs = codegen_rhs(state, node->bin_op.right, node->bin_op.left->type, &rhs_kind);
+    unsigned int rhs =
+        codegen_rhs(state, node->bin_op.op, node->bin_op.right, node->bin_op.left->type, &rhs_kind);
 
     codegen_emit_bin_op(state, node, dest, lhs, rhs, rhs_kind);
 
@@ -2164,7 +2256,8 @@ static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node) {
     unsigned int lhs = codegen_expr(state, node->bin_op.left);
 
     RhsKind rhs_kind = RHS_REGISTER;
-    unsigned int rhs = codegen_rhs(state, node->bin_op.right, node->bin_op.left->type, &rhs_kind);
+    unsigned int rhs =
+        codegen_rhs(state, node->bin_op.op, node->bin_op.right, node->bin_op.left->type, &rhs_kind);
 
     unsigned int result = codegen_alloc_register(state, node->span);
 
