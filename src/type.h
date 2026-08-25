@@ -1,6 +1,7 @@
 #ifndef GAB_TYPE_H
 #define GAB_TYPE_H
 
+#include "allocator.h"
 #include "arena.h"
 #include "string/string.h"
 #include "string/string_ref.h"
@@ -30,6 +31,18 @@ typedef enum {
 } TypeKind;
 
 typedef struct Type Type;
+
+// Frees what one value of a type owns, leaving the value itself to its holder.
+// Selected once, when the layout is computed, so that freeing never asks what
+// kind a type is: a type that owns nothing has none of these at all, and the
+// free path tests for that rather than calling one to learn there is nothing
+// to do.
+//
+// Takes its type because a walk over fields needs the offsets, and recurses
+// through the field's own function rather than flattening -- an owning shape
+// whose bounds are not in the type, such as an array counted at run time, can
+// then be its own function rather than a case in a shared walk.
+typedef void (*DropFn)(Allocator allocator, const Type *type, void *value);
 
 // A method is an ordinary function Symbol — same prototype index, same call
 // path — so the map holds one. Declared rather than included: Symbol's own
@@ -85,6 +98,10 @@ struct Type {
     // The methods declared with this type as their receiver. NULL until the
     // first one is, so a struct nobody declares a method on costs nothing.
     MethodMap *methods;
+
+    // What freeing a value of this type must free, or NULL when it owns
+    // nothing. Set by type_layout_compute.
+    DropFn drop;
 
     // For a borrowing type that shares another's identity -- 'ref string' and
     // 'string' -- the owning one. NULL everywhere else. Method lookup follows

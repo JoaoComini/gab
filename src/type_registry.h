@@ -42,9 +42,8 @@ typedef struct {
     // and a concatenation must not answer it the same way.
     Type *ref_string_type;
 
-    // The header a string's characters carry. Never nameable: it exists so that
-    // freeing them frees the bytes and stops, rather than reading them back as
-    // a string header naming further characters.
+    // The header a string's characters carry. Never nameable: it owns nothing,
+    // so freeing them frees the bytes and stops.
     Type *characters_type;
 
     Type *error_type;

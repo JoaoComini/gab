@@ -40,8 +40,42 @@ static Type *make_struct(TestContext *ctx, const char *name, const char **fields
     }
 
     type_layout_compute(type);
+    object_select_drop(type);
 
     return type;
+}
+
+// What a type owns decides its drop function, and a type that owns nothing has
+// none: the free path tests for that rather than calling a function to learn
+// there is nothing to do.
+static void test_a_type_that_owns_nothing_has_no_drop() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    TypeRegistry *registry = type_registry_create(ctx.arena, &ctx.strings);
+    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+
+    const char *names[] = {"x", "y"};
+    Type *types[] = {int_type, int_type};
+
+    assert(make_struct(&ctx, "Point", names, types, 2)->drop == NULL);
+
+    Type *owning = type_registry_indirect_to_kind(registry, int_type, false);
+    Type *borrowing = type_registry_indirect_to_kind(registry, int_type, true);
+
+    assert(owning->drop != NULL);
+    assert(borrowing->drop == NULL);
+
+    // A struct owns through whichever field does, so one owning field is what
+    // earns it a drop.
+    const char *held[] = {"held"};
+    Type *borrowed_field[] = {borrowing};
+    Type *owned_field[] = {owning};
+
+    assert(make_struct(&ctx, "Borrower", held, borrowed_field, 1)->drop == NULL);
+    assert(make_struct(&ctx, "Owner", held, owned_field, 1)->drop != NULL);
+
+    test_context_free(&ctx);
 }
 
 // One allocation for the header and payload together, and one free for both.
@@ -59,13 +93,13 @@ static void test_alloc_and_free_are_one_allocation() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *p = gab_object_alloc(allocator, player);
+    void *p = object_alloc(allocator, player);
 
     assert(p);
     assert(counts.allocs == 1);
-    assert(gab_object_of(p)->type == player);
+    assert(object_of(p)->type == player);
 
-    gab_object_free(allocator, p);
+    object_free(allocator, p);
 
     assert(counts.frees == 1);
 
@@ -88,11 +122,11 @@ static void test_the_payload_follows_the_header() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *p = gab_object_alloc(allocator, pair);
+    void *p = object_alloc(allocator, pair);
 
-    assert((char *)gab_object_of(p) + sizeof(ObjectHeader) == (char *)p);
+    assert((char *)object_of(p) + sizeof(ObjectHeader) == (char *)p);
 
-    gab_object_free(allocator, p);
+    object_free(allocator, p);
 
     test_context_free(&ctx);
 }
@@ -114,13 +148,13 @@ static void test_a_fresh_payload_is_zeroed() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    char *p = gab_object_alloc(allocator, pair);
+    char *p = object_alloc(allocator, pair);
 
     for (size_t i = 0; i < pair->size; i++) {
         assert(p[i] == 0);
     }
 
-    gab_object_free(allocator, p);
+    object_free(allocator, p);
 
     test_context_free(&ctx);
 }
@@ -145,14 +179,14 @@ static void test_freeing_an_object_frees_what_it_owns() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *child = gab_object_alloc(allocator, inner);
-    void *parent = gab_object_alloc(allocator, outer);
+    void *child = object_alloc(allocator, inner);
+    void *parent = object_alloc(allocator, outer);
 
     memcpy(parent, &child, sizeof(child));
 
     assert(counts.allocs == 2);
 
-    gab_object_free(allocator, parent);
+    object_free(allocator, parent);
 
     // Both: the parent, and the child its owning field named.
     assert(counts.frees == 2);
@@ -181,17 +215,17 @@ static void test_freeing_does_not_follow_a_ref_field() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *borrowed = gab_object_alloc(allocator, inner);
-    void *holder = gab_object_alloc(allocator, outer);
+    void *borrowed = object_alloc(allocator, inner);
+    void *holder = object_alloc(allocator, outer);
 
     memcpy(holder, &borrowed, sizeof(borrowed));
 
-    gab_object_free(allocator, holder);
+    object_free(allocator, holder);
 
     // Only the holder. The borrowed object is still its owner's to free.
     assert(counts.frees == 1);
 
-    gab_object_free(allocator, borrowed);
+    object_free(allocator, borrowed);
 
     assert(counts.frees == 2);
 
@@ -204,12 +238,13 @@ static void test_freeing_null_is_a_no_op() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    gab_object_free(allocator, NULL);
+    object_free(allocator, NULL);
 
     assert(counts.frees == 0);
 }
 
 int main(void) {
+    test_a_type_that_owns_nothing_has_no_drop();
     test_alloc_and_free_are_one_allocation();
     test_the_payload_follows_the_header();
     test_a_fresh_payload_is_zeroed();

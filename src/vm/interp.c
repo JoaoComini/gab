@@ -79,7 +79,7 @@ static void vm_release_frame_refs(VM *vm, const CallFrame *frame) {
 
         memcpy(vm->stack + frame->base + ref.slot * VM_SLOT_SIZE, &(void *){NULL}, sizeof(object));
 
-        gab_object_free(DEFAULT_ALLOCATOR, object);
+        object_free(DEFAULT_ALLOCATOR, object);
     }
 }
 
@@ -528,9 +528,9 @@ static void vm_run_loop(VM *vm) {
                 size_t total = (size_t)left.length + (size_t)right.length;
 
                 // Typed as characters rather than as a string: what is being
-                // allocated is the bytes themselves, and a string header here
-                // would send the free walk reading them back as one.
-                char *characters = gab_object_alloc_sized(
+                // allocated is the bytes themselves, and they own nothing
+                // further. The string header naming them is the value below.
+                char *characters = object_alloc_sized(
                     DEFAULT_ALLOCATOR, vm->env.global_scope.type_registry->builtins.characters_type,
                     total == 0 ? 1 : total);
 
@@ -686,7 +686,7 @@ static void vm_run_loop(VM *vm) {
 
                 // The one place a heap object is created, so a host-supplied
                 // allocator would replace this single call.
-                void *object = gab_object_alloc(DEFAULT_ALLOCATOR, type);
+                void *object = object_alloc(DEFAULT_ALLOCATOR, type);
 
                 if (!object) {
                     vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory");
@@ -717,7 +717,7 @@ static void vm_run_loop(VM *vm) {
                 // that was already released safe to visit again.
                 vm_clear_pointer(vm, rd);
 
-                gab_object_free(DEFAULT_ALLOCATOR, object);
+                object_free(DEFAULT_ALLOCATOR, object);
                 VM_NEXT();
             }
             VM_CASE(OP_CALL) {

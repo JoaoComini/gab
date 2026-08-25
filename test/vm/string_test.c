@@ -7,6 +7,7 @@
 #include "support/run.h"
 
 #include <assert.h>
+#include <stddef.h>
 #include <string.h>
 
 // 'string' is a builtin type name, resolvable wherever a type is written.
@@ -38,6 +39,34 @@ static void test_a_string_is_an_address_and_a_length() {
 
     // Padded to the address's alignment, so it tiles whole slots.
     assert(string_type->size == VM_STRING_SLOTS * VM_SLOT_SIZE);
+
+    test_context_free(&ctx);
+}
+
+// The two fields are what the layout comes from: the characters the string
+// names and how many there are. An owning string owns its characters, so the
+// field that names them owns; a borrow's field does not.
+static void test_a_string_is_two_fields() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope scope;
+    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+
+    Type *string_type = type_registry_get_builtin(scope.type_registry, TYPE_STRING);
+
+    const TypeField *data = type_find_field(string_type, string_from_cstr(&ctx.strings, "data"));
+    const TypeField *length = type_find_field(string_type, string_from_cstr(&ctx.strings, "length"));
+
+    assert(data && length);
+
+    // The C mirror the VM and the host both read is these fields' layout, so
+    // the two statements of it must agree.
+    assert(data->offset == offsetof(GabStringValue, data));
+    assert(length->offset == offsetof(GabStringValue, length));
+
+    assert(type_is_owned(data->type));
+    assert(!type_is_owned(length->type));
 
     test_context_free(&ctx);
 }
@@ -357,6 +386,7 @@ int main(void) {
     test_string_names_a_type();
     test_a_literal_is_a_string();
     test_a_string_is_an_address_and_a_length();
+    test_a_string_is_two_fields();
     test_a_literal_loads_its_characters_and_length();
     test_equal_strings_compare_equal();
     test_a_prefix_is_not_equal();

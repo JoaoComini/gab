@@ -30,9 +30,9 @@ typedef struct {
 
 typedef struct ObjectHeader {
     // What the payload is, and the only thing the header carries. Freeing a
-    // Player means freeing the objects its 'box T' fields own, and only the Type
-    // says where those are. A Type is pointer-stable and outlives every
-    // compile, so holding one costs nothing.
+    // Player means running the drop function its Type holds, which is where the
+    // offsets of everything it owns live. A Type is pointer-stable and outlives
+    // every compile, so holding one costs nothing.
     //
     // There is no reference count. Ownership is unique and statically known:
     // exactly one slot owns an object, and codegen frees it where that slot
@@ -46,28 +46,33 @@ typedef struct ObjectHeader {
 // misaligning every object of it.
 _Static_assert(sizeof(ObjectHeader) % 8 == 0, "the header must not misalign the payload that follows it");
 
+// Selects the drop function for a laid-out type, or NULL when it owns nothing.
+// Called wherever a Type is finished -- once per type, never on a free path.
+void object_select_drop(Type *type);
+
 // The header of a payload address. Not for a stack pointer: there is no header
 // there, and nothing in the representation can tell the caller so.
-ObjectHeader *gab_object_of(void *payload);
+ObjectHeader *object_of(void *payload);
 
 // Allocates a zeroed payload of 'type' and returns it. NULL if the allocation
 // fails.
-void *gab_object_alloc(Allocator allocator, const Type *type);
+void *object_alloc(Allocator allocator, const Type *type);
 
-// As gab_object_alloc, for a payload whose size is not the type's: a string's
+// As object_alloc, for a payload whose size is not the type's: a string's
 // characters are counted at run time, so 'size' says how many bytes follow the
 // header rather than the type doing.
 //
-// The type still says how to free it, which for a string is 'nothing beyond the
-// payload' -- the characters are the payload rather than something it points at.
-void *gab_object_alloc_sized(Allocator allocator, const Type *type, size_t size);
+// The type still says how to free it, which for characters is nothing beyond
+// the payload -- they are the payload rather than something it points at.
+void *object_alloc_sized(Allocator allocator, const Type *type, size_t size);
 
 // Frees a payload and everything it owns. NULL-tolerant, because a 'box T' that
 // was never assigned is NULL and every free path would otherwise need the same
 // guard.
 //
 // Freeing a tree of objects recurses, which is O(depth) in C stack for a deep
-// one. A 'ref T' field is not followed: it never owned what it names.
-void gab_object_free(Allocator allocator, void *payload);
+// one. What is followed is decided by the type's drop function, chosen when its
+// layout was: a 'ref' has none, having never owned what it names.
+void object_free(Allocator allocator, void *payload);
 
 #endif

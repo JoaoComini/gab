@@ -17,29 +17,51 @@ static Type *register_builtin(TypeRegistry *registry, TypeKind kind, const char 
     return type;
 }
 
+// The 'string' type, laid out from its two fields. 'is_ref' decides only
+// whether the field naming the characters owns them: that one bit is the whole
+// difference between a string and a borrow of one.
+static Type *string_builtin_create(TypeRegistry *registry, bool is_ref) {
+    Type *type = type_struct_create(registry->arena, string_from_cstr(registry->strings, "string"), 2);
+    type->kind = TYPE_STRING;
+
+    Type *characters = type_registry_indirect_to_kind(registry, registry->builtins.characters_type, is_ref);
+
+    type_add_field(type, string_from_cstr(registry->strings, "data"), characters);
+    type_add_field(type, string_from_cstr(registry->strings, "length"), registry->builtins.int_type);
+    type_layout_compute(type);
+    object_select_drop(type);
+
+    return type;
+}
+
 void type_registry_register_builtins(TypeRegistry *registry) {
     registry->builtins.int_type = register_builtin(registry, TYPE_INT, "int", 4, 4);
     registry->builtins.float_type = register_builtin(registry, TYPE_FLOAT, "float", 4, 4);
     registry->builtins.bool_type = register_builtin(registry, TYPE_BOOL, "bool", 1, 1);
 
-    // Two fields, so its size and alignment come from the layout the VM reads
-    // rather than from a number repeated here.
-    registry->builtins.string_type =
-        register_builtin(registry, TYPE_STRING, "string", sizeof(GabStringValue), _Alignof(GabStringValue));
+    // The characters a string names. Nameless in any scope -- no script writes
+    // it -- and owning nothing itself: freeing them frees the bytes and stops.
+    registry->builtins.characters_type = type_create(registry->arena, TYPE_UNKNOWN, NULL);
+    registry->builtins.characters_type->size = 1;
+    registry->builtins.characters_type->alignment = 1;
+
+    // A struct in its layout and a builtin in its semantics: the fields are
+    // where its size, its alignment and what it owns all come from, while
+    // comparison, literals and the borrow spelling stay the kind's own.
+    registry->builtins.string_type = string_builtin_create(registry, false);
 
     // Same layout and same name: 'ref' is spelled in the type spec rather than
     // being a type a script can name, so this one is never registered under a
-    // name of its own.
-    registry->builtins.ref_string_type =
-        type_create(registry->arena, TYPE_STRING, registry->builtins.string_type->name);
-    registry->builtins.ref_string_type->size = sizeof(GabStringValue);
-    registry->builtins.ref_string_type->alignment = _Alignof(GabStringValue);
+    // name of its own. It differs only in the field naming the characters,
+    // which borrows here and owns there.
+    registry->builtins.ref_string_type = string_builtin_create(registry, true);
     registry->builtins.ref_string_type->is_ref = true;
     registry->builtins.ref_string_type->owner = registry->builtins.string_type;
 
-    // Characters own nothing, so this is a plain sized payload: TYPE_UNKNOWN
-    // reaches neither the string branch of the free walk nor the field loop.
-    registry->builtins.characters_type = type_create(registry->arena, TYPE_UNKNOWN, NULL);
+    // The VM and the host both read these two fields as GabStringValue, so the
+    // computed layout and the C struct are two statements of one thing.
+    assert(registry->builtins.string_type->size == sizeof(GabStringValue));
+    assert(registry->builtins.string_type->alignment == _Alignof(GabStringValue));
 
     // Poison type. Deliberately never given a name in any scope: no script can
     // name it, it only arises from a failed resolution.
@@ -89,6 +111,8 @@ Type *type_registry_indirect_to_kind(TypeRegistry *registry, Type *inner, bool i
     type->alignment = _Alignof(void *);
     type->inner = inner;
     type->is_ref = is_ref;
+
+    object_select_drop(type);
 
     indirect_map_insert(map, inner, type);
 
