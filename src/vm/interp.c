@@ -864,16 +864,16 @@ static void vm_run_loop(VM *vm) {
                     VM_RETRY();
                 }
 
-                // Typed as the element rather than as the array, so that
-                // freeing the block walks the elements the way freeing any
-                // object walks what it holds. The count travels in the block's
-                // own header, which is what says how far that walk runs.
                 // Computed in size_t from an int32_t count, so the product
                 // cannot wrap: the widest it reaches is INT32_MAX times an
                 // element's width, which a 64-bit size_t holds. The allocation
                 // below is what refuses a length no memory could satisfy.
                 size_t bytes = (size_t)count * type->element->size;
 
+                // Typed as the element rather than as the array: what the block
+                // holds is elements, and the array's own drop is what walks
+                // them.
+                //
                 // A zero-length array still allocates, so its header holds a
                 // real address: an empty block and a freed one would otherwise
                 // be the same pointer.

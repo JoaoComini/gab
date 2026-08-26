@@ -186,16 +186,18 @@ typedef enum {
     OP_ADD_PTR,
 
     // Allocates the block for the array header at rd, whose type is
-    // heap_types[kx]. The count is read from the header's own length slot,
-    // which codegen has already written, and the address is written beside it.
-    // Fails the run on a negative count or an allocation that does not succeed.
+    // heap_types[kx], and writes its address into the header. Fails the run on
+    // a negative count or an allocation that does not succeed.
     //
-    // I-type, so the count rides in the header rather than in an operand: a
-    // type index is relocated at link and only this format is patched.
+    // Reads its own destination: the count is taken from the header's length
+    // slot, which codegen writes first. That is I-type's doing -- the format
+    // carries one register and a 17-bit index, and the index needs every bit of
+    // it, so there is nowhere else for a second operand to go. Only I-type is
+    // relocated, and a type index has to be.
     //
-    // Takes a type index rather than a width because the block is typed by the
-    // array that owns it -- freeing it walks the elements, and only the type
-    // says how.
+    // Takes a type index rather than a width because the count alone does not
+    // say how wide an element is, and because a length that is not yet a header
+    // could not be freed if the allocation below failed.
     OP_ARRAY_NEW,
 
     // As OP_ADD_PTR, with the offset read from a register rather than an

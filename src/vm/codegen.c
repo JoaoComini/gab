@@ -2013,23 +2013,8 @@ static void codegen_emit_release(CodegenState *state, unsigned int slot, const T
 static unsigned int codegen_new_expr(CodegenState *state, ASTExpr *node) {
     unsigned int rd = codegen_alloc_slots(state, VM_INDIRECT_SLOTS, VM_INDIRECT_SLOTS, node->span);
 
-    // Interned within the unit, not across the VM: an index means nothing until
-    // linking gives the unit its base, so a type an earlier unit registered is
-    // registered again here and the two are reconciled at link.
-    size_t type_index = state->unit->types.size;
-
-    for (size_t i = 0; i < state->unit->types.size; i++) {
-        if (state->unit->types.data[i] == node->new_expr.type) {
-            type_index = i;
-            break;
-        }
-    }
-
-    if (type_index == state->unit->types.size) {
-        type_list_add(&state->unit->types, node->new_expr.type);
-    }
-
-    size_t offset = chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_NEW, rd, (unsigned int)type_index));
+    size_t offset = chunk_add_instruction(
+        state->chunk, VM_ENCODE_I(OP_NEW, rd, codegen_type_index(state, node->new_expr.type)));
 
     relocation_list_add(&state->unit->type_relocations,
                         (Relocation){.chunk = state->chunk, .offset = offset});
@@ -2060,21 +2045,8 @@ static unsigned int codegen_array_new_expr(CodegenState *state, ASTExpr *node) {
 
     chunk_add_instruction(state->chunk, VM_ENCODE_R(store, rd, count, (unsigned int)length_offset));
 
-    size_t type_index = state->unit->types.size;
-
-    for (size_t i = 0; i < state->unit->types.size; i++) {
-        if (state->unit->types.data[i] == type) {
-            type_index = i;
-            break;
-        }
-    }
-
-    if (type_index == state->unit->types.size) {
-        type_list_add(&state->unit->types, (Type *)type);
-    }
-
     size_t offset =
-        chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_ARRAY_NEW, rd, (unsigned int)type_index));
+        chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_ARRAY_NEW, rd, codegen_type_index(state, type)));
 
     relocation_list_add(&state->unit->type_relocations,
                         (Relocation){.chunk = state->chunk, .offset = offset});
