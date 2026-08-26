@@ -17,7 +17,7 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser);
 static ASTStmt *parse_func_decl_stmt(Parser *parser);
 static ASTStmt *parse_struct_decl_stmt(Parser *parser);
 static ASTField *parse_field(Parser *parser, const char *name_message);
-static TypeSpec *parse_type_spec(Parser *parser);
+static TypeExpr *parse_type_expr(Parser *parser);
 static ASTExpr *parse_index_expr(Parser *parser, ASTExpr *target);
 static ASTExpr *parse_expression(Parser *parser);
 static ASTStmt *parse_if_stmt(Parser *parser);
@@ -373,11 +373,11 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser) {
 
     parser_next_token(parser); // eat identifier
 
-    TypeSpec *spec = NULL;
+    TypeExpr *spec = NULL;
     if (parser->current.type == TOKEN_COLON) {
         parser_next_token(parser); // eat ':'
 
-        spec = parse_type_spec(parser);
+        spec = parse_type_expr(parser);
         if (!spec) {
             return NULL;
         }
@@ -394,7 +394,7 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser) {
 
     if (!parser_expect(parser, TOKEN_ASSIGN, "expected ';' or '='")) {
         if (spec) {
-            type_spec_destroy(spec);
+            type_expr_destroy(spec);
         }
         return NULL;
     }
@@ -404,7 +404,7 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser) {
     ASTExpr *initializer = parse_expression(parser);
     if (!initializer) {
         if (spec) {
-            type_spec_destroy(spec);
+            type_expr_destroy(spec);
         }
         return NULL;
     }
@@ -605,7 +605,7 @@ static ASTField *parse_field(Parser *parser, const char *name_message) {
 
     parser_next_token(parser); // eat ':'
 
-    TypeSpec *type = parse_type_spec(parser);
+    TypeExpr *type = parse_type_expr(parser);
     if (!type) {
         return NULL;
     }
@@ -613,35 +613,29 @@ static ASTField *parse_field(Parser *parser, const char *name_message) {
     return ast_field_create(span, name, type);
 }
 
-// A type position, which is a name preceded by any number of 'box' or 'ref'.
-static TypeSpec *parse_type_spec(Parser *parser) {
-    unsigned int indirect_depth = 0;
-
+// A type position: any number of 'box' or 'ref', then a name, then the
+// arguments a constructor takes.
+//
+// Built outward-in, which is the order it reads: each wrapper is made once its
+// inner is parsed, so the tree's shape is the spelling's own and nothing counts
+// levels or records which of them borrow.
+static TypeExpr *parse_type_expr(Parser *parser) {
     // 'ref T' is a borrow: a pointer that does not own what it names. It stands
-    // in place of the 'box', not before it — 'ref T' and 'box T' are both one
-    // pointer deep, and differ only in who frees the inner.
-    //
-    // The two nest in any order, so each level records its own kind rather than
-    // the spec carrying one flag for all of them. Read left to right the levels
-    // arrive outermost first, and the mask counts from the name outward, so
-    // each bit is set at its distance from the far end once the depth is known.
-    bool is_ref[TYPE_SPEC_MAX_DEPTH];
+    // in place of the 'box', not before it -- 'ref T' and 'box T' are both one
+    // pointer deep, and differ only in who frees the inner. The two nest in any
+    // order, so each is its own wrapper around whatever follows it.
+    if (parser->current.type == TOKEN_REF || parser->current.type == TOKEN_BOX) {
+        TypeExprKind kind = parser->current.type == TOKEN_REF ? TYPE_EXPR_REF : TYPE_EXPR_BOX;
 
-    while (parser->current.type == TOKEN_REF || parser->current.type == TOKEN_BOX) {
-        if (indirect_depth == TYPE_SPEC_MAX_DEPTH) {
-            parser_error(parser, "too many levels of pointer");
+        parser_next_token(parser); // eat 'ref' or 'box'
+
+        TypeExpr *inner = parse_type_expr(parser);
+
+        if (!inner) {
             return NULL;
         }
 
-        is_ref[indirect_depth++] = parser->current.type == TOKEN_REF;
-        parser_next_token(parser); // eat 'ref' or 'box'
-    }
-
-    uint32_t ref_levels = 0;
-    for (unsigned int i = 0; i < indirect_depth; i++) {
-        if (is_ref[i]) {
-            ref_levels |= (uint32_t)1 << (indirect_depth - 1 - i);
-        }
+        return type_expr_indirect(kind, inner);
     }
 
     if (!parser_expect(parser, TOKEN_IDENT, "expected a type")) {
@@ -674,23 +668,28 @@ static TypeSpec *parse_type_spec(Parser *parser) {
         }
     }
 
-    TypeSpec *spec = type_spec_create(name, indirect_depth, ref_levels);
+    TypeExpr *base = type_expr_name(name);
 
-    // 'Array T' names its element after it, the one type here that takes an
-    // argument. Recognised by the name rather than a keyword, so that 'Array'
-    // stays an ordinary type name the resolver looks up -- what makes this one
-    // special is that an element follows, and the resolver reports it if the
-    // name was something else that cannot take one.
+    // 'Array T' names its element after it, the one constructor here that takes
+    // an argument. Recognised by the name rather than a keyword, so that
+    // 'Array' stays an ordinary type name the resolver looks up -- what makes
+    // this one special is that an argument follows, and the resolver reports it
+    // if the name was something else that cannot take one.
     if (string_ref_equals_cstr(name, "Array")) {
-        spec->element = parse_type_spec(parser);
+        TypeExpr *apply = type_expr_apply(base);
+        TypeExpr *argument = parse_type_expr(parser);
 
-        if (!spec->element) {
-            type_spec_destroy(spec);
+        if (!argument) {
+            type_expr_destroy(apply);
             return NULL;
         }
+
+        type_expr_list_add(&apply->apply.args, argument);
+
+        return apply;
     }
 
-    return spec;
+    return base;
 }
 
 static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
@@ -822,11 +821,11 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
     parser_next_token(parser); // eat ')'
 
-    TypeSpec *func_type = NULL;
+    TypeExpr *func_type = NULL;
     if (parser->current.type == TOKEN_COLON) {
         parser_next_token(parser); // eat ':'
 
-        func_type = parse_type_spec(parser);
+        func_type = parse_type_expr(parser);
         if (!func_type) {
             ast_field_destroy(receiver);
             ast_field_list_free(&func_params);
@@ -841,7 +840,7 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
             parser_error(parser, "an 'extern' function is defined by the host and cannot have a body");
 
             ast_field_destroy(receiver);
-            type_spec_destroy(func_type);
+            type_expr_destroy(func_type);
             ast_field_list_free(&func_params);
             ast_stmt_destroy(parse_block_stmt(parser));
 
@@ -857,7 +856,7 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
         // parse leaves it owned by nobody: the node that would have taken it is
         // never created. The receiver is in the same position.
         ast_field_destroy(receiver);
-        type_spec_destroy(func_type);
+        type_expr_destroy(func_type);
         ast_field_list_free(&func_params);
 
         return NULL;
@@ -1118,7 +1117,7 @@ static ASTExpr *parse_unary(Parser *parser) {
     if (parser->current.type == TOKEN_NEW) {
         parser_next_token(parser); // eat 'new'
 
-        TypeSpec *spec = parse_type_spec(parser);
+        TypeExpr *spec = parse_type_expr(parser);
         if (!spec) {
             return NULL;
         }
@@ -1130,14 +1129,14 @@ static ASTExpr *parse_unary(Parser *parser) {
     // them, which is a value like a string's. No 'new': what a slot holds is
     // the header itself, and 'new' is for what a slot points at.
     if (parser->current.type == TOKEN_IDENT && string_ref_equals_cstr(parser->current.lexeme, "Array")) {
-        TypeSpec *spec = parse_type_spec(parser);
+        TypeExpr *spec = parse_type_expr(parser);
 
         if (!spec) {
             return NULL;
         }
 
         if (!parser_expect(parser, TOKEN_LBRACKET, "expected '[' and a length after an array's element")) {
-            type_spec_destroy(spec);
+            type_expr_destroy(spec);
             return NULL;
         }
 
@@ -1146,7 +1145,7 @@ static ASTExpr *parse_unary(Parser *parser) {
         ASTExpr *count = parse_expression(parser);
 
         if (!count || !parser_expect(parser, TOKEN_RBRACKET, "expected ']' after an array's length")) {
-            type_spec_destroy(spec);
+            type_expr_destroy(spec);
             ast_expr_free(count);
             return NULL;
         }

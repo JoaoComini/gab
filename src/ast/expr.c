@@ -91,10 +91,10 @@ ASTExpr *ast_cast_expr_create(Span span, ASTExpr *operand) {
     return node;
 }
 
-ASTExpr *ast_new_expr_create(Span span, TypeSpec *type_spec) {
+ASTExpr *ast_new_expr_create(Span span, TypeExpr *type_expr) {
     ASTExpr *node = ast_expr_create(span);
     node->kind = EXPR_NEW;
-    node->new_expr.type_spec = type_spec;
+    node->new_expr.type_expr = type_expr;
     node->new_expr.type = NULL;
     return node;
 }
@@ -108,10 +108,10 @@ ASTExpr *ast_index_expr_create(Span span, ASTExpr *target, ASTExpr *index) {
     return node;
 }
 
-ASTExpr *ast_array_new_expr_create(Span span, TypeSpec *type_spec, ASTExpr *count) {
+ASTExpr *ast_array_new_expr_create(Span span, TypeExpr *type_expr, ASTExpr *count) {
     ASTExpr *node = ast_expr_create(span);
     node->kind = EXPR_ARRAY_NEW;
-    node->array_new.type_spec = type_spec;
+    node->array_new.type_expr = type_expr;
     node->array_new.count = count;
     node->array_new.type = NULL;
     return node;
@@ -149,14 +149,14 @@ void ast_expr_free(ASTExpr *expr) {
         ast_expr_free(expr->cast.operand);
         break;
     case EXPR_NEW:
-        type_spec_destroy(expr->new_expr.type_spec);
+        type_expr_destroy(expr->new_expr.type_expr);
         break;
     case EXPR_INDEX:
         ast_expr_free(expr->index.target);
         ast_expr_free(expr->index.index);
         break;
     case EXPR_ARRAY_NEW:
-        type_spec_destroy(expr->array_new.type_spec);
+        type_expr_destroy(expr->array_new.type_expr);
         ast_expr_free(expr->array_new.count);
         break;
     default:

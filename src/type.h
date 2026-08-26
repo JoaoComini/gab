@@ -6,6 +6,7 @@
 #include "string/string.h"
 #include "string/string_ref.h"
 #include "util/hash_map.h"
+#include "util/list.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -167,28 +168,59 @@ bool type_add_method(Arena *arena, Type *type, String *name, Symbol *method);
 // 'Player' share one method set.
 Symbol *type_find_method(const Type *type, const String *name);
 
-// The most indirection levels a type spec may carry, bounded by the bits in
-// 'ref_levels' -- every level records its own kind, so the mask is the limit.
-#define TYPE_SPEC_MAX_DEPTH 32
+// A type as the source wrote it, before any name is looked up. The syntactic
+// counterpart of Type: this is what a type position parses into, and the
+// resolver evaluates it to the interned Type it names.
+//
+// A tree rather than a name plus a count of indirections, because the
+// constructors nest freely and one of them takes arguments. Anything flatter
+// needs a field per constructor that does not fit -- which is what an array's
+// element was -- and a width to bound the nesting, which is a limit on what a
+// program may say rather than on anything real.
+typedef struct TypeExpr TypeExpr;
 
-typedef struct TypeSpec {
+void type_expr_destroy(TypeExpr *expr);
+
+#define type_expr_list_item_free(item) type_expr_destroy(item)
+GAB_LIST(TypeExprList, type_expr_list, TypeExpr *)
+
+typedef enum {
+    // A name, possibly qualified: 'int', 'Player', 'Module::Type'. The leaf
+    // every other kind bottoms out in.
+    TYPE_EXPR_NAME,
+
+    // 'box T' and 'ref T', each wrapping the one level it spells.
+    TYPE_EXPR_BOX,
+    TYPE_EXPR_REF,
+
+    // A constructor applied to arguments: 'Array int' today, and whatever takes
+    // more than one later. A list rather than a single argument, so that a
+    // second one needs no second field.
+    TYPE_EXPR_APPLY,
+} TypeExprKind;
+
+struct TypeExpr {
+    TypeExprKind kind;
+
+    // The name, for TYPE_EXPR_NAME. A qualified name is kept as one ref over
+    // the source, so the resolver sees it exactly as the registry stores it.
     StringRef name;
 
-    // 0 for T, 1 for 'box T', 2 for 'box box T'.
-    unsigned int indirect_depth;
+    union {
+        // What a 'box' or a 'ref' wraps.
+        struct {
+            TypeExpr *inner;
+        } indirect;
 
-    // Which levels borrow rather than own, bit 0 being the level nearest the
-    // name: 'ref box T' is depth 2 with bit 1 set. A flag per level rather than
-    // one for the spec, since the two spellings nest in any order.
-    uint32_t ref_levels;
+        struct {
+            TypeExpr *base;
+            TypeExprList args;
+        } apply;
+    };
+};
 
-    // What 'Array T' was written over, and NULL for every other spec. A spec
-    // rather than a Type because the element is itself written as one: an
-    // 'Array box Player' has to carry the level it spells.
-    struct TypeSpec *element;
-} TypeSpec;
-
-TypeSpec *type_spec_create(StringRef name, unsigned int indirect_depth, uint32_t ref_levels);
-void type_spec_destroy(TypeSpec *spec);
+TypeExpr *type_expr_name(StringRef name);
+TypeExpr *type_expr_indirect(TypeExprKind kind, TypeExpr *inner);
+TypeExpr *type_expr_apply(TypeExpr *base);
 
 #endif

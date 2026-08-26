@@ -221,21 +221,52 @@ Symbol *type_find_method(const Type *type, const String *name) {
     return NULL;
 }
 
-TypeSpec *type_spec_create(StringRef name, unsigned int indirect_depth, uint32_t ref_levels) {
-    TypeSpec *spec = malloc(sizeof(TypeSpec));
-    spec->name = name;
-    spec->indirect_depth = indirect_depth;
-    spec->ref_levels = ref_levels;
-    spec->element = NULL;
+static TypeExpr *type_expr_create(TypeExprKind kind) {
+    TypeExpr *expr = calloc(1, sizeof(TypeExpr));
+    expr->kind = kind;
 
-    return spec;
+    return expr;
 }
 
-void type_spec_destroy(TypeSpec *spec) {
-    if (!spec) {
+TypeExpr *type_expr_name(StringRef name) {
+    TypeExpr *expr = type_expr_create(TYPE_EXPR_NAME);
+    expr->name = name;
+
+    return expr;
+}
+
+TypeExpr *type_expr_indirect(TypeExprKind kind, TypeExpr *inner) {
+    TypeExpr *expr = type_expr_create(kind);
+    expr->indirect.inner = inner;
+
+    return expr;
+}
+
+TypeExpr *type_expr_apply(TypeExpr *base) {
+    TypeExpr *expr = type_expr_create(TYPE_EXPR_APPLY);
+    expr->apply.base = base;
+    expr->apply.args = type_expr_list_create();
+
+    return expr;
+}
+
+void type_expr_destroy(TypeExpr *expr) {
+    if (!expr) {
         return;
     }
 
-    type_spec_destroy(spec->element);
-    free(spec);
+    switch (expr->kind) {
+    case TYPE_EXPR_BOX:
+    case TYPE_EXPR_REF:
+        type_expr_destroy(expr->indirect.inner);
+        break;
+    case TYPE_EXPR_APPLY:
+        type_expr_destroy(expr->apply.base);
+        type_expr_list_free(&expr->apply.args);
+        break;
+    case TYPE_EXPR_NAME:
+        break;
+    }
+
+    free(expr);
 }

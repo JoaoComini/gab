@@ -112,9 +112,9 @@ typedef struct ASTExpr {
         } index;
 
         // 'Array T[count]'. Names a type and takes a count, so it carries a
-        // TypeSpec beside its operand the way 'new' carries one alone.
+        // TypeExpr beside its operand the way 'new' carries one alone.
         struct {
-            TypeSpec *type_spec;
+            TypeExpr *type_expr;
             ASTExpr *count;
 
             const Type *type;
@@ -143,10 +143,10 @@ typedef struct ASTExpr {
         } cast;
 
         // 'new T' — a heap allocation yielding an owned 'box T'. Names a type
-        // rather than taking an operand, so it carries a TypeSpec the way a
+        // rather than taking an operand, so it carries a TypeExpr the way a
         // declaration does rather than an expression.
         struct {
-            TypeSpec *type_spec;
+            TypeExpr *type_expr;
 
             // The struct being allocated, resolved from the spec. The
             // expression's own type is the pointer to it.
@@ -171,9 +171,9 @@ ASTExpr *ast_move_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_neg_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_not_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_cast_expr_create(Span span, ASTExpr *operand);
-ASTExpr *ast_new_expr_create(Span span, TypeSpec *type_spec);
+ASTExpr *ast_new_expr_create(Span span, TypeExpr *type_expr);
 ASTExpr *ast_index_expr_create(Span span, ASTExpr *target, ASTExpr *index);
-ASTExpr *ast_array_new_expr_create(Span span, TypeSpec *type_spec, ASTExpr *count);
+ASTExpr *ast_array_new_expr_create(Span span, TypeExpr *type_expr, ASTExpr *count);
 void ast_expr_free(ASTExpr *node);
 
 #endif

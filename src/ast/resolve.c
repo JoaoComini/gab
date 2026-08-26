@@ -97,7 +97,7 @@ static bool resolver_may_name(ResolverState *state, String *module) {
 // The scope a type spec names: another module's for 'Module::Type', and the
 // current one otherwise. NULL when the spec names a module that does not
 // exist, which the caller reports as an unknown type.
-static Scope *resolver_spec_scope(ResolverState *state, StringRef name) {
+static Scope *resolver_expr_scope(ResolverState *state, StringRef name) {
     StringRef module, member;
 
     if (!string_ref_split_colons(name, &module, &member)) {
@@ -120,7 +120,7 @@ static Scope *resolver_spec_scope(ResolverState *state, StringRef name) {
 }
 
 // The half of a spec name a scope holds: 'Type' out of 'Module::Type'.
-static String *resolver_spec_member(ResolverState *state, StringRef name) {
+static String *resolver_expr_member(ResolverState *state, StringRef name) {
     StringRef module, member;
 
     if (string_ref_split_colons(name, &module, &member)) {
@@ -760,7 +760,7 @@ bool is_string_type(Type *t) { return t->kind == TYPE_STRING; }
 // defined for it. Equality asks only whether two strings spell the same thing.
 bool is_comparable_type(Type *t) { return is_numeric_type(t) || is_boolean_type(t) || is_string_type(t); }
 
-static Type *resolve_type_spec(ResolverState *state, TypeSpec *spec, Span span);
+static Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span);
 
 // Whether a binary operator accepts operands of this type, reporting why not
 // when it does not. Both operands are already known to share the type.
@@ -1084,7 +1084,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         break;
     }
     case EXPR_ARRAY_NEW: {
-        Type *type = resolve_type_spec(state, expr->array_new.type_spec, expr->span);
+        Type *type = resolve_type_expr(state, expr->array_new.type_expr, expr->span);
 
         resolve_expr(state, expr->array_new.count);
 
@@ -1302,7 +1302,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         break;
     }
     case EXPR_NEW: {
-        Type *type = resolve_type_spec(state, expr->new_expr.type_spec, expr->span);
+        Type *type = resolve_type_expr(state, expr->new_expr.type_expr, expr->span);
 
         if (is_error_type(type)) {
             expr->type = resolver_error_type(state);
@@ -1400,38 +1400,61 @@ static void check_implicit_copy(ResolverState *state, ASTExpr *value, Type *dest
 
 // Returns NULL when there is no spec to resolve (an omitted type), and the
 // poison type when the spec names something that does not exist.
-static Type *resolve_type_spec(ResolverState *state, TypeSpec *spec, Span span) {
-    if (!spec) {
+static Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) {
+    if (!expr) {
         return NULL;
     }
 
-    Scope *scope = resolver_spec_scope(state, spec->name);
+    TypeRegistry *registry = state->current_scope->type_registry;
 
-    // Walks outward from that scope, so a module's own 'Config' shadows a
-    // root-namespace one and 'int' resolves with no import. A 'Module::Type'
-    // spec resolved to that module's scope above, and its bare member name is
-    // what that scope holds.
-    Type *type = scope ? scope_type_lookup(scope, resolver_spec_member(state, spec->name)) : NULL;
+    switch (expr->kind) {
+    case TYPE_EXPR_BOX:
+    case TYPE_EXPR_REF: {
+        Type *inner = resolve_type_expr(state, expr->indirect.inner, span);
 
-    if (!type) {
-        char *name = string_ref_to_cstr(spec->name);
-        diag_error(state->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", name);
-        free(name);
-
-        return resolver_error_type(state);
-    }
-
-    // 'Array T' applies its element before any indirection wraps it, so
-    // 'box Array int' is a pointer to an array of ints rather than an array of
-    // pointers. The element is a spec of its own, resolved the same way.
-    if (spec->element) {
-        if (type != state->current_scope->type_registry->builtins.array_type) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "%s does not take an element type",
-                       type_name(state, type));
+        if (is_error_type(inner)) {
             return resolver_error_type(state);
         }
 
-        Type *element = resolve_type_spec(state, spec->element, span);
+        // Interned in the one shared registry whichever scope named the inner,
+        // so 'box Config' is one type however many modules mention it.
+        return expr->kind == TYPE_EXPR_REF ? type_registry_ref_to(registry, inner)
+                                           : type_registry_box_to(registry, inner);
+    }
+
+    case TYPE_EXPR_APPLY: {
+        // Looked up rather than resolved: 'Array' names no type on its own, so
+        // resolving the base as an expression of its own would report that
+        // before this ever saw it.
+        Scope *base_scope = resolver_expr_scope(state, expr->apply.base->name);
+
+        Type *base = base_scope
+                         ? scope_type_lookup(base_scope, resolver_expr_member(state, expr->apply.base->name))
+                         : NULL;
+
+        if (!base) {
+            char *name = string_ref_to_cstr(expr->apply.base->name);
+            diag_error(state->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", name);
+            free(name);
+
+            return resolver_error_type(state);
+        }
+
+        if (base != registry->builtins.array_type) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "%s does not take an element type",
+                       type_name(state, base));
+            return resolver_error_type(state);
+        }
+
+        // One argument is all 'Array' takes. The list holds however many were
+        // written, so a count that does not match is this constructor's own
+        // complaint rather than something the shape prevented.
+        if (expr->apply.args.size != 1) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'Array' takes one element type");
+            return resolver_error_type(state);
+        }
+
+        Type *element = resolve_type_expr(state, expr->apply.args.data[0], span);
 
         if (is_error_type(element)) {
             return resolver_error_type(state);
@@ -1444,27 +1467,33 @@ static Type *resolve_type_spec(ResolverState *state, TypeSpec *spec, Span span) 
             return resolver_error_type(state);
         }
 
-        type = type_registry_array_of(state->current_scope->type_registry, element);
-    } else if (type == state->current_scope->type_registry->builtins.array_type) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'Array' needs an element type, as 'Array int'");
+        return type_registry_array_of(registry, element);
+    }
+
+    case TYPE_EXPR_NAME:
+        break;
+    }
+
+    Scope *scope = resolver_expr_scope(state, expr->name);
+
+    // Walks outward from that scope, so a module's own 'Config' shadows a
+    // root-namespace one and 'int' resolves with no import. A 'Module::Type'
+    // expression resolved to that module's scope above, and its bare member
+    // name is what that scope holds.
+    Type *type = scope ? scope_type_lookup(scope, resolver_expr_member(state, expr->name)) : NULL;
+
+    if (!type) {
+        char *name = string_ref_to_cstr(expr->name);
+        diag_error(state->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", name);
+        free(name);
+
         return resolver_error_type(state);
     }
 
-    // Interned in the one shared registry whichever scope named the inner,
-    // so 'box Config' is one type however many modules mention it.
-    //
-    // Built from the name outward, which is the order the mask records: bit i is
-    // the level wrapped on the i'th time round, so 'ref box T' owns first and
-    // borrows that.
-    //
-    // A string takes this path like anything else: 'ref String' is the address
-    // of a slot holding a header, and the borrow of the characters themselves
-    // is a type of its own, named 'str'.
-    for (unsigned int i = 0; i < spec->indirect_depth; i++) {
-        TypeRegistry *registry = state->current_scope->type_registry;
-
-        type = ((spec->ref_levels >> i) & 1) ? type_registry_ref_to(registry, type)
-                                             : type_registry_box_to(registry, type);
+    // 'Array' alone names no type: every array is 'Array T' for some element.
+    if (type == registry->builtins.array_type) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'Array' needs an element type, as 'Array int'");
+        return resolver_error_type(state);
     }
 
     return type;
@@ -1520,15 +1549,15 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
         // The struct is registered only after its fields resolve, so a
         // self-reference would otherwise surface as "unknown type". A
         // pointer to self is not containment, so only depth 0 is rejected.
-        if (field->type_spec->indirect_depth == 0 &&
-            string_ref_equals_ref(field->type_spec->name, stmt->struct_decl.name)) {
+        if (field->type_expr->kind == TYPE_EXPR_NAME &&
+            string_ref_equals_ref(field->type_expr->name, stmt->struct_decl.name)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, field->span, "struct '%s' cannot contain itself",
                        struct_name->data);
             poisoned = true;
             continue;
         }
 
-        Type *field_type = resolve_type_spec(state, field->type_spec, field->span);
+        Type *field_type = resolve_type_expr(state, field->type_expr, field->span);
 
         if (is_error_type(field_type)) {
             poisoned = true;
@@ -1562,7 +1591,7 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
 // nothing. Which one a signature declares is what a call site reads to know
 // whether it must move, so the two may not be written interchangeably.
 static Type *resolve_param_type(ResolverState *state, ASTField *param) {
-    return resolve_type_spec(state, param->type_spec, param->span);
+    return resolve_type_expr(state, param->type_expr, param->span);
 }
 
 // which is what lets a function call one declared below it.
@@ -1576,7 +1605,7 @@ static Type *resolve_param_type(ResolverState *state, ASTField *param) {
 static void declare_method(ResolverState *state, ASTStmt *stmt) {
     ASTField *receiver = stmt->func_decl.receiver;
 
-    Type *receiver_type = resolve_type_spec(state, receiver->type_spec, receiver->span);
+    Type *receiver_type = resolve_type_expr(state, receiver->type_expr, receiver->span);
 
     if (is_error_type(receiver_type)) {
         return;
@@ -1629,7 +1658,7 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
         return;
     }
 
-    Type *return_type = resolve_type_spec(state, stmt->func_decl.return_type, stmt->span);
+    Type *return_type = resolve_type_expr(state, stmt->func_decl.return_type, stmt->span);
 
     stmt->func_decl.resolved_return_type = return_type;
 
@@ -1701,7 +1730,7 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
     }
 
     StringRef func_name = stmt->func_decl.name;
-    Type *func_return_type = resolve_type_spec(state, stmt->func_decl.return_type, stmt->span);
+    Type *func_return_type = resolve_type_expr(state, stmt->func_decl.return_type, stmt->span);
 
     stmt->func_decl.resolved_return_type = func_return_type;
 
@@ -1740,7 +1769,7 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
 }
 
 // Walks the body in a scope holding the parameters. The signature is already
-// resolved, so this re-resolves each parameter's TypeSpec only to bind its
+// resolved, so this re-resolves each parameter's TypeExpr only to bind its
 // name; the types a caller sees were settled by declare_func.
 static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
     size_t errors_before = diagnostics_count(state->diagnostics);
@@ -1753,7 +1782,7 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
     ASTField *receiver = stmt->func_decl.receiver;
 
     if (receiver) {
-        Type *receiver_type = resolve_type_spec(state, receiver->type_spec, receiver->span);
+        Type *receiver_type = resolve_type_expr(state, receiver->type_expr, receiver->span);
 
         receiver->symbol =
             scope_decl_var(state->current_scope, resolver_intern(state, receiver->name), receiver_type);
@@ -1763,7 +1792,7 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
         ASTField *param = stmt->func_decl.params.data[i];
 
         String *param_name = resolver_intern(state, param->name);
-        Type *param_type = resolve_type_spec(state, param->type_spec, param->span);
+        Type *param_type = resolve_type_expr(state, param->type_expr, param->span);
 
         Symbol *symbol = scope_decl_var(state->current_scope, param_name, param_type);
 
@@ -1826,8 +1855,8 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         resolve_expr(state, stmt->var_decl.initializer);
 
         Type *type;
-        if (stmt->var_decl.type_spec) {
-            Type *decl_type = resolve_type_spec(state, stmt->var_decl.type_spec, stmt->span);
+        if (stmt->var_decl.type_expr) {
+            Type *decl_type = resolve_type_expr(state, stmt->var_decl.type_expr, stmt->span);
 
             if (stmt->var_decl.initializer) {
                 Type *init_type = stmt->var_decl.initializer->type;
