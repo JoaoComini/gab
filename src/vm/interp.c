@@ -531,7 +531,7 @@ static void vm_run_loop(VM *vm) {
                 // allocated is the bytes themselves, and they own nothing
                 // further. The string header naming them is the value below.
                 char *characters = object_alloc_sized(
-                    DEFAULT_ALLOCATOR, vm->env.global_scope.type_registry->builtins.characters_type,
+                    DEFAULT_ALLOCATOR, vm->env.global_scope.type_registry->builtins.buffer_type,
                     total == 0 ? 1 : total);
 
                 if (!characters) {

@@ -16,10 +16,12 @@ typedef enum {
     TYPE_FLOAT,
     TYPE_BOOL,
 
-    // The element a string's characters are a buffer of. Named so that a
-    // diagnostic can print what it is, but declared into no scope: nothing in
-    // the language reads or writes one, so no script can name it.
-    TYPE_BYTE,
+    // A run of bytes something else names: what a string's characters and an
+    // array's elements both are. Untyped, because a buffer can never free what
+    // it holds however well it knows the shape -- how many elements are live is
+    // the count in the header naming it. The element type therefore lives on
+    // that header, which is also what supplies the drop walk.
+    TYPE_BUFFER,
 
     // A header by value: the address of the characters and their count. Nominal
     // rather than structural, so it is interned once like the other builtins.
@@ -109,6 +111,12 @@ struct Type {
     // What freeing a value of this type must free, or NULL when it owns
     // nothing. Set by type_layout_compute.
     DropFn drop;
+
+    // What one element of the block this type names is, for the two headers
+    // that name one: a string's characters and an array's elements. NULL
+    // everywhere else. It is here rather than on the buffer because only a
+    // header knows how many elements are live, so only a header can walk them.
+    Type *element;
 
     // For a borrowing type that shares another's identity -- 'str' and
     // 'String' -- the owning one. NULL everywhere else. Method lookup follows
