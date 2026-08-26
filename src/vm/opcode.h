@@ -198,6 +198,12 @@ typedef enum {
     // Takes a type index rather than a width because the count alone does not
     // say how wide an element is, and because a length that is not yet a header
     // could not be freed if the allocation below failed.
+    //
+    // An instruction rather than a registered builtin, which is what the rest of
+    // this kind of thing is: a builtin fixes one return type where it is
+    // registered, and 'Array int[n]' and 'Array Point[n]' return different
+    // interned types. The element is written in the type spec rather than
+    // carried by an argument, so nothing about a call could recover it.
     OP_ARRAY_NEW,
 
     // As OP_ADD_PTR, with the offset read from a register rather than an
