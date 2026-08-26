@@ -267,7 +267,11 @@ static inline void test_compile_next(TestProgram *program, const char *source) {
 // VM has never been asked to allocate it.
 static inline long test_heap_type_index(TestProgram *program, const char *name) {
     for (size_t i = 0; i < program->vm->program.heap_types.size; i++) {
-        if (strcmp(program->vm->program.heap_types.data[i]->name->data, name) == 0) {
+        const String *type_name = program->vm->program.heap_types.data[i]->name;
+
+        // A release interns the type of whatever a slot held, and a pointer
+        // type is structural: it has no name to compare.
+        if (type_name && strcmp(type_name->data, name) == 0) {
             return (long)i;
         }
     }

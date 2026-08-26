@@ -143,7 +143,7 @@ bool args_return_string_copy(Args *args, const char *data, int32_t length) {
     // gives: the bytes are what is allocated, and they own nothing further.
     char *characters =
         object_alloc_sized(DEFAULT_ALLOCATOR, args->vm->env.global_scope.type_registry->builtins.buffer_type,
-                           length == 0 ? 1 : (size_t)length, length == 0 ? 1 : (size_t)length);
+                           length == 0 ? 1 : (size_t)length);
 
     if (!characters) {
         vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory copying a string");

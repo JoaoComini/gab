@@ -69,17 +69,14 @@ static void vm_release_frame_refs(VM *vm, const CallFrame *frame) {
 
     for (size_t i = 0; i < refs->size; i++) {
         FrameRef ref = refs->data[i];
+        void *slot = vm->stack + frame->base + ref.slot * VM_SLOT_SIZE;
 
-        void *object;
-        memcpy(&object, vm->stack + frame->base + ref.slot * VM_SLOT_SIZE, sizeof(object));
+        object_release(DEFAULT_ALLOCATOR, ref.type, slot);
 
-        if (!object) {
-            continue;
-        }
-
-        memcpy(vm->stack + frame->base + ref.slot * VM_SLOT_SIZE, &(void *){NULL}, sizeof(object));
-
-        object_free(DEFAULT_ALLOCATOR, object);
+        // Cleared so a slot freed here is safe to visit again: the pointer a
+        // release read is gone, and an array's length goes with it so a second
+        // visit walks nothing.
+        memset(slot, 0, type_release_width(ref.type));
     }
 }
 
@@ -532,7 +529,7 @@ static void vm_run_loop(VM *vm) {
                 // further. The string header naming them is the value below.
                 char *characters = object_alloc_sized(
                     DEFAULT_ALLOCATOR, vm->env.global_scope.type_registry->builtins.buffer_type,
-                    total == 0 ? 1 : total, total == 0 ? 1 : total);
+                    total == 0 ? 1 : total);
 
                 if (!characters) {
                     vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory concatenating strings");
@@ -706,18 +703,18 @@ static void vm_run_loop(VM *vm) {
                 VM_NEXT();
             }
             VM_CASE(OP_RELEASE) {
-                unsigned int rd = VM_DECODE_R_RD(instruction);
+                unsigned int rd = VM_DECODE_I_RD(instruction);
+                const Type *type = vm->program.heap_types.data[VM_DECODE_I_KX(instruction)];
 
-                void *object;
-                memcpy(&object, vm->registers + rd * VM_SLOT_SIZE, sizeof(object));
+                void *slot = vm->registers + rd * VM_SLOT_SIZE;
 
-                // Cleared as well as released, so the slot holds NULL rather than a
-                // pointer to something freed. An abnormal unwind walks every slot
-                // the frame may own a reference in, and this is what makes a slot
-                // that was already released safe to visit again.
-                vm_clear_pointer(vm, rd);
+                object_release(DEFAULT_ALLOCATOR, type, slot);
 
-                object_free(DEFAULT_ALLOCATOR, object);
+                // Cleared as well as released, so the slot holds nothing that
+                // reads as live. An abnormal unwind walks every slot the frame
+                // may own a reference in, and this is what makes a slot that
+                // was already released safe to visit again.
+                memset(slot, 0, type_release_width(type));
                 VM_NEXT();
             }
             VM_CASE(OP_CALL) {
@@ -880,8 +877,7 @@ static void vm_run_loop(VM *vm) {
                 // A zero-length array still allocates, so its header holds a
                 // real address: an empty block and a freed one would otherwise
                 // be the same pointer.
-                void *block = object_alloc_sized(DEFAULT_ALLOCATOR, type->element, bytes == 0 ? 1 : bytes,
-                                                 (size_t)count);
+                void *block = object_alloc_sized(DEFAULT_ALLOCATOR, type->element, bytes == 0 ? 1 : bytes);
 
                 if (!block) {
                     vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory allocating an array");

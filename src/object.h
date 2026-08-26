@@ -39,16 +39,7 @@ typedef struct {
 } GabArrayValue;
 
 typedef struct ObjectHeader {
-    // How many elements the payload holds, for a block one of the two header
-    // types names: an array's elements or a string's characters. One for every
-    // other object, which is the single value its type describes.
-    //
-    // Here rather than on the array's own header because this is what freeing
-    // reads: 'OP_RELEASE' is handed the block's address and nothing else, so
-    // the count of live elements has to travel with the block.
-    size_t count;
-
-    // What the payload is, and the first thing the header carries. Freeing a
+    // What the payload is, and the only thing the header carries. Freeing a
     // Player means running the drop function its Type holds, which is where the
     // offsets of everything it owns live. A Type is pointer-stable and outlives
     // every compile, so holding one costs nothing.
@@ -86,10 +77,24 @@ void *object_alloc(Allocator allocator, const Type *type);
 // characters and an array's elements are counted at run time, so 'size' says
 // how many bytes follow the header rather than the type doing.
 //
-// 'count' is how many elements those bytes hold, which freeing reads to know
-// how far to walk. A block of characters owns nothing and passes its byte
-// count; what matters there is only that the walk finds no dropper.
-void *object_alloc_sized(Allocator allocator, const Type *type, size_t size, size_t count);
+// The type still says how to free one value; how many the block holds is not
+// recorded here. Only the header naming a block knows that, which is why an
+// array's own drop is what walks it.
+void *object_alloc_sized(Allocator allocator, const Type *type, size_t size);
+
+// Frees what a value of 'type' sitting at 'value' owns, and the value itself
+// where it is an owning pointer. This is what a release does: the type is known
+// where the slot goes out of scope, so the free never has to rediscover it.
+//
+// Takes the slot's address rather than the object's, because not every owning
+// value is a pointer -- an array is a header, and freeing it needs the length
+// beside the pointer. NULL-tolerant through each type's own drop.
+void object_release(Allocator allocator, const Type *type, void *value);
+
+// The bytes a release has to clear so the slot is safe to visit again: the
+// pointer for an owning indirection, and the whole header for an array, whose
+// length must go with its pointer or a second visit would walk a freed block.
+size_t type_release_width(const Type *type);
 
 // Frees a payload and everything it owns. NULL-tolerant, because a 'box T' that
 // was never assigned is NULL and every free path would otherwise need the same

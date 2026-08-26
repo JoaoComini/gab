@@ -137,9 +137,17 @@ typedef enum {
     // wherever a pointer is not two slots wide.
     OP_NULL,
 
-    // Frees the object in rd, and everything it owns. The slot keeps whatever
-    // it held: nothing reads it again, since codegen only emits this where the
-    // value goes out of scope.
+    // Frees what the value at rd owns, by the drop of heap_types[kx]. I-type
+    // for the type index, which is relocated at link like OP_NEW's.
+    //
+    // Typed rather than reading the object's own header, because what a slot
+    // holds is not always a pointer: an array is a header whose length the free
+    // needs, and that is beside the pointer rather than in the block. Knowing
+    // the type here is also what lets the drop be the one chosen when the
+    // layout was computed, rather than rediscovered per free.
+    //
+    // The slot keeps whatever it held: nothing reads it again, since codegen
+    // only emits this where the value goes out of scope.
     //
     // There is no counterpart. Ownership is unique and static — exactly one
     // slot owns an object — so nothing ever needs to claim a second share of

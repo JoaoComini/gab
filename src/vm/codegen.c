@@ -235,7 +235,7 @@ static bool expr_yields_owned(const ASTExpr *expr);
 // Records that 'slot' owns an object for as long as the current block runs.
 static void codegen_own_slot(CodegenState *state, unsigned int slot, const Type *type);
 static void codegen_own_slot_at(CodegenState *state, unsigned int slot, const Type *type, unsigned int depth);
-static void codegen_record_frame_ref(CodegenState *state, unsigned int slot);
+static void codegen_record_frame_ref(CodegenState *state, unsigned int slot, const Type *type);
 
 // Whether this slot already owns a reference, and so has one to drop when it is
 // overwritten.
@@ -258,6 +258,9 @@ static void codegen_drop_temporary(CodegenState *state, unsigned int slot);
 // Emits a release for every owned slot deeper than keep_depth without dropping
 // the entries, for a jump that leaves those blocks early.
 static void codegen_emit_releases_below(CodegenState *state, unsigned int keep_depth);
+
+// Emits one release, by the type of what the slot holds.
+static void codegen_emit_release(CodegenState *state, unsigned int slot, const Type *type);
 
 // Frame slots and registers.
 static unsigned int codegen_slot_of(CodegenState *state, Symbol *symbol);
@@ -384,7 +387,7 @@ static void codegen_release_temporaries(CodegenState *state) {
     while (state->temporaries.size > 0) {
         OwnedSlot temporary = state->temporaries.data[--state->temporaries.size];
 
-        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE, temporary.slot, 0, 0));
+        codegen_emit_release(state, temporary.slot, temporary.type);
     }
 }
 
@@ -399,7 +402,7 @@ static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
         // store, so the statement is where it dies. Without this the object
         // leaks with no name left to release it by.
         if (expr_yields_owned(ast->expr.value)) {
-            chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE, reg, 0, 0));
+            codegen_emit_release(state, reg, ast->expr.value->type);
         }
         break;
     }
@@ -522,6 +525,26 @@ static void codegen_walk_owning_slots(CodegenState *state, const Type *type, uns
             return;
         }
 
+        switch (action) {
+        case OWNING_SLOT_NULL:
+            chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_NULL, base, 0));
+            break;
+        case OWNING_SLOT_OWN:
+            codegen_own_slot(state, base, type);
+            break;
+        case OWNING_SLOT_DISOWN:
+            codegen_disown_slot(state, base);
+            break;
+        }
+
+        return;
+    }
+
+    // An array owns as one value rather than through its 'data' field: freeing
+    // the block walks its elements, and how many are live is the length in the
+    // slot beside that pointer. Descending into the field would hand the free
+    // path the pointer alone, with nothing left to say how far to walk.
+    if (type && type->kind == TYPE_ARRAY) {
         switch (action) {
         case OWNING_SLOT_NULL:
             chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_NULL, base, 0));
@@ -721,7 +744,7 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
         // release the register it was computed in.
         codegen_drop_temporary(state, src);
 
-        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE, old, 0, 0));
+        codegen_emit_release(state, old, ast->target->type);
         return;
     }
 
@@ -779,7 +802,7 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
         // not also release the register it was computed in.
         codegen_drop_temporary(state, r1);
 
-        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE, old, 0, 0));
+        codegen_emit_release(state, old, ast->target->type);
         return;
     }
 
@@ -1588,7 +1611,12 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
     // Bounded by the frame rather than by the argument count: the block was
     // reserved above, and codegen_alloc_slots refuses one wider than a frame,
     // so there can never be more owned arguments than slots to hold them.
-    unsigned int owned_args[VM_MAX_FRAME_SLOTS];
+    // The slot each owned argument was left in, with what it holds: a release
+    // is by type, and the argument's own is what the copy above put there.
+    struct {
+        unsigned int slot;
+        const Type *type;
+    } owned_args[VM_MAX_FRAME_SLOTS];
     size_t owned_arg_count = 0;
 
     unsigned int offset = 1;
@@ -1618,7 +1646,9 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
                 codegen_copy_slots(state, owner, arg_reg, slots);
             }
 
-            owned_args[owned_arg_count++] = owner;
+            owned_args[owned_arg_count].slot = owner;
+            owned_args[owned_arg_count].type = arg->type;
+            owned_arg_count++;
 
             // That slot is the only owner now: an expression that
             // registered its result as a statement temporary -- a join does --
@@ -1634,7 +1664,7 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
     // After the call, so the callee still has its arguments, and before the
     // registers are reclaimed, so the slots still hold what was put in them.
     for (size_t i = 0; i < owned_arg_count; i++) {
-        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE, owned_args[i], 0, 0));
+        codegen_emit_release(state, owned_args[i].slot, owned_args[i].type);
     }
 
     codegen_release_registers(state, saved);
@@ -1948,6 +1978,33 @@ static unsigned int codegen_cast_expr(CodegenState *state, ASTExpr *node) {
     return rd;
 }
 
+// Interns a type within the unit and returns its index. An index means nothing
+// until linking gives the unit its base, so a type an earlier unit registered is
+// registered again here and the two are reconciled at link.
+static unsigned int codegen_type_index(CodegenState *state, const Type *type) {
+    for (size_t i = 0; i < state->unit->types.size; i++) {
+        if (state->unit->types.data[i] == type) {
+            return (unsigned int)i;
+        }
+    }
+
+    type_list_add(&state->unit->types, (Type *)type);
+
+    return (unsigned int)(state->unit->types.size - 1);
+}
+
+// Emits the release of a slot holding a value of this type, and the relocation
+// its type index needs. Every free of a named slot goes through here, so what a
+// release frees is always the type codegen knew rather than whatever the object
+// turns out to say.
+static void codegen_emit_release(CodegenState *state, unsigned int slot, const Type *type) {
+    size_t offset =
+        chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_RELEASE, slot, codegen_type_index(state, type)));
+
+    relocation_list_add(&state->unit->type_relocations,
+                        (Relocation){.chunk = state->chunk, .offset = offset});
+}
+
 // 'new T' allocates and leaves an owned 'box T' in a pointer-sized destination.
 // The type travels by index because a Type * is 8 bytes and cannot ride in an
 // instruction; the list is interned by pointer identity, which the type system
@@ -2120,7 +2177,7 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
     if (expr_yields_owned(node)) {
         owned_list_add(&state->temporaries,
                        (OwnedSlot){.slot = base, .depth = state->depth, .type = node->type});
-        codegen_record_frame_ref(state, base);
+        codegen_record_frame_ref(state, base, node->type);
     }
 
     bool indirect = auto_deref && type_is_indirect(node->type);
@@ -2552,7 +2609,7 @@ static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node) {
         // binding disowns.
         owned_list_add(&state->temporaries,
                        (OwnedSlot){.slot = result, .depth = state->depth, .type = node->type});
-        codegen_record_frame_ref(state, result);
+        codegen_record_frame_ref(state, result, node->type);
 
         return result;
     }
@@ -2657,14 +2714,14 @@ static bool expr_yields_owned(const ASTExpr *expr) {
 // Recorded once per slot: a slot reused by a later block is the same slot, and
 // the runtime clears one when it frees it, so a second entry would only make the
 // unwinder visit an empty slot twice.
-static void codegen_record_frame_ref(CodegenState *state, unsigned int slot) {
+static void codegen_record_frame_ref(CodegenState *state, unsigned int slot, const Type *type) {
     for (size_t i = 0; i < state->frame_refs.size; i++) {
         if (state->frame_refs.data[i].slot == slot) {
             return;
         }
     }
 
-    frame_ref_list_add(&state->frame_refs, (FrameRef){.slot = slot});
+    frame_ref_list_add(&state->frame_refs, (FrameRef){.slot = slot, .type = type});
 }
 
 static void codegen_own_slot_at(CodegenState *state, unsigned int slot, const Type *type,
@@ -2677,7 +2734,7 @@ static void codegen_own_slot_at(CodegenState *state, unsigned int slot, const Ty
     owned_list_add(&state->owned, (OwnedSlot){.slot = slot, .depth = depth, .type = type});
 
     // Also recorded on the frame, for the unwinder.
-    codegen_record_frame_ref(state, slot);
+    codegen_record_frame_ref(state, slot, type);
 }
 
 // As codegen_own_slot_at, at the depth of the block being generated. For a slot
@@ -2729,7 +2786,7 @@ static void codegen_release_owned(CodegenState *state, unsigned int keep_depth, 
             continue;
         }
 
-        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE, owned.slot, 0, 0));
+        codegen_emit_release(state, owned.slot, owned.type);
     }
 }
 
@@ -2745,7 +2802,7 @@ static void codegen_emit_releases_below(CodegenState *state, unsigned int keep_d
             break;
         }
 
-        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_RELEASE, owned.slot, 0, 0));
+        codegen_emit_release(state, owned.slot, owned.type);
     }
 }
 

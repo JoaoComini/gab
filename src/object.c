@@ -10,10 +10,10 @@ ObjectHeader *object_of(void *payload) {
 }
 
 void *object_alloc(Allocator allocator, const Type *type) {
-    return object_alloc_sized(allocator, type, type ? type->size : 0, 1);
+    return object_alloc_sized(allocator, type, type ? type->size : 0);
 }
 
-void *object_alloc_sized(Allocator allocator, const Type *type, size_t size, size_t count) {
+void *object_alloc_sized(Allocator allocator, const Type *type, size_t size) {
     assert(type && "an object needs a type; freeing it walks its fields");
 
     ObjectHeader *header = allocator.alloc(allocator.ctx, sizeof(ObjectHeader) + size);
@@ -23,7 +23,6 @@ void *object_alloc_sized(Allocator allocator, const Type *type, size_t size, siz
     }
 
     header->type = type;
-    header->count = count;
 
     // Zeroed so that a pointer field nobody assigned is NULL rather than
     // whatever the allocator left behind — freeing walks these fields, and it
@@ -45,15 +44,6 @@ static void drop_box(Allocator allocator, const Type *type, void *value) {
     object_free(allocator, owned);
 }
 
-// Frees what each element of a block owns, for a payload holding more than one
-// value of its type. How many is the header's count: an array's length is not
-// in its type, and the memory past it has never been written.
-static void drop_elements(Allocator allocator, const Type *type, void *value, size_t count) {
-    for (size_t i = 0; i < count; i++) {
-        type->drop(allocator, type, (char *)value + i * type->size);
-    }
-}
-
 // Frees what a value's fields own, so that freeing an object frees the tree
 // beneath it. A field that owns nothing has no drop function and is skipped,
 // so a struct of four ints walks four fields and calls nothing -- and a 'ref'
@@ -72,6 +62,36 @@ static void drop_fields(Allocator allocator, const Type *type, void *value) {
     }
 }
 
+// Frees the block an array header names, and everything its elements own. The
+// count is the header's own 'length': the block records nothing, so this is the
+// only thing that knows how far the live elements run.
+//
+// Its own function rather than a case in the field walk, because its bounds are
+// not in the type -- which is the shape DropFn was given a type parameter for.
+static void drop_array(Allocator allocator, const Type *type, void *value) {
+    GabArrayValue array;
+    memcpy(&array, value, sizeof(array));
+
+    if (!array.data) {
+        return;
+    }
+
+    // The array's own element, not the block's header: what one element is was
+    // settled when this type was interned, so the free reads it from there
+    // rather than asking the allocation what it holds.
+    const Type *element = type->element;
+
+    // Only when an element owns something itself. An array of ints frees its
+    // block without touching a single element.
+    if (element->drop) {
+        for (int32_t i = 0; i < array.length; i++) {
+            element->drop(allocator, element, (char *)array.data + (size_t)i * element->size);
+        }
+    }
+
+    allocator.free(allocator.ctx, object_of(array.data));
+}
+
 void object_select_drop(Type *type) {
     // Asked of the type rather than of its kind, so that a struct earns a drop
     // exactly when some field of it owns, and every 'ref' is excluded here
@@ -81,7 +101,31 @@ void object_select_drop(Type *type) {
         return;
     }
 
+    if (type->kind == TYPE_ARRAY) {
+        type->drop = drop_array;
+        return;
+    }
+
     type->drop = type->kind == TYPE_INDIRECT ? drop_box : drop_fields;
+}
+
+size_t type_release_width(const Type *type) {
+    if (!type) {
+        return 0;
+    }
+
+    // An array's length is as load-bearing as its pointer: the two are what a
+    // release reads, so both are cleared. Everything else that owns is reached
+    // through a pointer, and clearing that is what makes it NULL.
+    return type->kind == TYPE_ARRAY ? type->size : sizeof(void *);
+}
+
+void object_release(Allocator allocator, const Type *type, void *value) {
+    // A type that owns nothing has no drop at all, which is what makes a
+    // release of one free: the question was settled when its layout was.
+    if (type && type->drop) {
+        type->drop(allocator, type, value);
+    }
 }
 
 void object_free(Allocator allocator, void *payload) {
@@ -92,7 +136,7 @@ void object_free(Allocator allocator, void *payload) {
     ObjectHeader *header = object_of(payload);
 
     if (header->type->drop) {
-        drop_elements(allocator, header->type, payload, header->count);
+        header->type->drop(allocator, header->type, payload);
     }
 
     allocator.free(allocator.ctx, header);
