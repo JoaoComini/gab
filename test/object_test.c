@@ -61,8 +61,8 @@ static void test_a_type_that_owns_nothing_has_no_drop() {
 
     assert(make_struct(&ctx, "Point", names, types, 2)->drop == NULL);
 
-    Type *owning = type_registry_indirect_to_kind(registry, int_type, false);
-    Type *borrowing = type_registry_indirect_to_kind(registry, int_type, true);
+    Type *owning = type_registry_box_to(registry, int_type);
+    Type *borrowing = type_registry_ref_to(registry, int_type);
 
     assert(owning->drop != NULL);
     assert(borrowing->drop == NULL);
@@ -202,7 +202,7 @@ static void test_freeing_an_object_frees_what_it_owns() {
     Type *inner = make_struct(&ctx, "Inner", inner_names, inner_types, 1);
 
     const char *outer_names[] = {"child"};
-    Type *outer_types[] = {type_registry_indirect_to(registry, inner)};
+    Type *outer_types[] = {type_registry_box_to(registry, inner)};
     Type *outer = make_struct(&ctx, "Outer", outer_names, outer_types, 1);
 
     AllocCounts counts = {0};
@@ -238,7 +238,7 @@ static void test_freeing_does_not_follow_a_ref_field() {
     Type *inner = make_struct(&ctx, "Inner", inner_names, inner_types, 1);
 
     const char *outer_names[] = {"borrowed"};
-    Type *outer_types[] = {type_registry_indirect_to_kind(registry, inner, true)};
+    Type *outer_types[] = {type_registry_ref_to(registry, inner)};
     Type *outer = make_struct(&ctx, "Outer", outer_names, outer_types, 1);
 
     AllocCounts counts = {0};
@@ -272,8 +272,46 @@ static void test_freeing_null_is_a_no_op() {
     assert(counts.frees == 0);
 }
 
+// A header says what it frees where it is built rather than by what kind it
+// is: a string that owns its characters and one that borrows them are the same
+// kind and the same layout, and only the drop tells them apart.
+static void test_a_header_carries_its_own_drop() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope scope;
+    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+
+    TypeRegistry *registry = scope.type_registry;
+
+    Type *owning = registry->builtins.string_type;
+    Type *borrowing = registry->builtins.str_type;
+
+    // The same kind and the same two fields; nothing about the layout differs.
+    assert(owning->kind == borrowing->kind);
+    assert(owning->size == borrowing->size);
+
+    assert(owning->drop != NULL);
+    assert(borrowing->drop == NULL);
+
+    assert(type_is_owned(owning));
+    assert(!type_is_owned(borrowing));
+
+    assert(!type_is_copyable(owning));
+    assert(type_is_copyable(borrowing));
+
+    // An array owns its block, so it carries a drop the same way.
+    Type *ints = type_registry_array_of(registry, registry->builtins.int_type);
+
+    assert(ints->drop != NULL);
+    assert(type_is_owned(ints));
+
+    test_context_free(&ctx);
+}
+
 int main(void) {
     test_a_raw_pointer_carries_a_stride_and_drops_nothing();
+    test_a_header_carries_its_own_drop();
     test_a_type_that_owns_nothing_has_no_drop();
     test_alloc_and_free_are_one_allocation();
     test_the_payload_follows_the_header();

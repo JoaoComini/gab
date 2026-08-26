@@ -67,7 +67,7 @@ static void drop_fields(Allocator allocator, const Type *type, void *value) {
 //
 // Its own function rather than a case in the field walk, because its bounds are
 // not in the type -- which is the shape DropFn was given a type parameter for.
-static void drop_array(Allocator allocator, const Type *type, void *value) {
+void object_drop_array(Allocator allocator, const Type *type, void *value) {
     GabArrayValue array;
     memcpy(&array, value, sizeof(array));
 
@@ -97,7 +97,7 @@ static void drop_array(Allocator allocator, const Type *type, void *value) {
 // Frees the characters a string header owns. Its own function for the reason
 // drop_array has one: what must be freed is the block the header names, which
 // the field naming it cannot say now that the field is a raw address.
-static void drop_string(Allocator allocator, const Type *type, void *value) {
+void object_drop_string(Allocator allocator, const Type *type, void *value) {
     (void)type;
 
     GabStringValue string;
@@ -114,6 +114,9 @@ static void drop_string(Allocator allocator, const Type *type, void *value) {
 }
 
 void object_select_drop(Type *type) {
+    assert(type->kind != TYPE_STRING && type->kind != TYPE_ARRAY &&
+           "a header's drop is set where it is built, not inferred from its kind");
+
     // Asked of the type rather than of its kind, so that a struct earns a drop
     // exactly when some field of it owns, and every 'ref' is excluded here
     // rather than being tested again on each free.
@@ -122,17 +125,7 @@ void object_select_drop(Type *type) {
         return;
     }
 
-    if (type->kind == TYPE_ARRAY) {
-        type->drop = drop_array;
-        return;
-    }
-
-    if (type->kind == TYPE_STRING) {
-        type->drop = drop_string;
-        return;
-    }
-
-    type->drop = type->kind == TYPE_INDIRECT ? drop_box : drop_fields;
+    type->drop = type->kind == TYPE_BOX ? drop_box : drop_fields;
 }
 
 size_t type_release_width(const Type *type) {

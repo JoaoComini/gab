@@ -63,7 +63,18 @@ _Static_assert(sizeof(size_t) >= 8, "an array's size computation assumes a 64-bi
 
 // Selects the drop function for a laid-out type, or NULL when it owns nothing.
 // Called wherever a Type is finished -- once per type, never on a free path.
+//
+// A header is not one of these: what it frees is not derivable from its fields,
+// so whoever builds one says which of the two below it carries and this is not
+// asked at all.
 void object_select_drop(Type *type);
+
+// Frees the block a string header names, and the block an array header names
+// along with whatever its elements own. Named here rather than selected by kind
+// because a header that owns and one that borrows are the same kind and the
+// same layout: which of them a type is, is decided where it is built.
+void object_drop_string(Allocator allocator, const Type *type, void *value);
+void object_drop_array(Allocator allocator, const Type *type, void *value);
 
 // The header of a payload address. Not for a stack pointer: there is no header
 // there, and nothing in the representation can tell the caller so.

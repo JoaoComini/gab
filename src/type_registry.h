@@ -25,6 +25,7 @@ GAB_HASH_MAP(TypeMap, type_map, String *, TypeBinding)
 // An indirection is interned on what it names, so that every mention of
 // 'box T' yields the same Type *: the whole type system compares by pointer
 // identity, and a fresh Type per mention would silently break every comparison.
+// One map per constructor, so a 'box T' and a 'ref T' never collide.
 #define indirect_map_hash(key) (size_t)key
 #define indirect_map_key_equals(key, other) key == other
 #define indirect_map_key_dup(key) key
@@ -70,11 +71,12 @@ typedef struct TypeRegistry {
 
     StringPool *strings;
 
-    IndirectMap *indirects;
+    // Owning 'box T' types.
+    IndirectMap *boxes;
 
     // Borrowing 'ref T' types, interned apart from the owning ones so that
     // pointer-identity comparison keeps telling them apart.
-    IndirectMap *ref_indirects;
+    IndirectMap *refs;
 
     // Raw 'ptr T' types, interned on the pointee. A third map rather than a
     // flag on the other two, because a raw pointer is neither owning nor
@@ -96,19 +98,17 @@ void type_registry_destroy(TypeRegistry *registry);
 Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind type);
 Type *type_registry_error_type(TypeRegistry *registry);
 
-// The interned *inner. Repeated calls with the same inner return the same
-// Type *.
-Type *type_registry_indirect_to(TypeRegistry *registry, Type *inner);
-
 // The interned 'Array element': a header of {data, length} owning a block of
 // elements. One per element type, and the type that carries the element -- the
 // raw address naming the block does not, so this is what supplies the walk that
 // frees them.
 Type *type_registry_array_of(TypeRegistry *registry, Type *element);
 
-// As type_registry_indirect_to, choosing between the owning and borrowing
-// flavours. A 'ref T' does not own its inner; the two are distinct types.
-Type *type_registry_indirect_to_kind(TypeRegistry *registry, Type *inner, bool is_ref);
+// The interned 'box inner' and 'ref inner'. Two constructors rather than one
+// taking a flag: which of them a type is decides whether a slot holding it
+// frees what it names, and that is the question the kind exists to answer.
+Type *type_registry_box_to(TypeRegistry *registry, Type *inner);
+Type *type_registry_ref_to(TypeRegistry *registry, Type *inner);
 
 // The interned 'ptr pointee': an address the size of a machine pointer, owning
 // nothing. Distinct from both indirections of the same pointee, since what a

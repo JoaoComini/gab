@@ -20,7 +20,6 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->inner = NULL;
     type->element = NULL;
     type->methods = NULL;
-    type->is_ref = false;
     type->owner = NULL;
     type->drop = NULL;
 
@@ -90,42 +89,43 @@ bool type_field_offset(const Type *type, const String *name, size_t *out_offset)
     return true;
 }
 
-bool type_is_indirect(const Type *type) { return type && type->kind == TYPE_INDIRECT; }
+// A raw pointer is deliberately not one of these. Every caller is a
+// language-level path -- an auto-deref, a lend, a field access -- and a 'ptr T'
+// is reachable from none of them: it names a block the header beside it
+// describes, and reaching through it is that header's business.
+bool type_is_indirect(const Type *type) { return type && (type->kind == TYPE_BOX || type->kind == TYPE_REF); }
 
 bool type_is_owned(const Type *type) {
     if (!type) {
         return false;
     }
 
-    // A 'ref' names memory without owning it, whatever kind it qualifies.
-    if (type->is_ref) {
-        return false;
-    }
-
-    if (type->kind == TYPE_INDIRECT) {
+    switch (type->kind) {
+    // The two indirections differ in exactly this, which is why they are two
+    // kinds: one frees what it names and one does not.
+    case TYPE_BOX:
         return true;
-    }
+    case TYPE_REF:
+        return false;
 
     // A raw address claims nothing about what it names, so nothing frees
     // through one. The header naming a block is what owns it.
-    if (type->kind == TYPE_PTR) {
+    case TYPE_PTR:
         return false;
-    }
 
-    // A header owns its block, which the pointer naming it cannot say: a raw
-    // address carries no ownership, so the question is the header's own. An
-    // array always owns; a string owns unless it is the borrowing spelling.
-    if (type->kind == TYPE_ARRAY) {
-        return true;
-    }
+    // A header owns exactly what it was built to free. The raw address naming
+    // its block says nothing about it, and its fields say nothing either, so
+    // the drop chosen where the type was built is the whole answer.
+    case TYPE_STRING:
+    case TYPE_ARRAY:
+        return type->drop != NULL;
 
-    if (type->kind == TYPE_STRING) {
-        return !type->is_ref;
+    default:
+        break;
     }
 
     // A struct is not itself an owner: it owns through whichever fields do, and
-    // is freed field by field rather than as one value. A string answers here
-    // too, through the field naming its characters.
+    // is freed field by field rather than as one value.
     for (size_t i = 0; i < type->field_count; i++) {
         if (type_is_owned(type->fields[i].type)) {
             return true;
@@ -148,26 +148,23 @@ bool type_is_copyable(const Type *type) {
         return true;
     }
 
-    // Exactly the values that own: copying one would make a second owner of
-    // memory only one of them may free. A string reaches the field walk, where
-    // the field naming its characters answers the same question.
-    if (type->kind == TYPE_INDIRECT) {
-        return type->is_ref;
-    }
-
-    // Copying an address duplicates no ownership, since it carried none.
-    if (type->kind == TYPE_PTR) {
-        return true;
-    }
-
-    // A header that owns its block cannot be copied: two of them would free
-    // one block. Read off the header for the reason type_is_owned gives.
-    if (type->kind == TYPE_ARRAY) {
+    switch (type->kind) {
+    // Copying an owning pointer would make a second owner of memory only one of
+    // them may free. A borrow and a raw address each carried no ownership to
+    // duplicate.
+    case TYPE_BOX:
         return false;
-    }
+    case TYPE_REF:
+    case TYPE_PTR:
+        return true;
 
-    if (type->kind == TYPE_STRING) {
-        return type->is_ref;
+    // A header that frees its block cannot be copied, for the same reason.
+    case TYPE_STRING:
+    case TYPE_ARRAY:
+        return type->drop == NULL;
+
+    default:
+        break;
     }
 
     for (size_t i = 0; i < type->field_count; i++) {

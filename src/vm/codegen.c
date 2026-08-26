@@ -587,7 +587,7 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
     // A 'ref T' local borrows: nothing frees it, so its slot is never owned and
     // never listed on the frame. It needs no null-init either — nothing will
     // read it as an owner.
-    bool is_ref = ast->symbol->var.type && ast->symbol->var.type->is_ref;
+    bool is_ref = ast->symbol->var.type && ast->symbol->var.type->kind == TYPE_REF;
 
     if (!ast->initializer) {
         // An owning slot holds nothing until something is stored, so the store
@@ -690,7 +690,7 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
     // so it falls through to the ordinary store below.
     bool target_owns = (ast->target->kind == EXPR_FIELD || ast->target->kind == EXPR_DEREF ||
                         ast->target->kind == EXPR_INDEX) &&
-                       type_is_owned(ast->target->type) && !ast->target->type->is_ref;
+                       type_is_owned(ast->target->type);
 
     if (target_owns) {
         // The value stored is one nothing else owns: the resolver refuses a
@@ -781,7 +781,7 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
 
     unsigned int r1 = codegen_expr(state, ast->value);
 
-    bool target_is_ref = ast->target->type && ast->target->type->is_ref;
+    bool target_is_ref = ast->target->type && ast->target->type->kind == TYPE_REF;
 
     // Reassigning a variable that owns an object: it frees the old one and takes
     // over the new. Freeing after the store, for the same reason a field store
@@ -1361,7 +1361,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
     for (size_t i = 0; i < ast->params.size; i++) {
         Symbol *param = ast->params.data[i]->symbol;
 
-        if (type_is_owned(param->var.type) && !param->var.type->is_ref) {
+        if (type_is_owned(param->var.type)) {
             codegen_own_slot(&func_state, codegen_slot_of(&func_state, param), param->var.type);
         }
     }
@@ -1568,7 +1568,7 @@ static bool param_owns(const Symbol *callee, size_t index) {
 
     const Type *param = callee->func.params[index];
 
-    return type_is_owned(param) && !param->is_ref;
+    return type_is_owned(param);
 }
 
 // Arguments go into the registers immediately above the destination, which is
@@ -2719,7 +2719,7 @@ static void codegen_own_slot_at(CodegenState *state, unsigned int slot, const Ty
     // A 'ref T' slot borrows, so it never owns and is never freed. Callers
     // check this too, but a stray own here would be a use-after-free rather
     // than a leak, so it is refused at the one place ownership is recorded.
-    assert(!(type && type->is_ref) && "a 'ref T' slot never owns what it names");
+    assert(!(type && type->kind == TYPE_REF) && "a 'ref T' slot never owns what it names");
 
     owned_list_add(&state->owned, (OwnedSlot){.slot = slot, .depth = depth, .type = type});
 

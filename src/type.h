@@ -37,13 +37,18 @@ typedef enum {
     TYPE_ARRAY,
     TYPE_STRUCT,
 
-    // An indirection: 'box T' owns what it names, 'ref T' borrows it. One kind
-    // for both, because every operation that reaches through one -- a deref, a
-    // field access, a method receiver -- does the same thing either way. Only
-    // 'is_ref' distinguishes them, and only ownership reads it. Meaningful on
-    // an indirection alone: a string says what it owns through the field naming
-    // its characters, which the field walk already reads.
-    TYPE_INDIRECT,
+    // An indirection that owns what it names, and one that borrows it. Two
+    // kinds rather than one carrying a flag, because whether a slot frees what
+    // it names is the whole difference between them, and reading it off the
+    // kind is what keeps every other question -- a deref, a field access, a
+    // method receiver -- from having to ask about a flag it does not care
+    // about. Both carry their pointee in 'inner'.
+    //
+    // How wide one is at run time follows from the pointee rather than being
+    // stored here, so a pointee that one day needs a length beside its address
+    // changes what the constructor computes and nothing else.
+    TYPE_BOX,
+    TYPE_REF,
     TYPE_UNKNOWN,
     TYPE_ERROR,
 } TypeKind;
@@ -101,17 +106,9 @@ struct Type {
     TypeField *fields;
     size_t field_count;
 
-    // What a TYPE_INDIRECT or a TYPE_PTR names; NULL for every other kind.
+    // What an indirection names -- a TYPE_BOX, a TYPE_REF or a TYPE_PTR. NULL
+    // for every other kind.
     Type *inner;
-
-    // Whether this type borrows rather than owns what it names. A 'ref T' is a
-    // distinct Type from 'box T', interned separately, so that freeing an
-    // object can tell from a field's type alone whether it owns what the field
-    // names — which is what keeps the whole ownership story type-driven.
-    //
-    // Meaningful on an indirection and always false on everything else. A
-    // 'String' and a 'str' are told apart by what their fields own, not by this.
-    bool is_ref;
 
     // The methods declared with this type as their receiver. NULL until the
     // first one is, so a struct nobody declares a method on costs nothing.

@@ -145,7 +145,7 @@ void builtin_register_string(VM *vm) {
     // What 'clone' takes. A receiver by value would have to copy it, which an
     // owning string cannot do -- the rule a script's own method obeys -- so it
     // borrows the slot the header sits in.
-    Type *ref_string = type_registry_indirect_to_kind(registry, string_type, true);
+    Type *ref_string = type_registry_ref_to(registry, string_type);
 
     Type *int_type = registry->builtins.int_type;
     Type *bool_type = registry->builtins.bool_type;

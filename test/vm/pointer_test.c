@@ -121,8 +121,8 @@ static void test_ref_is_a_distinct_type() {
 
     assert(owning && borrow);
     assert(owning != borrow);
-    assert(!owning->is_ref);
-    assert(borrow->is_ref);
+    assert(owning->kind == TYPE_BOX);
+    assert(borrow->kind == TYPE_REF);
 
     // Same inner, and both are still ordinary addresses: a borrow is the same
     // address, differing only in who frees the inner.

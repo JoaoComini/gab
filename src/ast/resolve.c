@@ -148,7 +148,7 @@ static const char *type_name(ResolverState *state, Type *type) {
     }
 
     const char *inner = type->name ? type->name->data : type_name(state, type->inner);
-    const char *prefix = type->is_ref ? "ref " : "box ";
+    const char *prefix = type->kind == TYPE_REF ? "ref " : "box ";
     size_t length = strlen(prefix) + strlen(inner) + 1;
     char *out = arena_alloc(state->compile_arena, length);
 
@@ -650,7 +650,7 @@ static bool type_accepts(Type *to, Type *from) {
         return !type_is_owned(to);
     }
 
-    if (!type_is_indirect(to) || !to->is_ref) {
+    if (to->kind != TYPE_REF) {
         return false;
     }
 
@@ -687,7 +687,7 @@ static bool type_accepts(Type *to, Type *from) {
 // Whether 'to' accepts 'from' only by taking its address, which is the case
 // needing a node in the tree rather than a widening at the check.
 static bool accepts_by_borrowing(Type *to, Type *from) {
-    return to != from && type_is_indirect(to) && to->is_ref && to->inner == from;
+    return to != from && to->kind == TYPE_REF && to->inner == from;
 }
 
 // Materialises the borrow a 'ref T' destination asks for. Borrowing is implicit,
@@ -1203,7 +1203,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         // through one would free the caller's old object from inside the callee,
         // an owning slot changing owner mid-call. Returning ownership says the
         // same thing with the transfer visible at the call site.
-        if (type_is_indirect(target_type) && !target_type->is_ref) {
+        if (target_type->kind == TYPE_BOX) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "cannot take the address of an owning pointer; return ownership instead of "
                        "repointing it through a borrow");
@@ -1225,7 +1225,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         // Typing it 'box T' would make one type mean two things: an address of
         // something, and ownership of a heap object. Nothing could then tell
         // them apart from the type alone.
-        expr->type = type_registry_indirect_to_kind(state->current_scope->type_registry, target_type, true);
+        expr->type = type_registry_ref_to(state->current_scope->type_registry, target_type);
         break;
     }
     case EXPR_DEREF: {
@@ -1324,7 +1324,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
 
         // A borrow has no owner to name, so a heap slot holding one would
         // outlive whatever it borrows with nothing tracking that.
-        if (type_is_indirect(type) && type->is_ref) {
+        if (type->kind == TYPE_REF) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "cannot allocate %s; a heap slot cannot hold a borrow", type_name(state, type));
             expr->type = resolver_error_type(state);
@@ -1332,7 +1332,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         }
 
         expr->new_expr.type = type;
-        expr->type = type_registry_indirect_to(state->current_scope->type_registry, type);
+        expr->type = type_registry_box_to(state->current_scope->type_registry, type);
         break;
     }
     case EXPR_LITERAL: {
@@ -1461,8 +1461,10 @@ static Type *resolve_type_spec(ResolverState *state, TypeSpec *spec, Span span) 
     // of a slot holding a header, and the borrow of the characters themselves
     // is a type of its own, named 'str'.
     for (unsigned int i = 0; i < spec->indirect_depth; i++) {
-        bool is_ref = (spec->ref_levels >> i) & 1;
-        type = type_registry_indirect_to_kind(state->current_scope->type_registry, type, is_ref);
+        TypeRegistry *registry = state->current_scope->type_registry;
+
+        type = ((spec->ref_levels >> i) & 1) ? type_registry_ref_to(registry, type)
+                                             : type_registry_box_to(registry, type);
     }
 
     return type;
@@ -1599,7 +1601,7 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
     // 'ref T' is the form that says what is true. A receiver by value stays
     // available as 'T', which copies; the two axes are separate, and only this
     // one is about ownership.
-    if (type_is_indirect(receiver_type) && !receiver_type->is_ref) {
+    if (receiver_type->kind == TYPE_BOX) {
         diag_error(
             state->diagnostics, GAB_ERR_TYPE, receiver->span,
             "a method borrows its receiver rather than owning it, so write 'ref %s' instead of 'box %s'",

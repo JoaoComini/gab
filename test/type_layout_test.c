@@ -266,8 +266,8 @@ static void test_raw_pointer_owns_nothing() {
     assert(ptr->drop == NULL);
 
     // A 'box int' owns and a 'ref int' borrows; neither is this type.
-    assert(ptr != type_registry_indirect_to_kind(registry, int_type, false));
-    assert(ptr != type_registry_indirect_to_kind(registry, int_type, true));
+    assert(ptr != type_registry_box_to(registry, int_type));
+    assert(ptr != type_registry_ref_to(registry, int_type));
 
     assert(ptr->size == sizeof(void *));
     assert(ptr->alignment == _Alignof(void *));
@@ -275,9 +275,49 @@ static void test_raw_pointer_owns_nothing() {
     test_context_free(&ctx);
 }
 
+// A borrow and an ownership are separate constructors, each carrying what it
+// names. Neither is the pointee, and neither is the other: what a slot must
+// free is read off the kind rather than off a flag beside it.
+static void test_a_borrow_and_a_box_are_distinct_constructors() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope global_scope;
+    scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
+    TypeRegistry *registry = global_scope.type_registry;
+
+    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+
+    Type *box = type_registry_box_to(registry, int_type);
+    Type *ref = type_registry_ref_to(registry, int_type);
+
+    assert(box->kind == TYPE_BOX);
+    assert(ref->kind == TYPE_REF);
+
+    assert(box->inner == int_type);
+    assert(ref->inner == int_type);
+
+    // Interned on the pointee, so a second mention is the same Type.
+    assert(type_registry_box_to(registry, int_type) == box);
+    assert(type_registry_ref_to(registry, int_type) == ref);
+
+    assert(box != ref);
+    assert(box != int_type && ref != int_type);
+
+    // The whole difference between them: one frees what it names, one does not.
+    assert(type_is_owned(box));
+    assert(!type_is_owned(ref));
+
+    assert(!type_is_copyable(box));
+    assert(type_is_copyable(ref));
+
+    test_context_free(&ctx);
+}
+
 int main(void) {
     test_builtin_widths();
     test_raw_pointer_owns_nothing();
+    test_a_borrow_and_a_box_are_distinct_constructors();
 
     test_homogeneous_struct();
     test_interior_padding();

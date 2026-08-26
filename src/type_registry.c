@@ -17,9 +17,10 @@ static Type *register_builtin(TypeRegistry *registry, TypeKind kind, const char 
     return type;
 }
 
-// The 'String' type, laid out from its two fields. 'is_ref' is the whole
-// difference between a string and a view of one: it says whether the header
-// owns the characters it names, which the raw address naming them cannot.
+// The 'String' type, laid out from its two fields. Whether the header owns the
+// characters it names is the whole difference between a string and a view of
+// one, and it is the header's own business: the raw address naming them cannot
+// say.
 static Type *string_builtin_create(TypeRegistry *registry, bool is_ref) {
     // Each half carries its own name: 'String' owns its characters, 'str'
     // borrows someone else's. Two names rather than one, because the two differ
@@ -29,18 +30,18 @@ static Type *string_builtin_create(TypeRegistry *registry, bool is_ref) {
     Type *type = type_struct_create(registry->arena, string_from_cstr(registry->strings, name), 2);
     type->kind = TYPE_STRING;
 
-    // What the two spellings differ in. Read by type_is_owned, since the field
-    // naming the characters is a raw address and answers nothing about them.
-    type->is_ref = is_ref;
-
     // A raw address either way: who frees the characters is the header's own
-    // business, recorded in 'is_ref' above rather than in this field's type.
+    // business rather than this field's.
     Type *characters = type_registry_ptr_to(registry, registry->builtins.byte_type);
 
     type_add_field(type, string_from_cstr(registry->strings, "data"), characters);
     type_add_field(type, string_from_cstr(registry->strings, "length"), registry->builtins.int_type);
     type_layout_compute(type);
-    object_select_drop(type);
+
+    // The whole difference between the two, and all of it: one frees the
+    // characters it names and one was never given anything to free. Every later
+    // question about ownership reads this rather than a bit beside it.
+    type->drop = is_ref ? NULL : object_drop_string;
 
     return type;
 }
@@ -83,9 +84,8 @@ void type_registry_register_builtins(TypeRegistry *registry) {
 
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
-    registry->indirects = indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
-    registry->ref_indirects =
-        indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->boxes = indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->refs = indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->ptrs = indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arrays = indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
@@ -96,8 +96,8 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
 }
 
 void type_registry_destroy(TypeRegistry *registry) {
-    indirect_map_destroy(registry->indirects);
-    indirect_map_destroy(registry->ref_indirects);
+    indirect_map_destroy(registry->boxes);
+    indirect_map_destroy(registry->refs);
     indirect_map_destroy(registry->ptrs);
     indirect_map_destroy(registry->arrays);
 }
@@ -118,7 +118,11 @@ Type *type_registry_array_of(TypeRegistry *registry, Type *element) {
                    type_registry_ptr_to(registry, element));
     type_add_field(type, string_from_cstr(registry->strings, "length"), registry->builtins.int_type);
     type_layout_compute(type);
-    object_select_drop(type);
+
+    // Every array frees its block, and its elements with it. The borrowed
+    // counterpart a string has in 'str' would leave this NULL, which is the
+    // whole of what it would need.
+    type->drop = object_drop_array;
 
     // Every array answers the same methods, which do not depend on the element:
     // 'len' reads a count. Reached through 'owner' rather than copied into each
@@ -133,38 +137,42 @@ Type *type_registry_array_of(TypeRegistry *registry, Type *element) {
     return type;
 }
 
-Type *type_registry_indirect_to(TypeRegistry *registry, Type *inner) {
-    return type_registry_indirect_to_kind(registry, inner, false);
-}
-
-Type *type_registry_indirect_to_kind(TypeRegistry *registry, Type *inner, bool is_ref) {
-    // Two maps rather than a composite key: 'ref T' and 'box T' are different
-    // types, and the whole type system compares by pointer identity, so they
-    // must never collide in one table.
-    IndirectMap *map = is_ref ? registry->ref_indirects : registry->indirects;
-
+// Both constructors, which differ only in which map interns them and which
+// kind the result carries. Written once because everything else about building
+// one -- the width, the alignment, the pointee -- is the same for both.
+static Type *indirect_to(TypeRegistry *registry, IndirectMap *map, TypeKind kind, Type *inner) {
     Type **existing = indirect_map_lookup(map, inner);
     if (existing) {
         return *existing;
     }
 
-    // No name: a pointer type is structural, so its printable form is derived
+    // No name: an indirection is structural, so its printable form is derived
     // from the inner when a diagnostic asks. See Type::name.
-    Type *type = type_create(registry->arena, TYPE_INDIRECT, NULL);
+    Type *type = type_create(registry->arena, kind, NULL);
 
     // Always a raw address to the payload, so a stack pointer and a heap one
-    // are byte-identical; only the resolver knows which is which. A 'ref T' is
-    // the same address too — what differs is who frees the inner.
+    // are byte-identical; only the type says which is which. A 'ref T' is the
+    // same address too -- what differs is who frees the inner.
+    //
+    // Computed here rather than stored, so a pointee that one day needs a
+    // length beside its address changes this line and nothing else.
     type->size = sizeof(void *);
     type->alignment = _Alignof(void *);
     type->inner = inner;
-    type->is_ref = is_ref;
 
     object_select_drop(type);
 
     indirect_map_insert(map, inner, type);
 
     return type;
+}
+
+Type *type_registry_box_to(TypeRegistry *registry, Type *inner) {
+    return indirect_to(registry, registry->boxes, TYPE_BOX, inner);
+}
+
+Type *type_registry_ref_to(TypeRegistry *registry, Type *inner) {
+    return indirect_to(registry, registry->refs, TYPE_REF, inner);
 }
 
 Type *type_registry_ptr_to(TypeRegistry *registry, Type *pointee) {
