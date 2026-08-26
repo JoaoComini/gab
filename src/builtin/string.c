@@ -109,11 +109,11 @@ static void string_count(Args *args) {
     args_return_int(args, total);
 }
 
-// 's.clone()'. The characters a borrow names, copied into a string that owns
+// 's.to_owned()'. The characters a borrow names, copied into a string that owns
 // them. The one string method that allocates, and the way anything arena-backed
-// -- a literal, or the join of two -- becomes something a 'string' slot may
+// -- a literal, or the join of two -- becomes something a 'String' slot may
 // hold.
-static void string_clone(Args *args) {
+static void string_to_owned(Args *args) {
     GabStringValue string = args_string(args, 0);
 
     args_return_string_copy(args, string.data, string.length);
@@ -124,23 +124,45 @@ void builtin_register_string(VM *vm) {
 
     // Every method here reads its receiver and allocates nothing, so it takes a
     // borrow: an owning string lends to one, and a literal already is one.
-    Type *string_type = registry->builtins.ref_string_type;
+    //
+    // Declared on the owning type even so, because that is the set both halves
+    // read: a borrow reaches it through 'owner', while the owning string has no
+    // route to the borrow's own set. What each takes stays the borrow, so a
+    // 'String' receiver lends where the parameter says 'str'.
+    Type *string_type = registry->builtins.string_type;
+    Type *str_type = registry->builtins.str_type;
     Type *int_type = registry->builtins.int_type;
     Type *bool_type = registry->builtins.bool_type;
 
     Type *const int_param[] = {int_type};
-    Type *const string_param[] = {string_type};
+    Type *const string_param[] = {str_type};
 
-    builtin_register_method(vm, string_type, "len", string_len, int_type, NULL, 0);
-    builtin_register_method(vm, string_type, "is_empty", string_is_empty, bool_type, NULL, 0);
-    builtin_register_method(vm, string_type, "at", string_at, int_type, int_param, 1);
-    builtin_register_method(vm, string_type, "starts_with", string_starts_with, bool_type, string_param, 1);
-    builtin_register_method(vm, string_type, "ends_with", string_ends_with, bool_type, string_param, 1);
-    builtin_register_method(vm, string_type, "contains", string_contains, bool_type, string_param, 1);
-    builtin_register_method(vm, string_type, "index_of", string_index_of, int_type, string_param, 1);
-    builtin_register_method(vm, string_type, "count", string_count, int_type, string_param, 1);
+    builtin_register_method(vm, string_type, str_type, "len", string_len, int_type, NULL, 0);
+    builtin_register_method(vm, string_type, str_type, "is_empty", string_is_empty, bool_type, NULL, 0);
+    builtin_register_method(vm, string_type, str_type, "at", string_at, int_type, int_param, 1);
+    builtin_register_method(vm, string_type, str_type, "starts_with", string_starts_with, bool_type,
+                            string_param, 1);
+    builtin_register_method(vm, string_type, str_type, "ends_with", string_ends_with, bool_type, string_param,
+                            1);
+    builtin_register_method(vm, string_type, str_type, "contains", string_contains, bool_type, string_param,
+                            1);
+    builtin_register_method(vm, string_type, str_type, "index_of", string_index_of, int_type, string_param,
+                            1);
+    builtin_register_method(vm, string_type, str_type, "count", string_count, int_type, string_param, 1);
 
     // Returns the owning string, not the borrowed one every other method takes:
-    // what a clone hands back is a fresh allocation the caller frees.
-    builtin_register_method(vm, string_type, "clone", string_clone, registry->builtins.string_type, NULL, 0);
+    // what it hands back is a fresh allocation the caller frees.
+    builtin_register_method(vm, str_type, str_type, "to_owned", string_to_owned,
+                            registry->builtins.string_type, NULL, 0);
+
+    // The one method here taking an owning receiver, since it duplicates what it
+    // is given and a borrow duplicated is the same characters twice named. That
+    // receiver is also what keeps it off a 'str': an owning type never accepts a
+    // borrow, so the call is refused where the receiver is reconciled.
+    //
+    // Its body is 'to_owned's -- what copies borrowed characters and what makes
+    // a second owner of owned ones are the same allocation -- and the two slots
+    // it reads are the same whichever half it was handed.
+    builtin_register_method(vm, string_type, string_type, "clone", string_to_owned,
+                            registry->builtins.string_type, NULL, 0);
 }

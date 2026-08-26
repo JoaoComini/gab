@@ -22,8 +22,13 @@ void builtin_register_all(VM *vm);
 // parameter zero and is supplied here, which is what keeps a method from
 // declaring a receiver other than the type it hangs on. A method taking only
 // its receiver passes NULL and zero.
-void builtin_register_method(VM *vm, Type *receiver, const char *name, GabExternFn body, Type *return_type,
-                             Type *const *params, size_t param_count);
+// 'declared_on' is the type whose method set the name lands in, and 'receiver'
+// is what parameter zero takes. The two differ for a string: the set is the
+// owning type's, since a borrow reads it through 'owner' and an owning string
+// has no route the other way, while the receiver stays the borrow so that
+// reading a string never asks for ownership of it.
+void builtin_register_method(VM *vm, Type *declared_on, Type *receiver, const char *name, GabExternFn body,
+                             Type *return_type, Type *const *params, size_t param_count);
 
 // Each builtin type's methods, called by builtin_register_all.
 void builtin_register_string(VM *vm);

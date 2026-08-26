@@ -16,7 +16,7 @@ typedef struct {
     Diagnostics *diagnostics;
 
     // What a 'return' is checked against. Held here because a returned borrow
-    // is not always visible in the returned expression's type: a 'ref string'
+    // is not always visible in the returned expression's type: a 'str'
     // is a header copy, so no address-of node marks it.
     Type *return_type;
 
@@ -69,7 +69,7 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
         // exactly as long as the variable does. A pointer variable is the other
         // case: what it names was decided wherever it was assigned, which is
         // what the lattice carries.
-        if (expr->type && expr->type->kind == TYPE_STRING && !expr->type->is_ref) {
+        if (expr->type && expr->type->kind == TYPE_STRING && type_is_owned(expr->type)) {
             return expr->symbol->scope_depth;
         }
 
@@ -188,7 +188,7 @@ static uint64_t initialized_fields(FlowPass *pass, ASTExpr *initializer) {
 }
 
 // Whether a value names memory it does not own, so that how long that memory
-// lives is this pass's business. True of a 'ref T' and of a 'ref string': the
+// lives is this pass's business. True of a 'ref T' and of a 'str': the
 // two are different representations -- one an address, one a header carrying
 // one -- and the lifetime question is the same for both.
 static bool borrows_memory(const Type *type) {
@@ -196,7 +196,7 @@ static bool borrows_memory(const Type *type) {
         return false;
     }
 
-    return type_is_indirect(type) || (type->kind == TYPE_STRING && type->is_ref);
+    return type_is_indirect(type) || (type->kind == TYPE_STRING && !type_is_owned(type));
 }
 
 // Rejects a borrow being stored somewhere that outlives what it names.
@@ -220,7 +220,7 @@ static void check_borrow_lifetime(FlowPass *pass, ASTExpr *value, int target_dep
 
 // As check_borrow_lifetime, for a destination whose type says whether a borrow
 // is formed. Reading the destination rather than the value is what catches a
-// string: 'ref string' takes an owning 'string' by copying its header, so the
+// string: a 'str' takes an owning 'String' by copying its header, so the
 // value still reads as owning and only the destination shows a borrow was made.
 static void check_stored_lifetime(FlowPass *pass, ASTExpr *value, const Type *destination, int target_depth,
                                   Span span, const char *what) {
@@ -354,7 +354,7 @@ static void flow_pass_stmt(FlowPass *pass, ASTStmt *stmt) {
         // inside the function may be pointed at. Depth 0 is the global scope.
         //
         // Checked against the declared return type rather than the returned
-        // expression's: returning an owning string where a 'ref string' was
+        // expression's: returning an owning string where a 'str' was
         // declared forms a borrow that outlives the slot holding the
         // characters, and the expression alone still reads as owning.
         check_stored_lifetime(pass, stmt->ret.result, pass->return_type, 0, stmt->span, "returned");

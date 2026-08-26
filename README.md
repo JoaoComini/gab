@@ -157,19 +157,27 @@ that ownership away.
 Only something with a home in memory can be borrowed. A call result is a
 temporary with no address to name, so it must be bound to a variable first. A
 string literal is the exception: its characters live in the unit's arena, which
-outlives every value that reads them, so a literal *is* a `ref string`.
+outlives every value that reads them, so a literal *is* a `str`.
 
-A `string` owns its characters and a `ref string` borrows them, which is the
-same distinction `box T` and `ref T` draw and is read off the type the same way.
-A literal borrows the arena; `..` joins, allocating a `string` that the slot it
-lands in frees:
+A `str` is a view of characters: where they are and how many, over bytes
+something else keeps alive. That something is often a `String`, which owns its
+characters and lends them — but just as often it is the unit's arena behind a
+literal, or a host's buffer behind a struct field, with no `String` anywhere. It
+is the type most code passes around; `String` is what you reach for when the
+characters have to outlive the expression that made them.
+
+The two are separate types, not one type in two states. `ref` means an
+indirection wherever it is written, so a `ref String` is the address of a slot
+holding a header, and nothing converts it to a `str` implicitly — deref it and
+the `String` lends from there. A literal borrows the arena; `..` joins,
+allocating a `String` that the slot it lands in frees:
 
 ```
-func greet(name: ref string): string {
+func greet(name: str): String {
     return "hello, " .. name;     // allocates; the caller owns what comes back
 }
 
-let banner: ref string = "gab";   // borrows the arena, frees nothing
+let banner: str = "gab";          // borrows the arena, frees nothing
 ```
 
 Joining has its own operator rather than overloading `+`. Arithmetic does not
@@ -182,22 +190,24 @@ its characters exactly as a join with a runtime operand does. What a join may
 initialise is decided by how it was written rather than by what the compiler
 could evaluate early, so a literal is the only string that borrows the arena.
 
-`clone()` copies the characters a borrow names into a string that owns them,
-which is how anything arena-backed becomes something a `string` slot may hold:
+`to_owned()` copies the characters a borrow names into a string that owns them,
+which is how anything arena-backed becomes something a `String` slot may hold.
+It is named for what it produces rather than `clone`, since it does not hand
+back its own type: a `str` receiver yields a `String`.
 
 ```
-let borrowed: ref string = "ab";         // borrows the arena
-let owned: string = "a" .. "b";          // allocates; the slot frees it
-let copied: string = "ab".clone();       // copies the arena's characters
+let borrowed: str = "ab";                // borrows the arena
+let owned: String = "a" .. "b";          // allocates; the slot frees it
+let copied: String = "ab".to_owned();    // copies the arena's characters
 ```
 
-`new string` allocates a heap slot holding a header, which zeroed is the empty
+`new String` allocates a heap slot holding a header, which zeroed is the empty
 string — the same thing `new Player` does for a struct's layout. Only an owned
-value may be stored where a string owns, so a `box string` takes a join and
+value may be stored where a string owns, so a `box String` takes a join and
 refuses a literal: the slot frees what it holds, and a borrow names characters
 it did not allocate.
 
-A host struct holds a `ref string`: the host allocated those characters and goes
+A host struct holds a `str`: the host allocated those characters and goes
 on owning them, so the script reads them and frees nothing. That is what keeps a
 string field two words the host can lay out with `offsetof`, and it carries the
 same caveat every borrow does — the host must outlive the script's use of it.
@@ -258,8 +268,10 @@ slot revives it — deadness is about what the slot holds, not a mark the name
 carries forever.
 
 A type may say how it is duplicated by declaring a `clone` method, which takes
-nothing but its receiver and returns another of its own type. `string` ships
-with one, and a struct declares its own:
+nothing but its receiver and returns another of its own type. `String` ships
+with one; `str` does not, since a borrow already copies by assignment and what
+it needs is `to_owned()`, which changes the type rather than duplicating it. A
+struct declares its own:
 
 ```
 func (h: ref Holder) clone(): Holder { ... }
@@ -345,7 +357,7 @@ more or less, and a second spelling would say nothing the first does not.
 
 | | |
 | --- | --- |
-| Types | `int` (32-bit), `float` (32-bit), `bool`, `string`, structs, owning `box T`, borrows `ref T` |
+| Types | `int` (32-bit), `float` (32-bit), `bool`, `String` and views of characters `str`, structs, owning `box T`, borrows `ref T` |
 | Declarations | `let` with inferred or annotated type, `func`, `struct`, `module` |
 | Functions | Parameters and returns of any type, structs by value, methods with a receiver, recursion, forward references |
 | Control flow | `if` / `else`, `for` in three forms, `break`, `continue`, `return`, nested blocks with shadowing |

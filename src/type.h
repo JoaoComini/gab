@@ -29,7 +29,9 @@ typedef enum {
     // An indirection: 'box T' owns what it names, 'ref T' borrows it. One kind
     // for both, because every operation that reaches through one -- a deref, a
     // field access, a method receiver -- does the same thing either way. Only
-    // 'is_ref' distinguishes them, and only ownership reads it.
+    // 'is_ref' distinguishes them, and only ownership reads it. Meaningful on
+    // an indirection alone: a string says what it owns through the field naming
+    // its characters, which the field walk already reads.
     TYPE_INDIRECT,
     TYPE_UNKNOWN,
     TYPE_ERROR,
@@ -96,8 +98,8 @@ struct Type {
     // object can tell from a field's type alone whether it owns what the field
     // names — which is what keeps the whole ownership story type-driven.
     //
-    // Meaningful on an indirection and on a string, the two kinds that name
-    // memory someone must free. Always false on the rest.
+    // Meaningful on an indirection and always false on everything else. A
+    // 'String' and a 'str' are told apart by what their fields own, not by this.
     bool is_ref;
 
     // The methods declared with this type as their receiver. NULL until the
@@ -108,8 +110,8 @@ struct Type {
     // nothing. Set by type_layout_compute.
     DropFn drop;
 
-    // For a borrowing type that shares another's identity -- 'ref string' and
-    // 'string' -- the owning one. NULL everywhere else. Method lookup follows
+    // For a borrowing type that shares another's identity -- 'str' and
+    // 'String' -- the owning one. NULL everywhere else. Method lookup follows
     // it so that one declaration serves both.
     Type *owner;
 };

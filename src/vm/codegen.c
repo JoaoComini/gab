@@ -52,7 +52,8 @@ typedef struct {
     unsigned int depth;
 
     // What the slot holds. Kept for the assert in codegen_own_slot and for
-    // reading a chunk back; freeing is one opcode whatever the type.
+    // reading a chunk back; freeing is one opcode whatever the type, and which
+    // dropper runs is read off the allocation's own header at the free.
     const Type *type;
 } OwnedSlot;
 
@@ -508,14 +509,12 @@ typedef enum {
 // A struct owns through its fields rather than as a slot, so nulling, owning
 // and disowning one all mean doing the same walk and acting at each pointer.
 // A 'ref' field is skipped throughout: nothing frees it, so nothing reads it as
-// an owner.
+// an owner. A string answers here as a struct does, through the field naming
+// its characters.
 static void codegen_walk_owning_slots(CodegenState *state, const Type *type, unsigned int base,
                                       OwningSlotAction action) {
-    // An owning string is one slot's worth of owner -- its characters -- inside
-    // a value several slots wide. The base slot is where they hang, so it is
-    // the slot that owns and the rest are along for the ride.
-    if (type_is_indirect(type) || (type && type->kind == TYPE_STRING)) {
-        if (type->is_ref) {
+    if (type_is_indirect(type)) {
+        if (!type_is_owned(type)) {
             return;
         }
 
@@ -534,7 +533,10 @@ static void codegen_walk_owning_slots(CodegenState *state, const Type *type, uns
         return;
     }
 
-    if (!type_is_struct(type)) {
+    // Anything laid out from fields owns through them, whether it is a struct or
+    // a string: the walk reaches what each names by that field's offset rather
+    // than by knowing where its kind keeps things.
+    if (!type || type->field_count == 0) {
         return;
     }
 
@@ -2646,13 +2648,12 @@ static unsigned int type_align_slots(const Type *type) {
 static bool type_is_struct(const Type *type) { return type && type->kind == TYPE_STRUCT; }
 
 // Whether a field is moved as a run of slots rather than through a width-tagged
-// field opcode. A struct is, because its slots are laid out inline — and so is
-// a pointer, which is 8 bytes and has no 8-wide opcode. Before heap objects
-// existed no struct could hold a pointer, so the two cases only meet now.
-// A string is a header of several slots, so it moves as one run like a struct
-// rather than as a single slot.
+// field opcode. Anything laid out from fields is, because those slots sit
+// inline — a struct and a string alike — and so is a pointer, which is 8 bytes
+// and has no 8-wide opcode. Before heap objects existed no struct could hold a
+// pointer, so the two cases only meet now.
 static bool type_moves_as_slots(const Type *type) {
-    return type_is_struct(type) || type_is_indirect(type) || (type && type->kind == TYPE_STRING);
+    return type_is_indirect(type) || (type && type->field_count > 0);
 }
 
 // The field's width is known at compile time, so it picks the opcode instead

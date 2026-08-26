@@ -151,12 +151,6 @@ bool type_is_copyable(const Type *type) {
 #define METHOD_MAP_INITIAL_CAPACITY 4
 
 bool type_add_method(Arena *arena, Type *type, String *name, Symbol *method) {
-    // Declared on the owning type, which is where lookup reads: a borrow shares
-    // the method set of what it borrows rather than keeping one of its own.
-    if (type->owner) {
-        type = type->owner;
-    }
-
     if (!type->methods) {
         type->methods = method_map_create_alloc(arena_allocator(arena), METHOD_MAP_INITIAL_CAPACITY);
     }
@@ -174,21 +168,27 @@ Symbol *type_find_method(const Type *type, const String *name) {
         return NULL;
     }
 
-    // A borrow shares the method set of what it borrows: 'ref string' and
-    // 'string' are one type in two ownership states, and a method that only
-    // reads its receiver is meaningful on both. Declaring lands on the owning
-    // type, which is where 'owner' points.
+    // A borrow reads the method set of what it borrows, since a method that
+    // only reads its receiver is meaningful on both. Its own set is consulted
+    // first: what the two do not share is what tells them apart, and a method
+    // declared on the borrow answers for the borrow alone.
+    if (type->methods) {
+        Symbol **found = method_map_lookup(type->methods, (String *)name);
+
+        if (found) {
+            return *found;
+        }
+    }
+
+    // Only a borrow follows this, and finding a method here is not yet a call
+    // that resolves: the owner's methods declare an owning receiver, which a
+    // borrow does not satisfy. So 'clone', declared on the owning string, is
+    // found from a borrow and then refused where the receiver is reconciled.
     if (type->owner) {
-        type = type->owner;
+        return type_find_method(type->owner, name);
     }
 
-    if (!type->methods) {
-        return NULL;
-    }
-
-    Symbol **found = method_map_lookup(type->methods, (String *)name);
-
-    return found ? *found : NULL;
+    return NULL;
 }
 
 TypeSpec *type_spec_create(StringRef name, unsigned int indirect_depth, uint32_t ref_levels) {
