@@ -479,6 +479,17 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
     }
 
     if (type_is_indirect(declared) && !type_is_indirect(actual)) {
+        // The address of this receiver has to be the pointer the method asked
+        // for. A method set is shared between a type and what borrows it, so
+        // lookup can reach one whose receiver names the other -- and taking the
+        // address of a 'str' would hand a 'ref str' where a 'ref String' was
+        // declared.
+        if (declared->inner != actual) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot call '%s' on %s", name->data,
+                       type_name(state, actual));
+            return false;
+        }
+
         if (!is_addressable(receiver)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "cannot call '%s' on a temporary, since it takes a pointer receiver", name->data);
@@ -1492,6 +1503,18 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
             state->diagnostics, GAB_ERR_TYPE, receiver->span,
             "a method borrows its receiver rather than owning it, so write 'ref %s' instead of 'box %s'",
             base->name->data, base->name->data);
+        return;
+    }
+
+    // The other axis: a receiver by value is a copy, which a type holding an
+    // owner has no way to make. Nothing here could consume it instead -- a call
+    // gives no place to spell the transfer, which is what the check above says
+    // -- so the borrow is the only thing such a receiver could mean, and it is
+    // written rather than assumed.
+    if (!type_is_indirect(receiver_type) && !type_is_copyable(receiver_type)) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, receiver->span,
+                   "%s owns what it holds, so a receiver by value cannot copy it; write 'ref %s'",
+                   base->name->data, base->name->data);
         return;
     }
 

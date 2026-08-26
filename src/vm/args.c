@@ -85,6 +85,20 @@ GabStringValue args_string(Args *args, int index) {
     return value;
 }
 
+// The header a pointer parameter names. A 'ref String' is an address like any
+// other indirection, so the slots it occupies hold no characters of their own
+// and the header is read from where it points.
+GabStringValue args_string_at(Args *args, int index) {
+    const uint8_t *at = args_pointer(args, index);
+
+    assert(at && "a C body read a string through a pointer holding nothing");
+
+    GabStringValue value;
+    memcpy(&value, at, sizeof(value));
+
+    return value;
+}
+
 void *args_pointer(Args *args, int index) {
     void *pointer;
     memcpy(&pointer, args_address_of_kind(args, index, TYPE_INDIRECT), sizeof(pointer));

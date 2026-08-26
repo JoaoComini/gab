@@ -40,6 +40,11 @@ int32_t args_int(Args *args, int index);
 float args_float(Args *args, int index);
 bool args_bool(Args *args, int index);
 GabStringValue args_string(Args *args, int index);
+
+// As args_string, for a parameter declared as a pointer to one. The two are
+// separate because the declarations are: a 'String' or a 'str' parameter holds
+// the header in its own slots, and a 'ref String' holds an address.
+GabStringValue args_string_at(Args *args, int index);
 void *args_pointer(Args *args, int index);
 
 // 'size' is what the caller expects the parameter to occupy, which must be what
