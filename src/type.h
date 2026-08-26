@@ -6,6 +6,7 @@
 #include "string/string.h"
 #include "string/string_ref.h"
 #include "util/hash_map.h"
+#include "util/list.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -16,23 +17,39 @@ typedef enum {
     TYPE_FLOAT,
     TYPE_BOOL,
 
-    // The element a string's characters are a buffer of. Named so that a
-    // diagnostic can print what it is, but declared into no scope: nothing in
-    // the language reads or writes one, so no script can name it.
-    TYPE_BYTE,
+    // An address and nothing more: what a string's characters and an array's
+    // elements are reached through. Carries what it points at in 'inner', so a
+    // walk over a block knows its stride without asking the header naming it.
+    //
+    // Makes no claim beyond the address. It does not own what it names, does
+    // not borrow it, and says nothing about how long that memory lives or
+    // whether it is live at all -- which is what separates it from both
+    // spellings of an indirection. Freeing a block is therefore always the
+    // business of the header that knows how many of its elements are live.
+    TYPE_PTR,
 
     // A header by value: the address of the characters and their count. Nominal
     // rather than structural, so it is interned once like the other builtins.
     TYPE_STRING,
+
+    // A header owning a run of elements: where they are and how many. Laid out
+    // like a string and freed like one, differing in that its element is
+    // whatever it was written over rather than always a byte.
+    TYPE_ARRAY,
     TYPE_STRUCT,
 
-    // An indirection: 'box T' owns what it names, 'ref T' borrows it. One kind
-    // for both, because every operation that reaches through one -- a deref, a
-    // field access, a method receiver -- does the same thing either way. Only
-    // 'is_ref' distinguishes them, and only ownership reads it. Meaningful on
-    // an indirection alone: a string says what it owns through the field naming
-    // its characters, which the field walk already reads.
-    TYPE_INDIRECT,
+    // An indirection that owns what it names, and one that borrows it. Two
+    // kinds rather than one carrying a flag, because whether a slot frees what
+    // it names is the whole difference between them, and reading it off the
+    // kind is what keeps every other question -- a deref, a field access, a
+    // method receiver -- from having to ask about a flag it does not care
+    // about. Both carry their pointee in 'inner'.
+    //
+    // How wide one is at run time follows from the pointee rather than being
+    // stored here, so a pointee that one day needs a length beside its address
+    // changes what the constructor computes and nothing else.
+    TYPE_BOX,
+    TYPE_REF,
     TYPE_UNKNOWN,
     TYPE_ERROR,
 } TypeKind;
@@ -90,17 +107,9 @@ struct Type {
     TypeField *fields;
     size_t field_count;
 
-    // What a TYPE_INDIRECT names; NULL for every other kind.
+    // What an indirection names -- a TYPE_BOX, a TYPE_REF or a TYPE_PTR. NULL
+    // for every other kind.
     Type *inner;
-
-    // Whether this type borrows rather than owns what it names. A 'ref T' is a
-    // distinct Type from 'box T', interned separately, so that freeing an
-    // object can tell from a field's type alone whether it owns what the field
-    // names — which is what keeps the whole ownership story type-driven.
-    //
-    // Meaningful on an indirection and always false on everything else. A
-    // 'String' and a 'str' are told apart by what their fields own, not by this.
-    bool is_ref;
 
     // The methods declared with this type as their receiver. NULL until the
     // first one is, so a struct nobody declares a method on costs nothing.
@@ -127,6 +136,11 @@ void type_layout_compute(Type *type);
 // ownership: a 'ref T' is as indirect as a 'box T'.
 bool type_is_indirect(const Type *type);
 
+// What one element of an array's block is: what the 'data' pointer names.
+// Read through here rather than off a field of its own, so that the stride a
+// walk advances by and the type that pointer carries cannot disagree.
+Type *type_array_element(const Type *type);
+
 // Whether a value of this type owns memory that must be freed when it dies.
 // True of a 'box T' and of an owning string, false of every 'ref', and true of
 // a struct exactly when some field of it owns.
@@ -152,23 +166,59 @@ bool type_add_method(Arena *arena, Type *type, String *name, Symbol *method);
 // 'Player' share one method set.
 Symbol *type_find_method(const Type *type, const String *name);
 
-// The most indirection levels a type spec may carry, bounded by the bits in
-// 'ref_levels' -- every level records its own kind, so the mask is the limit.
-#define TYPE_SPEC_MAX_DEPTH 32
+// A type as the source wrote it, before any name is looked up. The syntactic
+// counterpart of Type: this is what a type position parses into, and the
+// resolver evaluates it to the interned Type it names.
+//
+// A tree rather than a name plus a count of indirections, because the
+// constructors nest freely and one of them takes arguments. Anything flatter
+// needs a field per constructor that does not fit -- which is what an array's
+// element was -- and a width to bound the nesting, which is a limit on what a
+// program may say rather than on anything real.
+typedef struct TypeExpr TypeExpr;
 
-typedef struct {
+void type_expr_destroy(TypeExpr *expr);
+
+#define type_expr_list_item_free(item) type_expr_destroy(item)
+GAB_LIST(TypeExprList, type_expr_list, TypeExpr *)
+
+typedef enum {
+    // A name, possibly qualified: 'int', 'Player', 'Module::Type'. The leaf
+    // every other kind bottoms out in.
+    TYPE_EXPR_NAME,
+
+    // 'box T' and 'ref T', each wrapping the one level it spells.
+    TYPE_EXPR_BOX,
+    TYPE_EXPR_REF,
+
+    // A constructor applied to arguments: 'Array int' today, and whatever takes
+    // more than one later. A list rather than a single argument, so that a
+    // second one needs no second field.
+    TYPE_EXPR_APPLY,
+} TypeExprKind;
+
+struct TypeExpr {
+    TypeExprKind kind;
+
+    // The name, for TYPE_EXPR_NAME. A qualified name is kept as one ref over
+    // the source, so the resolver sees it exactly as the registry stores it.
     StringRef name;
 
-    // 0 for T, 1 for 'box T', 2 for 'box box T'.
-    unsigned int indirect_depth;
+    union {
+        // What a 'box' or a 'ref' wraps.
+        struct {
+            TypeExpr *inner;
+        } indirect;
 
-    // Which levels borrow rather than own, bit 0 being the level nearest the
-    // name: 'ref box T' is depth 2 with bit 1 set. A flag per level rather than
-    // one for the spec, since the two spellings nest in any order.
-    uint32_t ref_levels;
-} TypeSpec;
+        struct {
+            TypeExpr *base;
+            TypeExprList args;
+        } apply;
+    };
+};
 
-TypeSpec *type_spec_create(StringRef name, unsigned int indirect_depth, uint32_t ref_levels);
-void type_spec_destroy(TypeSpec *spec);
+TypeExpr *type_expr_name(StringRef name);
+TypeExpr *type_expr_indirect(TypeExprKind kind, TypeExpr *inner);
+TypeExpr *type_expr_apply(TypeExpr *base);
 
 #endif

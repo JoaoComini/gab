@@ -84,7 +84,7 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
         // to borrow from the shortest-lived of them. Conservative in one
         // direction only -- it can refuse a borrow of something longer-lived,
         // never accept one that dangles.
-        if (!expr->type || !expr->type->is_ref) {
+        if (!expr->type || expr->type->kind != TYPE_REF) {
             return 0;
         }
 
@@ -109,8 +109,7 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
         //
         // An owning pointer is the exception -- what it names is a heap object,
         // which outlives every frame however the pointer was reached.
-        if (expr->unary.target->type && type_is_indirect(expr->unary.target->type) &&
-            !expr->unary.target->type->is_ref) {
+        if (expr->unary.target->type && expr->unary.target->type->kind == TYPE_BOX) {
             return 0;
         }
 
@@ -137,7 +136,7 @@ static bool owning_field_of_local(const ASTExpr *expr, Symbol **out_symbol, unsi
 
     const TypeField *field = expr->field.field;
 
-    if (!field || !type_is_indirect(field->type) || field->type->is_ref) {
+    if (!field || field->type->kind != TYPE_BOX) {
         return false;
     }
 
@@ -155,7 +154,7 @@ static bool owning_field_of_local(const ASTExpr *expr, Symbol **out_symbol, unsi
             break;
         }
 
-        if (type_is_indirect(other->type) && !other->type->is_ref) {
+        if (other->type->kind == TYPE_BOX) {
             index++;
         }
     }

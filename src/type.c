@@ -19,7 +19,6 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->field_count = 0;
     type->inner = NULL;
     type->methods = NULL;
-    type->is_ref = false;
     type->owner = NULL;
     type->drop = NULL;
 
@@ -89,25 +88,51 @@ bool type_field_offset(const Type *type, const String *name, size_t *out_offset)
     return true;
 }
 
-bool type_is_indirect(const Type *type) { return type && type->kind == TYPE_INDIRECT; }
+// A raw pointer is deliberately not one of these. Every caller is a
+// language-level path -- an auto-deref, a lend, a field access -- and a 'ptr T'
+// is reachable from none of them: it names a block the header beside it
+// describes, and reaching through it is that header's business.
+bool type_is_indirect(const Type *type) { return type && (type->kind == TYPE_BOX || type->kind == TYPE_REF); }
+
+Type *type_array_element(const Type *type) {
+    assert(type && type->kind == TYPE_ARRAY && "only an array has an element");
+
+    // The 'data' field is the pointer naming the block, and a 'ptr T' carries
+    // what it points at.
+    return type->fields[0].type->inner;
+}
 
 bool type_is_owned(const Type *type) {
     if (!type) {
         return false;
     }
 
-    // A 'ref' names memory without owning it, whatever kind it qualifies.
-    if (type->is_ref) {
-        return false;
-    }
-
-    if (type->kind == TYPE_INDIRECT) {
+    switch (type->kind) {
+    // The two indirections differ in exactly this, which is why they are two
+    // kinds: one frees what it names and one does not.
+    case TYPE_BOX:
         return true;
+    case TYPE_REF:
+        return false;
+
+    // A raw address claims nothing about what it names, so nothing frees
+    // through one. The header naming a block is what owns it.
+    case TYPE_PTR:
+        return false;
+
+    // A header owns exactly what it was built to free. The raw address naming
+    // its block says nothing about it, and its fields say nothing either, so
+    // the drop chosen where the type was built is the whole answer.
+    case TYPE_STRING:
+    case TYPE_ARRAY:
+        return type->drop != NULL;
+
+    default:
+        break;
     }
 
     // A struct is not itself an owner: it owns through whichever fields do, and
-    // is freed field by field rather than as one value. A string answers here
-    // too, through the field naming its characters.
+    // is freed field by field rather than as one value.
     for (size_t i = 0; i < type->field_count; i++) {
         if (type_is_owned(type->fields[i].type)) {
             return true;
@@ -130,11 +155,23 @@ bool type_is_copyable(const Type *type) {
         return true;
     }
 
-    // Exactly the values that own: copying one would make a second owner of
-    // memory only one of them may free. A string reaches the field walk, where
-    // the field naming its characters answers the same question.
-    if (type->kind == TYPE_INDIRECT) {
-        return type->is_ref;
+    switch (type->kind) {
+    // Copying an owning pointer would make a second owner of memory only one of
+    // them may free. A borrow and a raw address each carried no ownership to
+    // duplicate.
+    case TYPE_BOX:
+        return false;
+    case TYPE_REF:
+    case TYPE_PTR:
+        return true;
+
+    // A header that frees its block cannot be copied, for the same reason.
+    case TYPE_STRING:
+    case TYPE_ARRAY:
+        return type->drop == NULL;
+
+    default:
+        break;
     }
 
     for (size_t i = 0; i < type->field_count; i++) {
@@ -191,13 +228,52 @@ Symbol *type_find_method(const Type *type, const String *name) {
     return NULL;
 }
 
-TypeSpec *type_spec_create(StringRef name, unsigned int indirect_depth, uint32_t ref_levels) {
-    TypeSpec *spec = malloc(sizeof(TypeSpec));
-    spec->name = name;
-    spec->indirect_depth = indirect_depth;
-    spec->ref_levels = ref_levels;
+static TypeExpr *type_expr_create(TypeExprKind kind) {
+    TypeExpr *expr = calloc(1, sizeof(TypeExpr));
+    expr->kind = kind;
 
-    return spec;
+    return expr;
 }
 
-void type_spec_destroy(TypeSpec *spec) { free(spec); }
+TypeExpr *type_expr_name(StringRef name) {
+    TypeExpr *expr = type_expr_create(TYPE_EXPR_NAME);
+    expr->name = name;
+
+    return expr;
+}
+
+TypeExpr *type_expr_indirect(TypeExprKind kind, TypeExpr *inner) {
+    TypeExpr *expr = type_expr_create(kind);
+    expr->indirect.inner = inner;
+
+    return expr;
+}
+
+TypeExpr *type_expr_apply(TypeExpr *base) {
+    TypeExpr *expr = type_expr_create(TYPE_EXPR_APPLY);
+    expr->apply.base = base;
+    expr->apply.args = type_expr_list_create();
+
+    return expr;
+}
+
+void type_expr_destroy(TypeExpr *expr) {
+    if (!expr) {
+        return;
+    }
+
+    switch (expr->kind) {
+    case TYPE_EXPR_BOX:
+    case TYPE_EXPR_REF:
+        type_expr_destroy(expr->indirect.inner);
+        break;
+    case TYPE_EXPR_APPLY:
+        type_expr_destroy(expr->apply.base);
+        type_expr_list_free(&expr->apply.args);
+        break;
+    case TYPE_EXPR_NAME:
+        break;
+    }
+
+    free(expr);
+}

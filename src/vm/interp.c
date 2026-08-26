@@ -69,17 +69,14 @@ static void vm_release_frame_refs(VM *vm, const CallFrame *frame) {
 
     for (size_t i = 0; i < refs->size; i++) {
         FrameRef ref = refs->data[i];
+        void *slot = vm->stack + frame->base + ref.slot * VM_SLOT_SIZE;
 
-        void *object;
-        memcpy(&object, vm->stack + frame->base + ref.slot * VM_SLOT_SIZE, sizeof(object));
+        object_release(DEFAULT_ALLOCATOR, ref.type, slot);
 
-        if (!object) {
-            continue;
-        }
-
-        memcpy(vm->stack + frame->base + ref.slot * VM_SLOT_SIZE, &(void *){NULL}, sizeof(object));
-
-        object_free(DEFAULT_ALLOCATOR, object);
+        // Cleared so a slot freed here is safe to visit again: the pointer a
+        // release read is gone, and an array's length goes with it so a second
+        // visit walks nothing.
+        memset(slot, 0, type_release_width(ref.type));
     }
 }
 
@@ -530,9 +527,7 @@ static void vm_run_loop(VM *vm) {
                 // Typed as characters rather than as a string: what is being
                 // allocated is the bytes themselves, and they own nothing
                 // further. The string header naming them is the value below.
-                char *characters = object_alloc_sized(
-                    DEFAULT_ALLOCATOR, vm->env.global_scope.type_registry->builtins.characters_type,
-                    total == 0 ? 1 : total);
+                char *characters = DEFAULT_ALLOCATOR.alloc(DEFAULT_ALLOCATOR.ctx, total == 0 ? 1 : total);
 
                 if (!characters) {
                     vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory concatenating strings");
@@ -706,18 +701,18 @@ static void vm_run_loop(VM *vm) {
                 VM_NEXT();
             }
             VM_CASE(OP_RELEASE) {
-                unsigned int rd = VM_DECODE_R_RD(instruction);
+                unsigned int rd = VM_DECODE_I_RD(instruction);
+                const Type *type = vm->program.heap_types.data[VM_DECODE_I_KX(instruction)];
 
-                void *object;
-                memcpy(&object, vm->registers + rd * VM_SLOT_SIZE, sizeof(object));
+                void *slot = vm->registers + rd * VM_SLOT_SIZE;
 
-                // Cleared as well as released, so the slot holds NULL rather than a
-                // pointer to something freed. An abnormal unwind walks every slot
-                // the frame may own a reference in, and this is what makes a slot
-                // that was already released safe to visit again.
-                vm_clear_pointer(vm, rd);
+                object_release(DEFAULT_ALLOCATOR, type, slot);
 
-                object_free(DEFAULT_ALLOCATOR, object);
+                // Cleared as well as released, so the slot holds nothing that
+                // reads as live. An abnormal unwind walks every slot the frame
+                // may own a reference in, and this is what makes a slot that
+                // was already released safe to visit again.
+                memset(slot, 0, type_release_width(type));
                 VM_NEXT();
             }
             VM_CASE(OP_CALL) {
@@ -848,6 +843,87 @@ static void vm_run_loop(VM *vm) {
             }
             VM_CASE(OP_STORE_FIELD_PTR_4) {
                 vm_store_field_ptr(vm, instruction, 4);
+                VM_NEXT();
+            }
+            VM_CASE(OP_ALLOC) {
+                unsigned int rd = VM_DECODE_R_RD(instruction);
+                size_t r1 = VM_DECODE_R_R1(instruction);
+
+                // The alignment is always a compile-time constant, so it rides
+                // in the immediate and costs no register.
+                size_t alignment = VM_DECODE_R_R2(instruction);
+                (void)alignment;
+
+                int32_t count;
+                memcpy(&count, vm_reg_at(vm, r1), sizeof(count));
+
+                if (count < 0) {
+                    vm_fail(vm, VM_RUN_ERR_BOUNDS, "an array's length cannot be negative");
+
+                    vm_unwind(vm);
+                    VM_RETRY();
+                }
+
+                // A zero-length block still allocates, so the header holds a
+                // real address: an empty block and a freed one would otherwise
+                // be the same pointer.
+                size_t bytes = count == 0 ? 1 : (size_t)count;
+
+                void *block = DEFAULT_ALLOCATOR.alloc(DEFAULT_ALLOCATOR.ctx, bytes);
+
+                if (!block) {
+                    vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory allocating an array");
+
+                    vm_unwind(vm);
+                    VM_RETRY();
+                }
+
+                // Zeroed for the reason an object's payload is: an element that
+                // owns and was never stored into must read as NULL, since the
+                // drop walk has no other way to tell it from a live reference.
+                memset(block, 0, bytes);
+
+                vm_write_ptr(vm, rd, (uint8_t *)block);
+                VM_NEXT();
+            }
+            VM_CASE(OP_FREE) {
+                unsigned int rd = VM_DECODE_R_RD(instruction);
+                size_t r1 = VM_DECODE_R_R1(instruction);
+
+                int32_t size;
+                memcpy(&size, vm_reg_at(vm, r1), sizeof(size));
+
+                DEFAULT_ALLOCATOR.free_sized(DEFAULT_ALLOCATOR.ctx, vm_read_ptr(vm, rd), (size_t)size);
+                VM_NEXT();
+            }
+            VM_CASE(OP_ADD_PTR_REG) {
+                size_t rd = VM_DECODE_R_RD(instruction);
+                size_t base = VM_DECODE_R_R1(instruction);
+                size_t r2 = VM_DECODE_R_R2(instruction);
+
+                int32_t offset;
+                memcpy(&offset, vm_reg_at(vm, r2), sizeof(offset));
+
+                vm_write_ptr(vm, rd, vm_read_ptr(vm, base) + offset);
+                VM_NEXT();
+            }
+            VM_CASE(OP_BOUNDS_CHECK) {
+                size_t rd = VM_DECODE_R_RD(instruction);
+                size_t r1 = VM_DECODE_R_R1(instruction);
+
+                GabArrayValue array;
+                memcpy(&array, vm_reg_at(vm, rd), sizeof(array));
+
+                int32_t index;
+                memcpy(&index, vm_reg_at(vm, r1), sizeof(index));
+
+                if (index < 0 || index >= array.length) {
+                    vm_fail(vm, VM_RUN_ERR_BOUNDS, "array index is out of range");
+
+                    vm_unwind(vm);
+                    VM_RETRY();
+                }
+
                 VM_NEXT();
             }
             VM_CASE(OP_ADD_PTR) {

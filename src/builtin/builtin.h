@@ -33,4 +33,9 @@ void builtin_register_method(VM *vm, Type *declared_on, Type *receiver, const ch
 // Each builtin type's methods, called by builtin_register_all.
 void builtin_register_string(VM *vm);
 
+// The methods every array answers, declared once on the bare 'Array' type that
+// each 'Array T' reaches through 'owner'. None of them depend on the element,
+// so one set serves every array.
+void builtin_register_array(VM *vm);
+
 #endif

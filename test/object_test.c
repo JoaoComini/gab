@@ -61,8 +61,8 @@ static void test_a_type_that_owns_nothing_has_no_drop() {
 
     assert(make_struct(&ctx, "Point", names, types, 2)->drop == NULL);
 
-    Type *owning = type_registry_indirect_to_kind(registry, int_type, false);
-    Type *borrowing = type_registry_indirect_to_kind(registry, int_type, true);
+    Type *owning = type_registry_box_to(registry, int_type);
+    Type *borrowing = type_registry_ref_to(registry, int_type);
 
     assert(owning->drop != NULL);
     assert(borrowing->drop == NULL);
@@ -79,64 +79,30 @@ static void test_a_type_that_owns_nothing_has_no_drop() {
     test_context_free(&ctx);
 }
 
-// A byte is a named type of its own so that a diagnostic can print what a
-// string's characters are a buffer of. Not declared into any scope: nothing in
-// the language reads or writes one, so no script can name it.
-static void test_a_byte_is_named_but_unwritable() {
+// A 'ptr T' carries what it points at, so a walk over a block knows its stride
+// without asking the header naming it. It still drops nothing: how many
+// elements are live is the count on that header, so freeing them is its
+// business rather than the pointer's.
+static void test_a_raw_pointer_carries_a_stride_and_drops_nothing() {
     TestContext ctx;
     test_context_init(&ctx);
 
     Scope scope;
     scope_init(&scope, ctx.arena, &ctx.strings, NULL);
 
-    Type *byte = scope.type_registry->builtins.byte_type;
+    TypeRegistry *registry = scope.type_registry;
 
-    assert(byte->kind == TYPE_BYTE);
-    assert(byte->size == 1 && byte->alignment == 1);
-    assert(byte->name == string_from_cstr(&ctx.strings, "byte"));
+    Type *characters = type_registry_ptr_to(registry, registry->builtins.byte_type);
 
-    // Named, but not declared anywhere a type name is looked up.
+    assert(characters->kind == TYPE_PTR);
+    assert(characters->inner == registry->builtins.byte_type);
+    assert(characters->drop == NULL);
+
+    // One byte, which is the unit the count of an allocation is given in.
+    assert(characters->inner->size == 1 && characters->inner->alignment == 1);
+
+    // Named so a diagnostic can print it, but declared into no scope.
     assert(!test_compiles("func f(b: byte): int { return 0; }\n"));
-
-    test_context_free(&ctx);
-}
-
-// A buffer names a run of elements of one type: the block a pointer reaches,
-// never a value anything holds. Interned on the element, since the type system
-// compares by pointer identity.
-static void test_a_buffer_is_interned_on_its_element() {
-    TestContext ctx;
-    test_context_init(&ctx);
-
-    TypeRegistry *registry = type_registry_create(ctx.arena, &ctx.strings);
-    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
-    Type *bool_type = type_registry_get_builtin(registry, TYPE_BOOL);
-
-    assert(type_registry_buffer_of(registry, int_type) == type_registry_buffer_of(registry, int_type));
-    assert(type_registry_buffer_of(registry, int_type) != type_registry_buffer_of(registry, bool_type));
-
-    // The element's width is the stride a walk over the block advances by.
-    Type *buffer = type_registry_buffer_of(registry, int_type);
-
-    assert(buffer->size == int_type->size);
-    assert(buffer->alignment == int_type->alignment);
-
-    test_context_free(&ctx);
-}
-
-// A buffer never drops itself, even when its elements own. How many of them are
-// live is the count in the header that names the block, not anything the block
-// records, so only that header's own drop can walk them.
-static void test_a_buffer_does_not_drop_its_elements() {
-    TestContext ctx;
-    test_context_init(&ctx);
-
-    TypeRegistry *registry = type_registry_create(ctx.arena, &ctx.strings);
-    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
-    Type *owning = type_registry_indirect_to_kind(registry, int_type, false);
-
-    assert(type_registry_buffer_of(registry, int_type)->drop == NULL);
-    assert(type_registry_buffer_of(registry, owning)->drop == NULL);
 
     test_context_free(&ctx);
 }
@@ -236,7 +202,7 @@ static void test_freeing_an_object_frees_what_it_owns() {
     Type *inner = make_struct(&ctx, "Inner", inner_names, inner_types, 1);
 
     const char *outer_names[] = {"child"};
-    Type *outer_types[] = {type_registry_indirect_to(registry, inner)};
+    Type *outer_types[] = {type_registry_box_to(registry, inner)};
     Type *outer = make_struct(&ctx, "Outer", outer_names, outer_types, 1);
 
     AllocCounts counts = {0};
@@ -272,7 +238,7 @@ static void test_freeing_does_not_follow_a_ref_field() {
     Type *inner = make_struct(&ctx, "Inner", inner_names, inner_types, 1);
 
     const char *outer_names[] = {"borrowed"};
-    Type *outer_types[] = {type_registry_indirect_to_kind(registry, inner, true)};
+    Type *outer_types[] = {type_registry_ref_to(registry, inner)};
     Type *outer = make_struct(&ctx, "Outer", outer_names, outer_types, 1);
 
     AllocCounts counts = {0};
@@ -306,10 +272,75 @@ static void test_freeing_null_is_a_no_op() {
     assert(counts.frees == 0);
 }
 
+// A header says what it frees where it is built rather than by what kind it
+// is: a string that owns its characters and one that borrows them are the same
+// kind and the same layout, and only the drop tells them apart.
+static void test_a_header_carries_its_own_drop() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope scope;
+    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+
+    TypeRegistry *registry = scope.type_registry;
+
+    Type *owning = registry->builtins.string_type;
+    Type *borrowing = registry->builtins.str_type;
+
+    // The same kind and the same two fields; nothing about the layout differs.
+    assert(owning->kind == borrowing->kind);
+    assert(owning->size == borrowing->size);
+
+    assert(owning->drop != NULL);
+    assert(borrowing->drop == NULL);
+
+    assert(type_is_owned(owning));
+    assert(!type_is_owned(borrowing));
+
+    assert(!type_is_copyable(owning));
+    assert(type_is_copyable(borrowing));
+
+    // An array owns its block, so it carries a drop the same way.
+    Type *ints = type_registry_array_of(registry, registry->builtins.int_type);
+
+    assert(ints->drop != NULL);
+    assert(type_is_owned(ints));
+
+    test_context_free(&ctx);
+}
+
+// An array's element is what its 'data' pointer names. One statement of it
+// rather than two: a second field beside the pointer could disagree with it,
+// and the stride a walk over the block advances by would then depend on which
+// of them was asked.
+static void test_an_arrays_element_is_what_its_pointer_names() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope scope;
+    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+
+    TypeRegistry *registry = scope.type_registry;
+
+    // A float element, so that reading the wrong field of the header -- the
+    // length, which is an int -- gives a different answer than the pointer.
+    Type *floats = type_registry_array_of(registry, registry->builtins.float_type);
+
+    const TypeField *data = type_find_field(floats, string_from_cstr(&ctx.strings, "data"));
+
+    assert(data);
+    assert(data->type->kind == TYPE_PTR);
+    assert(data->type->inner == registry->builtins.float_type);
+
+    assert(type_array_element(floats) == registry->builtins.float_type);
+
+    test_context_free(&ctx);
+}
+
 int main(void) {
-    test_a_byte_is_named_but_unwritable();
-    test_a_buffer_is_interned_on_its_element();
-    test_a_buffer_does_not_drop_its_elements();
+    test_a_raw_pointer_carries_a_stride_and_drops_nothing();
+    test_a_header_carries_its_own_drop();
+    test_an_arrays_element_is_what_its_pointer_names();
     test_a_type_that_owns_nothing_has_no_drop();
     test_alloc_and_free_are_one_allocation();
     test_the_payload_follows_the_header();

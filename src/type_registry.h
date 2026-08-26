@@ -25,6 +25,7 @@ GAB_HASH_MAP(TypeMap, type_map, String *, TypeBinding)
 // An indirection is interned on what it names, so that every mention of
 // 'box T' yields the same Type *: the whole type system compares by pointer
 // identity, and a fresh Type per mention would silently break every comparison.
+// One map per constructor, so a 'box T' and a 'ref T' never collide.
 #define indirect_map_hash(key) (size_t)key
 #define indirect_map_key_equals(key, other) key == other
 #define indirect_map_key_dup(key) key
@@ -33,6 +34,11 @@ GAB_HASH_MAP(IndirectMap, indirect_map, Type *, Type *)
 
 typedef struct {
     Type *int_type;
+
+    // One byte, which is what a string's characters are. Not spellable in the
+    // language: it exists so that the pointer naming those characters carries a
+    // stride, the way every other 'ptr T' does.
+    Type *byte_type;
     Type *float_type;
     Type *bool_type;
     Type *string_type;
@@ -46,14 +52,10 @@ typedef struct {
     // header, which is what 'ref' builds for every type in the language.
     Type *str_type;
 
-    // The element a string's characters are a buffer of. A byte: the width the
-    // stride of a walk over those characters advances by.
-    Type *byte_type;
-
-    // 'buffer byte', held rather than looked up: it is what every concatenation
-    // and every string a host returns allocates, and interning it once keeps
-    // that off a hash lookup.
-    Type *characters_type;
+    // 'Array', the bare name. Not a usable type on its own -- every array is
+    // 'Array T' for some element -- but the name a spec resolves to before its
+    // element is applied, and what a diagnostic prints when one is missing.
+    Type *array_type;
 
     Type *error_type;
 } TypeBuiltins;
@@ -69,16 +71,23 @@ typedef struct TypeRegistry {
 
     StringPool *strings;
 
-    IndirectMap *indirects;
+    // Owning 'box T' types.
+    IndirectMap *boxes;
 
     // Borrowing 'ref T' types, interned apart from the owning ones so that
     // pointer-identity comparison keeps telling them apart.
-    IndirectMap *ref_indirects;
+    IndirectMap *refs;
 
-    // 'buffer T' types, interned on the element. No owning and borrowing pair
-    // here as there is for an indirection: nothing holds a buffer by value, so
-    // whether the block is owned is asked of the 'box' or 'ref' reaching it.
-    IndirectMap *buffers;
+    // Raw 'ptr T' types, interned on the pointee. A third map rather than a
+    // flag on the other two, because a raw pointer is neither owning nor
+    // borrowing and must not compare equal to either.
+    IndirectMap *ptrs;
+
+    // 'Array T' types, interned on the element for the same reason: the type
+    // system compares by pointer identity, so two mentions of 'Array int' must
+    // be one Type.
+    IndirectMap *arrays;
+
     TypeBuiltins builtins;
 } TypeRegistry;
 
@@ -89,18 +98,21 @@ void type_registry_destroy(TypeRegistry *registry);
 Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind type);
 Type *type_registry_error_type(TypeRegistry *registry);
 
-// The interned *inner. Repeated calls with the same inner return the same
-// Type *.
-Type *type_registry_indirect_to(TypeRegistry *registry, Type *inner);
+// The interned 'Array element': a header of {data, length} owning a block of
+// elements. One per element type, and the type that carries the element -- the
+// raw address naming the block does not, so this is what supplies the walk that
+// frees them.
+Type *type_registry_array_of(TypeRegistry *registry, Type *element);
 
-// The interned 'buffer inner': a run of elements of one type, which is what a
-// pointer to many of something reaches. Never a value in its own right -- it
-// is always named through a 'box' or a 'ref' -- so it carries the element's
-// width as its stride and no ownership of its own.
-Type *type_registry_buffer_of(TypeRegistry *registry, Type *element);
+// The interned 'box inner' and 'ref inner'. Two constructors rather than one
+// taking a flag: which of them a type is decides whether a slot holding it
+// frees what it names, and that is the question the kind exists to answer.
+Type *type_registry_box_to(TypeRegistry *registry, Type *inner);
+Type *type_registry_ref_to(TypeRegistry *registry, Type *inner);
 
-// As type_registry_indirect_to, choosing between the owning and borrowing
-// flavours. A 'ref T' does not own its inner; the two are distinct types.
-Type *type_registry_indirect_to_kind(TypeRegistry *registry, Type *inner, bool is_ref);
+// The interned 'ptr pointee': an address the size of a machine pointer, owning
+// nothing. Distinct from both indirections of the same pointee, since what a
+// slot must free is read off the type.
+Type *type_registry_ptr_to(TypeRegistry *registry, Type *pointee);
 
 #endif

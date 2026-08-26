@@ -16,6 +16,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 
 // An arithmetic operator over two literals is computed once, here, rather than
 // once per execution. Everything a constant expression needs is known now, so
@@ -522,6 +523,37 @@ static void test_a_struct_write_through_a_pointer_is_one_instruction() {
 // A 'break' leaves the loop body without running the block's ordinary close, so
 // it has to free what that block owns on the way out. The leak is invisible to
 // a returned value, which is why the claim is made against the instructions.
+// A release names the type it frees, so the drop it runs is the one chosen when
+// that type's layout was computed rather than one rediscovered from the object.
+// That is what lets a value whose bounds are not in its type -- an array, whose
+// length sits beside its pointer -- be freed by the same instruction as a
+// pointer.
+static void test_a_release_names_what_it_frees() {
+    TestProgram program = test_compile("struct Node { n: int }\n"
+                                       "func f(): int {\n"
+                                       "    let p: box Node = new Node;\n"
+                                       "    return 0;\n"
+                                       "}\n");
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    // The slot's own type, which is the 'box Node' holding the object rather
+    // than the 'Node' that was allocated: what a release frees is what the slot
+    // holds, and following the pointer is that type's drop.
+    long released = test_first_operand(chunk, OP_RELEASE);
+
+    assert(released >= 0);
+    assert(released != test_first_operand(chunk, OP_NEW));
+
+    // An owning indirection to the struct that was allocated: freeing the slot
+    // follows the pointer, which is what 'box Node's drop does.
+    const Type *type = program.vm->program.heap_types.data[released];
+
+    assert(type->kind == TYPE_BOX);
+    assert(type->inner->name && strcmp(type->inner->name->data, "Node") == 0);
+
+    test_program_free(&program);
+}
+
 static void test_break_releases_what_the_body_owns() {
     TestProgram program = test_compile("struct Node { n: int }\n"
                                        "func f(): int {\n"
@@ -725,6 +757,30 @@ static void test_every_chunk_ends_in_a_return() {
     test_program_free(&program);
 }
 
+// Allocating a block names no type: how many bytes and at what alignment is
+// everything the instruction says, so one opcode serves an array of any
+// element and would serve any other collection. Nothing about it is relocated,
+// which is what a type index would have required.
+static void test_allocating_a_block_names_no_type() {
+    TestProgram program = test_compile("func f(): int {\n"
+                                       "    let xs: Array int = Array int[3];\n"
+                                       "    return 0;\n"
+                                       "}\n");
+
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    assert(test_count_opcode(chunk, OP_ALLOC) == 1);
+
+    // The element's width rides in the immediate, so the byte count is computed
+    // from the length rather than read from a type the instruction names.
+    Instruction alloc = test_instruction(chunk, (size_t)test_find_opcode(chunk, OP_ALLOC));
+
+    assert(VM_DECODE_R_K(alloc) == 1);
+    assert(VM_DECODE_R_R2(alloc) == sizeof(int32_t));
+
+    test_program_free(&program);
+}
+
 int main() {
     test_a_constant_expression_folds_to_one_load();
     test_a_constant_float_expression_folds();
@@ -753,6 +809,7 @@ int main() {
     test_every_chunk_ends_in_a_return();
     test_a_function_compiles_into_its_own_chunk();
     test_a_method_counts_its_receiver();
+    test_a_release_names_what_it_frees();
     test_break_releases_what_the_body_owns();
 
     test_a_struct_copy_is_one_instruction();
@@ -763,6 +820,7 @@ int main() {
     test_a_struct_write_through_a_pointer_is_one_instruction();
 
     test_new_encodes_the_type_index_the_vm_holds();
+    test_allocating_a_block_names_no_type();
 
     test_a_signature_too_wide_for_a_frame_is_refused();
 

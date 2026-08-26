@@ -99,9 +99,23 @@ GabStringValue args_string_at(Args *args, int index) {
     return value;
 }
 
+GabArrayValue args_array(Args *args, int index) {
+    GabArrayValue value;
+    memcpy(&value, args_address_of_kind(args, index, TYPE_ARRAY), sizeof(value));
+
+    return value;
+}
+
 void *args_pointer(Args *args, int index) {
+    const Type *type = NULL;
+    uint8_t *at = args_address(args, index, &type);
+
+    // Either constructor: a C body is handed an address, and whether the script
+    // owns what it names is the script's business rather than this read's.
+    assert(type && type_is_indirect(type) && "a C body read a parameter as a type it was not declared");
+
     void *pointer;
-    memcpy(&pointer, args_address_of_kind(args, index, TYPE_INDIRECT), sizeof(pointer));
+    memcpy(&pointer, at, sizeof(pointer));
 
     return pointer;
 }
@@ -134,9 +148,7 @@ void args_return_pointer(Args *args, void *pointer) {
 bool args_return_string_copy(Args *args, const char *data, int32_t length) {
     // Typed as characters rather than as a string, for the reason OP_CONCAT
     // gives: the bytes are what is allocated, and they own nothing further.
-    char *characters = object_alloc_sized(DEFAULT_ALLOCATOR,
-                                          args->vm->env.global_scope.type_registry->builtins.characters_type,
-                                          length == 0 ? 1 : (size_t)length);
+    char *characters = DEFAULT_ALLOCATOR.alloc(DEFAULT_ALLOCATOR.ctx, length == 0 ? 1 : (size_t)length);
 
     if (!characters) {
         vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory copying a string");

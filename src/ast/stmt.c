@@ -14,17 +14,17 @@ ASTStmt *ast_expr_stmt_create(Span span, ASTExpr *value) {
     return stmt;
 }
 
-ASTStmt *ast_var_decl_stmt_create(Span span, StringRef name, TypeSpec *type_spec, ASTExpr *initializer) {
+ASTStmt *ast_var_decl_stmt_create(Span span, StringRef name, TypeExpr *type_expr, ASTExpr *initializer) {
     ASTStmt *stmt = ast_stmt_create(span);
     stmt->kind = STMT_VAR_DECL;
     stmt->var_decl.name = name;
-    stmt->var_decl.type_spec = type_spec;
+    stmt->var_decl.type_expr = type_expr;
     stmt->var_decl.initializer = initializer;
     stmt->var_decl.symbol = NULL;
     return stmt;
 }
 
-ASTStmt *ast_func_decl_stmt_create(Span span, StringRef name, ASTField *receiver, TypeSpec *return_type,
+ASTStmt *ast_func_decl_stmt_create(Span span, StringRef name, ASTField *receiver, TypeExpr *return_type,
                                    ASTFieldList params, ASTStmt *body) {
     ASTStmt *stmt = ast_stmt_create(span);
     stmt->kind = STMT_FUNC_DECL;
@@ -118,13 +118,13 @@ void ast_stmt_destroy(ASTStmt *stmt) {
         break;
     case STMT_VAR_DECL:
         ast_expr_free(stmt->var_decl.initializer);
-        if (stmt->var_decl.type_spec) {
-            type_spec_destroy(stmt->var_decl.type_spec);
+        if (stmt->var_decl.type_expr) {
+            type_expr_destroy(stmt->var_decl.type_expr);
         }
         break;
     case STMT_FUNC_DECL:
         if (stmt->func_decl.return_type) {
-            type_spec_destroy(stmt->func_decl.return_type);
+            type_expr_destroy(stmt->func_decl.return_type);
         }
         ast_field_destroy(stmt->func_decl.receiver);
         ast_field_list_free(&stmt->func_decl.params);
@@ -165,11 +165,11 @@ void ast_stmt_destroy(ASTStmt *stmt) {
     free(stmt);
 }
 
-ASTField *ast_field_create(Span span, StringRef name, TypeSpec *type_spec) {
+ASTField *ast_field_create(Span span, StringRef name, TypeExpr *type_expr) {
     ASTField *field = malloc(sizeof(ASTField));
     field->span = span;
     field->name = name;
-    field->type_spec = type_spec;
+    field->type_expr = type_expr;
     field->symbol = NULL;
 
     return field;
@@ -182,6 +182,6 @@ void ast_field_destroy(ASTField *field) {
         return;
     }
 
-    type_spec_destroy(field->type_spec);
+    type_expr_destroy(field->type_expr);
     free(field);
 }

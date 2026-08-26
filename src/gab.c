@@ -609,7 +609,12 @@ void gab_call_free(GabCall *call) {
 
 // Validates an argument index and that the parameter has the expected kind,
 // returning where to write it or NULL if it may not be written.
-static uint8_t *gab_arg_slot(GabCall *call, int index, TypeKind expected) {
+// Claims the slot for one staged argument, once the parameter is one this
+// setter may write. 'accepts' answers that: a kind comparison for most setters,
+// and for a pointer the pair of constructors, since a host stages an address
+// without saying whether the script owns what it names.
+static uint8_t *gab_arg_slot_where(GabCall *call, int index, bool (*accepts)(const Type *, TypeKind),
+                                   TypeKind expected) {
     if (!call) {
         return NULL;
     }
@@ -622,7 +627,7 @@ static uint8_t *gab_arg_slot(GabCall *call, int index, TypeKind expected) {
 
     const Type *param = fn->sig_params[index];
 
-    if (!param || param->kind != expected) {
+    if (!param || !accepts(param, expected)) {
         return NULL;
     }
 
@@ -634,6 +639,18 @@ static uint8_t *gab_arg_slot(GabCall *call, int index, TypeKind expected) {
     }
 
     return call->args + (size_t)fn->param_slot[index] * VM_SLOT_SIZE;
+}
+
+static bool accepts_indirect(const Type *type, TypeKind expected) {
+    (void)expected;
+
+    return type_is_indirect(type);
+}
+
+static bool accepts_kind(const Type *type, TypeKind expected) { return type->kind == expected; }
+
+static uint8_t *gab_arg_slot(GabCall *call, int index, TypeKind expected) {
+    return gab_arg_slot_where(call, index, accepts_kind, expected);
 }
 
 bool gab_arg_int(GabCall *call, int index, int32_t value) {
@@ -701,12 +718,12 @@ bool gab_arg_pointer(GabCall *call, int index, void *pointer, const GabType *inn
     if (call && index >= 0 && (size_t)index < call->fn->sig_param_count) {
         const Type *param = call->fn->sig_params[index];
 
-        if (param && param->kind == TYPE_INDIRECT && param->inner != (const Type *)inner) {
+        if (param && type_is_indirect(param) && param->inner != (const Type *)inner) {
             return false;
         }
     }
 
-    uint8_t *slot = gab_arg_slot(call, index, TYPE_INDIRECT);
+    uint8_t *slot = gab_arg_slot_where(call, index, accepts_indirect, TYPE_UNKNOWN);
     if (!slot) {
         return false;
     }

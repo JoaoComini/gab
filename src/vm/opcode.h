@@ -137,9 +137,17 @@ typedef enum {
     // wherever a pointer is not two slots wide.
     OP_NULL,
 
-    // Frees the object in rd, and everything it owns. The slot keeps whatever
-    // it held: nothing reads it again, since codegen only emits this where the
-    // value goes out of scope.
+    // Frees what the value at rd owns, by the drop of heap_types[kx]. I-type
+    // for the type index, which is relocated at link like OP_NEW's.
+    //
+    // Typed rather than reading the object's own header, because what a slot
+    // holds is not always a pointer: an array is a header whose length the free
+    // needs, and that is beside the pointer rather than in the block. Knowing
+    // the type here is also what lets the drop be the one chosen when the
+    // layout was computed, rather than rediscovered per free.
+    //
+    // The slot keeps whatever it held: nothing reads it again, since codegen
+    // only emits this where the value goes out of scope.
     //
     // There is no counterpart. Ownership is unique and static — exactly one
     // slot owns an object — so nothing ever needs to claim a second share of
@@ -176,6 +184,36 @@ typedef enum {
 
     // Adds a byte offset to an address, for reaching a field through a pointer.
     OP_ADD_PTR,
+
+    // Allocates r1 bytes at the alignment in r2, writing the address into rd.
+    // Fails the run on a negative count or an allocation that does not succeed.
+    //
+    // Names no type. How many bytes and at what alignment is everything the
+    // allocation needs, so one instruction serves an array of any element and
+    // would serve any other collection the same way -- what the block holds is
+    // the business of the header naming it. That is also why nothing here is
+    // relocated: a type index would have had to be, and it is the reason this
+    // fits R-type at all.
+    //
+    // The block carries no ObjectHeader. Nothing reads one on a block -- a
+    // drop walk reads its element off the header that names the block -- so the
+    // word it would cost buys nothing, and OP_FREE is told the size instead.
+    OP_ALLOC,
+
+    // Frees the block whose address is at rd, whose size is in r1. The
+    // counterpart of OP_ALLOC and sized for the same reason: a raw block says
+    // nothing about itself, so what is freed is what the caller kept.
+    OP_FREE,
+
+    // As OP_ADD_PTR, with the offset read from a register rather than an
+    // operand. An element's offset is the index times the stride, which is not
+    // known until the index is.
+    OP_ADD_PTR_REG,
+
+    // Traps unless 0 <= r1 < the length in the header at rd. Separate from the
+    // access that follows so that the access stays the same instruction a field
+    // uses -- a bounds check is about the index, not about the load.
+    OP_BOUNDS_CHECK,
 
     // Copies a run of slots to or from the address a slot pair holds. The slot
     // count rides in the third operand, so a whole struct moves in one step.

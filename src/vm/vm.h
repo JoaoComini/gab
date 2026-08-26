@@ -61,6 +61,9 @@ typedef enum {
     VM_RUN_ERR_DIVIDE_BY_ZERO,
     VM_RUN_ERR_DIVIDE_OVERFLOW,
 
+    // An index outside the array it indexed, or a negative length given to one.
+    VM_RUN_ERR_BOUNDS,
+
     // An 'extern' function reported failure, or none was ever bound to the
     // prototype a call named.
     VM_RUN_ERR_EXTERN,

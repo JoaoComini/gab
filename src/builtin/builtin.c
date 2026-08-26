@@ -41,4 +41,7 @@ void builtin_register_method(VM *vm, Type *declared_on, Type *receiver, const ch
 // These land at the bottom of the extern table, before any unit loads. That
 // costs a unit's own externs nothing: the two tables are numbered apart, so a
 // script function's index is unaffected by how many builtins exist.
-void builtin_register_all(VM *vm) { builtin_register_string(vm); }
+void builtin_register_all(VM *vm) {
+    builtin_register_string(vm);
+    builtin_register_array(vm);
+}

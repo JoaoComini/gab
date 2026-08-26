@@ -235,6 +235,25 @@ the struct, so the levels never have to be spelled: `s.n` and `s.bump()` work
 whether `s` is a `Box`, a `box Box`, or a `ref box Box`. Only `*` is explicit,
 for when the pointer itself is what you mean.
 
+An `Array T` is a header like a string's -- where the elements are and how many
+-- over a block it owns. Its length is fixed when it is allocated, and every
+index is checked against it: an index outside the array fails the run rather
+than reading past the block.
+
+```
+let xs: Array int = Array int[3];
+xs[0] = 1;
+let n: int = xs.len();
+```
+
+No `new`: what a slot holds is the header itself, and `new` is for what a slot
+points at. The header owns, so a second binding to one is refused exactly as it
+is for any owning value, and `move` is how it changes hands.
+
+Freeing an array frees what its elements own, however deep that goes. How many
+elements are live is the count the block carries rather than anything its type
+says, which is what lets one block type serve every length.
+
 `new` allocates anything with a layout to fill — a struct, or an owning pointer:
 
 ```
@@ -357,11 +376,11 @@ more or less, and a second spelling would say nothing the first does not.
 
 | | |
 | --- | --- |
-| Types | `int` (32-bit), `float` (32-bit), `bool`, `String` and views of characters `str`, structs, owning `box T`, borrows `ref T` |
+| Types | `int` (32-bit), `float` (32-bit), `bool`, `String` and views of characters `str`, `Array T`, structs, owning `box T`, borrows `ref T` |
 | Declarations | `let` with inferred or annotated type, `func`, `struct`, `module` |
 | Functions | Parameters and returns of any type, structs by value, methods with a receiver, recursion, forward references |
 | Control flow | `if` / `else`, `for` in three forms, `break`, `continue`, `return`, nested blocks with shadowing |
-| Operators | `+` `-` `*` `/` `%`, unary `-` `!`, `==` `!=` `<` `>` `<=` `>=`, `&&` `||`, unary `*`, field access, `..` joins |
+| Operators | `+` `-` `*` `/` `%`, unary `-` `!`, `==` `!=` `<` `>` `<=` `>=`, `&&` `||`, unary `*`, field access, indexing `xs[i]`, `..` joins |
 | Conversions | `int(x)` and `float(x)`; nothing converts implicitly |
 | Assignment | `=`, and compound `+=` `-=` `*=` `/=` `%=` on any assignable target |
 | Memory | Unique ownership, `new`, `ref` borrows, implicit copy, explicit `move`, user-declared `clone`, scope-based free. A top-level variable may not own: nothing closes over it to free what it holds |
@@ -374,7 +393,7 @@ Not yet implemented:
 | | |
 | --- | --- |
 | Strings | No interpolation, no `substring` or case conversion |
-| Arrays | No array type or indexing |
+| Arrays | Fixed length once allocated: no `push`, no growth, and no slice type |
 | Operators | Bitwise |
 | Literals | No struct literals (`V{x: 1}`) |
 

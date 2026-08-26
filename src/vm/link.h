@@ -11,6 +11,7 @@
 #include <stddef.h>
 
 struct Symbol;
+struct Type;
 
 // unwind jumps past every free codegen emitted, so the frames have to be told
 // what to drop.
@@ -18,6 +19,11 @@ struct Symbol;
 // A 'ref T' slot is never listed: it borrows, so there is nothing to free.
 typedef struct {
     unsigned int slot;
+
+    // What the slot holds, so the unwinder frees it by the same drop the
+    // ordinary release uses. A Type * rather than an index: this rides on the
+    // prototype rather than in an instruction, so nothing relocates it.
+    const struct Type *type;
 } FrameRef;
 
 #define frame_ref_list_item_free(item) ((void)(item))

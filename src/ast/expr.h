@@ -32,6 +32,11 @@ typedef enum {
     EXPR_NOT,
     EXPR_CAST,
     EXPR_NEW,
+
+    // 'xs[i]' -- one element of an array, and 'Array T[n]', which allocates
+    // one. Distinguished by which of the two fields is set.
+    EXPR_INDEX,
+    EXPR_ARRAY_NEW,
     EXPR_MOVE,
 } ExprKind;
 
@@ -93,6 +98,28 @@ typedef struct ASTExpr {
             ASTExprList args;
         } call;
 
+        // 'xs[index]'. Assignable and addressable like a field, so it resolves
+        // to the element type and codegen reaches it the same way -- an offset
+        // from an address -- except that the offset is computed rather than
+        // known.
+        struct {
+            ASTExpr *target;
+            ASTExpr *index;
+
+            // The array the target reaches, once any indirection is stripped.
+            // Its element is what the expression yields.
+            const Type *array_type;
+        } index;
+
+        // 'Array T[count]'. Names a type and takes a count, so it carries a
+        // TypeExpr beside its operand the way 'new' carries one alone.
+        struct {
+            TypeExpr *type_expr;
+            ASTExpr *count;
+
+            const Type *type;
+        } array_new;
+
         struct {
             ASTExpr *target;
             StringRef name;
@@ -116,10 +143,10 @@ typedef struct ASTExpr {
         } cast;
 
         // 'new T' — a heap allocation yielding an owned 'box T'. Names a type
-        // rather than taking an operand, so it carries a TypeSpec the way a
+        // rather than taking an operand, so it carries a TypeExpr the way a
         // declaration does rather than an expression.
         struct {
-            TypeSpec *type_spec;
+            TypeExpr *type_expr;
 
             // The struct being allocated, resolved from the spec. The
             // expression's own type is the pointer to it.
@@ -144,7 +171,9 @@ ASTExpr *ast_move_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_neg_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_not_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_cast_expr_create(Span span, ASTExpr *operand);
-ASTExpr *ast_new_expr_create(Span span, TypeSpec *type_spec);
+ASTExpr *ast_new_expr_create(Span span, TypeExpr *type_expr);
+ASTExpr *ast_index_expr_create(Span span, ASTExpr *target, ASTExpr *index);
+ASTExpr *ast_array_new_expr_create(Span span, TypeExpr *type_expr, ASTExpr *count);
 void ast_expr_free(ASTExpr *node);
 
 #endif

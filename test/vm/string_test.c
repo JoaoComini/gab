@@ -65,7 +65,9 @@ static void test_a_string_is_two_fields() {
     assert(data->offset == offsetof(GabStringValue, data));
     assert(length->offset == offsetof(GabStringValue, length));
 
-    assert(type_is_owned(data->type));
+    // The header owns its characters, not the field naming them: a raw address
+    // carries no ownership, so the question is answered by the string itself.
+    assert(!type_is_owned(data->type));
     assert(!type_is_owned(length->type));
 
     test_context_free(&ctx);
