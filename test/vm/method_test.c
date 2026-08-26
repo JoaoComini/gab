@@ -471,6 +471,39 @@ static void test_an_unknown_method_is_refused() {
                           "}\n"));
 }
 
+// A value receiver is a copy of what the caller holds, so a type that cannot be
+// copied cannot have one: the call would neither duplicate the receiver nor
+// take it, and 'ref T' is the form that says what is true.
+static void test_a_value_receiver_needs_a_copyable_type() {
+    assert(!test_compiles("struct Node { child: box Node }\n"
+                          "func (n: Node) peek(): int { return 0; }\n"));
+
+    // The borrow is what such a type takes instead.
+    assert(test_compiles("struct Node { child: box Node }\n"
+                         "func (n: ref Node) peek(): int { return 0; }\n"));
+
+    // A type whose fields all copy is unaffected.
+    assert(test_compiles("struct Point { x: int, y: int }\n"
+                         "func (p: Point) peek(): int { return p.x; }\n"));
+}
+
+// A method reached through a shared method set still has to be given the
+// receiver it declared: taking the address of one type does not produce a
+// pointer to another, however the lookup arrived at the method.
+static void test_a_pointer_receiver_is_not_reached_from_another_type() {
+    assert(!test_compiles_on_vm("func f(): int {\n"
+                                "    let s: str = \"hi\";\n"
+                                "    let c: String = s.clone();\n"
+                                "    return 0;\n"
+                                "}\n"));
+
+    assert(test_compiles_on_vm("func f(): int {\n"
+                               "    let o: String = \"hi\".to_owned();\n"
+                               "    let c: String = o.clone();\n"
+                               "    return 0;\n"
+                               "}\n"));
+}
+
 int main(void) {
     test_a_matching_receiver_needs_no_adjustment();
     test_a_value_receiver_has_its_address_taken();
@@ -499,6 +532,8 @@ int main(void) {
     test_struct_parameter_and_return();
     test_call_on_a_nested_struct();
     test_call_diagnostics();
+    test_a_value_receiver_needs_a_copyable_type();
+    test_a_pointer_receiver_is_not_reached_from_another_type();
 
     printf("All method tests passed\n");
     return 0;

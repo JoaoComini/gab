@@ -119,6 +119,16 @@ static void string_to_owned(Args *args) {
     args_return_string_copy(args, string.data, string.length);
 }
 
+// 's.clone()'. What 'to_owned' does, for the owning half: duplicating what a
+// 'String' holds and copying what a 'str' names are the same allocation. The
+// two differ only in how the receiver reaches the body, which is what the
+// declaration says and what each reads through.
+static void string_clone(Args *args) {
+    GabStringValue string = args_string_at(args, 0);
+
+    args_return_string_copy(args, string.data, string.length);
+}
+
 void builtin_register_string(VM *vm) {
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
@@ -131,6 +141,12 @@ void builtin_register_string(VM *vm) {
     // 'String' receiver lends where the parameter says 'str'.
     Type *string_type = registry->builtins.string_type;
     Type *str_type = registry->builtins.str_type;
+
+    // What 'clone' takes. A receiver by value would have to copy it, which an
+    // owning string cannot do -- the rule a script's own method obeys -- so it
+    // borrows the slot the header sits in.
+    Type *ref_string = type_registry_indirect_to_kind(registry, string_type, true);
+
     Type *int_type = registry->builtins.int_type;
     Type *bool_type = registry->builtins.bool_type;
 
@@ -155,14 +171,10 @@ void builtin_register_string(VM *vm) {
     builtin_register_method(vm, str_type, str_type, "to_owned", string_to_owned,
                             registry->builtins.string_type, NULL, 0);
 
-    // The one method here taking an owning receiver, since it duplicates what it
-    // is given and a borrow duplicated is the same characters twice named. That
-    // receiver is also what keeps it off a 'str': an owning type never accepts a
-    // borrow, so the call is refused where the receiver is reconciled.
-    //
-    // Its body is 'to_owned's -- what copies borrowed characters and what makes
-    // a second owner of owned ones are the same allocation -- and the two slots
-    // it reads are the same whichever half it was handed.
-    builtin_register_method(vm, string_type, string_type, "clone", string_to_owned,
+    // The one method here reaching its receiver through a pointer. A receiver by
+    // value would have to copy it, which an owning string cannot do; and the
+    // pointer is what keeps it off a 'str', since the address of one is not the
+    // 'ref String' this declares.
+    builtin_register_method(vm, string_type, ref_string, "clone", string_clone,
                             registry->builtins.string_type, NULL, 0);
 }
