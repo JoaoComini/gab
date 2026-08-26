@@ -119,13 +119,6 @@ struct Type {
     // nothing. Set by type_layout_compute.
     DropFn drop;
 
-    // What one element of the block this type names is, for the two headers
-    // that name one: a string's characters and an array's elements. NULL
-    // everywhere else. It is here rather than on the pointer naming the block
-    // because only a header knows how many elements are live, so only a header
-    // can walk them.
-    Type *element;
-
     // For a borrowing type that shares another's identity -- 'str' and
     // 'String' -- the owning one. NULL everywhere else. Method lookup follows
     // it so that one declaration serves both.
@@ -142,6 +135,11 @@ void type_layout_compute(Type *type);
 // deref, an auto-deref, and a field access all ask. Says nothing about
 // ownership: a 'ref T' is as indirect as a 'box T'.
 bool type_is_indirect(const Type *type);
+
+// What one element of an array's block is: what the 'data' pointer names.
+// Read through here rather than off a field of its own, so that the stride a
+// walk advances by and the type that pointer carries cannot disagree.
+Type *type_array_element(const Type *type);
 
 // Whether a value of this type owns memory that must be freed when it dies.
 // True of a 'box T' and of an owning string, false of every 'ref', and true of

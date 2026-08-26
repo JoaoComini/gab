@@ -112,7 +112,6 @@ Type *type_registry_array_of(TypeRegistry *registry, Type *element) {
     // the size, the alignment and what it owns all follow from them.
     Type *type = type_struct_create(registry->arena, registry->builtins.array_type->name, 2);
     type->kind = TYPE_ARRAY;
-    type->element = element;
 
     type_add_field(type, string_from_cstr(registry->strings, "data"),
                    type_registry_ptr_to(registry, element));

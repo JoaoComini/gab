@@ -75,10 +75,9 @@ void object_drop_array(Allocator allocator, const Type *type, void *value) {
         return;
     }
 
-    // The array's own element, not the block's header: what one element is was
-    // settled when this type was interned, so the free reads it from there
-    // rather than asking the allocation what it holds.
-    const Type *element = type->element;
+    // What the 'data' pointer names, not anything the allocation says: a block
+    // carries no header, so the type is the only thing that knows its stride.
+    const Type *element = type_array_element(type);
 
     // Only when an element owns something itself. An array of ints frees its
     // block without touching a single element.

@@ -1732,7 +1732,7 @@ static void codegen_scale_by_stride(CodegenState *state, unsigned int dest, unsi
 
 static unsigned int codegen_index_address(CodegenState *state, ASTExpr *node) {
     const Type *array_type = node->index.array_type;
-    const Type *element = array_type->element;
+    const Type *element = type_array_element(array_type);
 
     // The header, whichever way the target reaches it: indexing looks through
     // a pointer exactly as a field access does.
@@ -2058,12 +2058,14 @@ static unsigned int codegen_array_new_expr(CodegenState *state, ASTExpr *node) {
     // times a width would be a plausible-looking positive.
     unsigned int bytes = codegen_alloc_register(state, node->span);
 
-    codegen_scale_by_stride(state, bytes, count, type->element->size, node->span);
+    const Type *element = type_array_element(type);
+
+    codegen_scale_by_stride(state, bytes, count, element->size, node->span);
 
     unsigned int block = codegen_alloc_slots(state, VM_INDIRECT_SLOTS, VM_INDIRECT_SLOTS, node->span);
 
     chunk_add_instruction(state->chunk,
-                          VM_ENCODE_RK(OP_ALLOC, block, bytes, (unsigned int)type->element->alignment, 1));
+                          VM_ENCODE_RK(OP_ALLOC, block, bytes, (unsigned int)element->alignment, 1));
 
     // The 'data' field is first in the header, so the block's address lands at
     // the header's own offset.

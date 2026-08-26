@@ -1080,7 +1080,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         }
 
         expr->index.array_type = target_type;
-        expr->type = target_type->element;
+        expr->type = type_array_element(target_type);
         break;
     }
     case EXPR_ARRAY_NEW: {

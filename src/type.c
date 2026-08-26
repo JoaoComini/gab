@@ -18,7 +18,6 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->fields = NULL;
     type->field_count = 0;
     type->inner = NULL;
-    type->element = NULL;
     type->methods = NULL;
     type->owner = NULL;
     type->drop = NULL;
@@ -94,6 +93,14 @@ bool type_field_offset(const Type *type, const String *name, size_t *out_offset)
 // is reachable from none of them: it names a block the header beside it
 // describes, and reaching through it is that header's business.
 bool type_is_indirect(const Type *type) { return type && (type->kind == TYPE_BOX || type->kind == TYPE_REF); }
+
+Type *type_array_element(const Type *type) {
+    assert(type && type->kind == TYPE_ARRAY && "only an array has an element");
+
+    // The 'data' field is the pointer naming the block, and a 'ptr T' carries
+    // what it points at.
+    return type->fields[0].type->inner;
+}
 
 bool type_is_owned(const Type *type) {
     if (!type) {

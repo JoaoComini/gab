@@ -309,9 +309,38 @@ static void test_a_header_carries_its_own_drop() {
     test_context_free(&ctx);
 }
 
+// An array's element is what its 'data' pointer names. One statement of it
+// rather than two: a second field beside the pointer could disagree with it,
+// and the stride a walk over the block advances by would then depend on which
+// of them was asked.
+static void test_an_arrays_element_is_what_its_pointer_names() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope scope;
+    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+
+    TypeRegistry *registry = scope.type_registry;
+
+    // A float element, so that reading the wrong field of the header -- the
+    // length, which is an int -- gives a different answer than the pointer.
+    Type *floats = type_registry_array_of(registry, registry->builtins.float_type);
+
+    const TypeField *data = type_find_field(floats, string_from_cstr(&ctx.strings, "data"));
+
+    assert(data);
+    assert(data->type->kind == TYPE_PTR);
+    assert(data->type->inner == registry->builtins.float_type);
+
+    assert(type_array_element(floats) == registry->builtins.float_type);
+
+    test_context_free(&ctx);
+}
+
 int main(void) {
     test_a_raw_pointer_carries_a_stride_and_drops_nothing();
     test_a_header_carries_its_own_drop();
+    test_an_arrays_element_is_what_its_pointer_names();
     test_a_type_that_owns_nothing_has_no_drop();
     test_alloc_and_free_are_one_allocation();
     test_the_payload_follows_the_header();
