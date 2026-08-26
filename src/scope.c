@@ -27,6 +27,11 @@ static void scope_declare_builtins(Scope *scope) {
     scope_decl_type(scope, builtins->bool_type->name, builtins->bool_type);
     scope_decl_type(scope, builtins->string_type->name, builtins->string_type);
     scope_decl_type(scope, builtins->str_type->name, builtins->str_type);
+
+    // The bare name. Never a usable type on its own -- resolving a spec turns
+    // it into the 'Array T' its element names -- but it must be found here for
+    // that spec to get as far as applying one.
+    scope_decl_type(scope, builtins->array_type->name, builtins->array_type);
 }
 
 void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope *parent, int depth) {

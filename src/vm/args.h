@@ -45,6 +45,8 @@ GabStringValue args_string(Args *args, int index);
 // separate because the declarations are: a 'String' or a 'str' parameter holds
 // the header in its own slots, and a 'ref String' holds an address.
 GabStringValue args_string_at(Args *args, int index);
+
+GabArrayValue args_array(Args *args, int index);
 void *args_pointer(Args *args, int index);
 
 // 'size' is what the caller expects the parameter to occupy, which must be what

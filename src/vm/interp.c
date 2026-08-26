@@ -532,7 +532,7 @@ static void vm_run_loop(VM *vm) {
                 // further. The string header naming them is the value below.
                 char *characters = object_alloc_sized(
                     DEFAULT_ALLOCATOR, vm->env.global_scope.type_registry->builtins.buffer_type,
-                    total == 0 ? 1 : total);
+                    total == 0 ? 1 : total, total == 0 ? 1 : total);
 
                 if (!characters) {
                     vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory concatenating strings");
@@ -848,6 +848,81 @@ static void vm_run_loop(VM *vm) {
             }
             VM_CASE(OP_STORE_FIELD_PTR_4) {
                 vm_store_field_ptr(vm, instruction, 4);
+                VM_NEXT();
+            }
+            VM_CASE(OP_ARRAY_NEW) {
+                unsigned int rd = VM_DECODE_I_RD(instruction);
+                size_t type_index = VM_DECODE_I_KX(instruction);
+                const Type *type = vm->program.heap_types.data[type_index];
+
+                GabArrayValue array;
+                memcpy(&array, vm->registers + rd * VM_SLOT_SIZE, sizeof(array));
+
+                int32_t count = array.length;
+
+                if (count < 0) {
+                    vm_fail(vm, VM_RUN_ERR_BOUNDS, "an array's length cannot be negative");
+
+                    vm_unwind(vm);
+                    VM_RETRY();
+                }
+
+                // Typed as the element rather than as the array, so that
+                // freeing the block walks the elements the way freeing any
+                // object walks what it holds. The count travels in the block's
+                // own header, which is what says how far that walk runs.
+                // Computed in size_t from an int32_t count, so the product
+                // cannot wrap: the widest it reaches is INT32_MAX times an
+                // element's width, which a 64-bit size_t holds. The allocation
+                // below is what refuses a length no memory could satisfy.
+                size_t bytes = (size_t)count * type->element->size;
+
+                // A zero-length array still allocates, so its header holds a
+                // real address: an empty block and a freed one would otherwise
+                // be the same pointer.
+                void *block = object_alloc_sized(DEFAULT_ALLOCATOR, type->element, bytes == 0 ? 1 : bytes,
+                                                 (size_t)count);
+
+                if (!block) {
+                    vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory allocating an array");
+
+                    vm_unwind(vm);
+                    VM_RETRY();
+                }
+
+                array.data = block;
+                memcpy(vm->registers + rd * VM_SLOT_SIZE, &array, sizeof(array));
+
+                VM_NEXT();
+            }
+            VM_CASE(OP_ADD_PTR_REG) {
+                size_t rd = VM_DECODE_R_RD(instruction);
+                size_t base = VM_DECODE_R_R1(instruction);
+                size_t r2 = VM_DECODE_R_R2(instruction);
+
+                int32_t offset;
+                memcpy(&offset, vm_reg_at(vm, r2), sizeof(offset));
+
+                vm_write_ptr(vm, rd, vm_read_ptr(vm, base) + offset);
+                VM_NEXT();
+            }
+            VM_CASE(OP_BOUNDS_CHECK) {
+                size_t rd = VM_DECODE_R_RD(instruction);
+                size_t r1 = VM_DECODE_R_R1(instruction);
+
+                GabArrayValue array;
+                memcpy(&array, vm_reg_at(vm, rd), sizeof(array));
+
+                int32_t index;
+                memcpy(&index, vm_reg_at(vm, r1), sizeof(index));
+
+                if (index < 0 || index >= array.length) {
+                    vm_fail(vm, VM_RUN_ERR_BOUNDS, "array index is out of range");
+
+                    vm_unwind(vm);
+                    VM_RETRY();
+                }
+
                 VM_NEXT();
             }
             VM_CASE(OP_ADD_PTR) {

@@ -273,6 +273,9 @@
         [OP_STORE_FIELD_PTR_2] = &&OP_STORE_FIELD_PTR_2_label,                                               \
         [OP_STORE_FIELD_PTR_4] = &&OP_STORE_FIELD_PTR_4_label,                                               \
         [OP_ADD_PTR] = &&OP_ADD_PTR_label,                                                                   \
+        [OP_ADD_PTR_REG] = &&OP_ADD_PTR_REG_label,                                                           \
+        [OP_ARRAY_NEW] = &&OP_ARRAY_NEW_label,                                                               \
+        [OP_BOUNDS_CHECK] = &&OP_BOUNDS_CHECK_label,                                                         \
         [OP_LOAD_PTR_N] = &&OP_LOAD_PTR_N_label,                                                             \
         [OP_STORE_PTR_N] = &&OP_STORE_PTR_N_label,                                                           \
         [OP_FOR_LOOP] = &&OP_FOR_LOOP_label,                                                                 \

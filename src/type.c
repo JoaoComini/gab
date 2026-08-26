@@ -18,6 +18,7 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->fields = NULL;
     type->field_count = 0;
     type->inner = NULL;
+    type->element = NULL;
     type->methods = NULL;
     type->is_ref = false;
     type->owner = NULL;
@@ -196,8 +197,16 @@ TypeSpec *type_spec_create(StringRef name, unsigned int indirect_depth, uint32_t
     spec->name = name;
     spec->indirect_depth = indirect_depth;
     spec->ref_levels = ref_levels;
+    spec->element = NULL;
 
     return spec;
 }
 
-void type_spec_destroy(TypeSpec *spec) { free(spec); }
+void type_spec_destroy(TypeSpec *spec) {
+    if (!spec) {
+        return;
+    }
+
+    type_spec_destroy(spec->element);
+    free(spec);
+}

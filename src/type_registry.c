@@ -72,6 +72,11 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     assert(registry->builtins.string_type->size == sizeof(GabStringValue));
     assert(registry->builtins.string_type->alignment == _Alignof(GabStringValue));
 
+    // The bare name every 'Array T' is interned under. Sized as the header the
+    // elements make it, so that a diagnostic naming it says something true even
+    // though no slot ever holds this type itself.
+    registry->builtins.array_type = register_builtin(registry, TYPE_ARRAY, "Array", 0, 1);
+
     // Poison type. Deliberately never given a name in any scope: no script can
     // name it, it only arises from a failed resolution.
     registry->builtins.error_type = register_builtin(registry, TYPE_ERROR, "<error>", 0, 1);
@@ -82,6 +87,7 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     registry->indirects = indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->ref_indirects =
         indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->arrays = indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
     registry->strings = strings;
     type_registry_register_builtins(registry);
@@ -92,6 +98,38 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
 void type_registry_destroy(TypeRegistry *registry) {
     indirect_map_destroy(registry->indirects);
     indirect_map_destroy(registry->ref_indirects);
+    indirect_map_destroy(registry->arrays);
+}
+
+Type *type_registry_array_of(TypeRegistry *registry, Type *element) {
+    Type **existing = indirect_map_lookup(registry->arrays, element);
+    if (existing) {
+        return *existing;
+    }
+
+    // Laid out from its fields exactly as a string is, and for the same reason:
+    // the size, the alignment and what it owns all follow from them.
+    Type *type = type_struct_create(registry->arena, registry->builtins.array_type->name, 2);
+    type->kind = TYPE_ARRAY;
+    type->element = element;
+
+    type_add_field(type, string_from_cstr(registry->strings, "data"),
+                   type_registry_indirect_to_kind(registry, registry->builtins.buffer_type, false));
+    type_add_field(type, string_from_cstr(registry->strings, "length"), registry->builtins.int_type);
+    type_layout_compute(type);
+    object_select_drop(type);
+
+    // Every array answers the same methods, which do not depend on the element:
+    // 'len' reads a count. Reached through 'owner' rather than copied into each
+    // set, the way a 'str' reaches a 'String's.
+    type->owner = registry->builtins.array_type;
+
+    // Interned before the layout is read by anything else, so a recursive
+    // element -- an 'Array' of a struct holding one -- finds this entry rather
+    // than building a second.
+    indirect_map_insert(registry->arrays, element, type);
+
+    return type;
 }
 
 Type *type_registry_indirect_to(TypeRegistry *registry, Type *inner) {

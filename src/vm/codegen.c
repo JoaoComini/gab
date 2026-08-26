@@ -180,12 +180,15 @@ static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node);
 static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symbol *callee, Span span);
 static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node);
+static FieldTarget codegen_index_target(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_addr_of_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_deref_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_neg_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_not_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_cast_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_new_expr(CodegenState *state, ASTExpr *node);
+static unsigned int codegen_index_expr(CodegenState *state, ASTExpr *node);
+static unsigned int codegen_array_new_expr(CodegenState *state, ASTExpr *node);
 
 // Field and pointer access, against a struct in registers or through a pointer.
 static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *node, bool auto_deref);
@@ -197,6 +200,7 @@ static void codegen_store_indirect(CodegenState *state, ASTExpr *node, FieldTarg
                                    unsigned int slots);
 static void codegen_store_field(CodegenState *state, ASTExpr *node, unsigned int src);
 static void codegen_store_deref(CodegenState *state, ASTExpr *node, unsigned int src);
+static void codegen_store_index(CodegenState *state, ASTExpr *node, unsigned int src);
 static void codegen_addr_of_into(CodegenState *state, ASTExpr *inner, unsigned int rd, Span span);
 
 // Binary operators: which instruction an operator calls for, and how its right
@@ -658,7 +662,8 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
     // outlives the statement. An owning target takes over what it is given and
     // frees whatever it held before; a 'ref T' target owns nothing either way,
     // so it falls through to the ordinary store below.
-    bool target_owns = (ast->target->kind == EXPR_FIELD || ast->target->kind == EXPR_DEREF) &&
+    bool target_owns = (ast->target->kind == EXPR_FIELD || ast->target->kind == EXPR_DEREF ||
+                        ast->target->kind == EXPR_INDEX) &&
                        type_is_owned(ast->target->type) && !ast->target->type->is_ref;
 
     if (target_owns) {
@@ -675,8 +680,19 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
         // slot -- so releasing that slot directly would free whatever the store
         // had just written into it. The local-variable path below copies for
         // the same reason.
-        unsigned int held = ast->target->kind == EXPR_FIELD ? codegen_field_expr(state, ast->target)
-                                                            : codegen_deref_expr(state, ast->target);
+        unsigned int held;
+
+        switch (ast->target->kind) {
+        case EXPR_FIELD:
+            held = codegen_field_expr(state, ast->target);
+            break;
+        case EXPR_INDEX:
+            held = codegen_index_expr(state, ast->target);
+            break;
+        default:
+            held = codegen_deref_expr(state, ast->target);
+            break;
+        }
 
         // As wide as the value being replaced: a string is a header of several
         // slots, and copying only the first would leave the release reading a
@@ -689,10 +705,16 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
 
         unsigned int src = codegen_expr(state, ast->value);
 
-        if (ast->target->kind == EXPR_FIELD) {
+        switch (ast->target->kind) {
+        case EXPR_FIELD:
             codegen_store_field(state, ast->target, src);
-        } else {
+            break;
+        case EXPR_INDEX:
+            codegen_store_index(state, ast->target, src);
+            break;
+        default:
             codegen_store_deref(state, ast->target, src);
+            break;
         }
 
         // The field owns what was stored, so the statement's end must not also
@@ -707,6 +729,13 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
     // is never materialised as a value first.
     if (ast->target->kind == EXPR_FIELD) {
         codegen_store_field(state, ast->target, codegen_expr(state, ast->value));
+        return;
+    }
+
+    // Likewise an element, which is written through the address computed for
+    // it rather than over the header naming the block.
+    if (ast->target->kind == EXPR_INDEX) {
+        codegen_store_index(state, ast->target, codegen_expr(state, ast->value));
         return;
     }
 
@@ -1377,6 +1406,10 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
         return codegen_cast_expr(state, ast);
     case EXPR_NEW:
         return codegen_new_expr(state, ast);
+    case EXPR_INDEX:
+        return codegen_index_expr(state, ast);
+    case EXPR_ARRAY_NEW:
+        return codegen_array_new_expr(state, ast);
     }
 
     assert(0 && "unknown expression kind");
@@ -1609,6 +1642,126 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
     return dest;
 }
 
+// The array header an index is taken against, as a slot pair holding the block
+// address and the count. A target that already is the header names its slots;
+// one behind a pointer has the header copied out, since the block address must
+// be read from somewhere the instructions can name.
+static unsigned int codegen_index_header(CodegenState *state, ASTExpr *target) {
+    if (!type_is_indirect(target->type)) {
+        return codegen_expr(state, target);
+    }
+
+    unsigned int pointer = codegen_expr(state, target);
+
+    // Every level, as a field access reaches through every level: a
+    // 'ref box Array int' is two hops from the header.
+    const Type *type = target->type;
+
+    while (type_is_indirect(type->inner)) {
+        unsigned int next = codegen_alloc_slots(state, VM_INDIRECT_SLOTS, VM_INDIRECT_SLOTS, target->span);
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_LOAD_PTR_N, next, pointer, VM_INDIRECT_SLOTS));
+
+        pointer = next;
+        type = type->inner;
+    }
+
+    unsigned int header =
+        codegen_alloc_slots(state, type_slot_count(type->inner), type_align_slots(type->inner), target->span);
+
+    chunk_add_instruction(state->chunk,
+                          VM_ENCODE_R(OP_LOAD_PTR_N, header, pointer, type_slot_count(type->inner)));
+
+    return header;
+}
+
+// The address of 'xs[i]', bounds-checked, left in a fresh pointer pair. The
+// element is at 'data + i * stride', so this is the one access whose offset is
+// computed rather than folded into the instruction -- which is why it lands in
+// an indirect FieldTarget and every read and write of it goes through the same
+// paths a field reached through a pointer does.
+static unsigned int codegen_index_address(CodegenState *state, ASTExpr *node) {
+    const Type *array_type = node->index.array_type;
+    const Type *element = array_type->element;
+
+    // The header, whichever way the target reaches it: indexing looks through
+    // a pointer exactly as a field access does.
+    unsigned int header = codegen_index_header(state, node->index.target);
+    unsigned int index = codegen_expr(state, node->index.index);
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_BOUNDS_CHECK, header, index, 0));
+
+    unsigned int offset = codegen_alloc_register(state, node->span);
+
+    // A stride wider than an operand takes the register form, which costs a
+    // load of the width rather than refusing the element.
+    if (element->size <= VM_MAX_IMMEDIATE) {
+        chunk_add_instruction(state->chunk,
+                              VM_ENCODE_RK(OP_MULI, offset, index, (unsigned int)element->size, 1));
+    } else {
+        unsigned int stride = codegen_alloc_register(state, node->span);
+        unsigned int const_index =
+            constpool_add(state->chunk->const_pool, (Constant){.as_int = (int32_t)element->size});
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_LOAD_CONST, stride, const_index));
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_MULI, offset, index, stride));
+    }
+
+    unsigned int address = codegen_alloc_slots(state, VM_INDIRECT_SLOTS, VM_INDIRECT_SLOTS, node->span);
+
+    // The 'data' field is first in the header, so the block's address is the
+    // header's own slot pair.
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_ADD_PTR_REG, address, header, offset));
+
+    return address;
+}
+
+// The FieldTarget an element access reads and writes through: always indirect,
+// since the address was computed rather than named.
+static FieldTarget codegen_index_target(CodegenState *state, ASTExpr *node) {
+    return (FieldTarget){.base = codegen_index_address(state, node), .offset = 0, .indirect = true};
+}
+
+static unsigned int codegen_index_expr(CodegenState *state, ASTExpr *node) {
+    FieldTarget target = codegen_index_target(state, node);
+
+    if (type_moves_as_slots(node->type)) {
+        return codegen_load_indirect_struct(state, node, node->type, target, type_slot_count(node->type));
+    }
+
+    bool ok;
+    OpCode op = field_opcode_for(node->type->size, true, true, &ok);
+
+    if (!codegen_field_access_fits(state, node, ok, target.offset)) {
+        return 0;
+    }
+
+    unsigned int rd = codegen_alloc_register(state, node->span);
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(op, rd, target.base, 0));
+
+    return rd;
+}
+
+// Writes a value into 'xs[i]', through the address computed for the element.
+static void codegen_store_index(CodegenState *state, ASTExpr *node, unsigned int src) {
+    FieldTarget target = codegen_index_target(state, node);
+
+    if (type_moves_as_slots(node->type)) {
+        codegen_store_indirect(state, node, target, src, type_slot_count(node->type));
+        return;
+    }
+
+    bool ok;
+    OpCode op = field_opcode_for(node->type->size, false, true, &ok);
+
+    if (!codegen_field_access_fits(state, node, ok, target.offset)) {
+        return;
+    }
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(op, target.base, src, 0));
+}
+
 static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node) {
     FieldTarget target = codegen_resolve_field_target(state, node, true);
 
@@ -1827,6 +1980,51 @@ static unsigned int codegen_new_expr(CodegenState *state, ASTExpr *node) {
     return rd;
 }
 
+// 'Array T[n]' leaves the header in two slots: the count written first, then
+// the block allocated against it. The count travels in the header rather than
+// in an operand because the instruction carries a type index, and only that
+// format is relocated at link.
+static unsigned int codegen_array_new_expr(CodegenState *state, ASTExpr *node) {
+    const Type *type = node->array_new.type;
+
+    unsigned int rd = codegen_alloc_slots(state, type_slot_count(type), type_align_slots(type), node->span);
+
+    unsigned int count = codegen_expr(state, node->array_new.count);
+
+    size_t length_offset = type->fields[1].offset;
+
+    bool ok;
+    OpCode store = field_opcode_for(type->fields[1].type->size, false, false, &ok);
+
+    if (!ok) {
+        state->failed = true;
+        return rd;
+    }
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(store, rd, count, (unsigned int)length_offset));
+
+    size_t type_index = state->unit->types.size;
+
+    for (size_t i = 0; i < state->unit->types.size; i++) {
+        if (state->unit->types.data[i] == type) {
+            type_index = i;
+            break;
+        }
+    }
+
+    if (type_index == state->unit->types.size) {
+        type_list_add(&state->unit->types, (Type *)type);
+    }
+
+    size_t offset =
+        chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_ARRAY_NEW, rd, (unsigned int)type_index));
+
+    relocation_list_add(&state->unit->type_relocations,
+                        (Relocation){.chunk = state->chunk, .offset = offset});
+
+    return rd;
+}
+
 // ---- Field and pointer access ----
 
 // Walks a field chain down to whatever the outermost struct lives in,
@@ -1857,6 +2055,27 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
                 .offset = node->field.field->offset,
                 .indirect = true,
             };
+        }
+
+        // An element ends the chain for the same reason a pointer-typed field
+        // does: its address is computed from the index, so a field of it is an
+        // offset from that address rather than from any slot named here.
+        //
+        // A pointer-typed element is followed rather than offset into, exactly
+        // as a pointer-typed field is: what 'xs[i].n' names then lives where
+        // that pointer says, not in the block.
+        if (inner->kind == EXPR_INDEX) {
+            if (type_is_indirect(inner->type)) {
+                return (FieldTarget){
+                    .base = codegen_index_expr(state, inner),
+                    .offset = node->field.field->offset,
+                    .indirect = true,
+                };
+            }
+
+            FieldTarget target = codegen_index_target(state, inner);
+            target.offset += node->field.field->offset;
+            return target;
         }
 
         // Everything else below a field access is a struct being reached into,
@@ -2417,6 +2636,9 @@ static bool expr_yields_owned(const ASTExpr *expr) {
 
     case EXPR_NEW:
     case EXPR_CALL:
+
+    // An array allocates the block it names, which the slot it lands in frees.
+    case EXPR_ARRAY_NEW:
 
     // A move hands the source's reference over, so the destination owns it
     // exactly as it would a fresh one -- and the source has been disowned, so

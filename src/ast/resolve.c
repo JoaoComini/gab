@@ -295,6 +295,8 @@ static Symbol *addressed_symbol(ASTExpr *expr) {
         return expr->symbol;
     case EXPR_FIELD:
         return addressed_symbol(expr->field.target);
+    case EXPR_INDEX:
+        return addressed_symbol(expr->index.target);
     default:
         break;
     }
@@ -311,6 +313,10 @@ static bool is_addressable(const ASTExpr *expr) {
         return expr->symbol && expr->symbol->kind == SYMBOL_VAR;
     case EXPR_FIELD:
         return is_addressable(expr->field.target);
+    case EXPR_INDEX:
+        // An element lives in the block the header names, so it has an address
+        // whenever the array does.
+        return is_addressable(expr->index.target);
     case EXPR_DEREF:
         return true;
     default:
@@ -531,6 +537,15 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
     // is what a receiver is — and 'declared == actual' above does not catch it
     // only because the two are distinct interned types.
     if (type_accepts(declared, actual)) {
+        *out = RECEIVER_AS_IS;
+        return true;
+    }
+
+    // A method declared on the type this one reaches through 'owner', which for
+    // an array is the bare 'Array' its whole set hangs on. What it reads is the
+    // header, which every array has the same shape of, so the element the
+    // receiver was written over does not enter into it.
+    if (actual->kind == TYPE_ARRAY && declared == actual->owner) {
         *out = RECEIVER_AS_IS;
         return true;
     }
@@ -1033,6 +1048,63 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         expr->type = callee->func.return_type;
         break;
     }
+    case EXPR_INDEX: {
+        resolve_expr(state, expr->index.target);
+        resolve_expr(state, expr->index.index);
+
+        Type *target_type = expr->index.target->type;
+
+        if (is_error_type(target_type) || is_error_type(expr->index.index->type)) {
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        // Reaches through every pointer level, as a field access does: an
+        // 'Array int' and a 'ref Array int' are indexed the same way.
+        while (type_is_indirect(target_type)) {
+            target_type = target_type->inner;
+        }
+
+        if (target_type->kind != TYPE_ARRAY) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot index %s",
+                       type_name(state, expr->index.target->type));
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        if (expr->index.index->type != state->current_scope->type_registry->builtins.int_type) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "an index must be an int, not %s",
+                       type_name(state, expr->index.index->type));
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        expr->index.array_type = target_type;
+        expr->type = target_type->element;
+        break;
+    }
+    case EXPR_ARRAY_NEW: {
+        Type *type = resolve_type_spec(state, expr->array_new.type_spec, expr->span);
+
+        resolve_expr(state, expr->array_new.count);
+
+        if (is_error_type(type) || is_error_type(expr->array_new.count->type)) {
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        if (expr->array_new.count->type != state->current_scope->type_registry->builtins.int_type) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                       "an array's length must be an int, not %s",
+                       type_name(state, expr->array_new.count->type));
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        expr->array_new.type = type;
+        expr->type = type;
+        break;
+    }
     case EXPR_FIELD: {
         resolve_expr(state, expr->field.target);
 
@@ -1346,6 +1418,35 @@ static Type *resolve_type_spec(ResolverState *state, TypeSpec *spec, Span span) 
         diag_error(state->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", name);
         free(name);
 
+        return resolver_error_type(state);
+    }
+
+    // 'Array T' applies its element before any indirection wraps it, so
+    // 'box Array int' is a pointer to an array of ints rather than an array of
+    // pointers. The element is a spec of its own, resolved the same way.
+    if (spec->element) {
+        if (type != state->current_scope->type_registry->builtins.array_type) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "%s does not take an element type",
+                       type_name(state, type));
+            return resolver_error_type(state);
+        }
+
+        Type *element = resolve_type_spec(state, spec->element, span);
+
+        if (is_error_type(element)) {
+            return resolver_error_type(state);
+        }
+
+        // A zero-width element would make every index the same address, so
+        // there would be nothing for a length to count.
+        if (element->size == 0) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "an array's element must have a size");
+            return resolver_error_type(state);
+        }
+
+        type = type_registry_array_of(state->current_scope->type_registry, element);
+    } else if (type == state->current_scope->type_registry->builtins.array_type) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'Array' needs an element type, as 'Array int'");
         return resolver_error_type(state);
     }
 

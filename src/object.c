@@ -10,10 +10,10 @@ ObjectHeader *object_of(void *payload) {
 }
 
 void *object_alloc(Allocator allocator, const Type *type) {
-    return object_alloc_sized(allocator, type, type ? type->size : 0);
+    return object_alloc_sized(allocator, type, type ? type->size : 0, 1);
 }
 
-void *object_alloc_sized(Allocator allocator, const Type *type, size_t size) {
+void *object_alloc_sized(Allocator allocator, const Type *type, size_t size, size_t count) {
     assert(type && "an object needs a type; freeing it walks its fields");
 
     ObjectHeader *header = allocator.alloc(allocator.ctx, sizeof(ObjectHeader) + size);
@@ -23,6 +23,7 @@ void *object_alloc_sized(Allocator allocator, const Type *type, size_t size) {
     }
 
     header->type = type;
+    header->count = count;
 
     // Zeroed so that a pointer field nobody assigned is NULL rather than
     // whatever the allocator left behind — freeing walks these fields, and it
@@ -42,6 +43,15 @@ static void drop_box(Allocator allocator, const Type *type, void *value) {
     memcpy(&owned, value, sizeof(owned));
 
     object_free(allocator, owned);
+}
+
+// Frees what each element of a block owns, for a payload holding more than one
+// value of its type. How many is the header's count: an array's length is not
+// in its type, and the memory past it has never been written.
+static void drop_elements(Allocator allocator, const Type *type, void *value, size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        type->drop(allocator, type, (char *)value + i * type->size);
+    }
 }
 
 // Frees what a value's fields own, so that freeing an object frees the tree
@@ -82,7 +92,7 @@ void object_free(Allocator allocator, void *payload) {
     ObjectHeader *header = object_of(payload);
 
     if (header->type->drop) {
-        header->type->drop(allocator, header->type, payload);
+        drop_elements(allocator, header->type, payload, header->count);
     }
 
     allocator.free(allocator.ctx, header);

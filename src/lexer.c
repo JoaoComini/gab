@@ -103,6 +103,10 @@ const char *token_description(TokenType type) {
         return "'{'";
     case TOKEN_RBRACE:
         return "'}'";
+    case TOKEN_LBRACKET:
+        return "'['";
+    case TOKEN_RBRACKET:
+        return "']'";
     case TOKEN_SEMICOLON:
         return "';'";
     case TOKEN_COLON:
@@ -551,6 +555,10 @@ Token lexer_next(Lexer *lexer) {
         return token_create(lexer, TOKEN_LBRACE);
     case '}':
         return token_create(lexer, TOKEN_RBRACE);
+    case '[':
+        return token_create(lexer, TOKEN_LBRACKET);
+    case ']':
+        return token_create(lexer, TOKEN_RBRACKET);
     case '=':
         return lexer_handle_eq(lexer, TOKEN_ASSIGN, TOKEN_EQUAL);
     case '!':

@@ -177,6 +177,29 @@ typedef enum {
     // Adds a byte offset to an address, for reaching a field through a pointer.
     OP_ADD_PTR,
 
+    // Allocates the block for the array header at rd, whose type is
+    // heap_types[kx]. The count is read from the header's own length slot,
+    // which codegen has already written, and the address is written beside it.
+    // Fails the run on a negative count or an allocation that does not succeed.
+    //
+    // I-type, so the count rides in the header rather than in an operand: a
+    // type index is relocated at link and only this format is patched.
+    //
+    // Takes a type index rather than a width because the block is typed by the
+    // array that owns it -- freeing it walks the elements, and only the type
+    // says how.
+    OP_ARRAY_NEW,
+
+    // As OP_ADD_PTR, with the offset read from a register rather than an
+    // operand. An element's offset is the index times the stride, which is not
+    // known until the index is.
+    OP_ADD_PTR_REG,
+
+    // Traps unless 0 <= r1 < the length in the header at rd. Separate from the
+    // access that follows so that the access stays the same instruction a field
+    // uses -- a bounds check is about the index, not about the load.
+    OP_BOUNDS_CHECK,
+
     // Copies a run of slots to or from the address a slot pair holds. The slot
     // count rides in the third operand, so a whole struct moves in one step.
     OP_LOAD_PTR_N,

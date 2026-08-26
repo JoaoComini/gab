@@ -52,6 +52,11 @@ typedef struct {
     // every concatenation and every array allocates.
     Type *buffer_type;
 
+    // 'Array', the bare name. Not a usable type on its own -- every array is
+    // 'Array T' for some element -- but the name a spec resolves to before its
+    // element is applied, and what a diagnostic prints when one is missing.
+    Type *array_type;
+
     Type *error_type;
 } TypeBuiltins;
 
@@ -72,6 +77,11 @@ typedef struct TypeRegistry {
     // pointer-identity comparison keeps telling them apart.
     IndirectMap *ref_indirects;
 
+    // 'Array T' types, interned on the element for the same reason: the type
+    // system compares by pointer identity, so two mentions of 'Array int' must
+    // be one Type.
+    IndirectMap *arrays;
+
     TypeBuiltins builtins;
 } TypeRegistry;
 
@@ -85,6 +95,11 @@ Type *type_registry_error_type(TypeRegistry *registry);
 // The interned *inner. Repeated calls with the same inner return the same
 // Type *.
 Type *type_registry_indirect_to(TypeRegistry *registry, Type *inner);
+
+// The interned 'Array element': a header of {data, length} owning a block of
+// elements. One per element type, and the type that carries the element -- a
+// buffer does not, so this is what supplies the walk that frees them.
+Type *type_registry_array_of(TypeRegistry *registry, Type *element);
 
 // As type_registry_indirect_to, choosing between the owning and borrowing
 // flavours. A 'ref T' does not own its inner; the two are distinct types.

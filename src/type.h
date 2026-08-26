@@ -26,6 +26,11 @@ typedef enum {
     // A header by value: the address of the characters and their count. Nominal
     // rather than structural, so it is interned once like the other builtins.
     TYPE_STRING,
+
+    // A header owning a run of elements: where they are and how many. Laid out
+    // like a string and freed like one, differing in that its element is
+    // whatever it was written over rather than always a byte.
+    TYPE_ARRAY,
     TYPE_STRUCT,
 
     // An indirection: 'box T' owns what it names, 'ref T' borrows it. One kind
@@ -164,7 +169,7 @@ Symbol *type_find_method(const Type *type, const String *name);
 // 'ref_levels' -- every level records its own kind, so the mask is the limit.
 #define TYPE_SPEC_MAX_DEPTH 32
 
-typedef struct {
+typedef struct TypeSpec {
     StringRef name;
 
     // 0 for T, 1 for 'box T', 2 for 'box box T'.
@@ -174,6 +179,11 @@ typedef struct {
     // name: 'ref box T' is depth 2 with bit 1 set. A flag per level rather than
     // one for the spec, since the two spellings nest in any order.
     uint32_t ref_levels;
+
+    // What 'Array T' was written over, and NULL for every other spec. A spec
+    // rather than a Type because the element is itself written as one: an
+    // 'Array box Player' has to carry the level it spells.
+    struct TypeSpec *element;
 } TypeSpec;
 
 TypeSpec *type_spec_create(StringRef name, unsigned int indirect_depth, uint32_t ref_levels);

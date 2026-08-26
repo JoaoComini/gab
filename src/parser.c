@@ -18,6 +18,8 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser);
 static ASTStmt *parse_struct_decl_stmt(Parser *parser);
 static ASTField *parse_field(Parser *parser, const char *name_message);
 static TypeSpec *parse_type_spec(Parser *parser);
+static ASTExpr *parse_index_expr(Parser *parser, ASTExpr *target);
+static ASTExpr *parse_expression(Parser *parser);
 static ASTStmt *parse_if_stmt(Parser *parser);
 static ASTStmt *parse_for_stmt(Parser *parser);
 static ASTStmt *parse_jump_stmt(Parser *parser);
@@ -672,7 +674,23 @@ static TypeSpec *parse_type_spec(Parser *parser) {
         }
     }
 
-    return type_spec_create(name, indirect_depth, ref_levels);
+    TypeSpec *spec = type_spec_create(name, indirect_depth, ref_levels);
+
+    // 'Array T' names its element after it, the one type here that takes an
+    // argument. Recognised by the name rather than a keyword, so that 'Array'
+    // stays an ordinary type name the resolver looks up -- what makes this one
+    // special is that an element follows, and the resolver reports it if the
+    // name was something else that cannot take one.
+    if (string_ref_equals_cstr(name, "Array")) {
+        spec->element = parse_type_spec(parser);
+
+        if (!spec->element) {
+            type_spec_destroy(spec);
+            return NULL;
+        }
+    }
+
+    return spec;
 }
 
 static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
@@ -907,7 +925,8 @@ static ASTStmt *parse_expr_stmt(Parser *parser) {
         return ast_expr_stmt_create(span, expr);
     }
 
-    if (expr->kind != EXPR_VARIABLE && expr->kind != EXPR_FIELD && expr->kind != EXPR_DEREF) {
+    if (expr->kind != EXPR_VARIABLE && expr->kind != EXPR_FIELD && expr->kind != EXPR_DEREF &&
+        expr->kind != EXPR_INDEX) {
         parser_error(parser, "expression is not assignable");
         ast_expr_free(expr);
         return NULL;
@@ -1063,6 +1082,31 @@ static ASTExpr *parse_method_call_expr(Parser *parser, ASTExpr *receiver, String
     return ast_call_expr_create(span, target, args);
 }
 
+// 'xs[i]'. A postfix like a call, so it chains: 'a.b[i].c' and 'xs[i][j]' both
+// fall out of the loop that reads it.
+static ASTExpr *parse_index_expr(Parser *parser, ASTExpr *target) {
+    Span span = parser_span(parser);
+
+    parser_next_token(parser); // eat '['
+
+    ASTExpr *index = parse_expression(parser);
+
+    if (!index) {
+        ast_expr_free(target);
+        return NULL;
+    }
+
+    if (!parser_expect(parser, TOKEN_RBRACKET, "expected ']' after an index")) {
+        ast_expr_free(target);
+        ast_expr_free(index);
+        return NULL;
+    }
+
+    parser_next_token(parser); // eat ']'
+
+    return ast_index_expr_create(span, target, index);
+}
+
 // A primary with its postfixes, or a prefix form over one of those. Prefix '&'
 // and '*' bind tighter than any binary operator but looser than a postfix, so
 // 'ref p.x' takes the address of the field and '*p.x' dereferences it.
@@ -1080,6 +1124,36 @@ static ASTExpr *parse_unary(Parser *parser) {
         }
 
         return ast_new_expr_create(span, spec);
+    }
+
+    // 'Array T[n]' allocates a run of elements and yields the header naming
+    // them, which is a value like a string's. No 'new': what a slot holds is
+    // the header itself, and 'new' is for what a slot points at.
+    if (parser->current.type == TOKEN_IDENT && string_ref_equals_cstr(parser->current.lexeme, "Array")) {
+        TypeSpec *spec = parse_type_spec(parser);
+
+        if (!spec) {
+            return NULL;
+        }
+
+        if (!parser_expect(parser, TOKEN_LBRACKET, "expected '[' and a length after an array's element")) {
+            type_spec_destroy(spec);
+            return NULL;
+        }
+
+        parser_next_token(parser); // eat '['
+
+        ASTExpr *count = parse_expression(parser);
+
+        if (!count || !parser_expect(parser, TOKEN_RBRACKET, "expected ']' after an array's length")) {
+            type_spec_destroy(spec);
+            ast_expr_free(count);
+            return NULL;
+        }
+
+        parser_next_token(parser); // eat ']'
+
+        return ast_array_new_expr_create(span, spec, count);
     }
 
     // 'move x' transfers ownership out of 'x'. It takes an operand rather
@@ -1128,9 +1202,12 @@ static ASTExpr *parse_unary(Parser *parser) {
 
     // Postfixes bind tighter than any binary operator and chain, so 'a.b.c' and
     // 'f().x' both fall out of looping here.
-    while (parser->current.type == TOKEN_LPAREN || parser->current.type == TOKEN_DOT) {
+    while (parser->current.type == TOKEN_LPAREN || parser->current.type == TOKEN_DOT ||
+           parser->current.type == TOKEN_LBRACKET) {
         if (parser->current.type == TOKEN_LPAREN) {
             expr = parse_call_expr(parser, expr);
+        } else if (parser->current.type == TOKEN_LBRACKET) {
+            expr = parse_index_expr(parser, expr);
         } else {
             expr = parse_field_expr(parser, expr);
         }
