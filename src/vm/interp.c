@@ -527,9 +527,7 @@ static void vm_run_loop(VM *vm) {
                 // Typed as characters rather than as a string: what is being
                 // allocated is the bytes themselves, and they own nothing
                 // further. The string header naming them is the value below.
-                char *characters = object_alloc_sized(
-                    DEFAULT_ALLOCATOR, vm->env.global_scope.type_registry->builtins.buffer_type,
-                    total == 0 ? 1 : total);
+                char *characters = DEFAULT_ALLOCATOR.alloc(DEFAULT_ALLOCATOR.ctx, total == 0 ? 1 : total);
 
                 if (!characters) {
                     vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory concatenating strings");
@@ -847,15 +845,17 @@ static void vm_run_loop(VM *vm) {
                 vm_store_field_ptr(vm, instruction, 4);
                 VM_NEXT();
             }
-            VM_CASE(OP_ARRAY_NEW) {
-                unsigned int rd = VM_DECODE_I_RD(instruction);
-                size_t type_index = VM_DECODE_I_KX(instruction);
-                const Type *type = vm->program.heap_types.data[type_index];
+            VM_CASE(OP_ALLOC) {
+                unsigned int rd = VM_DECODE_R_RD(instruction);
+                size_t r1 = VM_DECODE_R_R1(instruction);
 
-                GabArrayValue array;
-                memcpy(&array, vm->registers + rd * VM_SLOT_SIZE, sizeof(array));
+                // The alignment is always a compile-time constant, so it rides
+                // in the immediate and costs no register.
+                size_t alignment = VM_DECODE_R_R2(instruction);
+                (void)alignment;
 
-                int32_t count = array.length;
+                int32_t count;
+                memcpy(&count, vm_reg_at(vm, r1), sizeof(count));
 
                 if (count < 0) {
                     vm_fail(vm, VM_RUN_ERR_BOUNDS, "an array's length cannot be negative");
@@ -864,20 +864,12 @@ static void vm_run_loop(VM *vm) {
                     VM_RETRY();
                 }
 
-                // Computed in size_t from an int32_t count, so the product
-                // cannot wrap: the widest it reaches is INT32_MAX times an
-                // element's width, which a 64-bit size_t holds. The allocation
-                // below is what refuses a length no memory could satisfy.
-                size_t bytes = (size_t)count * type->element->size;
-
-                // Typed as the element rather than as the array: what the block
-                // holds is elements, and the array's own drop is what walks
-                // them.
-                //
-                // A zero-length array still allocates, so its header holds a
+                // A zero-length block still allocates, so the header holds a
                 // real address: an empty block and a freed one would otherwise
                 // be the same pointer.
-                void *block = object_alloc_sized(DEFAULT_ALLOCATOR, type->element, bytes == 0 ? 1 : bytes);
+                size_t bytes = count == 0 ? 1 : (size_t)count;
+
+                void *block = DEFAULT_ALLOCATOR.alloc(DEFAULT_ALLOCATOR.ctx, bytes);
 
                 if (!block) {
                     vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory allocating an array");
@@ -886,9 +878,22 @@ static void vm_run_loop(VM *vm) {
                     VM_RETRY();
                 }
 
-                array.data = block;
-                memcpy(vm->registers + rd * VM_SLOT_SIZE, &array, sizeof(array));
+                // Zeroed for the reason an object's payload is: an element that
+                // owns and was never stored into must read as NULL, since the
+                // drop walk has no other way to tell it from a live reference.
+                memset(block, 0, bytes);
 
+                vm_write_ptr(vm, rd, (uint8_t *)block);
+                VM_NEXT();
+            }
+            VM_CASE(OP_FREE) {
+                unsigned int rd = VM_DECODE_R_RD(instruction);
+                size_t r1 = VM_DECODE_R_R1(instruction);
+
+                int32_t size;
+                memcpy(&size, vm_reg_at(vm, r1), sizeof(size));
+
+                DEFAULT_ALLOCATOR.free_sized(DEFAULT_ALLOCATOR.ctx, vm_read_ptr(vm, rd), (size_t)size);
                 VM_NEXT();
             }
             VM_CASE(OP_ADD_PTR_REG) {

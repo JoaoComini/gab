@@ -17,10 +17,9 @@ static Type *register_builtin(TypeRegistry *registry, TypeKind kind, const char 
     return type;
 }
 
-// The 'String' type, laid out from its two fields. 'is_ref' decides only
-// whether the field naming the characters owns them, which is the whole
-// difference between a string and a view of one -- and is where every later
-// question about ownership reads its answer, rather than from a bit beside it.
+// The 'String' type, laid out from its two fields. 'is_ref' is the whole
+// difference between a string and a view of one: it says whether the header
+// owns the characters it names, which the raw address naming them cannot.
 static Type *string_builtin_create(TypeRegistry *registry, bool is_ref) {
     // Each half carries its own name: 'String' owns its characters, 'str'
     // borrows someone else's. Two names rather than one, because the two differ
@@ -30,7 +29,13 @@ static Type *string_builtin_create(TypeRegistry *registry, bool is_ref) {
     Type *type = type_struct_create(registry->arena, string_from_cstr(registry->strings, name), 2);
     type->kind = TYPE_STRING;
 
-    Type *characters = type_registry_indirect_to_kind(registry, registry->builtins.buffer_type, is_ref);
+    // What the two spellings differ in. Read by type_is_owned, since the field
+    // naming the characters is a raw address and answers nothing about them.
+    type->is_ref = is_ref;
+
+    // A raw address either way: who frees the characters is the header's own
+    // business, recorded in 'is_ref' above rather than in this field's type.
+    Type *characters = type_registry_ptr_to(registry, registry->builtins.byte_type);
 
     type_add_field(type, string_from_cstr(registry->strings, "data"), characters);
     type_add_field(type, string_from_cstr(registry->strings, "length"), registry->builtins.int_type);
@@ -45,15 +50,9 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     registry->builtins.float_type = register_builtin(registry, TYPE_FLOAT, "float", 4, 4);
     registry->builtins.bool_type = register_builtin(registry, TYPE_BOOL, "bool", 1, 1);
 
-    // Sized as one byte: a buffer holds no element type, so what a walk over it
-    // advances by comes from the header, and this stride is the unit that
-    // 'object_alloc_sized' counts its bytes in.
-    registry->builtins.buffer_type = register_builtin(registry, TYPE_BUFFER, "buffer", 1, 1);
-
-    // Never a dropper, however its elements answer: only the header naming a
-    // block knows how many of its elements are live, so only that header's own
-    // drop may walk them. See Type::element.
-    registry->builtins.buffer_type->drop = NULL;
+    // Sized as one byte, which is the stride a walk over characters advances by
+    // and the unit a block of them is counted in.
+    registry->builtins.byte_type = register_builtin(registry, TYPE_INT, "byte", 1, 1);
 
     // A struct in its layout and a builtin in its semantics: the fields are
     // where its size, its alignment and what it owns all come from, while
@@ -87,6 +86,7 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     registry->indirects = indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->ref_indirects =
         indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->ptrs = indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arrays = indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
     registry->strings = strings;
@@ -98,6 +98,7 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
 void type_registry_destroy(TypeRegistry *registry) {
     indirect_map_destroy(registry->indirects);
     indirect_map_destroy(registry->ref_indirects);
+    indirect_map_destroy(registry->ptrs);
     indirect_map_destroy(registry->arrays);
 }
 
@@ -114,7 +115,7 @@ Type *type_registry_array_of(TypeRegistry *registry, Type *element) {
     type->element = element;
 
     type_add_field(type, string_from_cstr(registry->strings, "data"),
-                   type_registry_indirect_to_kind(registry, registry->builtins.buffer_type, false));
+                   type_registry_ptr_to(registry, element));
     type_add_field(type, string_from_cstr(registry->strings, "length"), registry->builtins.int_type);
     type_layout_compute(type);
     object_select_drop(type);
@@ -166,6 +167,30 @@ Type *type_registry_indirect_to_kind(TypeRegistry *registry, Type *inner, bool i
     return type;
 }
 
+Type *type_registry_ptr_to(TypeRegistry *registry, Type *pointee) {
+    Type **existing = indirect_map_lookup(registry->ptrs, pointee);
+    if (existing) {
+        return *existing;
+    }
+
+    // Structural like an indirection, so no name of its own: a diagnostic
+    // derives one from the pointee. See Type::name.
+    Type *type = type_create(registry->arena, TYPE_PTR, NULL);
+
+    type->size = sizeof(void *);
+    type->alignment = _Alignof(void *);
+    type->inner = pointee;
+
+    // Interned before the drop is selected, so a pointee reaching back here --
+    // a struct holding a pointer to its own type -- finds this entry rather
+    // than building a second.
+    indirect_map_insert(registry->ptrs, pointee, type);
+
+    object_select_drop(type);
+
+    return type;
+}
+
 Type *type_registry_error_type(TypeRegistry *registry) { return registry->builtins.error_type; }
 
 Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind kind) {
@@ -178,8 +203,6 @@ Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind kind) {
         return registry->builtins.bool_type;
     case TYPE_STRING:
         return registry->builtins.string_type;
-    case TYPE_BUFFER:
-        return registry->builtins.buffer_type;
     default:
         break;
     }

@@ -16,12 +16,16 @@ typedef enum {
     TYPE_FLOAT,
     TYPE_BOOL,
 
-    // A run of bytes something else names: what a string's characters and an
-    // array's elements both are. Untyped, because a buffer can never free what
-    // it holds however well it knows the shape -- how many elements are live is
-    // the count in the header naming it. The element type therefore lives on
-    // that header, which is also what supplies the drop walk.
-    TYPE_BUFFER,
+    // An address and nothing more: what a string's characters and an array's
+    // elements are reached through. Carries what it points at in 'inner', so a
+    // walk over a block knows its stride without asking the header naming it.
+    //
+    // Makes no claim beyond the address. It does not own what it names, does
+    // not borrow it, and says nothing about how long that memory lives or
+    // whether it is live at all -- which is what separates it from both
+    // spellings of an indirection. Freeing a block is therefore always the
+    // business of the header that knows how many of its elements are live.
+    TYPE_PTR,
 
     // A header by value: the address of the characters and their count. Nominal
     // rather than structural, so it is interned once like the other builtins.
@@ -97,7 +101,7 @@ struct Type {
     TypeField *fields;
     size_t field_count;
 
-    // What a TYPE_INDIRECT names; NULL for every other kind.
+    // What a TYPE_INDIRECT or a TYPE_PTR names; NULL for every other kind.
     Type *inner;
 
     // Whether this type borrows rather than owns what it names. A 'ref T' is a
@@ -119,8 +123,9 @@ struct Type {
 
     // What one element of the block this type names is, for the two headers
     // that name one: a string's characters and an array's elements. NULL
-    // everywhere else. It is here rather than on the buffer because only a
-    // header knows how many elements are live, so only a header can walk them.
+    // everywhere else. It is here rather than on the pointer naming the block
+    // because only a header knows how many elements are live, so only a header
+    // can walk them.
     Type *element;
 
     // For a borrowing type that shares another's identity -- 'str' and

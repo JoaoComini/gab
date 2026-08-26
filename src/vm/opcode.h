@@ -185,31 +185,25 @@ typedef enum {
     // Adds a byte offset to an address, for reaching a field through a pointer.
     OP_ADD_PTR,
 
-    // Allocates the block for the array header at rd, whose type is
-    // heap_types[kx], and writes its address into the header. Fails the run on
-    // a negative count or an allocation that does not succeed.
+    // Allocates r1 bytes at the alignment in r2, writing the address into rd.
+    // Fails the run on a negative count or an allocation that does not succeed.
     //
-    // Reads its own destination: the count is taken from the header's length
-    // slot, which codegen writes first. That is I-type's doing -- the format
-    // carries one register and a 17-bit index, and the index needs every bit of
-    // it, so there is nowhere else for a second operand to go. Only I-type is
-    // relocated, and a type index has to be.
+    // Names no type. How many bytes and at what alignment is everything the
+    // allocation needs, so one instruction serves an array of any element and
+    // would serve any other collection the same way -- what the block holds is
+    // the business of the header naming it. That is also why nothing here is
+    // relocated: a type index would have had to be, and it is the reason this
+    // fits R-type at all.
     //
-    // Takes a type index rather than a width because the count alone does not
-    // say how wide an element is, and because a length that is not yet a header
-    // could not be freed if the allocation below failed.
-    //
-    // An instruction rather than a registered builtin, which is what the rest of
-    // this kind of thing is: a builtin fixes one return type where it is
-    // registered, and 'Array int[n]' and 'Array Point[n]' return different
-    // interned types. The element is written in the type spec rather than
-    // carried by an argument, so nothing about a call could recover it.
-    //
-    // A call could only recover it by being told, and there is nowhere to say
-    // it: OP_CALL_EXTERN is I-type and spends all 17 bits on the extern index.
-    // One extern per element type would need no such operand, which is the
-    // shape that would retire this.
-    OP_ARRAY_NEW,
+    // The block carries no ObjectHeader. Nothing reads one on a block -- a
+    // drop walk reads its element off the header that names the block -- so the
+    // word it would cost buys nothing, and OP_FREE is told the size instead.
+    OP_ALLOC,
+
+    // Frees the block whose address is at rd, whose size is in r1. The
+    // counterpart of OP_ALLOC and sized for the same reason: a raw block says
+    // nothing about itself, so what is freed is what the caller kept.
+    OP_FREE,
 
     // As OP_ADD_PTR, with the offset read from a register rather than an
     // operand. An element's offset is the index times the stride, which is not

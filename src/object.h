@@ -73,15 +73,6 @@ ObjectHeader *object_of(void *payload);
 // fails.
 void *object_alloc(Allocator allocator, const Type *type);
 
-// As object_alloc, for a payload whose size is not the type's: a string's
-// characters and an array's elements are counted at run time, so 'size' says
-// how many bytes follow the header rather than the type doing.
-//
-// The type still says how to free one value; how many the block holds is not
-// recorded here. Only the header naming a block knows that, which is why an
-// array's own drop is what walks it.
-void *object_alloc_sized(Allocator allocator, const Type *type, size_t size);
-
 // Frees what a value of 'type' sitting at 'value' owns, and the value itself
 // where it is an owning pointer. This is what a release does: the type is known
 // where the slot goes out of scope, so the free never has to rediscover it.

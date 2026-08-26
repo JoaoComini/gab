@@ -79,31 +79,30 @@ static void test_a_type_that_owns_nothing_has_no_drop() {
     test_context_free(&ctx);
 }
 
-// A byte is a named type of its own so that a diagnostic can print what a
-// string's characters are a buffer of. Not declared into any scope: nothing in
-// the language reads or writes one, so no script can name it.
-// A buffer is a block of bytes and nothing more. It carries no element type,
-// because it could not free its elements even knowing one: how many are live is
-// the count in the header naming the block. That header carries the element
-// instead, and supplies the walk.
-static void test_a_buffer_is_untyped_and_drops_nothing() {
+// A 'ptr T' carries what it points at, so a walk over a block knows its stride
+// without asking the header naming it. It still drops nothing: how many
+// elements are live is the count on that header, so freeing them is its
+// business rather than the pointer's.
+static void test_a_raw_pointer_carries_a_stride_and_drops_nothing() {
     TestContext ctx;
     test_context_init(&ctx);
 
     Scope scope;
     scope_init(&scope, ctx.arena, &ctx.strings, NULL);
 
-    Type *buffer = scope.type_registry->builtins.buffer_type;
+    TypeRegistry *registry = scope.type_registry;
 
-    assert(buffer->kind == TYPE_BUFFER);
-    assert(buffer->element == NULL);
-    assert(buffer->drop == NULL);
+    Type *characters = type_registry_ptr_to(registry, registry->builtins.byte_type);
+
+    assert(characters->kind == TYPE_PTR);
+    assert(characters->inner == registry->builtins.byte_type);
+    assert(characters->drop == NULL);
 
     // One byte, which is the unit the count of an allocation is given in.
-    assert(buffer->size == 1 && buffer->alignment == 1);
+    assert(characters->inner->size == 1 && characters->inner->alignment == 1);
 
     // Named so a diagnostic can print it, but declared into no scope.
-    assert(!test_compiles("func f(b: buffer): int { return 0; }\n"));
+    assert(!test_compiles("func f(b: byte): int { return 0; }\n"));
 
     test_context_free(&ctx);
 }
@@ -274,7 +273,7 @@ static void test_freeing_null_is_a_no_op() {
 }
 
 int main(void) {
-    test_a_buffer_is_untyped_and_drops_nothing();
+    test_a_raw_pointer_carries_a_stride_and_drops_nothing();
     test_a_type_that_owns_nothing_has_no_drop();
     test_alloc_and_free_are_one_allocation();
     test_the_payload_follows_the_header();

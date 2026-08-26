@@ -540,11 +540,15 @@ static void codegen_walk_owning_slots(CodegenState *state, const Type *type, uns
         return;
     }
 
-    // An array owns as one value rather than through its 'data' field: freeing
-    // the block walks its elements, and how many are live is the length in the
-    // slot beside that pointer. Descending into the field would hand the free
-    // path the pointer alone, with nothing left to say how far to walk.
-    if (type && type->kind == TYPE_ARRAY) {
+    // A header owns as one value rather than through its 'data' field, which is
+    // a raw address claiming nothing: what must be freed is the block, and the
+    // count saying how far to walk it sits in the slot beside that pointer.
+    // Descending into the field would hand the free path the pointer alone.
+    if (type && (type->kind == TYPE_ARRAY || type->kind == TYPE_STRING)) {
+        if (!type_is_owned(type)) {
+            return;
+        }
+
         switch (action) {
         case OWNING_SLOT_NULL:
             chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_NULL, base, 0));
@@ -560,9 +564,8 @@ static void codegen_walk_owning_slots(CodegenState *state, const Type *type, uns
         return;
     }
 
-    // Anything laid out from fields owns through them, whether it is a struct or
-    // a string: the walk reaches what each names by that field's offset rather
-    // than by knowing where its kind keeps things.
+    // A struct owns through its fields: the walk reaches what each names by that
+    // field's offset rather than by knowing where its kind keeps things.
     if (!type || type->field_count == 0) {
         return;
     }
@@ -1710,6 +1713,23 @@ static unsigned int codegen_index_header(CodegenState *state, ASTExpr *target) {
 // computed rather than folded into the instruction -- which is why it lands in
 // an indirect FieldTarget and every read and write of it goes through the same
 // paths a field reached through a pointer does.
+// Writes 'count' times 'stride' into 'dest'. A stride wider than an operand
+// takes the register form, which costs a load of the width rather than refusing
+// the element.
+static void codegen_scale_by_stride(CodegenState *state, unsigned int dest, unsigned int count, size_t stride,
+                                    Span span) {
+    if (stride <= VM_MAX_IMMEDIATE) {
+        chunk_add_instruction(state->chunk, VM_ENCODE_RK(OP_MULI, dest, count, (unsigned int)stride, 1));
+        return;
+    }
+
+    unsigned int width = codegen_alloc_register(state, span);
+    unsigned int const_index = constpool_add(state->chunk->const_pool, (Constant){.as_int = (int32_t)stride});
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_LOAD_CONST, width, const_index));
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_MULI, dest, count, width));
+}
+
 static unsigned int codegen_index_address(CodegenState *state, ASTExpr *node) {
     const Type *array_type = node->index.array_type;
     const Type *element = array_type->element;
@@ -1723,19 +1743,7 @@ static unsigned int codegen_index_address(CodegenState *state, ASTExpr *node) {
 
     unsigned int offset = codegen_alloc_register(state, node->span);
 
-    // A stride wider than an operand takes the register form, which costs a
-    // load of the width rather than refusing the element.
-    if (element->size <= VM_MAX_IMMEDIATE) {
-        chunk_add_instruction(state->chunk,
-                              VM_ENCODE_RK(OP_MULI, offset, index, (unsigned int)element->size, 1));
-    } else {
-        unsigned int stride = codegen_alloc_register(state, node->span);
-        unsigned int const_index =
-            constpool_add(state->chunk->const_pool, (Constant){.as_int = (int32_t)element->size});
-
-        chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_LOAD_CONST, stride, const_index));
-        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_MULI, offset, index, stride));
-    }
+    codegen_scale_by_stride(state, offset, index, element->size, node->span);
 
     unsigned int address = codegen_alloc_slots(state, VM_INDIRECT_SLOTS, VM_INDIRECT_SLOTS, node->span);
 
@@ -2023,9 +2031,9 @@ static unsigned int codegen_new_expr(CodegenState *state, ASTExpr *node) {
 }
 
 // 'Array T[n]' leaves the header in two slots: the count written first, then
-// the block allocated against it. The count travels in the header rather than
-// in an operand because the instruction carries a type index, and only that
-// format is relocated at link.
+// the block allocated against it. Nothing here names a type -- the element's
+// width is folded into the byte count, so the allocation is the same
+// instruction whatever the array holds.
 static unsigned int codegen_array_new_expr(CodegenState *state, ASTExpr *node) {
     const Type *type = node->array_new.type;
 
@@ -2045,11 +2053,21 @@ static unsigned int codegen_array_new_expr(CodegenState *state, ASTExpr *node) {
 
     chunk_add_instruction(state->chunk, VM_ENCODE_R(store, rd, count, (unsigned int)length_offset));
 
-    size_t offset =
-        chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_ARRAY_NEW, rd, codegen_type_index(state, type)));
+    // The count is checked for negativity by the allocation, so the byte count
+    // is computed from it rather than the other way round: a negative length
+    // times a width would be a plausible-looking positive.
+    unsigned int bytes = codegen_alloc_register(state, node->span);
 
-    relocation_list_add(&state->unit->type_relocations,
-                        (Relocation){.chunk = state->chunk, .offset = offset});
+    codegen_scale_by_stride(state, bytes, count, type->element->size, node->span);
+
+    unsigned int block = codegen_alloc_slots(state, VM_INDIRECT_SLOTS, VM_INDIRECT_SLOTS, node->span);
+
+    chunk_add_instruction(state->chunk,
+                          VM_ENCODE_RK(OP_ALLOC, block, bytes, (unsigned int)type->element->alignment, 1));
+
+    // The 'data' field is first in the header, so the block's address lands at
+    // the header's own offset.
+    codegen_copy_slots(state, rd, block, VM_INDIRECT_SLOTS);
 
     return rd;
 }

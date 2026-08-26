@@ -106,6 +106,23 @@ bool type_is_owned(const Type *type) {
         return true;
     }
 
+    // A raw address claims nothing about what it names, so nothing frees
+    // through one. The header naming a block is what owns it.
+    if (type->kind == TYPE_PTR) {
+        return false;
+    }
+
+    // A header owns its block, which the pointer naming it cannot say: a raw
+    // address carries no ownership, so the question is the header's own. An
+    // array always owns; a string owns unless it is the borrowing spelling.
+    if (type->kind == TYPE_ARRAY) {
+        return true;
+    }
+
+    if (type->kind == TYPE_STRING) {
+        return !type->is_ref;
+    }
+
     // A struct is not itself an owner: it owns through whichever fields do, and
     // is freed field by field rather than as one value. A string answers here
     // too, through the field naming its characters.
@@ -135,6 +152,21 @@ bool type_is_copyable(const Type *type) {
     // memory only one of them may free. A string reaches the field walk, where
     // the field naming its characters answers the same question.
     if (type->kind == TYPE_INDIRECT) {
+        return type->is_ref;
+    }
+
+    // Copying an address duplicates no ownership, since it carried none.
+    if (type->kind == TYPE_PTR) {
+        return true;
+    }
+
+    // A header that owns its block cannot be copied: two of them would free
+    // one block. Read off the header for the reason type_is_owned gives.
+    if (type->kind == TYPE_ARRAY) {
+        return false;
+    }
+
+    if (type->kind == TYPE_STRING) {
         return type->is_ref;
     }
 
