@@ -204,6 +204,11 @@ typedef enum {
     // registered, and 'Array int[n]' and 'Array Point[n]' return different
     // interned types. The element is written in the type spec rather than
     // carried by an argument, so nothing about a call could recover it.
+    //
+    // A call could only recover it by being told, and there is nowhere to say
+    // it: OP_CALL_EXTERN is I-type and spends all 17 bits on the extern index.
+    // One extern per element type would need no such operand, which is the
+    // shape that would retire this.
     OP_ARRAY_NEW,
 
     // As OP_ADD_PTR, with the offset read from a register rather than an
