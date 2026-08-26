@@ -643,7 +643,7 @@ static void test_reports_returning_a_string_borrow_of_a_local() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test(a: ref string): ref string { let s: string = a .. \"b\"; return s; }");
+    compile(&ctx, "func test(a: str): str { let s: String = a .. \"b\"; return s; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -661,7 +661,7 @@ static void test_reports_a_string_borrow_escaping_its_block() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test(a: ref string) { let p: ref string; { let s: string = a .. \"b\"; p = s; } }");
+    compile(&ctx, "func test(a: str) { let p: str; { let s: String = a .. \"b\"; p = s; } }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -680,8 +680,8 @@ static void test_reports_a_string_borrow_stored_into_a_heap_object() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "struct Doc { body: ref string }\n"
-                  "func test(a: ref string) { let d: box Doc = new Doc; let s: string = a .. \"b\"; "
+    compile(&ctx, "struct Doc { body: str }\n"
+                  "func test(a: str) { let d: box Doc = new Doc; let s: String = a .. \"b\"; "
                   "d.body = s; }");
 
     assert(diagnostics_count(diagnostics) == 1);

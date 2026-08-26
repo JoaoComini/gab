@@ -15,7 +15,7 @@
 */
 
 /*
-    A 'string' value: where the characters are and how many there are. Passed
+    A 'String' value: where the characters are and how many there are. Passed
     and copied by value like a small struct, and owning nothing -- the
     characters belong to whatever allocated them, which for a literal is the
     unit's arena.

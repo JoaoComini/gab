@@ -38,10 +38,10 @@ static void test_conversion_is_owned_to_ref_only() {
 // one. Owning belongs where a scope ends.
 static void test_a_top_level_variable_may_not_own() {
     assert(!test_compiles("struct Node { n: int }\nlet n: box Node = new Node;\n"));
-    assert(!test_compiles("let s: string = \"a\" .. \"b\";\n"));
+    assert(!test_compiles("let s: String = \"a\" .. \"b\";\n"));
 
     // A borrow frees nothing, so it is at home there.
-    assert(test_compiles("let s: ref string = \"hi\";\n"));
+    assert(test_compiles("let s: str = \"hi\";\n"));
 }
 
 // 'ref' and 'box' each qualify the one level they spell, so they nest in either

@@ -117,7 +117,7 @@ void gab_arg_get_struct(GabArgs *args, int index, void *out, size_t size);
 // frees nothing. Not NUL-terminated in general, since a '\0' is an ordinary
 // character, so the length is what says where the string ends.
 //
-// A struct field a host declares is a 'ref string': the host allocated those
+// A struct field a host declares is a 'str': the host allocated those
 // characters and goes on owning them, and the script frees nothing it was lent.
 // The host must outlive the script's use of them, as for every borrow it hands
 // in.

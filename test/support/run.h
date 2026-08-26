@@ -198,6 +198,30 @@ static inline VmRunStatus test_run_status(const char *source) {
     return status;
 }
 
+// Whether a source compiles against a real VM, which is what a program calling
+// a builtin method needs: the builtins are registered on the VM's registry, so
+// a scope built without one resolves no method at all and would report a
+// failure whatever the rule under test says.
+static inline bool test_compiles_on_vm(const char *source) {
+    VM *vm = vm_create();
+
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
+
+    FuncPrototype script;
+    bool compiled = compile_unit(vm, test_in_a_module(source), &script, &diagnostics);
+
+    diagnostics_free(&diagnostics);
+
+    if (compiled) {
+        func_proto_free(&script);
+    }
+
+    vm_free(vm);
+
+    return compiled;
+}
+
 // A compiled program, held open so its instructions can be inspected. The VM
 // stays alive because the function prototypes live on it, not on the script.
 //

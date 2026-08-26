@@ -143,9 +143,7 @@ static const char *type_name(ResolverState *state, Type *type) {
         return "none";
     }
 
-    // A borrowing string keeps the name of what it borrows, so the 'ref' has to
-    // be put back or a mismatch between the two reads as 'string' and 'string'.
-    if (type->name && !(type->kind == TYPE_STRING && type->is_ref)) {
+    if (type->name) {
         return type->name->data;
     }
 
@@ -615,11 +613,15 @@ static bool type_accepts(Type *to, Type *from) {
         return true;
     }
 
-    // An owning string lends to a borrow of one. The reverse is refused: the
-    // characters a borrow names belong to someone else, and an owning slot
-    // would free what it never allocated.
+    // An owning string lends to a view of one. The reverse is refused: the
+    // characters a view names belong to someone else, and an owning slot would
+    // free what it never allocated.
+    //
+    // Which of the two is the view is read off what it owns rather than off a
+    // bit beside it: a 'str' holds its characters through a borrowing field and
+    // a 'String' through an owning one, so the field walk already answers.
     if (to->kind == TYPE_STRING && from && from->kind == TYPE_STRING) {
-        return to->is_ref;
+        return !type_is_owned(to);
     }
 
     if (!type_is_indirect(to) || !to->is_ref) {
@@ -672,8 +674,8 @@ static bool borrow_into(ResolverState *state, ASTExpr **slot, Type *destination,
     // Only something with a home in memory can be lent. A string that owns and
     // has no home is a temporary -- a concatenation -- and its characters are
     // freed where the expression ends, so the borrow would name freed memory.
-    if (destination->kind == TYPE_STRING && destination->is_ref && (*slot)->type &&
-        (*slot)->type->kind == TYPE_STRING && !(*slot)->type->is_ref && !is_addressable(*slot)) {
+    if (destination->kind == TYPE_STRING && !type_is_owned(destination) && (*slot)->type &&
+        (*slot)->type->kind == TYPE_STRING && type_is_owned((*slot)->type) && !is_addressable(*slot)) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, span,
                    "cannot borrow a string that nothing holds, since its characters are freed where the "
                    "expression ends");
@@ -1226,11 +1228,11 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
 
         // A struct has a layout to allocate, and so does a pointer: 'new box T'
         // is a heap slot holding an owning pointer, which is what makes a
-        // 'box box T' fillable rather than merely declarable. A string is a
-        // header with a layout of its own, and zeroed it is the empty string.
-        // A scalar is none of these -- 'new int' would be a boxed scalar, a
-        // different feature.
-        if (type->kind != TYPE_STRUCT && type->kind != TYPE_STRING && !type_is_indirect(type)) {
+        // 'box box T' fillable rather than merely declarable. Anything laid out
+        // from fields has a layout to fill, which is a struct or a string --
+        // zeroed, the latter is the empty string. A scalar has none: 'new int'
+        // would be a boxed scalar, a different feature.
+        if (type->field_count == 0 && !type_is_indirect(type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "cannot allocate %s; 'new' takes a struct or a pointer", type_name(state, type));
             expr->type = resolver_error_type(state);
@@ -1257,7 +1259,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         // outlive every value that reads them and are freed with the unit. So
         // it borrows: nothing in a frame allocated them, and nothing there may
         // free them.
-        expr->type = expr->lit.kind == TYPE_STRING ? registry->builtins.ref_string_type
+        expr->type = expr->lit.kind == TYPE_STRING ? registry->builtins.str_type
                                                    : type_registry_get_builtin(registry, expr->lit.kind);
         break;
     }
@@ -1283,9 +1285,10 @@ static void check_implicit_copy(ResolverState *state, ASTExpr *value, Type *dest
         return;
     }
 
-    // Binding into a 'ref' slot borrows rather than copies: the destination
-    // never frees what it names, so the owner stays the only one.
-    if (destination && destination->is_ref) {
+    // Binding into a slot that owns nothing borrows rather than copies: the
+    // destination never frees what it names, so the owner stays the only one.
+    // True of a 'ref T' and of a 'str', which owns nothing through its fields.
+    if (destination && !type_is_owned(destination)) {
         return;
     }
 
@@ -1341,14 +1344,10 @@ static Type *resolve_type_spec(ResolverState *state, TypeSpec *spec, Span span) 
     // Built from the name outward, which is the order the mask records: bit i is
     // the level wrapped on the i'th time round, so 'ref box T' owns first and
     // borrows that.
-    // A string carries its own borrow bit rather than being wrapped, because
-    // its characters hang off the value itself: 'ref string' is the same two
-    // slots as 'string', borrowed. Wrapping would put an indirection in front
-    // of a header that is already one.
-    if (type->kind == TYPE_STRING && spec->indirect_depth == 1 && (spec->ref_levels & 1)) {
-        return state->current_scope->type_registry->builtins.ref_string_type;
-    }
-
+    //
+    // A string takes this path like anything else: 'ref String' is the address
+    // of a slot holding a header, and the borrow of the characters themselves
+    // is a type of its own, named 'str'.
     for (unsigned int i = 0; i < spec->indirect_depth; i++) {
         bool is_ref = (spec->ref_levels >> i) & 1;
         type = type_registry_indirect_to_kind(state->current_scope->type_registry, type, is_ref);
@@ -1711,12 +1710,12 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
                     !type_accepts(decl_type, init_type)) {
                     // A borrow reaching an owning string is the one mismatch
                     // with a remedy to name: the characters belong to the
-                    // arena, and 'clone()' is what copies them into a string
+                    // arena, and 'to_owned()' is what copies them into a string
                     // this slot may free.
                     if (decl_type->kind == TYPE_STRING && init_type->kind == TYPE_STRING) {
                         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->var_decl.initializer->span,
-                                   "a %s borrows characters it does not own, so a 'string' cannot take it; "
-                                   "write 'ref string', or '.clone()' to copy them",
+                                   "a %s borrows characters it does not own, so a 'String' cannot take it; "
+                                   "write 'str', or '.to_owned()' to copy them",
                                    type_name(state, init_type));
                         decl_type = resolver_error_type(state);
                         break;

@@ -17,11 +17,17 @@ static Type *register_builtin(TypeRegistry *registry, TypeKind kind, const char 
     return type;
 }
 
-// The 'string' type, laid out from its two fields. 'is_ref' decides only
-// whether the field naming the characters owns them: that one bit is the whole
-// difference between a string and a borrow of one.
+// The 'String' type, laid out from its two fields. 'is_ref' decides only
+// whether the field naming the characters owns them, which is the whole
+// difference between a string and a view of one -- and is where every later
+// question about ownership reads its answer, rather than from a bit beside it.
 static Type *string_builtin_create(TypeRegistry *registry, bool is_ref) {
-    Type *type = type_struct_create(registry->arena, string_from_cstr(registry->strings, "string"), 2);
+    // Each half carries its own name: 'String' owns its characters, 'str'
+    // borrows someone else's. Two names rather than one, because the two differ
+    // in what a slot holding them must free, and a diagnostic naming both
+    // 'String' would read as a mismatch between a type and itself.
+    const char *name = is_ref ? "str" : "String";
+    Type *type = type_struct_create(registry->arena, string_from_cstr(registry->strings, name), 2);
     type->kind = TYPE_STRING;
 
     Type *characters = type_registry_indirect_to_kind(registry, registry->builtins.characters_type, is_ref);
@@ -49,13 +55,12 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     // comparison, literals and the borrow spelling stay the kind's own.
     registry->builtins.string_type = string_builtin_create(registry, false);
 
-    // Same layout and same name: 'ref' is spelled in the type spec rather than
-    // being a type a script can name, so this one is never registered under a
-    // name of its own. It differs only in the field naming the characters,
-    // which borrows here and owns there.
-    registry->builtins.ref_string_type = string_builtin_create(registry, true);
-    registry->builtins.ref_string_type->is_ref = true;
-    registry->builtins.ref_string_type->owner = registry->builtins.string_type;
+    // Same layout, differing only in the field naming the characters, which
+    // borrows here and owns there. 'ref String' is a different type again: the
+    // address of a slot holding a header, which is what 'ref' means everywhere.
+    registry->builtins.str_type = string_builtin_create(registry, true);
+
+    registry->builtins.str_type->owner = registry->builtins.string_type;
 
     // The VM and the host both read these two fields as GabStringValue, so the
     // computed layout and the C struct are two statements of one thing.

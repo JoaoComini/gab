@@ -37,10 +37,14 @@ typedef struct {
     Type *bool_type;
     Type *string_type;
 
-    // 'ref string'. A distinct interned Type from the owning one, for the
-    // reason every 'ref T' is: ownership is read off the type, and a literal
+    // 'str'. The characters of a string, borrowed: the same two slots as a
+    // 'String' and copied like one, owning nothing. A distinct interned Type
+    // from the owning one because ownership is read off the type, and a literal
     // and a concatenation must not answer it the same way.
-    Type *ref_string_type;
+    //
+    // Not what 'ref String' names. That is an indirection to a slot holding a
+    // header, which is what 'ref' builds for every type in the language.
+    Type *str_type;
 
     // The element a string's characters are a buffer of. A byte: the width the
     // stride of a walk over those characters advances by.

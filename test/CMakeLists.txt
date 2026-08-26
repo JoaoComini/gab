@@ -28,6 +28,7 @@ set(
     vm/clone_test.c
     ast/cfg_test.c
     vm/string_test.c
+    vm/str_test.c
     builtin/string_method_test.c
     vm/neg_test.c
     vm/not_test.c
