@@ -103,6 +103,19 @@ static void test_equal_strings_compare_equal() {
                       "let r: bool = f();") == false);
 }
 
+// Two references naming equal characters at different addresses. Interning
+// makes equal literals one address, so a comparison that read only the address
+// would answer this one wrongly.
+static void test_equal_characters_at_different_addresses() {
+    assert(test_run_bool("func f(): bool {\n"
+                         "    let o: String = \"hi\" .. \"\";\n"
+                         "    let a: ref str = o;\n"
+                         "    let b: ref str = \"hi\";\n"
+                         "    return a == b;\n"
+                         "}\n"
+                         "let r: bool = f();") == true);
+}
+
 // Length is part of the comparison, so a prefix is not the string it prefixes.
 static void test_a_prefix_is_not_equal() {
     assert(
@@ -403,6 +416,7 @@ int main(void) {
     test_a_string_is_two_fields();
     test_a_literal_loads_its_characters_and_length();
     test_equal_strings_compare_equal();
+    test_equal_characters_at_different_addresses();
     test_a_prefix_is_not_equal();
     test_strings_compare_unequal();
     test_a_null_is_compared_like_any_character();

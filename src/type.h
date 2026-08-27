@@ -277,13 +277,6 @@ struct Type {
     // address. Beside the width for that reason -- a type that has no width of
     // its own is exactly one whose reference carries what it lacks.
     //
-    // Two facts rather than one read off the other: a sized type may want
-    // nothing carried, and an unsized one may want something other than a
-    // count. Set where the type is built, so a type says what it is once rather
-    // than being added to a switch elsewhere that would have to be found.
-    bool sized;
-    TypeMetadata metadata;
-
     // The declaration an application instantiates: every 'Array T,N' names the
     // bare 'Array'. NULL for a type that is not an instantiation.
     //
@@ -314,8 +307,12 @@ struct Type {
             const Type *pointee;
         } indirect;
 
-        // TYPE_STRUCT, TYPE_STRING, TYPE_STR: the fields the layout came from.
-        // A string's two are its characters and their count.
+        // TYPE_STRUCT, TYPE_STRING: the fields the layout came from. A string's
+        // two are its characters and their count.
+        //
+        // Not TYPE_STR: those characters are what a 'str' is, so it holds no
+        // fields naming them. What does is a reference to one, and that is the
+        // reference's own shape rather than anything read off the pointee.
         struct {
             TypeField *fields;
             size_t field_count;
@@ -393,6 +390,14 @@ bool type_is_copyable(const Type *type);
 // Which field a name denotes, or NULL when the type has no such field. Where it
 // begins is a layout question, so it is asked of the registry rather than here.
 const TypeField *type_find_field(const Type *type, const String *name);
+
+// The fields of 'lender' that a reference to 'pointee' carries, written into
+// 'out' in the order the reference holds them, and how many there are.
+//
+// By name rather than by position: what a reference carries is its own shape,
+// and a lender declaring more than that -- a capacity beside a count -- lends
+// the fields asked for wherever it happens to keep them.
+size_t type_lent_fields(const Type *lender, const Type *pointee, const TypeField **out, size_t max);
 
 // A type as the source wrote it, before any name is looked up. The syntactic
 // counterpart of Type: this is what a type position parses into, and the

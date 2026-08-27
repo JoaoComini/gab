@@ -275,6 +275,7 @@ static unsigned int codegen_alloc_slots(CodegenState *state, unsigned int count,
                                         Span span);
 static void codegen_release_registers(CodegenState *state, unsigned int saved);
 static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned int src, unsigned int count);
+static unsigned int codegen_lend_expr(CodegenState *state, ASTExpr *node);
 
 // Type layout in frame slots.
 static size_t slot_release_width(TypeRegistry *registry, const Type *type);
@@ -1443,6 +1444,8 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
         return codegen_addr_of_expr(state, ast);
     case EXPR_DEREF:
         return codegen_deref_expr(state, ast);
+    case EXPR_LEND:
+        return codegen_lend_expr(state, ast);
     case EXPR_NEG:
         return codegen_neg_expr(state, ast);
     case EXPR_NOT:
@@ -1477,11 +1480,57 @@ static Constant value_from_literal(Literal lit) {
     abort();
 }
 
+// A value handing over a reference to what it holds: the fields the reference
+// carries, copied out of the header by the offsets its layout gives them.
+//
+// Read by offset rather than taken as a run of slots, so a header holding more
+// than the reference does -- a capacity beside the length -- lends the two words
+// a 'ref str' is and leaves the rest where it sits. That the two happen to be
+// the same bytes today is what this stops depending on.
+static unsigned int codegen_lend_expr(CodegenState *state, ASTExpr *node) {
+    const Type *lent = node->unary.target->type;
+    const Type *reference = node->type;
+
+    unsigned int source = codegen_expr(state, node->unary.target);
+
+    unsigned int rd = codegen_alloc_slots(state, type_slot_count(state->registry, reference),
+                                          type_align_slots(state->registry, reference), node->span);
+
+    const TypeLayout *layout = type_registry_layout_of(state->registry, lent);
+
+    // Each field the reference carries, found in the header by name. By name
+    // rather than by position, so a header that declares a capacity between its
+    // address and its count still lends the two the reference asks for.
+    const TypeField *carried[VM_MAX_LENT_FIELDS];
+    size_t count = type_lent_fields(lent, type_pointee(reference), carried, VM_MAX_LENT_FIELDS);
+
+    assert(count > 0 && "a lend handed over nothing");
+
+    unsigned int at = 0;
+
+    for (size_t i = 0; i < count; i++) {
+        size_t index = (size_t)(carried[i] - type_fields(lent));
+
+        assert(layout->offsets[index] % VM_SLOT_SIZE == 0 && "a lent field is always slot-aligned");
+
+        codegen_copy_slots(state, rd + at, source + (unsigned int)(layout->offsets[index] / VM_SLOT_SIZE),
+                           type_slot_count(state->registry, carried[i]->type));
+
+        at += type_slot_count(state->registry, carried[i]->type);
+    }
+
+    return rd;
+}
+
 static unsigned int codegen_string_literal(CodegenState *state, ASTExpr *node) {
     // Decoded and interned by the lexer, so the node already holds the String *.
     String *text = node->lit.as_string;
 
-    unsigned int rd = codegen_alloc_slots(state, VM_STRING_SLOTS, VM_INDIRECT_SLOTS, node->span);
+    // A literal is a reference to characters the unit holds, not a header
+    // owning them, so it takes what a reference occupies rather than what a
+    // 'String' does. The two are the same width today and need not stay so.
+    unsigned int rd = codegen_alloc_slots(state, type_slot_count(state->registry, node->type),
+                                          type_align_slots(state->registry, node->type), node->span);
 
     // Interned within the unit, as a type index is: the index means nothing
     // until linking gives the unit its base. See codegen_new_expr.
@@ -2466,7 +2515,12 @@ static unsigned int codegen_rhs(CodegenState *state, BinOp op, ASTExpr *rhs, con
 static OpCode bin_op_opcode_for(BinOp op, const Type *left_type, RhsKind kind) {
     // A string is compared by its characters rather than its slots, so the
     // opcode is chosen by the operand type before the numeric families.
-    if (left_type->kind == TYPE_STRING) {
+    //
+    // However the characters are named: a reference to them compares the same
+    // way a header does, since what is read is the characters either way. A
+    // reference falling through to the integer families would compare the
+    // address alone, which answers only for two names of one allocation.
+    if (left_type->kind == TYPE_STRING || type_is_str_ref(left_type)) {
         return op == BIN_OP_EQUAL ? OP_CMP_EQS : OP_CMP_NES;
     }
 

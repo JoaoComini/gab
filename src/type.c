@@ -14,11 +14,6 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->name = name;
     type->decl = NULL;
 
-    // Held by a slot and named by a bare address, which is what all but the
-    // handful that say otherwise are.
-    type->metadata = TYPE_META_NONE;
-    type->sized = true;
-
     // One arm zeroed is every arm zeroed: whichever the kind reads, it reads
     // nothing rather than whatever the arena held.
     memset(&type->record, 0, sizeof(type->record));
@@ -57,18 +52,80 @@ const TypeField *type_find_field(const Type *type, const String *name) {
     return NULL;
 }
 
+size_t type_lent_fields(const Type *lender, const Type *pointee, const TypeField **out, size_t max) {
+    // What a reference to characters carries. Named here because the pointee is
+    // the characters themselves, which have no fields: a 'str' is a run of
+    // bytes, and the address and count naming it belong to the reference.
+    static const char *const of_characters[] = {"data", "length"};
+
+    if (!pointee || pointee->kind != TYPE_STR) {
+        return 0;
+    }
+
+    size_t count = 0;
+
+    for (size_t i = 0; i < sizeof(of_characters) / sizeof(*of_characters) && count < max; i++) {
+        for (size_t j = 0; j < type_field_count(lender); j++) {
+            const TypeField *field = &type_fields(lender)[j];
+
+            if (field->name && strcmp(field->name->data, of_characters[i]) == 0) {
+                out[count++] = field;
+                break;
+            }
+        }
+    }
+
+    return count;
+}
+
 // A raw pointer is deliberately not one of these. Every caller is a
 // language-level path -- an auto-deref, a lend, a field access -- and a 'ptr T'
 // is reachable from none of them: it names a block the header beside it
 // describes, and reaching through it is that header's business.
-TypeMetadata type_metadata_of(const Type *type) { return type ? type->metadata : TYPE_META_NONE; }
+TypeMetadata type_metadata_of(const Type *type) {
+    if (!type) {
+        return TYPE_META_NONE;
+    }
+
+    switch (type->kind) {
+    // How far the characters run is not in their type, so a reference to them
+    // carries that count beside the address.
+    case TYPE_STR:
+        return TYPE_META_LENGTH;
+
+    // Named by a bare address, which is what all but the handful that say
+    // otherwise are.
+    default:
+        return TYPE_META_NONE;
+    }
+}
 
 bool type_is_str_ref(const Type *type) {
     return type && type->kind == TYPE_REF && type->indirect.pointee &&
            type->indirect.pointee->kind == TYPE_STR;
 }
 
-bool type_is_sized(const Type *type) { return !type || type->sized; }
+// Whether a value of this type can be held at all.
+//
+// Read off the kind rather than stored, because it is what the kind means: the
+// characters of a string run however far they run, and no slot can reserve room
+// for that. A type that named something unsized would be answering for its
+// kind, not for itself.
+bool type_is_sized(const Type *type) {
+    if (!type) {
+        return true;
+    }
+
+    switch (type->kind) {
+    // The characters themselves, however many there are. Reached only through a
+    // reference, which carries the count the type does not.
+    case TYPE_STR:
+        return false;
+
+    default:
+        return true;
+    }
+}
 
 const Type *type_pointee(const Type *type) {
     if (!type) {
@@ -94,7 +151,6 @@ const TypeField *type_fields(const Type *type) {
     switch (type->kind) {
     case TYPE_STRUCT:
     case TYPE_STRING:
-    case TYPE_STR:
         return type->record.fields;
 
     default:
@@ -110,7 +166,6 @@ size_t type_field_count(const Type *type) {
     switch (type->kind) {
     case TYPE_STRUCT:
     case TYPE_STRING:
-    case TYPE_STR:
         return type->record.field_count;
 
     default:

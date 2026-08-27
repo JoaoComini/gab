@@ -32,6 +32,24 @@ typedef struct {
 } GabStringValue;
 
 /*
+    What a 'ref str' is: where the characters are and how many of them the
+    reference names.
+
+    Its own type rather than the header's, though the two are the same words
+    today. A 'str' is the characters themselves and has no width, so what a
+    reference to it carries is not read off the pointee -- it is this, and a
+    header lends it by handing over the fields it names.
+
+    What the two are is what separates them: a header owns its characters and
+    may grow fields of its own, while a reference names someone else's and never
+    carries more than it takes to find them.
+*/
+typedef struct {
+    const char *data;
+    int32_t length;
+} GabStrRef;
+
+/*
     An 'Array T' value: where the elements are and how many. The same two slots
     a string has, and copied the same way -- what differs is that the element is
     whatever the array was written over, which is what its drop walk reads.

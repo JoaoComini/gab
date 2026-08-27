@@ -232,13 +232,16 @@ void vm_conditionali(VM *vm, Instruction instruction, bool (*func)(int32_t, int3
     vm_write_i32(vm, rd, func(vm_read_i32(vm, r1), vm_operand2i(vm, instruction)));
 }
 
-// Whether two string headers name the same characters. Length first, since it
+// Whether two references name the same characters. Length first, since it
 // settles most pairs without reading any of them, and identical addresses
 // second: interning makes equal literals one address, but a string built at
 // runtime is never interned, so identity is a fast path and never the answer.
+//
+// References, since '==' takes them however the characters are owned: a header
+// reaches here having lent one.
 bool vm_equals(VM *vm, size_t r1, size_t r2) {
-    GabStringValue a;
-    GabStringValue b;
+    GabStrRef a;
+    GabStrRef b;
 
     memcpy(&a, vm->registers + r1 * VM_SLOT_SIZE, sizeof(a));
     memcpy(&b, vm->registers + r2 * VM_SLOT_SIZE, sizeof(b));
@@ -436,8 +439,10 @@ static void vm_run_loop(VM *vm) {
                 const String *text = vm->program.strings.data[string_index];
 
                 // Borrowed, not copied: the characters are interned and outlive
-                // every frame, so the header names them where they already are.
-                GabStringValue value = {.data = text->data, .length = (int32_t)text->length};
+                // every frame, so the reference names them where they already
+                // are. A reference rather than a header, since a literal owns
+                // nothing and its type is a 'ref str'.
+                GabStrRef value = {.data = text->data, .length = (int32_t)text->length};
 
                 memcpy(vm->registers + rd * VM_SLOT_SIZE, &value, sizeof(value));
                 VM_NEXT();
@@ -516,8 +521,10 @@ static void vm_run_loop(VM *vm) {
                 unsigned int r1 = VM_DECODE_R_R1(instruction);
                 unsigned int r2 = VM_DECODE_R_R2(instruction);
 
-                GabStringValue left;
-                GabStringValue right;
+                // The operands are references to characters, whatever they were
+                // lent from; the result below is a header that owns.
+                GabStrRef left;
+                GabStrRef right;
 
                 memcpy(&left, vm->registers + r1 * VM_SLOT_SIZE, sizeof(left));
                 memcpy(&right, vm->registers + r2 * VM_SLOT_SIZE, sizeof(right));

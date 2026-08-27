@@ -354,27 +354,13 @@ static void test_a_string_owns_and_a_reference_to_one_does_not() {
     assert(!type_is_sized(registry->builtins.str_type));
     assert(type_is_sized(borrowing));
 
-    // Two facts a type carries, not one read off the other. Each answers
-    // independently of the other, so a type that is unsized without wanting a
-    // count carried -- or sized while wanting one -- is expressible rather than
-    // being decided by whichever switch was reached.
+    // What a reference carries is a fact the type is given, while whether a
+    // value can be held is what its kind means. So a reference to characters
+    // carries a count while the reference itself is held like any other value.
     assert(type_metadata_of(registry->builtins.str_type) == TYPE_META_LENGTH);
     assert(type_metadata_of(borrowing) == TYPE_META_NONE);
     assert(type_metadata_of(owning) == TYPE_META_NONE);
     assert(type_is_sized(owning));
-
-    // Built past the registry deliberately: this asserts on what a type carries
-    // rather than on what a program can name, and the two questions are asked
-    // of different things.
-    Type *probe = type_create(ctx.arena, TYPE_STRUCT, NULL);
-
-    assert(type_is_sized(probe));
-    assert(type_metadata_of(probe) == TYPE_META_NONE);
-
-    probe->sized = false;
-
-    assert(!type_is_sized(probe));
-    assert(type_metadata_of(probe) == TYPE_META_NONE);
 
     // An array of an owning element frees each of them, so it carries a drop
     // the same way. An array of ints owns nothing and has none.

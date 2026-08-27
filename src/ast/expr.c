@@ -57,6 +57,13 @@ ASTExpr *ast_addr_of_expr_create(Span span, ASTExpr *target) {
     return node;
 }
 
+ASTExpr *ast_lend_expr_create(Span span, ASTExpr *target) {
+    ASTExpr *node = ast_expr_create(span);
+    node->kind = EXPR_LEND;
+    node->unary.target = target;
+    return node;
+}
+
 ASTExpr *ast_move_expr_create(Span span, ASTExpr *target) {
     ASTExpr *node = ast_expr_create(span);
     node->kind = EXPR_MOVE;
@@ -139,6 +146,7 @@ void ast_expr_free(ASTExpr *expr) {
         break;
     case EXPR_ADDR_OF:
     case EXPR_DEREF:
+    case EXPR_LEND:
     case EXPR_NEG:
     case EXPR_NOT:
     case EXPR_MOVE:

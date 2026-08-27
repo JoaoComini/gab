@@ -12,7 +12,7 @@
 // Where 'needle' first occurs in 'haystack' at or after 'from', or -1. The
 // empty needle occurs at the position asked for, which is what makes
 // 'index_of("")' zero.
-static int32_t string_find(GabStringValue haystack, GabStringValue needle, int32_t from) {
+static int32_t string_find(GabStrRef haystack, GabStrRef needle, int32_t from) {
     // Checked before the loop bound is computed: the lengths are unsigned, so a
     // needle longer than the haystack would wrap the subtraction into a huge
     // bound rather than an empty range.
@@ -40,7 +40,7 @@ static void string_is_empty(Args *args) { args_return_bool(args, args_string(arg
 // An index outside the string fails the run rather than answering: there is no
 // value that could mean 'no character' without a caller mistaking it for one.
 static void string_at(Args *args) {
-    GabStringValue string = args_string(args, 0);
+    GabStrRef string = args_string(args, 0);
     int32_t index = args_int(args, 1);
 
     if (index < 0 || (size_t)index >= (size_t)string.length) {
@@ -58,8 +58,8 @@ static void string_at(Args *args) {
 // characters there belong to whatever the arena interned next -- so the answer
 // would depend on that rather than on the two strings.
 static void string_starts_with(Args *args) {
-    GabStringValue string = args_string(args, 0);
-    GabStringValue prefix = args_string(args, 1);
+    GabStrRef string = args_string(args, 0);
+    GabStrRef prefix = args_string(args, 1);
 
     args_return_bool(args,
                      prefix.length <= string.length && memcmp(string.data, prefix.data, prefix.length) == 0);
@@ -69,8 +69,8 @@ static void string_starts_with(Args *args) {
 // length is checked first for the reason 'starts_with' gives, and here it also
 // keeps the subtraction below from wrapping.
 static void string_ends_with(Args *args) {
-    GabStringValue string = args_string(args, 0);
-    GabStringValue suffix = args_string(args, 1);
+    GabStrRef string = args_string(args, 0);
+    GabStrRef suffix = args_string(args, 1);
 
     args_return_bool(args,
                      suffix.length <= string.length && memcmp(string.data + (string.length - suffix.length),
@@ -90,8 +90,8 @@ static void string_index_of(Args *args) {
 // 's.count(o)'. How many non-overlapping occurrences of 'o' the receiver holds:
 // a match resumes past the one just found, so 'aaa' holds one 'aa'.
 static void string_count(Args *args) {
-    GabStringValue string = args_string(args, 0);
-    GabStringValue needle = args_string(args, 1);
+    GabStrRef string = args_string(args, 0);
+    GabStrRef needle = args_string(args, 1);
 
     // The empty needle matches at every position without consuming one, so the
     // loop below would never advance past it.
@@ -114,7 +114,7 @@ static void string_count(Args *args) {
 // -- a literal, or the join of two -- becomes something a 'String' slot may
 // hold.
 static void string_to_owned(Args *args) {
-    GabStringValue string = args_string(args, 0);
+    GabStrRef string = args_string(args, 0);
 
     args_return_string_copy(args, string.data, string.length);
 }
