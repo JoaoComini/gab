@@ -142,38 +142,23 @@ typedef struct TypeRegistry {
 bool type_registry_add_method(TypeRegistry *registry, TypeHandle type, String *name, Symbol *method);
 Symbol *type_registry_find_method(TypeRegistry *registry, TypeHandle type, const String *name);
 
-// Declares a nominal type, and finishes one.
-//
-// Two calls rather than one because a struct is reachable by name before its
-// fields resolve -- that is what lets a field name the struct it is declared in
-// -- so there is a window where the type exists without a layout. The window is
-// here rather than in the resolver, which is the whole of why a type cannot be
-// built anywhere else.
+// Declares a nominal type: interns its identity under the declaration that
+// names it, and hands back the Type nothing else may build.
 //
 // Identity is the declaration: the scope it was declared in and the name it was
 // given, so two modules each declaring a 'Config' declare two types however
 // alike their fields.
+//
+// The type comes back with no layout, because a declaration does not have one:
+// its name is bound here so that a field may name it, and its width follows
+// later from fields that may name types not yet declared. What may be done with
+// such a type is what needs no width -- name it, point at it -- which is what
+// makes 'struct A { b: box B }' resolve before B exists.
 Type *type_registry_declare_struct(TypeRegistry *registry, const Scope *scope, String *name,
                                    size_t max_fields);
 
-// Computes the layout and hands back the handle. The only way a declared type
-// becomes one anything else may hold: until this runs it has no width, and
-// laying out whatever holds it would read a size of zero.
-TypeHandle type_registry_finish_struct(TypeRegistry *registry, Type *type);
-
-// Takes a failed declaration back out. A struct is registered before its fields
-// resolve, so one that fails has to be removed rather than left half-built for
-// the next lookup to find.
-void type_registry_withdraw_struct(TypeRegistry *registry, const Scope *scope, String *name);
-
-// A type, by the declaration that names it.
-//
-// May be one still resolving its fields: a struct is registered before them so
-// that a field may point at the struct it is declared in, which is what makes
-// 'struct Node { next: box Node }' resolve. Such a type has no layout yet, so
-// what may be done with one is take its address -- 'type_is_sized' and the
-// containment check are what keep it from being held by value before its width
-// is known.
+// A type, by the declaration that names it. May be one whose layout is not yet
+// computed, for the reason above.
 TypeHandle type_registry_find_struct(TypeRegistry *registry, const Scope *scope, String *name);
 
 // A builtin, by the name it goes by. Declared under no scope, since it belongs

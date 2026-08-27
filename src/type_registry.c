@@ -42,8 +42,9 @@ static Type *string_builtin_create(TypeRegistry *registry) {
 
     // A string owns its characters, always: what borrows them is a 'ref str',
     // which owns nothing because no reference does. So this is not a question
-    // the type has to be asked -- it is what being a String means.
-    type->drop = object_drop_string;
+    // the type has to be asked -- it is what being a String means, and
+    // object_select_drop reads it off the kind.
+    object_select_drop(registry->arena, type);
 
     return type;
 }
@@ -111,24 +112,12 @@ Type *type_registry_declare_struct(TypeRegistry *registry, const Scope *scope, S
                                    size_t max_fields) {
     Type *type = type_struct_create(registry->arena, name, max_fields);
 
-    // Registered before its fields are known, so a field naming the struct
-    // being declared finds this entry rather than building a second.
+    // Interned as soon as its name is bound, so that every field naming it --
+    // in this declaration or in one further down the file -- finds this entry
+    // rather than building a second.
     nominal_key_insert(registry->nominals, (NominalKey){.scope = scope, .name = name}, type);
 
     return type;
-}
-
-TypeHandle type_registry_finish_struct(TypeRegistry *registry, Type *type) {
-    (void)registry;
-
-    type_layout_compute(type);
-    object_select_drop(type);
-
-    return type;
-}
-
-void type_registry_withdraw_struct(TypeRegistry *registry, const Scope *scope, String *name) {
-    nominal_key_delete(registry->nominals, (NominalKey){.scope = scope, .name = name});
 }
 
 TypeHandle type_registry_find_builtin(TypeRegistry *registry, String *name) {
@@ -229,7 +218,7 @@ TypeHandle type_registry_array_of(TypeRegistry *registry, TypeHandle element, in
     // second.
     application_insert(registry, app, type);
 
-    object_select_drop(type);
+    object_select_drop(registry->arena, type);
 
     return type;
 }
@@ -274,7 +263,7 @@ static TypeHandle indirect_to(TypeRegistry *registry, TypeCtor ctor, TypeKind ki
     // than building a second.
     application_insert(registry, app, type);
 
-    object_select_drop(type);
+    object_select_drop(registry->arena, type);
 
     return type;
 }

@@ -80,10 +80,10 @@ TypeHandle scope_type_lookup_local(Scope *scope, String *name);
 TypeHandle scope_type_lookup_declaring(Scope *scope, String *name);
 Symbol *scope_symbol_lookup_declaring(Scope *scope, String *name);
 
-// Removes a name this scope declared. Exists for one case: a struct is
-// registered before its fields resolve, so that a field may point at the struct
-// being declared, and a struct whose fields fail to resolve has to be taken
-// back out — it has no layout, so nothing may use it as a type.
+// Removes a name this scope declared. Exists for one case: a struct's name is
+// bound before its fields resolve, so that any field in the unit may name it,
+// and one whose layout then fails has to be taken back out — it has no width,
+// so nothing may use it as a type.
 void scope_withdraw_type(Scope *scope, String *name);
 
 // Returns false if this scope already declares the name. Declaring a name is a

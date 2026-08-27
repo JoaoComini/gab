@@ -13,6 +13,48 @@
 #include <stdlib.h>
 #include <string.h>
 
+/*
+    A struct as declared, before it has a layout.
+
+    Complete as soon as its name is bound: the name, the scope it was bound in,
+    the type interned for it, and the fields as the source wrote them. None of
+    that depends on another declaration, which is what lets every struct in a
+    unit be declared before any of their fields resolve -- and so what lets two
+    structs name each other.
+
+    The layout is derived from this and memoized, rather than being part of it.
+    Deriving one reads other declarations, so it may not run until they are all
+    bound; and it may not run twice, since a Type is laid out once.
+*/
+typedef struct StructDecl {
+    ASTStmt *stmt;
+    Scope *scope;
+    String *name;
+
+    // The interned identity, which the declaration has from the start. Const
+    // once laid out, but built through here, so it is the mutable pointer.
+    Type *type;
+
+    enum {
+        // Bound, with no layout asked for yet.
+        STRUCT_DECLARED,
+
+        // Being laid out. A field reaching a declaration in this state by value
+        // is a containment cycle: its width is waiting on itself.
+        STRUCT_LAYING_OUT,
+
+        STRUCT_LAID_OUT,
+
+        // Laid out as far as it goes: a field failed, so the type is poisoned
+        // rather than half-built. Distinct from LAID_OUT so a second demand
+        // reports nothing a second time.
+        STRUCT_POISONED,
+    } state;
+} StructDecl;
+
+#define struct_decl_list_item_free(item) ((void)(item))
+GAB_LIST(StructDeclList, struct_decl_list, StructDecl *)
+
 typedef struct {
     TypeHandle return_type;
 
@@ -41,6 +83,12 @@ typedef struct {
     String *module_name;
 
     FuncContext func_context;
+
+    // Every struct this unit declared, in declaration order. Held so that the
+    // layouts can be forced once the whole unit's names are bound -- a struct
+    // must leave this unit laid out, since the AST its fields were written in
+    // does not outlive the unit.
+    StructDeclList struct_decls;
 
     Diagnostics *diagnostics;
 } ResolverState;
@@ -810,6 +858,17 @@ bool is_comparable_type(TypeHandle t) {
 
 static TypeHandle resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span);
 
+// Computes the layout this type owes if it is held by value, and reports back
+// the declaration a cycle closes on when that layout is waiting on itself.
+//
+// A declaration is bound before its fields resolve, so a type may name a struct
+// whose width is not yet known -- and every by-value use of one needs that
+// width now rather than whenever its own declaration is reached. The
+// layout-level questions are exactly the by-value ones: how wide a field is,
+// how far an array strides. An indirection asks none of them, which is why it
+// is not one of these and why a ring through a 'box' stays finite.
+static StructDecl *element_completes_a_cycle(ResolverState *state, TypeHandle type);
+
 // Rejects a type nothing can hold. How far an unsized value runs is not in its
 // type, so a slot, a field or a parameter has no width to reserve for one: a
 // reference carries that count and is what every use of it goes through.
@@ -1574,6 +1633,19 @@ static TypeHandle resolve_type_expr(ResolverState *state, TypeExpr *expr, Span s
             return resolver_error_type(state);
         }
 
+        // The element's width is what every index strides by, so it is owed
+        // here rather than wherever the element's own declaration is reached --
+        // and a run of a struct still being laid out is that struct waiting on
+        // its own width, which is a containment cycle however many elements
+        // long the run is.
+        StructDecl *cycle = element_completes_a_cycle(state, element);
+
+        if (cycle) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "struct '%s' cannot contain itself",
+                       cycle->name->data);
+            return resolver_error_type(state);
+        }
+
         // A zero-width element would make every index the same address, so
         // there would be nothing for a length to count.
         if (element->size == 0) {
@@ -1637,10 +1709,36 @@ static TypeHandle resolve_type_expr(ResolverState *state, TypeExpr *expr, Span s
 
 static void resolve_stmt(ResolverState *state, ASTStmt *stmt);
 
-// Declares the struct's Type: its name, its fields, and its layout. Split from
-// the body walk so the pre-pass can run it over a whole unit's top level
-// before any signature mentions a type.
-static void declare_struct(ResolverState *state, ASTStmt *stmt) {
+// The declaration whose width holding this type by value depends on, or NULL
+// when it depends on none of this unit's.
+//
+// An array is a run of its element, so it is held by value exactly as the
+// element is and the walk continues through it. An indirection is where the
+// walk stops: what a 'box T' or a 'ref T' costs does not depend on T's width,
+// which is what keeps a ring through one finite and is how a linked structure
+// is written.
+//
+// A linear scan because the list is one unit's structs and the question is
+// asked once per field of each.
+static StructDecl *decl_held_by_value(ResolverState *state, TypeHandle type) {
+    while (type && type->kind == TYPE_ARRAY) {
+        type = type_array_element(type);
+    }
+
+    for (size_t i = 0; i < state->struct_decls.size; i++) {
+        if (state->struct_decls.data[i]->type == type) {
+            return state->struct_decls.data[i];
+        }
+    }
+
+    return NULL;
+}
+
+// Binds the struct's name to a type with no layout. Everything a declaration is
+// -- the name, the scope, the fields as written -- is settled here, and nothing
+// it needs comes from another declaration, so a whole unit's structs can be
+// bound before any field resolves.
+static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
     stmt->struct_decl.declared = true;
 
     // Declared under its bare name into the scope it appears in, so two
@@ -1653,25 +1751,86 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
     if (scope_type_lookup_declaring(state->current_scope, struct_name)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "type '%s' is already declared",
                    struct_name->data);
-        return;
+        return NULL;
     }
 
-    // Declared through the registry, which owns every type a program can name.
-    // Not finished yet: its fields and its layout are still to come, which is
-    // why the declaring call and the finishing one are separate.
     Type *type = type_registry_declare_struct(state->current_scope->type_registry, state->current_scope,
                                               struct_name, stmt->struct_decl.fields.size);
 
-    // Registered under its name *before* its fields resolve, so that a field
-    // pointing at the struct being declared finds it. A scene graph is exactly
-    // this shape — 'struct Node { parent: ref Node, child: box Node }' — and
-    // without this it fails with "unknown type", which the containment check
-    // below was already written expecting not to happen.
-    //
-    // Safe because only a pointer to self can appear: a struct containing
-    // itself by value is rejected below, before its size is ever needed, and
-    // the layout is computed only once every field has resolved.
     scope_decl_type(state->current_scope, struct_name, type);
+
+    StructDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(StructDecl));
+
+    *decl = (StructDecl){
+        .stmt = stmt,
+        .scope = state->current_scope,
+        .name = struct_name,
+        .type = type,
+        .state = STRUCT_DECLARED,
+    };
+
+    struct_decl_list_add(&state->struct_decls, decl);
+
+    return decl;
+}
+
+static void layout_struct(ResolverState *state, StructDecl *decl);
+
+// The declaration a by-value use of this type closes a containment cycle on, or
+// NULL when the use is finite. Forces the layout of whatever declaration it reaches, so
+// that a field naming a struct declared further down has a width by the time
+// this returns -- and a declaration reached while it is still being laid out is
+// the cycle, since its width is waiting on itself. A field and an array's
+// element ask this identically: both are held by value.
+//
+// That declaration is what the diagnostic names rather than the one being laid
+// out: it is the one the ring closes on.
+static StructDecl *element_completes_a_cycle(ResolverState *state, TypeHandle type) {
+    StructDecl *decl = decl_held_by_value(state, type);
+
+    if (!decl) {
+        return NULL;
+    }
+
+    if (decl->state == STRUCT_LAYING_OUT) {
+        return decl;
+    }
+
+    layout_struct(state, decl);
+
+    return NULL;
+}
+
+// Whether the field's type is a declaration whose own layout failed. Asked
+// after the cycle walk, which is what forced that layout.
+static bool field_type_failed(ResolverState *state, TypeHandle type) {
+    StructDecl *decl = decl_held_by_value(state, type);
+
+    return decl && decl->state == STRUCT_POISONED;
+}
+
+// Derives the struct's layout from its declaration, once: resolves the fields,
+// rejects what no slot may hold, and computes the offsets and the width.
+//
+// Memoized rather than run where the declaration was bound, because a field may
+// name a struct declared further down the file: forcing that field's layout
+// from here is what orders the computation by dependency rather than by the
+// order the declarations were written in.
+static void layout_struct(ResolverState *state, StructDecl *decl) {
+    if (decl->state != STRUCT_DECLARED) {
+        return;
+    }
+
+    decl->state = STRUCT_LAYING_OUT;
+
+    ASTStmt *stmt = decl->stmt;
+    Type *type = decl->type;
+
+    // The fields resolve in the scope the struct was declared in, which is not
+    // where the layout was demanded from: a struct declared in one module is
+    // laid out when another names it.
+    Scope *enclosing = state->current_scope;
+    state->current_scope = decl->scope;
 
     bool poisoned = false;
 
@@ -1681,26 +1840,39 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
 
         if (type_find_field(type, field_name)) {
             diag_error(state->diagnostics, GAB_ERR_NAME, field->span, "duplicate field '%s' in struct '%s'",
-                       field_name->data, struct_name->data);
-            poisoned = true;
-            continue;
-        }
-
-        // The struct is already registered, so a field naming it resolves
-        // rather than surfacing as "unknown type" -- which is what this has to
-        // reject instead. A pointer to self is not containment, so only a field
-        // holding one by value is refused.
-        if (field->type_expr->kind == TYPE_EXPR_NAME &&
-            string_ref_equals_ref(field->type_expr->name, stmt->struct_decl.name)) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, field->span, "struct '%s' cannot contain itself",
-                       struct_name->data);
+                       field_name->data, decl->name->data);
             poisoned = true;
             continue;
         }
 
         TypeHandle field_type = resolve_type_expr(state, field->type_expr, field->span);
 
-        if (is_error_type(field_type) || reject_unsized(state, field_type, field->span, "a field")) {
+        if (is_error_type(field_type)) {
+            poisoned = true;
+            continue;
+        }
+
+        // Asked before the field is added, since a struct waiting on its own
+        // width has no width to add.
+        StructDecl *cycle = element_completes_a_cycle(state, field_type);
+
+        if (cycle) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, field->span, "struct '%s' cannot contain itself",
+                       cycle->name->data);
+            poisoned = true;
+            continue;
+        }
+
+        // A field whose own layout failed carries the failure up rather than
+        // being laid out at the width it does not have. Silent, because the
+        // field's declaration already reported why: this struct is unusable as
+        // a consequence, not as a second fault.
+        if (field_type_failed(state, field_type)) {
+            poisoned = true;
+            continue;
+        }
+
+        if (reject_unsized(state, field_type, field->span, "a field")) {
             poisoned = true;
             continue;
         }
@@ -1708,17 +1880,23 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
         type_add_field(type, field_name, field_type);
     }
 
-    // Registered before its fields resolved, so a struct that failed has to be
-    // taken back out of both the scope that names it and the registry that owns
-    // it: with no layout computed, anything finding it would read a size of
-    // zero.
+    state->current_scope = enclosing;
+
+    // A struct with a bad field has no layout worth computing: its name stays
+    // bound so that the rest of the unit resolves against something, and the
+    // fields that did resolve are dropped rather than laid out into a width
+    // that would be wrong.
     if (poisoned) {
-        scope_withdraw_type(state->current_scope, struct_name);
-        type_registry_withdraw_struct(state->current_scope->type_registry, state->current_scope, struct_name);
+        decl->state = STRUCT_POISONED;
+        scope_withdraw_type(decl->scope, decl->name);
         return;
     }
 
-    stmt->struct_decl.type = type_registry_finish_struct(state->current_scope->type_registry, type);
+    type_layout_compute(type);
+    object_select_drop(resolver_owner_arena(state), type);
+
+    decl->state = STRUCT_LAID_OUT;
+    stmt->struct_decl.type = type;
 }
 
 // Declares the function's name, return type, and parameter types — everything a
@@ -2095,8 +2273,14 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         break;
     }
     case STMT_STRUCT_DECL: {
+        // A struct nested in a body has nothing above it that could have
+        // declared it, so its name is bound and its layout forced together.
         if (!stmt->struct_decl.declared) {
-            declare_struct(state, stmt);
+            StructDecl *decl = declare_struct(state, stmt);
+
+            if (decl) {
+                layout_struct(state, decl);
+            }
         }
         break;
     }
@@ -2297,6 +2481,7 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
             {
                 .return_type = NULL,
             },
+        .struct_decls = struct_decl_list_create(),
         .diagnostics = diagnostics,
     };
 
@@ -2318,6 +2503,18 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
         }
     }
 
+    // Layouts second, once every name in the unit is bound. A field may name a
+    // struct declared further down, and one may name the other through a 'box'
+    // in both directions -- neither resolves while the layouts are computed in
+    // the order the declarations were written.
+    //
+    // Forced here rather than left to whoever first needs a width, because the
+    // fields are read off this unit's AST, which does not outlive it: a struct
+    // leaves this unit laid out or poisoned, never merely declared.
+    for (size_t i = 0; i < state.struct_decls.size; i++) {
+        layout_struct(&state, state.struct_decls.data[i]);
+    }
+
     for (size_t i = 0; i < unit->statements.size; i++) {
         ASTStmt *stmt = unit->statements.data[i];
 
@@ -2329,6 +2526,8 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
     for (size_t i = 0; i < unit->statements.size; i++) {
         resolve_stmt(&state, unit->statements.data[i]);
     }
+
+    struct_decl_list_free(&state.struct_decls);
 
     return diagnostics_count(diagnostics) == errors_before;
 }

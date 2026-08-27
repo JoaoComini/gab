@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 // Equivalents the C compiler lays out, so every expectation below is checked
 // against sizeof/offsetof rather than hand-computed numbers.
@@ -34,6 +35,11 @@ typedef struct {
 typedef struct {
     int32_t only;
 } SingleC;
+
+typedef struct {
+    void *b;
+    int32_t tag;
+} BoxRingC;
 
 static TypeHandle resolve_struct(TestContext *ctx, const char *source, const char *name) {
     Lexer lexer = lexer_create(test_in_a_module(source), ctx->arena, &ctx->strings, &ctx->diagnostics);
@@ -314,6 +320,110 @@ static void test_a_borrow_and_a_box_are_distinct_constructors() {
     test_context_free(&ctx);
 }
 
+// A 'box T' needs T's declaration, not its layout, so two structs may each
+// point at the other however they are ordered in the file.
+static void test_mutually_recursive_structs() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    TypeHandle a = resolve_struct(&ctx,
+                                  "struct A { b: box B }\n"
+                                  "struct B { a: box A }\n",
+                                  "A");
+
+    const TypeField *field = type_find_field(a, string_from_cstr(&ctx.strings, "b"));
+
+    assert(field);
+    assert(type_pointee(field->type)->name == string_from_cstr(&ctx.strings, "B"));
+
+    test_context_free(&ctx);
+}
+
+// A struct whose field failed has no layout, and neither has anything holding
+// it: a width derived from a type that has none would be wrong rather than
+// missing.
+static void test_a_failed_field_poisons_what_holds_it() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Lexer lexer = lexer_create(test_in_a_module("struct A { b: B }\n"
+                                                "struct B { a: A }\n"),
+                               ctx.arena, &ctx.strings, &ctx.diagnostics);
+    Parser parser = parser_create(&lexer, &ctx.diagnostics);
+    ASTUnit *unit = ast_unit_create();
+
+    Scope global_scope;
+    scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
+
+    parser_parse(&parser, unit);
+    resolve_unit(ctx.arena, unit, &global_scope, NULL, &ctx.diagnostics);
+
+    assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "A")) == NULL);
+    assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "B")) == NULL);
+
+    ast_unit_destroy(unit);
+    test_context_free(&ctx);
+}
+
+// An array's element is held by value, so naming one demands its layout -- and
+// gets it, however far down the file the element was declared.
+static void test_array_of_a_struct_declared_below() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    TypeHandle holder = resolve_struct(&ctx,
+                                       "struct Holder { cells: Array Cell,2 }\n"
+                                       "struct Cell { value: int }\n",
+                                       "Holder");
+
+    assert(holder->size == 2 * sizeof(int32_t));
+
+    test_context_free(&ctx);
+}
+
+// A ring through a 'box' is finite: the indirection is a machine word whatever
+// it names, so neither struct's width waits on the other's.
+static void test_a_ring_through_a_box_is_laid_out() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    TypeHandle a = resolve_struct(&ctx,
+                                  "struct A { b: box B, tag: int }\n"
+                                  "struct B { a: box A }\n",
+                                  "A");
+
+    assert(a->size == sizeof(BoxRingC));
+    assert(a->alignment == _Alignof(BoxRingC));
+    assert(offset_of(&ctx, a, "tag") == offsetof(BoxRingC, tag));
+
+    test_context_free(&ctx);
+}
+
+// An array is a run of its element, so a struct holding an array of itself is
+// as infinite as one holding itself directly.
+static void test_rejects_an_array_of_the_struct_declaring_it() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Lexer lexer = lexer_create(test_in_a_module("struct A { cells: Array A,2 }"), ctx.arena, &ctx.strings,
+                               &ctx.diagnostics);
+    Parser parser = parser_create(&lexer, &ctx.diagnostics);
+    ASTUnit *unit = ast_unit_create();
+
+    Scope global_scope;
+    scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
+
+    parser_parse(&parser, unit);
+    resolve_unit(ctx.arena, unit, &global_scope, NULL, &ctx.diagnostics);
+
+    assert(diagnostics_count(&ctx.diagnostics) == 1);
+    assert(strcmp(diagnostics_get(&ctx.diagnostics, 0)->message, "struct 'A' cannot contain itself") == 0);
+    assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "A")) == NULL);
+
+    ast_unit_destroy(unit);
+    test_context_free(&ctx);
+}
+
 int main(void) {
     test_builtin_widths();
     test_raw_pointer_owns_nothing();
@@ -326,6 +436,11 @@ int main(void) {
     test_single_field_struct();
     test_empty_struct();
     test_trailing_comma_allowed();
+    test_mutually_recursive_structs();
+    test_a_failed_field_poisons_what_holds_it();
+    test_array_of_a_struct_declared_below();
+    test_a_ring_through_a_box_is_laid_out();
+    test_rejects_an_array_of_the_struct_declaring_it();
 
     test_unknown_field_type_is_not_registered();
     test_field_lookup_misses();

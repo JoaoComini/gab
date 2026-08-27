@@ -40,7 +40,8 @@ static TypeHandle make_struct(TestContext *ctx, TypeRegistry *registry, const ch
         type_add_field(type, string_from_cstr(&ctx->strings, fields[i]), field_types[i]);
     }
 
-    type_registry_finish_struct(registry, type);
+    type_layout_compute(type);
+    object_select_drop(ctx->arena, type);
 
     return type;
 }
@@ -121,11 +122,11 @@ static void test_alloc_and_free_are_one_allocation() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *p = object_alloc(allocator, player);
+    void *p = object_alloc(allocator, player->size, player->drop);
 
     assert(p);
     assert(counts.allocs == 1);
-    assert(object_of(p)->type == player);
+    assert(object_of(p)->drop == player->drop);
 
     object_free(allocator, p);
 
@@ -150,7 +151,7 @@ static void test_the_payload_follows_the_header() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *p = object_alloc(allocator, pair);
+    void *p = object_alloc(allocator, pair->size, pair->drop);
 
     assert((char *)object_of(p) + sizeof(ObjectHeader) == (char *)p);
 
@@ -176,7 +177,7 @@ static void test_a_fresh_payload_is_zeroed() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    char *p = object_alloc(allocator, pair);
+    char *p = object_alloc(allocator, pair->size, pair->drop);
 
     for (size_t i = 0; i < pair->size; i++) {
         assert(p[i] == 0);
@@ -207,8 +208,8 @@ static void test_freeing_an_object_frees_what_it_owns() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *child = object_alloc(allocator, inner);
-    void *parent = object_alloc(allocator, outer);
+    void *child = object_alloc(allocator, inner->size, inner->drop);
+    void *parent = object_alloc(allocator, outer->size, outer->drop);
 
     memcpy(parent, &child, sizeof(child));
 
@@ -217,6 +218,47 @@ static void test_freeing_an_object_frees_what_it_owns() {
     object_free(allocator, parent);
 
     // Both: the parent, and the child its owning field named.
+    assert(counts.frees == 2);
+
+    test_context_free(&ctx);
+}
+
+// A free reaches an owning field where the layout put it, not where the walk
+// happens to start: a struct whose owning field sits behind others is freed
+// through that field's offset.
+static void test_freeing_reaches_an_owning_field_at_its_offset() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    TypeRegistry *registry = type_registry_create(ctx.arena, &ctx.strings);
+    TypeHandle int_type = type_registry_get_builtin(registry, TYPE_INT);
+
+    const char *inner_names[] = {"n"};
+    TypeHandle inner_types[] = {int_type};
+    TypeHandle inner = make_struct(&ctx, registry, "Inner", inner_names, inner_types, 1);
+
+    // The owning field is last, so a walk that ignored offsets would read the
+    // leading ints as an address.
+    const char *outer_names[] = {"a", "b", "child"};
+    TypeHandle outer_types[] = {int_type, int_type, type_registry_box_to(registry, inner)};
+    TypeHandle outer = make_struct(&ctx, registry, "Outer", outer_names, outer_types, 3);
+
+    size_t offset = 0;
+    assert(type_field_offset(outer, string_from_cstr(&ctx.strings, "child"), &offset));
+    assert(offset > 0);
+
+    AllocCounts counts = {0};
+    Allocator allocator = counting_allocator(&counts);
+
+    void *child = object_alloc(allocator, inner->size, inner->drop);
+    void *parent = object_alloc(allocator, outer->size, outer->drop);
+
+    memcpy((char *)parent + offset, &child, sizeof(child));
+
+    assert(counts.allocs == 2);
+
+    object_free(allocator, parent);
+
     assert(counts.frees == 2);
 
     test_context_free(&ctx);
@@ -243,8 +285,8 @@ static void test_freeing_does_not_follow_a_ref_field() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *borrowed = object_alloc(allocator, inner);
-    void *holder = object_alloc(allocator, outer);
+    void *borrowed = object_alloc(allocator, inner->size, inner->drop);
+    void *holder = object_alloc(allocator, outer->size, outer->drop);
 
     memcpy(holder, &borrowed, sizeof(borrowed));
 
@@ -392,14 +434,14 @@ static void test_an_array_owns_exactly_when_its_element_does() {
 
     assert(type_is_owned(nested));
 
-    // Asked of the element rather than of the glue: clearing the drop leaves the
-    // answer where it was, since what an array owns is what it holds and not
-    // which function was chosen to free it.
+    // Asked of the element rather than of the plan: clearing the drop leaves
+    // the answer where it was, since what an array owns is what it holds and
+    // not what was planned to free it.
     //
     // Reaching past the handle to do it, which is what a test asserting on the
-    // glue rather than through it has to do.
+    // plan rather than through it has to do.
     Type *poke = (Type *)nested;
-    DropFn glue = poke->drop;
+    const DropPlan *glue = poke->drop;
 
     poke->drop = NULL;
 
@@ -431,7 +473,7 @@ static void test_a_type_carries_only_what_its_kind_has() {
 
     Type *player = type_registry_declare_struct(registry, NULL, string_from_cstr(&ctx.strings, "Player"), 1);
     type_add_field(player, string_from_cstr(&ctx.strings, "health"), int_type);
-    type_registry_finish_struct(registry, player);
+    type_layout_compute(player);
 
     assert(type_field_count(player) == 1);
     assert(type_pointee(player) == NULL);
@@ -501,7 +543,7 @@ static void test_every_type_comes_from_the_registry() {
     Type *player = type_registry_declare_struct(registry, &scope, name, 1);
 
     type_add_field(player, string_from_cstr(&ctx.strings, "health"), registry->builtins.int_type);
-    type_registry_finish_struct(registry, player);
+    type_layout_compute(player);
 
     // Its identity is the declaration, not its shape: the same scope and name
     // find it again, and a second scope declaring the same shape is a second
@@ -546,27 +588,6 @@ static void test_a_builtin_is_interned_and_found_by_its_kind() {
     test_context_free(&ctx);
 }
 
-// A declaration that fails leaves nothing behind. Half a type is worse than
-// none: its layout was never computed, so anything finding it would read a size
-// of zero and lay out whatever holds it wrongly.
-static void test_a_withdrawn_declaration_leaves_nothing_findable() {
-    TestContext ctx;
-    test_context_init(&ctx);
-
-    Scope scope;
-    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
-
-    TypeRegistry *registry = scope.type_registry;
-    String *name = string_from_cstr(&ctx.strings, "Broken");
-
-    type_registry_declare_struct(registry, &scope, name, 1);
-    type_registry_withdraw_struct(registry, &scope, name);
-
-    assert(type_registry_find_struct(registry, &scope, name) == NULL);
-
-    test_context_free(&ctx);
-}
-
 int main(void) {
     test_a_raw_pointer_carries_a_stride_and_drops_nothing();
     test_a_string_owns_and_a_reference_to_one_does_not();
@@ -574,7 +595,6 @@ int main(void) {
     test_methods_live_beside_the_type_not_in_it();
     test_every_type_comes_from_the_registry();
     test_a_builtin_is_interned_and_found_by_its_kind();
-    test_a_withdrawn_declaration_leaves_nothing_findable();
     test_an_array_is_its_elements_laid_end_to_end();
     test_an_array_owns_exactly_when_its_element_does();
     test_a_type_that_owns_nothing_has_no_drop();
@@ -582,6 +602,7 @@ int main(void) {
     test_the_payload_follows_the_header();
     test_a_fresh_payload_is_zeroed();
     test_freeing_an_object_frees_what_it_owns();
+    test_freeing_reaches_an_owning_field_at_its_offset();
     test_freeing_does_not_follow_a_ref_field();
     test_freeing_null_is_a_no_op();
 

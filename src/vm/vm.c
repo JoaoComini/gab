@@ -71,7 +71,8 @@ static void environment_free(Environment *env) {
 
 static void program_init(Program *program) {
     program->prototypes = func_proto_list_create();
-    program->heap_types = type_list_create();
+    program->heap_shapes = heap_shape_list_create();
+    program->shape_types = type_list_create();
     program->strings = string_list_create();
     program->top_levels = top_level_list_create();
     program->extern_bindings = extern_binding_list_create();
@@ -82,7 +83,8 @@ static void program_init(Program *program) {
 // indexes come from the environment's arena and go with it.
 static void program_free(Program *program) {
     func_proto_list_free(&program->prototypes);
-    type_list_free(&program->heap_types);
+    heap_shape_list_free(&program->heap_shapes);
+    type_list_free(&program->shape_types);
     string_list_free(&program->strings);
     extern_binding_list_free(&program->extern_bindings);
     extern_proto_list_free(&program->extern_protos);

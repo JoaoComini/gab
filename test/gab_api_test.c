@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 // A compile error is reported through GabError rather than printed, so a host
@@ -1121,7 +1122,7 @@ static void test_a_host_pointer_reaches_a_script() {
     const GabType *player = gab_find_type(vm, "test", "Player");
     assert(player);
 
-    void *object = gab_new(vm, player);
+    void *object = calloc(1, gab_type_size(player));
     assert(object);
 
     size_t health_at = 0;
@@ -1146,7 +1147,7 @@ static void test_a_host_pointer_reaches_a_script() {
     assert(health == 60);
 
     gab_call_free(call);
-    gab_free(vm, object);
+    free(object);
     gab_vm_free(vm);
 }
 
@@ -1166,7 +1167,7 @@ static void test_a_pointer_argument_checks_its_pointee() {
     const GabType *player = gab_find_type(vm, "test", "Player");
     const GabType *enemy = gab_find_type(vm, "test", "Enemy");
 
-    void *object = gab_new(vm, player);
+    void *object = calloc(1, gab_type_size(player));
 
     GabFunc *fn = gab_lookup(vm, "test", "hurt", &err);
     GabCall *call = gab_call_init(fn, &err);
@@ -1180,13 +1181,13 @@ static void test_a_pointer_argument_checks_its_pointee() {
     assert(gab_arg_pointer(call, 0, object, player));
 
     gab_call_free(call);
-    gab_free(vm, object);
+    free(object);
     gab_vm_free(vm);
 }
 
-// A fresh object is zeroed, which is what lets a host fill only the fields it
-// cares about.
-static void test_a_new_object_is_zeroed() {
+// What a host must know to hold a script struct itself: its width and its
+// alignment, which are what the shared-layout story rests on.
+static void test_a_type_reports_the_layout_a_host_allocates_by() {
     GabVM *vm = gab_vm_new();
     GabError err;
 
@@ -1196,13 +1197,18 @@ static void test_a_new_object_is_zeroed() {
                     &err));
 
     const GabType *player = gab_find_type(vm, "test", "Player");
-    char *object = gab_new(vm, player);
 
-    for (size_t i = 0; i < gab_type_size(player); i++) {
-        assert(object[i] == 0);
-    }
+    typedef struct {
+        int32_t health, mana;
+    } PlayerC;
 
-    gab_free(vm, object);
+    assert(gab_type_size(player) == sizeof(PlayerC));
+    assert(gab_type_align(player) == _Alignof(PlayerC));
+
+    size_t mana_at = 0;
+    assert(gab_field_offset(player, "mana", &mana_at));
+    assert(mana_at == offsetof(PlayerC, mana));
+
     gab_vm_free(vm);
 }
 
@@ -1232,7 +1238,7 @@ static void test_a_builtin_type_may_not_be_redeclared(void) {
 int main(void) {
     test_a_host_pointer_reaches_a_script();
     test_a_pointer_argument_checks_its_pointee();
-    test_a_new_object_is_zeroed();
+    test_a_type_reports_the_layout_a_host_allocates_by();
     test_two_modules_can_share_a_function_name();
     test_the_script_names_its_module_not_the_filename();
     test_the_vm_owns_its_handles();
