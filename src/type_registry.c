@@ -11,9 +11,15 @@
 
 static Type *register_builtin(TypeRegistry *registry, TypeKind kind, const char *name, size_t size,
                               size_t alignment) {
-    Type *type = type_create(registry->arena, kind, string_from_cstr(registry->strings, name));
+    String *interned = string_from_cstr(registry->strings, name);
+
+    Type *type = type_create(registry->arena, kind, interned);
     type->size = size;
     type->alignment = alignment;
+
+    // Interned like every other type, under no scope: a builtin belongs to no
+    // module, and its name is the whole of its identity.
+    nominal_key_insert(registry->nominals, (NominalKey){.scope = NULL, .name = interned}, type);
 
     return type;
 }
@@ -47,9 +53,7 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     registry->builtins.float_type = register_builtin(registry, TYPE_FLOAT, "float", 4, 4);
     registry->builtins.bool_type = register_builtin(registry, TYPE_BOOL, "bool", 1, 1);
 
-    // Sized as one byte, which is the stride a walk over characters advances by
-    // and the unit a block of them is counted in.
-    registry->builtins.byte_type = register_builtin(registry, TYPE_INT, "byte", 1, 1);
+    registry->builtins.byte_type = register_builtin(registry, TYPE_BYTE, "byte", 1, 1);
 
     // A struct in its layout and a builtin in its semantics: the fields are
     // where its size, its alignment and what it owns all come from, while
@@ -119,6 +123,10 @@ void type_registry_finish_struct(TypeRegistry *registry, Type *type) {
 
     type_layout_compute(type);
     object_select_drop(type);
+}
+
+TypeHandle type_registry_find_builtin(TypeRegistry *registry, String *name) {
+    return type_registry_find_struct(registry, NULL, name);
 }
 
 TypeHandle type_registry_find_struct(TypeRegistry *registry, const Scope *scope, String *name) {
@@ -287,6 +295,8 @@ TypeHandle type_registry_get_builtin(TypeRegistry *registry, TypeKind kind) {
         return registry->builtins.float_type;
     case TYPE_BOOL:
         return registry->builtins.bool_type;
+    case TYPE_BYTE:
+        return registry->builtins.byte_type;
     case TYPE_STRING:
         return registry->builtins.string_type;
     default:

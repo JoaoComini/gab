@@ -516,12 +516,43 @@ static void test_every_type_comes_from_the_registry() {
     test_context_free(&ctx);
 }
 
+// A builtin is interned like everything else, and its kind is what finds it: one
+// kind, one type, so asking for a kind is a lookup rather than a choice between
+// types that share one.
+static void test_a_builtin_is_interned_and_found_by_its_kind() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope scope;
+    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+
+    TypeRegistry *registry = scope.type_registry;
+
+    assert(type_registry_get_builtin(registry, TYPE_INT) == registry->builtins.int_type);
+    assert(type_registry_get_builtin(registry, TYPE_BOOL) == registry->builtins.bool_type);
+
+    // A byte is not an int of another width: it is its own kind, which is what
+    // lets a kind name exactly one type.
+    assert(type_registry_get_builtin(registry, TYPE_BYTE) == registry->builtins.byte_type);
+    assert(registry->builtins.byte_type != registry->builtins.int_type);
+    assert(registry->builtins.byte_type->kind == TYPE_BYTE);
+
+    // Interned, so the two ways of reaching it are one type.
+    assert(type_registry_find_builtin(registry, string_from_cstr(&ctx.strings, "int")) ==
+           registry->builtins.int_type);
+    assert(type_registry_find_builtin(registry, string_from_cstr(&ctx.strings, "byte")) ==
+           registry->builtins.byte_type);
+
+    test_context_free(&ctx);
+}
+
 int main(void) {
     test_a_raw_pointer_carries_a_stride_and_drops_nothing();
     test_a_string_owns_and_a_reference_to_one_does_not();
     test_a_type_carries_only_what_its_kind_has();
     test_methods_live_beside_the_type_not_in_it();
     test_every_type_comes_from_the_registry();
+    test_a_builtin_is_interned_and_found_by_its_kind();
     test_an_array_is_its_elements_laid_end_to_end();
     test_an_array_owns_exactly_when_its_element_does();
     test_a_type_that_owns_nothing_has_no_drop();

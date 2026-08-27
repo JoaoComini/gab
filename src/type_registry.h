@@ -158,6 +158,10 @@ Type *type_registry_declare_struct(TypeRegistry *registry, const Scope *scope, S
 void type_registry_finish_struct(TypeRegistry *registry, Type *type);
 TypeHandle type_registry_find_struct(TypeRegistry *registry, const Scope *scope, String *name);
 
+// A builtin, by the name it goes by. Declared under no scope, since it belongs
+// to no module.
+TypeHandle type_registry_find_builtin(TypeRegistry *registry, String *name);
+
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings);
 
 void type_registry_destroy(TypeRegistry *registry);

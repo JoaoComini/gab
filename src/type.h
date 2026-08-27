@@ -17,6 +17,12 @@ typedef enum {
     TYPE_FLOAT,
     TYPE_BOOL,
 
+    // One byte: the stride a walk over characters advances by, and the unit a
+    // block of them is counted in. Its own kind rather than an int of another
+    // width, so that a kind names exactly one type -- and unspellable, since no
+    // scope is given the name.
+    TYPE_BYTE,
+
     // An address and nothing more: what a string's characters and an array's
     // elements are reached through. Carries what it points at, so a
     // walk over a block knows its stride without asking the header naming it.
