@@ -28,7 +28,7 @@ static Type *string_builtin_create(TypeRegistry *registry) {
 
     // A raw address either way: who frees the characters is the header's own
     // business rather than this field's.
-    Type *characters = type_registry_ptr_to(registry, registry->builtins.byte_type);
+    TypeHandle characters = type_registry_ptr_to(registry, registry->builtins.byte_type);
 
     type_add_field(type, string_from_cstr(registry->strings, "data"), characters);
     type_add_field(type, string_from_cstr(registry->strings, "length"), registry->builtins.int_type);
@@ -59,14 +59,15 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     // The characters, which no slot holds: a 'ref str' is what names them, and
     // that reference is what carries how many there are. Zero-width because
     // nothing is ever laid out for it.
-    registry->builtins.str_type = register_builtin(registry, TYPE_STR, "str", 0, 1);
+    Type *str = register_builtin(registry, TYPE_STR, "str", 0, 1);
 
     // How far the characters run is not in their type, so no slot reserves room
     // for one and a reference to them carries that count.
-    registry->builtins.str_type->sized = false;
-    registry->builtins.str_type->metadata = TYPE_META_LENGTH;
+    str->sized = false;
+    str->metadata = TYPE_META_LENGTH;
+    str->owner = registry->builtins.string_type;
 
-    registry->builtins.str_type->owner = registry->builtins.string_type;
+    registry->builtins.str_type = str;
 
     // The VM and the host both read these two fields as GabStringValue, so the
     // computed layout and the C struct are two statements of one thing.
@@ -100,7 +101,7 @@ void type_registry_destroy(TypeRegistry *registry) {
     method_key_destroy(registry->methods);
 }
 
-bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method) {
+bool type_registry_add_method(TypeRegistry *registry, TypeHandle type, String *name, Symbol *method) {
     if (type_registry_find_method(registry, type, name)) {
         return false;
     }
@@ -109,7 +110,7 @@ bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *
     return true;
 }
 
-Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name) {
+Symbol *type_registry_find_method(TypeRegistry *registry, TypeHandle type, const String *name) {
     if (!type) {
         return NULL;
     }
@@ -148,7 +149,7 @@ static void application_insert(TypeRegistry *registry, TypeApp app, Type *type) 
     type_app_map_insert(registry->applications, app, type);
 }
 
-Type *type_registry_array_of(TypeRegistry *registry, Type *element, int32_t length) {
+TypeHandle type_registry_array_of(TypeRegistry *registry, TypeHandle element, int32_t length) {
     TypeArg args[] = {
         {.kind = TYPE_ARG_TYPE, .type = element},
         {.kind = TYPE_ARG_CONST, .value = length},
@@ -196,7 +197,7 @@ Type *type_registry_array_of(TypeRegistry *registry, Type *element, int32_t leng
 // The three built-in one-argument constructors, which differ only in the kind
 // the result carries. Written once because everything else about building one
 // -- the width, the alignment, the pointee -- is the same for all of them.
-static Type *indirect_to(TypeRegistry *registry, TypeCtor ctor, TypeKind kind, Type *inner) {
+static TypeHandle indirect_to(TypeRegistry *registry, TypeCtor ctor, TypeKind kind, TypeHandle inner) {
     TypeArg args[] = {{.kind = TYPE_ARG_TYPE, .type = inner}};
 
     TypeApp app = {.ctor = ctor, .decl = NULL, .args = args, .arg_count = 1};
@@ -238,21 +239,21 @@ static Type *indirect_to(TypeRegistry *registry, TypeCtor ctor, TypeKind kind, T
     return type;
 }
 
-Type *type_registry_box_to(TypeRegistry *registry, Type *inner) {
+TypeHandle type_registry_box_to(TypeRegistry *registry, TypeHandle inner) {
     return indirect_to(registry, TYPE_CTOR_BOX, TYPE_BOX, inner);
 }
 
-Type *type_registry_ref_to(TypeRegistry *registry, Type *inner) {
+TypeHandle type_registry_ref_to(TypeRegistry *registry, TypeHandle inner) {
     return indirect_to(registry, TYPE_CTOR_REF, TYPE_REF, inner);
 }
 
-Type *type_registry_ptr_to(TypeRegistry *registry, Type *pointee) {
+TypeHandle type_registry_ptr_to(TypeRegistry *registry, TypeHandle pointee) {
     return indirect_to(registry, TYPE_CTOR_PTR, TYPE_PTR, pointee);
 }
 
-Type *type_registry_error_type(TypeRegistry *registry) { return registry->builtins.error_type; }
+TypeHandle type_registry_error_type(TypeRegistry *registry) { return registry->builtins.error_type; }
 
-Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind kind) {
+TypeHandle type_registry_get_builtin(TypeRegistry *registry, TypeKind kind) {
     switch (kind) {
     case TYPE_INT:
         return registry->builtins.int_type;

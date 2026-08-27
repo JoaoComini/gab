@@ -32,8 +32,8 @@ static Allocator counting_allocator(AllocCounts *counts) {
 
 // A struct type with the given fields, laid out as the compiler would lay it
 // out — freeing walks offsets, so the layout has to be real.
-static Type *make_struct(TestContext *ctx, const char *name, const char **fields, Type **field_types,
-                         size_t count) {
+static TypeHandle make_struct(TestContext *ctx, const char *name, const char **fields,
+                              TypeHandle *field_types, size_t count) {
     Type *type = type_struct_create(ctx->arena, string_from_cstr(&ctx->strings, name), count);
 
     for (size_t i = 0; i < count; i++) {
@@ -54,15 +54,15 @@ static void test_a_type_that_owns_nothing_has_no_drop() {
     test_context_init(&ctx);
 
     TypeRegistry *registry = type_registry_create(ctx.arena, &ctx.strings);
-    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+    TypeHandle int_type = type_registry_get_builtin(registry, TYPE_INT);
 
     const char *names[] = {"x", "y"};
-    Type *types[] = {int_type, int_type};
+    TypeHandle types[] = {int_type, int_type};
 
     assert(make_struct(&ctx, "Point", names, types, 2)->drop == NULL);
 
-    Type *owning = type_registry_box_to(registry, int_type);
-    Type *borrowing = type_registry_ref_to(registry, int_type);
+    TypeHandle owning = type_registry_box_to(registry, int_type);
+    TypeHandle borrowing = type_registry_ref_to(registry, int_type);
 
     assert(owning->drop != NULL);
     assert(borrowing->drop == NULL);
@@ -70,8 +70,8 @@ static void test_a_type_that_owns_nothing_has_no_drop() {
     // A struct owns through whichever field does, so one owning field is what
     // earns it a drop.
     const char *held[] = {"held"};
-    Type *borrowed_field[] = {borrowing};
-    Type *owned_field[] = {owning};
+    TypeHandle borrowed_field[] = {borrowing};
+    TypeHandle owned_field[] = {owning};
 
     assert(make_struct(&ctx, "Borrower", held, borrowed_field, 1)->drop == NULL);
     assert(make_struct(&ctx, "Owner", held, owned_field, 1)->drop != NULL);
@@ -92,7 +92,7 @@ static void test_a_raw_pointer_carries_a_stride_and_drops_nothing() {
 
     TypeRegistry *registry = scope.type_registry;
 
-    Type *characters = type_registry_ptr_to(registry, registry->builtins.byte_type);
+    TypeHandle characters = type_registry_ptr_to(registry, registry->builtins.byte_type);
 
     assert(characters->kind == TYPE_PTR);
     assert(type_pointee(characters) == registry->builtins.byte_type);
@@ -113,11 +113,11 @@ static void test_alloc_and_free_are_one_allocation() {
     test_context_init(&ctx);
 
     TypeRegistry *registry = type_registry_create(ctx.arena, &ctx.strings);
-    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+    TypeHandle int_type = type_registry_get_builtin(registry, TYPE_INT);
 
     const char *names[] = {"health"};
-    Type *types[] = {int_type};
-    Type *player = make_struct(&ctx, "Player", names, types, 1);
+    TypeHandle types[] = {int_type};
+    TypeHandle player = make_struct(&ctx, "Player", names, types, 1);
 
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
@@ -142,11 +142,11 @@ static void test_the_payload_follows_the_header() {
     test_context_init(&ctx);
 
     TypeRegistry *registry = type_registry_create(ctx.arena, &ctx.strings);
-    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+    TypeHandle int_type = type_registry_get_builtin(registry, TYPE_INT);
 
     const char *names[] = {"a", "b"};
-    Type *types[] = {int_type, int_type};
-    Type *pair = make_struct(&ctx, "Pair", names, types, 2);
+    TypeHandle types[] = {int_type, int_type};
+    TypeHandle pair = make_struct(&ctx, "Pair", names, types, 2);
 
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
@@ -168,11 +168,11 @@ static void test_a_fresh_payload_is_zeroed() {
     test_context_init(&ctx);
 
     TypeRegistry *registry = type_registry_create(ctx.arena, &ctx.strings);
-    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+    TypeHandle int_type = type_registry_get_builtin(registry, TYPE_INT);
 
     const char *names[] = {"a", "b"};
-    Type *types[] = {int_type, int_type};
-    Type *pair = make_struct(&ctx, "Pair", names, types, 2);
+    TypeHandle types[] = {int_type, int_type};
+    TypeHandle pair = make_struct(&ctx, "Pair", names, types, 2);
 
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
@@ -195,15 +195,15 @@ static void test_freeing_an_object_frees_what_it_owns() {
     test_context_init(&ctx);
 
     TypeRegistry *registry = type_registry_create(ctx.arena, &ctx.strings);
-    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+    TypeHandle int_type = type_registry_get_builtin(registry, TYPE_INT);
 
     const char *inner_names[] = {"n"};
-    Type *inner_types[] = {int_type};
-    Type *inner = make_struct(&ctx, "Inner", inner_names, inner_types, 1);
+    TypeHandle inner_types[] = {int_type};
+    TypeHandle inner = make_struct(&ctx, "Inner", inner_names, inner_types, 1);
 
     const char *outer_names[] = {"child"};
-    Type *outer_types[] = {type_registry_box_to(registry, inner)};
-    Type *outer = make_struct(&ctx, "Outer", outer_names, outer_types, 1);
+    TypeHandle outer_types[] = {type_registry_box_to(registry, inner)};
+    TypeHandle outer = make_struct(&ctx, "Outer", outer_names, outer_types, 1);
 
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
@@ -231,15 +231,15 @@ static void test_freeing_does_not_follow_a_ref_field() {
     test_context_init(&ctx);
 
     TypeRegistry *registry = type_registry_create(ctx.arena, &ctx.strings);
-    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+    TypeHandle int_type = type_registry_get_builtin(registry, TYPE_INT);
 
     const char *inner_names[] = {"n"};
-    Type *inner_types[] = {int_type};
-    Type *inner = make_struct(&ctx, "Inner", inner_names, inner_types, 1);
+    TypeHandle inner_types[] = {int_type};
+    TypeHandle inner = make_struct(&ctx, "Inner", inner_names, inner_types, 1);
 
     const char *outer_names[] = {"borrowed"};
-    Type *outer_types[] = {type_registry_ref_to(registry, inner)};
-    Type *outer = make_struct(&ctx, "Outer", outer_names, outer_types, 1);
+    TypeHandle outer_types[] = {type_registry_ref_to(registry, inner)};
+    TypeHandle outer = make_struct(&ctx, "Outer", outer_names, outer_types, 1);
 
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
@@ -283,8 +283,8 @@ static void test_a_string_owns_and_a_reference_to_one_does_not() {
 
     TypeRegistry *registry = scope.type_registry;
 
-    Type *owning = registry->builtins.string_type;
-    Type *borrowing = type_registry_ref_to(registry, registry->builtins.str_type);
+    TypeHandle owning = registry->builtins.string_type;
+    TypeHandle borrowing = type_registry_ref_to(registry, registry->builtins.str_type);
 
     // A reference carrying a count is as wide as the header it borrows from:
     // the same address and the same length, differing only in who frees them.
@@ -322,12 +322,12 @@ static void test_a_string_owns_and_a_reference_to_one_does_not() {
 
     // An array of an owning element frees each of them, so it carries a drop
     // the same way. An array of ints owns nothing and has none.
-    Type *ints = type_registry_array_of(registry, registry->builtins.int_type, 4);
+    TypeHandle ints = type_registry_array_of(registry, registry->builtins.int_type, 4);
 
     assert(ints->drop == NULL);
     assert(!type_is_owned(ints));
 
-    Type *strings = type_registry_array_of(registry, owning, 2);
+    TypeHandle strings = type_registry_array_of(registry, owning, 2);
 
     assert(strings->drop != NULL);
     assert(type_is_owned(strings));
@@ -346,7 +346,7 @@ static void test_an_array_is_its_elements_laid_end_to_end() {
 
     TypeRegistry *registry = scope.type_registry;
 
-    Type *floats = type_registry_array_of(registry, registry->builtins.float_type, 3);
+    TypeHandle floats = type_registry_array_of(registry, registry->builtins.float_type, 3);
 
     assert(type_array_element(floats) == registry->builtins.float_type);
     assert(type_array_length(floats) == 3);
@@ -374,31 +374,36 @@ static void test_an_array_owns_exactly_when_its_element_does() {
 
     TypeRegistry *registry = scope.type_registry;
 
-    Type *ints = type_registry_array_of(registry, registry->builtins.int_type, 4);
+    TypeHandle ints = type_registry_array_of(registry, registry->builtins.int_type, 4);
 
     assert(!type_is_owned(ints));
     assert(type_is_copyable(ints));
 
-    Type *boxes = type_registry_array_of(registry, type_registry_box_to(registry, ints), 2);
+    TypeHandle boxes = type_registry_array_of(registry, type_registry_box_to(registry, ints), 2);
 
     assert(type_is_owned(boxes));
     assert(!type_is_copyable(boxes));
 
     // An array of arrays owns through both levels, so the inner element is what
     // the outer one's answer rests on.
-    Type *nested = type_registry_array_of(registry, boxes, 3);
+    TypeHandle nested = type_registry_array_of(registry, boxes, 3);
 
     assert(type_is_owned(nested));
 
     // Asked of the element rather than of the glue: clearing the drop leaves the
     // answer where it was, since what an array owns is what it holds and not
     // which function was chosen to free it.
-    DropFn glue = nested->drop;
-    nested->drop = NULL;
+    //
+    // Reaching past the handle to do it, which is what a test asserting on the
+    // glue rather than through it has to do.
+    Type *poke = (Type *)nested;
+    DropFn glue = poke->drop;
+
+    poke->drop = NULL;
 
     assert(type_is_owned(nested));
 
-    nested->drop = glue;
+    poke->drop = glue;
 
     test_context_free(&ctx);
 }
@@ -414,9 +419,9 @@ static void test_a_type_carries_only_what_its_kind_has() {
     scope_init(&scope, ctx.arena, &ctx.strings, NULL);
 
     TypeRegistry *registry = scope.type_registry;
-    Type *int_type = registry->builtins.int_type;
+    TypeHandle int_type = registry->builtins.int_type;
 
-    Type *box = type_registry_box_to(registry, int_type);
+    TypeHandle box = type_registry_box_to(registry, int_type);
 
     assert(type_pointee(box) == int_type);
     assert(type_field_count(box) == 0);
@@ -429,7 +434,7 @@ static void test_a_type_carries_only_what_its_kind_has() {
     assert(type_field_count(player) == 1);
     assert(type_pointee(player) == NULL);
 
-    Type *ints = type_registry_array_of(registry, int_type, 3);
+    TypeHandle ints = type_registry_array_of(registry, int_type, 3);
 
     assert(type_array_element(ints) == int_type);
     assert(type_array_length(ints) == 3);
@@ -456,7 +461,7 @@ static void test_methods_live_beside_the_type_not_in_it() {
     scope_init(&scope, ctx.arena, &ctx.strings, NULL);
 
     TypeRegistry *registry = scope.type_registry;
-    const Type *int_type = registry->builtins.int_type;
+    TypeHandle int_type = registry->builtins.int_type;
 
     String *name = string_from_cstr(&ctx.strings, "twice");
 

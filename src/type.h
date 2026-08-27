@@ -71,6 +71,20 @@ typedef enum {
 typedef struct Type Type;
 
 /*
+    A type, as everything but the registry sees one.
+
+    Types compare by pointer identity, so every one a program can name came from
+    the registry that interned it. This is what says so: a handle names an
+    interned type, cannot be used to build one, and cannot be written through --
+    a type is finished when the registry hands it over.
+
+    The registry builds with 'Type *' and hands back these. Const rather than an
+    opaque struct because the fields are read constantly and wrapping them would
+    buy nothing the const does not.
+*/
+typedef const Type *TypeHandle;
+
+/*
     What a reference to a type must carry besides the address.
 
     A value whose bounds are its own -- an int, a struct, an owning header --
@@ -126,7 +140,7 @@ typedef struct TypeArg {
     } kind;
 
     union {
-        Type *type;
+        TypeHandle type;
         int32_t value;
     };
 } TypeArg;
@@ -141,7 +155,7 @@ typedef struct TypeApp {
 
     // The declaration a nominal constructor came from -- the bare 'Array'.
     // NULL for the built-in constructors, which their tag already tells apart.
-    Type *decl;
+    TypeHandle decl;
 
     const TypeArg *args;
     size_t arg_count;
@@ -160,7 +174,7 @@ bool type_app_equals(TypeApp app, TypeApp other);
 // through the field's own function rather than flattening -- an owning shape
 // whose bounds are not in the type, such as an array counted at run time, can
 // then be its own function rather than a case in a shared walk.
-typedef void (*DropFn)(Allocator allocator, const Type *type, void *value);
+typedef void (*DropFn)(Allocator allocator, TypeHandle type, void *value);
 
 // A method is an ordinary function Symbol — same prototype index, same call
 // path — so the map holds one. Declared rather than included: Symbol's own
@@ -169,7 +183,7 @@ typedef struct Symbol Symbol;
 
 typedef struct TypeField {
     String *name;
-    Type *type;
+    TypeHandle type;
 
     size_t offset;
 } TypeField;
@@ -205,7 +219,7 @@ struct Type {
     // For a type that shares another's identity -- 'str' reaching 'String's
     // methods, every 'Array T,N' reaching the bare 'Array's -- the one whose
     // set is followed. NULL everywhere else.
-    Type *owner;
+    TypeHandle owner;
 
     /*
         What the kind gives it, and nothing another kind would give.
@@ -219,7 +233,7 @@ struct Type {
     union {
         // TYPE_BOX, TYPE_REF, TYPE_PTR: what the indirection names.
         struct {
-            Type *pointee;
+            TypeHandle pointee;
         } indirect;
 
         // TYPE_STRUCT, TYPE_STRING, TYPE_STR: the fields the layout came from.
@@ -231,7 +245,7 @@ struct Type {
 
         // TYPE_ARRAY: a run of one element, as many as the length says.
         struct {
-            Type *element;
+            TypeHandle element;
             int32_t length;
         } array;
     };
@@ -240,43 +254,43 @@ struct Type {
 // What an indirection names, or NULL for a kind that names nothing. The walks
 // asking how many levels deep something is read it that way, so "not an
 // indirection" is the answer that stops them rather than a mistake.
-Type *type_pointee(const Type *type);
+TypeHandle type_pointee(TypeHandle type);
 
 // The fields a layout was computed from. Empty for a kind laid out some other
 // way, so a walk over them is the right no-op there.
-const TypeField *type_fields(const Type *type);
-size_t type_field_count(const Type *type);
+const TypeField *type_fields(TypeHandle type);
+size_t type_field_count(TypeHandle type);
 
 Type *type_create(Arena *arena, TypeKind kind, String *name);
 Type *type_struct_create(Arena *arena, String *name, size_t max_fields);
 
-void type_add_field(Type *type, String *name, Type *field_type);
+void type_add_field(Type *type, String *name, TypeHandle field_type);
 void type_layout_compute(Type *type);
 
 // What a reference to this type carries besides the address.
-TypeMetadata type_metadata_of(const Type *type);
+TypeMetadata type_metadata_of(TypeHandle type);
 
 // Whether this is a reference to characters -- the borrowed way of naming them,
 // as an owning 'String' is the other. Its own predicate because the shape is
 // two levels deep and asked in several places: what accepts a lend, what a
 // receiver reconciles to, what a C body reads, and what '==' and '..' take.
-bool type_is_str_ref(const Type *type);
+bool type_is_str_ref(TypeHandle type);
 
 // Whether a value of this type can be held at all: an unsized type names
 // something no slot, field or parameter may contain, and is reached only
 // through a reference.
-bool type_is_sized(const Type *type);
+bool type_is_sized(TypeHandle type);
 
 // Whether reaching the value means going through an indirection -- what a
 // deref, an auto-deref, and a field access all ask. Says nothing about
 // ownership: a 'ref T' is as indirect as a 'box T'.
-bool type_is_indirect(const Type *type);
+bool type_is_indirect(TypeHandle type);
 
 // What one element of an array is, and how many it holds. Both are what the
 // application was given, so the element a walk strides by and the count it
 // stops at are read from the same place the type was interned on.
-Type *type_array_element(const Type *type);
-int32_t type_array_length(const Type *type);
+TypeHandle type_array_element(TypeHandle type);
+int32_t type_array_length(TypeHandle type);
 
 // Whether a value of this type owns memory that must be freed when it dies.
 // True of a 'box T' and of an owning string, false of every 'ref', and true of
@@ -285,14 +299,14 @@ int32_t type_array_length(const Type *type);
 // Distinct from type_is_indirect because the two questions came apart once a
 // string could own: a string owns without being an indirection, and a 'ref T'
 // is an indirection that owns nothing.
-bool type_is_owned(const Type *type);
+bool type_is_owned(TypeHandle type);
 
 // Whether a value of this type duplicates by copying its bytes, which is true
 // exactly when nothing it holds transitively owns. See the definition.
-bool type_is_copyable(const Type *type);
+bool type_is_copyable(TypeHandle type);
 
-bool type_field_offset(const Type *type, const String *name, size_t *out_offset);
-const TypeField *type_find_field(const Type *type, const String *name);
+bool type_field_offset(TypeHandle type, const String *name, size_t *out_offset);
+const TypeField *type_find_field(TypeHandle type, const String *name);
 
 // A type as the source wrote it, before any name is looked up. The syntactic
 // counterpart of Type: this is what a type position parses into, and the

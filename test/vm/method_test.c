@@ -14,7 +14,7 @@
 
 // Compiles as far as resolution and hands back the scope, so a test can inspect
 // the types and method tables the front end settled on.
-static Type *lookup_type(TestContext *ctx, Scope *scope, const char *name) {
+static TypeHandle lookup_type(TestContext *ctx, Scope *scope, const char *name) {
     return scope_type_lookup(scope, string_from_cstr(&ctx->strings, name));
 }
 

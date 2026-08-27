@@ -57,8 +57,8 @@ static void test_two_vms_are_independent() {
 
     assert(&first->env.strings != &second->env.strings);
 
-    Type *first_int = type_registry_get_builtin(first->env.global_scope.type_registry, TYPE_INT);
-    Type *second_int = type_registry_get_builtin(second->env.global_scope.type_registry, TYPE_INT);
+    TypeHandle first_int = type_registry_get_builtin(first->env.global_scope.type_registry, TYPE_INT);
+    TypeHandle second_int = type_registry_get_builtin(second->env.global_scope.type_registry, TYPE_INT);
 
     // Same name, different pools: distinct objects that must not be shared.
     assert(first_int->name != second_int->name);
@@ -132,7 +132,7 @@ static void test_types_survive_a_later_compile() {
     compile_and_run(vm, "module test;\n"
                         "struct Player { health: int, mana: int }\n");
 
-    Type *player =
+    TypeHandle player =
         scope_type_lookup(environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "test")),
                           string_from_cstr(&vm->env.strings, "Player"));
     assert(player);

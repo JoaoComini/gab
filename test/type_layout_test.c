@@ -35,7 +35,7 @@ typedef struct {
     int32_t only;
 } SingleC;
 
-static Type *resolve_struct(TestContext *ctx, const char *source, const char *name) {
+static TypeHandle resolve_struct(TestContext *ctx, const char *source, const char *name) {
     Lexer lexer = lexer_create(test_in_a_module(source), ctx->arena, &ctx->strings, &ctx->diagnostics);
     Parser parser = parser_create(&lexer, &ctx->diagnostics);
     ASTUnit *unit = ast_unit_create();
@@ -58,7 +58,7 @@ static Type *resolve_struct(TestContext *ctx, const char *source, const char *na
     return scope_type_lookup(&global_scope, string_from_cstr(&ctx->strings, name));
 }
 
-static size_t offset_of(TestContext *ctx, Type *type, const char *field) {
+static size_t offset_of(TestContext *ctx, TypeHandle type, const char *field) {
     size_t offset = 0;
     bool found = type_field_offset(type, string_from_cstr(&ctx->strings, field), &offset);
 
@@ -71,7 +71,7 @@ static void test_homogeneous_struct() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Type *type = resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float }", "Vec3");
+    TypeHandle type = resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float }", "Vec3");
 
     assert(type != NULL);
     assert(type->kind == TYPE_STRUCT);
@@ -93,7 +93,7 @@ static void test_interior_padding() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Type *type = resolve_struct(&ctx, "struct Pad { flag: bool, value: int }", "Pad");
+    TypeHandle type = resolve_struct(&ctx, "struct Pad { flag: bool, value: int }", "Pad");
 
     assert(type->size == sizeof(LeadingPadC));
     assert(type->alignment == _Alignof(LeadingPadC));
@@ -109,7 +109,7 @@ static void test_trailing_padding() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Type *type = resolve_struct(&ctx, "struct Pad { value: int, flag: bool }", "Pad");
+    TypeHandle type = resolve_struct(&ctx, "struct Pad { value: int, flag: bool }", "Pad");
 
     assert(type->size == sizeof(TrailingPadC));
     assert(offset_of(&ctx, type, "value") == offsetof(TrailingPadC, value));
@@ -123,10 +123,10 @@ static void test_nested_struct() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Type *type = resolve_struct(&ctx,
-                                "struct Vec3 { x: float, y: float, z: float }"
-                                "struct Nested { flag: bool, position: Vec3 }",
-                                "Nested");
+    TypeHandle type = resolve_struct(&ctx,
+                                     "struct Vec3 { x: float, y: float, z: float }"
+                                     "struct Nested { flag: bool, position: Vec3 }",
+                                     "Nested");
 
     assert(type->size == sizeof(NestedC));
     assert(type->alignment == _Alignof(NestedC));
@@ -145,7 +145,7 @@ static void test_single_field_struct() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Type *type = resolve_struct(&ctx, "struct Single { only: int }", "Single");
+    TypeHandle type = resolve_struct(&ctx, "struct Single { only: int }", "Single");
 
     assert(type->size == sizeof(SingleC));
     assert(type->alignment == _Alignof(SingleC));
@@ -158,7 +158,7 @@ static void test_empty_struct() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Type *type = resolve_struct(&ctx, "struct Empty { }", "Empty");
+    TypeHandle type = resolve_struct(&ctx, "struct Empty { }", "Empty");
 
     assert(type != NULL);
     assert(type_field_count(type) == 0);
@@ -172,7 +172,7 @@ static void test_trailing_comma_allowed() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Type *type = resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float, }", "Vec3");
+    TypeHandle type = resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float, }", "Vec3");
 
     assert(type_field_count(type) == 3);
     assert(type->size == sizeof(Vec3C));
@@ -208,7 +208,7 @@ static void test_field_lookup_misses() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Type *type = resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float }", "Vec3");
+    TypeHandle type = resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float }", "Vec3");
 
     size_t offset = 0;
     assert(!type_field_offset(type, string_from_cstr(&ctx.strings, "w"), &offset));
@@ -225,9 +225,9 @@ static void test_builtin_widths() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
     TypeRegistry *registry = global_scope.type_registry;
 
-    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
-    Type *float_type = type_registry_get_builtin(registry, TYPE_FLOAT);
-    Type *bool_type = type_registry_get_builtin(registry, TYPE_BOOL);
+    TypeHandle int_type = type_registry_get_builtin(registry, TYPE_INT);
+    TypeHandle float_type = type_registry_get_builtin(registry, TYPE_FLOAT);
+    TypeHandle bool_type = type_registry_get_builtin(registry, TYPE_BOOL);
 
     assert(int_type->size == sizeof(int32_t));
     assert(int_type->alignment == _Alignof(int32_t));
@@ -252,9 +252,9 @@ static void test_raw_pointer_owns_nothing() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
     TypeRegistry *registry = global_scope.type_registry;
 
-    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+    TypeHandle int_type = type_registry_get_builtin(registry, TYPE_INT);
 
-    Type *ptr = type_registry_ptr_to(registry, int_type);
+    TypeHandle ptr = type_registry_ptr_to(registry, int_type);
 
     assert(ptr->kind == TYPE_PTR);
     assert(type_pointee(ptr) == int_type);
@@ -286,10 +286,10 @@ static void test_a_borrow_and_a_box_are_distinct_constructors() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
     TypeRegistry *registry = global_scope.type_registry;
 
-    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+    TypeHandle int_type = type_registry_get_builtin(registry, TYPE_INT);
 
-    Type *box = type_registry_box_to(registry, int_type);
-    Type *ref = type_registry_ref_to(registry, int_type);
+    TypeHandle box = type_registry_box_to(registry, int_type);
+    TypeHandle ref = type_registry_ref_to(registry, int_type);
 
     assert(box->kind == TYPE_BOX);
     assert(ref->kind == TYPE_REF);

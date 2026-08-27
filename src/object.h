@@ -47,7 +47,7 @@ typedef struct ObjectHeader {
     // There is no reference count. Ownership is unique and statically known:
     // exactly one slot owns an object, and codegen frees it where that slot
     // goes out of scope. A count would only ever have read 1.
-    const Type *type;
+    TypeHandle type;
 } ObjectHeader;
 
 // The payload must land at its own alignment, so the header's size has to be a
@@ -72,8 +72,8 @@ void object_select_drop(Type *type);
 // Frees the characters a string header names, and whatever an array's elements
 // own. Each knows bounds the field walk cannot read: one frees what an address
 // names, the other counts by a length its type says.
-void object_drop_string(Allocator allocator, const Type *type, void *value);
-void object_drop_array(Allocator allocator, const Type *type, void *value);
+void object_drop_string(Allocator allocator, TypeHandle type, void *value);
+void object_drop_array(Allocator allocator, TypeHandle type, void *value);
 
 // The header of a payload address. Not for a stack pointer: there is no header
 // there, and nothing in the representation can tell the caller so.
@@ -81,7 +81,7 @@ ObjectHeader *object_of(void *payload);
 
 // Allocates a zeroed payload of 'type' and returns it. NULL if the allocation
 // fails.
-void *object_alloc(Allocator allocator, const Type *type);
+void *object_alloc(Allocator allocator, TypeHandle type);
 
 // Frees what a value of 'type' sitting at 'value' owns, and the value itself
 // where it is an owning pointer. This is what a release does: the type is known
@@ -90,12 +90,12 @@ void *object_alloc(Allocator allocator, const Type *type);
 // Takes the slot's address rather than the object's, because not every owning
 // value is a pointer -- an array is a header, and freeing it needs the length
 // beside the pointer. NULL-tolerant through each type's own drop.
-void object_release(Allocator allocator, const Type *type, void *value);
+void object_release(Allocator allocator, TypeHandle type, void *value);
 
 // The bytes a release has to clear so the slot is safe to visit again: the
 // pointer for an owning indirection, and the whole header for an array, whose
 // length must go with its pointer or a second visit would walk a freed block.
-size_t type_release_width(const Type *type);
+size_t type_release_width(TypeHandle type);
 
 // Frees a payload and everything it owns. NULL-tolerant, because a 'box T' that
 // was never assigned is NULL and every free path would otherwise need the same

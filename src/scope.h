@@ -64,11 +64,11 @@ Symbol *scope_symbol_lookup(Scope *scope, String *name);
 // The type this name means here: this scope, then outward. A module's own
 // 'Config' therefore shadows an outer one, and 'int' resolves from
 // anywhere because the root scope declares it.
-Type *scope_type_lookup(Scope *scope, String *name);
+TypeHandle scope_type_lookup(Scope *scope, String *name);
 
 // As scope_type_lookup, but only this scope. For declaration, where shadowing
 // an outer name is allowed and redeclaring one of this scope's own is not.
-Type *scope_type_lookup_local(Scope *scope, String *name);
+TypeHandle scope_type_lookup_local(Scope *scope, String *name);
 
 // What a declaration of this name would clash with. Both search this scope and,
 // through a staging scope, the module scope it stands in for -- so a name an
@@ -77,7 +77,7 @@ Type *scope_type_lookup_local(Scope *scope, String *name);
 //
 // They differ at the root. A type also clashes with a builtin, which no syntax
 // can name past a shadow; a symbol does not, so a local may be called 'int'.
-Type *scope_type_lookup_declaring(Scope *scope, String *name);
+TypeHandle scope_type_lookup_declaring(Scope *scope, String *name);
 Symbol *scope_symbol_lookup_declaring(Scope *scope, String *name);
 
 // Removes a name this scope declared. Exists for one case: a struct is
@@ -89,7 +89,7 @@ void scope_withdraw_type(Scope *scope, String *name);
 // Returns false if this scope already declares the name. Declaring a name is a
 // one-time act: a second declaration of it, in this unit or a later one, is a
 // collision rather than a replacement.
-bool scope_decl_type(Scope *scope, String *name, Type *type);
+bool scope_decl_type(Scope *scope, String *name, TypeHandle type);
 
 // A scope a compile declares into instead of its real target, so a compile that
 // fails declares nothing. Parented to the target, so lookups still reach what is
@@ -100,7 +100,7 @@ void scope_init_staging(Scope *scope, Arena *arena, StringPool *strings, Scope *
 // collide: a name already in the module was refused where it was declared.
 void scope_merge_staged(Scope *target, Scope *staged);
 
-Symbol *scope_decl_var(Scope *scope, String *name, Type *type);
-Symbol *scope_decl_func(Scope *scope, String *name, Type *return_type);
+Symbol *scope_decl_var(Scope *scope, String *name, TypeHandle type);
+Symbol *scope_decl_func(Scope *scope, String *name, TypeHandle return_type);
 
 #endif

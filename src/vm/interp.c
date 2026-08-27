@@ -677,7 +677,7 @@ static void vm_run_loop(VM *vm) {
                 unsigned int rd = VM_DECODE_I_RD(instruction);
                 size_t type_index = VM_DECODE_I_KX(instruction);
 
-                const Type *type = vm->program.heap_types.data[type_index];
+                TypeHandle type = vm->program.heap_types.data[type_index];
 
                 // The one place a heap object is created, so a host-supplied
                 // allocator would replace this single call.
@@ -702,7 +702,7 @@ static void vm_run_loop(VM *vm) {
             }
             VM_CASE(OP_RELEASE) {
                 unsigned int rd = VM_DECODE_I_RD(instruction);
-                const Type *type = vm->program.heap_types.data[VM_DECODE_I_KX(instruction)];
+                TypeHandle type = vm->program.heap_types.data[VM_DECODE_I_KX(instruction)];
 
                 void *slot = vm->registers + rd * VM_SLOT_SIZE;
 

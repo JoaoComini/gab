@@ -10,7 +10,7 @@ ObjectHeader *object_of(void *payload) {
     return (ObjectHeader *)payload - 1;
 }
 
-void *object_alloc(Allocator allocator, const Type *type) {
+void *object_alloc(Allocator allocator, TypeHandle type) {
     assert(type && "an object needs a type; freeing it walks its fields");
 
     size_t size = type->size;
@@ -34,7 +34,7 @@ void *object_alloc(Allocator allocator, const Type *type) {
 
 // Frees what an owning indirection names -- what 'new box T' allocates, and
 // what every owning pointer field holds.
-static void drop_box(Allocator allocator, const Type *type, void *value) {
+static void drop_box(Allocator allocator, TypeHandle type, void *value) {
     (void)type;
 
     void *owned;
@@ -51,7 +51,7 @@ static void drop_box(Allocator allocator, const Type *type, void *value) {
 // An inline struct or string field is reached through its own function rather
 // than being flattened into this walk, which is what keeps the offsets it
 // needs its own business.
-static void drop_fields(Allocator allocator, const Type *type, void *value) {
+static void drop_fields(Allocator allocator, TypeHandle type, void *value) {
     for (size_t i = 0; i < type_field_count(type); i++) {
         const TypeField *field = &type_fields(type)[i];
 
@@ -68,8 +68,8 @@ static void drop_fields(Allocator allocator, const Type *type, void *value) {
 // Its own function rather than a case in the field walk, because an array has
 // no fields: one element type repeated is what it holds, which is the shape
 // DropFn was given a type parameter for.
-void object_drop_array(Allocator allocator, const Type *type, void *value) {
-    const Type *element = type_array_element(type);
+void object_drop_array(Allocator allocator, TypeHandle type, void *value) {
+    TypeHandle element = type_array_element(type);
     int32_t length = type_array_length(type);
 
     // Selected only when the element owns something, so reaching here at all
@@ -82,7 +82,7 @@ void object_drop_array(Allocator allocator, const Type *type, void *value) {
 // Frees the characters a string header owns. Its own function for the reason
 // drop_array has one: what must be freed is the block the header names, which
 // the field naming it cannot say now that the field is a raw address.
-void object_drop_string(Allocator allocator, const Type *type, void *value) {
+void object_drop_string(Allocator allocator, TypeHandle type, void *value) {
     (void)type;
 
     GabStringValue string;
@@ -132,7 +132,7 @@ void object_select_drop(Type *type) {
     }
 }
 
-size_t type_release_width(const Type *type) {
+size_t type_release_width(TypeHandle type) {
     if (!type) {
         return 0;
     }
@@ -143,7 +143,7 @@ size_t type_release_width(const Type *type) {
     return type->kind == TYPE_ARRAY || type->kind == TYPE_STRING ? type->size : sizeof(void *);
 }
 
-void object_release(Allocator allocator, const Type *type, void *value) {
+void object_release(Allocator allocator, TypeHandle type, void *value) {
     // A type that owns nothing has no drop at all, which is what makes a
     // release of one free: the question was settled when its layout was.
     if (type && type->drop) {

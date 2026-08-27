@@ -17,7 +17,7 @@ typedef struct Symbol Symbol;
 // The named types of one scope. Scope owns these and chains them, the same way
 // it chains symbol tables.
 typedef struct {
-    Type *type;
+    TypeHandle type;
 } TypeBinding;
 
 #define type_map_hash(key) (size_t)key
@@ -45,15 +45,15 @@ GAB_HASH_MAP(TypeMap, type_map, String *, TypeBinding)
 GAB_HASH_MAP(TypeAppMap, type_app_map, TypeApp, Type *)
 
 typedef struct {
-    Type *int_type;
+    TypeHandle int_type;
 
     // One byte, which is what a string's characters are. Not spellable in the
     // language: it exists so that the pointer naming those characters carries a
     // stride, the way every other 'ptr T' does.
-    Type *byte_type;
-    Type *float_type;
-    Type *bool_type;
-    Type *string_type;
+    TypeHandle byte_type;
+    TypeHandle float_type;
+    TypeHandle bool_type;
+    TypeHandle string_type;
 
     // 'str'. The characters of a string, borrowed: the same two slots as a
     // 'String' and copied like one, owning nothing. A distinct interned Type
@@ -62,14 +62,14 @@ typedef struct {
     //
     // Not what 'ref String' names. That is an indirection to a slot holding a
     // header, which is what 'ref' builds for every type in the language.
-    Type *str_type;
+    TypeHandle str_type;
 
     // 'Array', the bare name. Not a usable type on its own -- every array is
     // 'Array T' for some element -- but the name a spec resolves to before its
     // element is applied, and what a diagnostic prints when one is missing.
-    Type *array_type;
+    TypeHandle array_type;
 
-    Type *error_type;
+    TypeHandle error_type;
 } TypeBuiltins;
 
 // Interning, not naming. One registry per VM holds the builtins and every
@@ -86,7 +86,7 @@ typedef struct {
 // what a type is was settled when it was interned. Keeping them apart is what
 // lets a type be finished when the registry hands it over.
 typedef struct MethodKey {
-    const Type *type;
+    TypeHandle type;
     const String *name;
 } MethodKey;
 
@@ -118,31 +118,31 @@ typedef struct TypeRegistry {
 // Declares a method, or fails if the type already answers that name. Finds one
 // by following 'owner' when the type itself does not answer, so that a type
 // sharing another's identity reaches its set.
-bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method);
-Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name);
+bool type_registry_add_method(TypeRegistry *registry, TypeHandle type, String *name, Symbol *method);
+Symbol *type_registry_find_method(TypeRegistry *registry, TypeHandle type, const String *name);
 
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings);
 
 void type_registry_destroy(TypeRegistry *registry);
 
-Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind type);
-Type *type_registry_error_type(TypeRegistry *registry);
+TypeHandle type_registry_get_builtin(TypeRegistry *registry, TypeKind type);
+TypeHandle type_registry_error_type(TypeRegistry *registry);
 
 // The interned 'Array element': a header of {data, length} owning a block of
 // elements. One per element type, and the type that carries the element -- the
 // raw address naming the block does not, so this is what supplies the walk that
 // frees them.
-Type *type_registry_array_of(TypeRegistry *registry, Type *element, int32_t length);
+TypeHandle type_registry_array_of(TypeRegistry *registry, TypeHandle element, int32_t length);
 
 // The interned 'box inner' and 'ref inner'. Two constructors rather than one
 // taking a flag: which of them a type is decides whether a slot holding it
 // frees what it names, and that is the question the kind exists to answer.
-Type *type_registry_box_to(TypeRegistry *registry, Type *inner);
-Type *type_registry_ref_to(TypeRegistry *registry, Type *inner);
+TypeHandle type_registry_box_to(TypeRegistry *registry, TypeHandle inner);
+TypeHandle type_registry_ref_to(TypeRegistry *registry, TypeHandle inner);
 
 // The interned 'ptr pointee': an address the size of a machine pointer, owning
 // nothing. Distinct from both indirections of the same pointee, since what a
 // slot must free is read off the type.
-Type *type_registry_ptr_to(TypeRegistry *registry, Type *pointee);
+TypeHandle type_registry_ptr_to(TypeRegistry *registry, TypeHandle pointee);
 
 #endif

@@ -32,7 +32,7 @@ static void test_a_string_is_an_address_and_a_length() {
     Scope scope;
     scope_init(&scope, ctx.arena, &ctx.strings, NULL);
 
-    Type *string_type = type_registry_get_builtin(scope.type_registry, TYPE_STRING);
+    TypeHandle string_type = type_registry_get_builtin(scope.type_registry, TYPE_STRING);
 
     assert(string_type->size == sizeof(GabStringValue));
     assert(string_type->alignment == _Alignof(GabStringValue));
@@ -53,7 +53,7 @@ static void test_a_string_is_two_fields() {
     Scope scope;
     scope_init(&scope, ctx.arena, &ctx.strings, NULL);
 
-    Type *string_type = type_registry_get_builtin(scope.type_registry, TYPE_STRING);
+    TypeHandle string_type = type_registry_get_builtin(scope.type_registry, TYPE_STRING);
 
     const TypeField *data = type_find_field(string_type, string_from_cstr(&ctx.strings, "data"));
     const TypeField *length = type_find_field(string_type, string_from_cstr(&ctx.strings, "length"));
