@@ -908,16 +908,17 @@ static void vm_run_loop(VM *vm) {
                 VM_NEXT();
             }
             VM_CASE(OP_BOUNDS_CHECK) {
-                size_t rd = VM_DECODE_R_RD(instruction);
                 size_t r1 = VM_DECODE_R_R1(instruction);
 
-                GabArrayValue array;
-                memcpy(&array, vm_reg_at(vm, rd), sizeof(array));
+                // The length is the array type's, so it rides in the
+                // instruction rather than being read from the value: an array
+                // carries no count of its own to disagree with it.
+                int32_t length = (int32_t)VM_DECODE_R_R2(instruction);
 
                 int32_t index;
                 memcpy(&index, vm_reg_at(vm, r1), sizeof(index));
 
-                if (index < 0 || index >= array.length) {
+                if (index < 0 || index >= length) {
                     vm_fail(vm, VM_RUN_ERR_BOUNDS, "array index is out of range");
 
                     vm_unwind(vm);

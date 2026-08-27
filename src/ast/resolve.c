@@ -556,7 +556,11 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
     return false;
 }
 
-static void resolve_expr(ResolverState *state, ASTExpr *expr);
+// 'expected' is the type the value is going to land in, or NULL where the
+// destination is not known before the value is. Only an array literal reads it:
+// '[1, 2, 3]' has no type of its own, so what it must be is whatever it is
+// being stored into.
+static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected);
 
 // A call whose target is a field expression: 'recv.m(args)'. Resolves the
 // method against the receiver's type, checks the call, and lowers the whole
@@ -569,10 +573,13 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     ASTExpr *receiver = expr->call.target->field.target;
     StringRef name = expr->call.target->field.name;
 
-    resolve_expr(state, receiver);
+    resolve_expr(state, receiver, NULL);
 
+    // No destination type for the arguments: which method this is depends on
+    // the receiver's type, so the parameter list is not known until after the
+    // arguments would have to be resolved.
     for (size_t i = 0; i < expr->call.args.size; i++) {
-        resolve_expr(state, expr->call.args.data[i]);
+        resolve_expr(state, expr->call.args.data[i], NULL);
     }
 
     Type *receiver_type = receiver->type;
@@ -620,6 +627,20 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     }
 
     check_call_args(state, &expr->call.args, method->func.params + 1);
+
+    // An array's length is part of its type, so 'xs.len()' is known here and
+    // becomes the literal it answers. Folded rather than called because there
+    // is nothing at run time to read: the elements carry no count beside them.
+    if (base->kind == TYPE_ARRAY &&
+        method_name == string_from_cstr(state->current_scope->type_registry->strings, "len")) {
+        ast_expr_free(expr->call.target);
+        ast_expr_list_free(&expr->call.args);
+
+        expr->kind = EXPR_LITERAL;
+        expr->lit = (Literal){.kind = TYPE_INT, .as_int = type_array_length(base)};
+        expr->type = method->func.return_type;
+        return;
+    }
 
     lower_method_call(expr, method, adjustment);
 
@@ -901,7 +922,7 @@ static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
         return true;
     }
 
-    resolve_expr(state, operand);
+    resolve_expr(state, operand, NULL);
 
     Type *from = operand->type;
 
@@ -926,15 +947,15 @@ static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
     return true;
 }
 
-static void resolve_expr(ResolverState *state, ASTExpr *expr) {
+static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
     if (!expr) {
         return;
     }
 
     switch (expr->kind) {
     case EXPR_BIN_OP: {
-        resolve_expr(state, expr->bin_op.left);
-        resolve_expr(state, expr->bin_op.right);
+        resolve_expr(state, expr->bin_op.left, NULL);
+        resolve_expr(state, expr->bin_op.right, NULL);
 
         Type *left_type = expr->bin_op.left->type;
         Type *right_type = expr->bin_op.right->type;
@@ -1016,13 +1037,20 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
             break;
         }
 
-        resolve_expr(state, expr->call.target);
-
-        for (size_t i = 0; i < expr->call.args.size; i++) {
-            resolve_expr(state, expr->call.args.data[i]);
-        }
+        resolve_expr(state, expr->call.target, NULL);
 
         Symbol *callee = expr->call.target->symbol;
+
+        // The parameters are what the arguments land in, so they are looked up
+        // before the arguments are resolved: an argument with no type of its own
+        // has nothing else to take one from. Only when the callee is a function
+        // whose arity matches, since a parameter list is what is being indexed.
+        bool params_known =
+            callee && callee->kind == SYMBOL_FUNC && expr->call.args.size == callee->func.param_count;
+
+        for (size_t i = 0; i < expr->call.args.size; i++) {
+            resolve_expr(state, expr->call.args.data[i], params_known ? callee->func.params[i] : NULL);
+        }
 
         if (!callee) {
             expr->type = resolver_error_type(state);
@@ -1049,8 +1077,8 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         break;
     }
     case EXPR_INDEX: {
-        resolve_expr(state, expr->index.target);
-        resolve_expr(state, expr->index.index);
+        resolve_expr(state, expr->index.target, NULL);
+        resolve_expr(state, expr->index.index, NULL);
 
         Type *target_type = expr->index.target->type;
 
@@ -1083,30 +1111,8 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         expr->type = type_array_element(target_type);
         break;
     }
-    case EXPR_ARRAY_NEW: {
-        Type *type = resolve_type_expr(state, expr->array_new.type_expr, expr->span);
-
-        resolve_expr(state, expr->array_new.count);
-
-        if (is_error_type(type) || is_error_type(expr->array_new.count->type)) {
-            expr->type = resolver_error_type(state);
-            break;
-        }
-
-        if (expr->array_new.count->type != state->current_scope->type_registry->builtins.int_type) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                       "an array's length must be an int, not %s",
-                       type_name(state, expr->array_new.count->type));
-            expr->type = resolver_error_type(state);
-            break;
-        }
-
-        expr->array_new.type = type;
-        expr->type = type;
-        break;
-    }
     case EXPR_FIELD: {
-        resolve_expr(state, expr->field.target);
+        resolve_expr(state, expr->field.target, NULL);
 
         Type *target_type = expr->field.target->type;
 
@@ -1150,7 +1156,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         break;
     }
     case EXPR_MOVE: {
-        resolve_expr(state, expr->unary.target);
+        resolve_expr(state, expr->unary.target, NULL);
 
         Type *target_type = expr->unary.target->type;
 
@@ -1176,7 +1182,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         break;
     }
     case EXPR_ADDR_OF: {
-        resolve_expr(state, expr->unary.target);
+        resolve_expr(state, expr->unary.target, NULL);
 
         Type *target_type = expr->unary.target->type;
 
@@ -1229,7 +1235,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         break;
     }
     case EXPR_DEREF: {
-        resolve_expr(state, expr->unary.target);
+        resolve_expr(state, expr->unary.target, NULL);
 
         Type *target_type = expr->unary.target->type;
 
@@ -1253,7 +1259,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         break;
     }
     case EXPR_NEG: {
-        resolve_expr(state, expr->unary.target);
+        resolve_expr(state, expr->unary.target, NULL);
 
         Type *target_type = expr->unary.target->type;
 
@@ -1277,7 +1283,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
         break;
     }
     case EXPR_NOT: {
-        resolve_expr(state, expr->unary.target);
+        resolve_expr(state, expr->unary.target, NULL);
 
         Type *target_type = expr->unary.target->type;
 
@@ -1333,6 +1339,61 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr) {
 
         expr->new_expr.type = type;
         expr->type = type_registry_box_to(state->current_scope->type_registry, type);
+        break;
+    }
+    case EXPR_ARRAY_LIT: {
+        for (size_t i = 0; i < expr->array_lit.elements.size; i++) {
+            resolve_expr(state, expr->array_lit.elements.data[i], NULL);
+        }
+
+        if (!expected || expected->kind != TYPE_ARRAY) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                       "an array's elements need the array's type to be written, as "
+                       "'let xs: Array int,3 = [1, 2, 3];'");
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        int32_t length = type_array_length(expected);
+        Type *element = type_array_element(expected);
+
+        if ((int32_t)expr->array_lit.elements.size != length) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %d element(s), found %zu",
+                       length, expr->array_lit.elements.size);
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        bool ok = true;
+
+        for (size_t i = 0; i < expr->array_lit.elements.size; i++) {
+            ASTExpr *value = expr->array_lit.elements.data[i];
+
+            if (is_error_type(value->type)) {
+                ok = false;
+                continue;
+            }
+
+            // type_accepts rather than identity, for the reason an argument
+            // uses it: an element is bound into the array exactly as a value is
+            // bound into any slot that owns it.
+            if (!type_accepts(element, value->type)) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, value->span,
+                           "element %zu is %s, but the array holds %s", i + 1, type_name(state, value->type),
+                           type_name(state, element));
+                ok = false;
+                continue;
+            }
+
+            if (!borrow_into(state, &expr->array_lit.elements.data[i], element, value->span)) {
+                ok = false;
+                continue;
+            }
+
+            check_implicit_copy(state, expr->array_lit.elements.data[i], element, value->span);
+        }
+
+        expr->type = ok ? expected : resolver_error_type(state);
         break;
     }
     case EXPR_LITERAL: {
@@ -1446,9 +1507,9 @@ static Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) 
             return resolver_error_type(state);
         }
 
-        // One argument is all 'Array' takes. The list holds however many were
-        // written, so a count that does not match is this constructor's own
-        // complaint rather than something the shape prevented.
+        // One element type is all 'Array' takes. The list holds however many
+        // were written, so a count that does not match is this constructor's
+        // own complaint rather than something the shape prevented.
         if (expr->apply.args.size != 1) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'Array' takes one element type");
             return resolver_error_type(state);
@@ -1467,7 +1528,28 @@ static Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) 
             return resolver_error_type(state);
         }
 
-        return type_registry_array_of(registry, element);
+        int32_t length = expr->apply.length;
+
+        // An array of nothing has no element to index and no width to lay out.
+        if (length <= 0) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "an array's length must be positive, not %d",
+                       length);
+            return resolver_error_type(state);
+        }
+
+        // The elements live in the frame, so the whole run has to be reachable
+        // by the operands that address it: a slot index names where the array
+        // starts, and a byte offset reaches the element within it.
+        size_t bytes = element->size * (size_t)length;
+
+        if (bytes > GAB_MAX_TYPE_BYTES) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, span,
+                       "'Array' of %d needs %zu bytes, over the %d a frame addresses", length, bytes,
+                       GAB_MAX_TYPE_BYTES);
+            return resolver_error_type(state);
+        }
+
+        return type_registry_array_of(registry, element, length);
     }
 
     case TYPE_EXPR_NAME:
@@ -1490,9 +1572,10 @@ static Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) 
         return resolver_error_type(state);
     }
 
-    // 'Array' alone names no type: every array is 'Array T' for some element.
+    // 'Array' alone names no type: every array is 'Array T,N'.
     if (type == registry->builtins.array_type) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'Array' needs an element type, as 'Array int'");
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span,
+                   "'Array' needs an element type and a length, as 'Array int,3'");
         return resolver_error_type(state);
     }
 
@@ -1848,15 +1931,20 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
 
     switch (stmt->kind) {
     case STMT_EXPR: {
-        resolve_expr(state, stmt->expr.value);
+        resolve_expr(state, stmt->expr.value, NULL);
         break;
     }
     case STMT_VAR_DECL: {
-        resolve_expr(state, stmt->var_decl.initializer);
+        // Resolved before the initializer, so a value with no type of its own
+        // has the annotation to take one from.
+        Type *declared =
+            stmt->var_decl.type_expr ? resolve_type_expr(state, stmt->var_decl.type_expr, stmt->span) : NULL;
+
+        resolve_expr(state, stmt->var_decl.initializer, declared);
 
         Type *type;
         if (stmt->var_decl.type_expr) {
-            Type *decl_type = resolve_type_expr(state, stmt->var_decl.type_expr, stmt->span);
+            Type *decl_type = declared;
 
             if (stmt->var_decl.initializer) {
                 Type *init_type = stmt->var_decl.initializer->type;
@@ -1942,8 +2030,11 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         break;
     }
     case STMT_ASSIGN: {
-        resolve_expr(state, stmt->assign.target);
-        resolve_expr(state, stmt->assign.value);
+        resolve_expr(state, stmt->assign.target, NULL);
+
+        // The target is resolved first, so what it holds is what the value has
+        // to be -- which a value with no type of its own needs told.
+        resolve_expr(state, stmt->assign.value, stmt->assign.target->type);
 
         Type *target_type = stmt->assign.target->type;
         Type *value_type = stmt->assign.value->type;
@@ -1982,8 +2073,8 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         break;
     }
     case STMT_COMPOUND_ASSIGN: {
-        resolve_expr(state, stmt->compound_assign.target);
-        resolve_expr(state, stmt->compound_assign.value);
+        resolve_expr(state, stmt->compound_assign.target, NULL);
+        resolve_expr(state, stmt->compound_assign.value, NULL);
 
         Type *target_type = stmt->compound_assign.target->type;
         Type *value_type = stmt->compound_assign.value->type;
@@ -2018,7 +2109,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         break;
     }
     case STMT_IF: {
-        resolve_expr(state, stmt->ifstmt.condition);
+        resolve_expr(state, stmt->ifstmt.condition, NULL);
 
         // A branch has to have something to branch on, and bool is the only
         // thing the jump opcodes read. An already-poisoned condition has
@@ -2046,7 +2137,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         resolve_stmt(state, stmt->forstmt.init);
 
         if (stmt->forstmt.condition) {
-            resolve_expr(state, stmt->forstmt.condition);
+            resolve_expr(state, stmt->forstmt.condition, NULL);
 
             Type *condition_type = stmt->forstmt.condition->type;
 
@@ -2089,7 +2180,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         break;
     }
     case STMT_RETURN: {
-        resolve_expr(state, stmt->ret.result);
+        resolve_expr(state, stmt->ret.result, state->func_context.return_type);
 
         Type *expected = state->func_context.return_type;
         Type *actual = stmt->ret.result ? stmt->ret.result->type : NULL;

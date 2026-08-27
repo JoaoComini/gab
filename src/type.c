@@ -21,6 +21,7 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->methods = NULL;
     type->owner = NULL;
     type->drop = NULL;
+    type->app = (TypeApp){0};
 
     return type;
 }
@@ -97,9 +98,13 @@ bool type_is_indirect(const Type *type) { return type && (type->kind == TYPE_BOX
 Type *type_array_element(const Type *type) {
     assert(type && type->kind == TYPE_ARRAY && "only an array has an element");
 
-    // The 'data' field is the pointer naming the block, and a 'ptr T' carries
-    // what it points at.
-    return type->fields[0].type->inner;
+    return type->app.args[0].type;
+}
+
+int32_t type_array_length(const Type *type) {
+    assert(type && type->kind == TYPE_ARRAY && "only an array has a length");
+
+    return type->app.args[1].value;
 }
 
 bool type_is_owned(const Type *type) {
@@ -120,11 +125,17 @@ bool type_is_owned(const Type *type) {
     case TYPE_PTR:
         return false;
 
-    // A header owns exactly what it was built to free. The raw address naming
-    // its block says nothing about it, and its fields say nothing either, so
-    // the drop chosen where the type was built is the whole answer.
-    case TYPE_STRING:
+    // An array owns exactly what its elements do: it is a run of them and holds
+    // nothing else, so the element answers for the whole run however long it is.
     case TYPE_ARRAY:
+        return type_is_owned(type_array_element(type));
+
+    // A string owns exactly what it was built to free. Its fields cannot say --
+    // the address naming its characters claims nothing about them -- so the
+    // drop chosen where the type was built is what tells a 'String' from a
+    // 'str'. The one place ownership is read off the glue rather than derived,
+    // and what a borrowed view spelled as its own constructor would retire.
+    case TYPE_STRING:
         return type->drop != NULL;
 
     default:
@@ -165,9 +176,14 @@ bool type_is_copyable(const Type *type) {
     case TYPE_PTR:
         return true;
 
-    // A header that frees its block cannot be copied, for the same reason.
-    case TYPE_STRING:
+    // An array copies exactly when its elements do: copying one duplicates each
+    // of them, so a run of a non-copyable element is as uncopyable as one is.
     case TYPE_ARRAY:
+        return type_is_copyable(type_array_element(type));
+
+    // A string that frees its characters cannot be copied, for the same reason
+    // an owning pointer cannot: two headers would free them.
+    case TYPE_STRING:
         return type->drop == NULL;
 
     default:
@@ -276,4 +292,51 @@ void type_expr_destroy(TypeExpr *expr) {
     }
 
     free(expr);
+}
+
+// Mixed rather than summed, so that 'Array int,3' and 'Array int,4' -- and an
+// application whose arguments were given in the other order -- land in
+// different buckets. dj2b's shift-and-add over each argument's bytes, which is
+// what the string hash beside it does over characters.
+size_t type_app_hash_of(TypeApp app) {
+    size_t hash = 5381;
+
+    hash = ((hash << 5) + hash) + (size_t)app.ctor;
+    hash = ((hash << 5) + hash) + (size_t)(uintptr_t)app.decl;
+
+    for (size_t i = 0; i < app.arg_count; i++) {
+        const TypeArg *arg = &app.args[i];
+
+        hash = ((hash << 5) + hash) + (size_t)arg->kind;
+
+        // A type argument is compared by identity, so its address is what
+        // distinguishes it; a const argument is its value.
+        hash = ((hash << 5) + hash) +
+               (arg->kind == TYPE_ARG_TYPE ? (size_t)(uintptr_t)arg->type : (size_t)(uint32_t)arg->value);
+    }
+
+    return hash;
+}
+
+bool type_app_equals(TypeApp app, TypeApp other) {
+    if (app.ctor != other.ctor || app.decl != other.decl || app.arg_count != other.arg_count) {
+        return false;
+    }
+
+    for (size_t i = 0; i < app.arg_count; i++) {
+        if (app.args[i].kind != other.args[i].kind) {
+            return false;
+        }
+
+        // An interned type is one Type, so identity is the whole comparison.
+        if (app.args[i].kind == TYPE_ARG_TYPE) {
+            if (app.args[i].type != other.args[i].type) {
+                return false;
+            }
+        } else if (app.args[i].value != other.args[i].value) {
+            return false;
+        }
+    }
+
+    return true;
 }

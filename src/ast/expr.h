@@ -36,7 +36,9 @@ typedef enum {
     // 'xs[i]' -- one element of an array, and 'Array T[n]', which allocates
     // one. Distinguished by which of the two fields is set.
     EXPR_INDEX,
-    EXPR_ARRAY_NEW,
+
+    // '[a, b, c]'. The elements of a fixed array, written out.
+    EXPR_ARRAY_LIT,
     EXPR_MOVE,
 } ExprKind;
 
@@ -102,6 +104,12 @@ typedef struct ASTExpr {
         // to the element type and codegen reaches it the same way -- an offset
         // from an address -- except that the offset is computed rather than
         // known.
+        // The elements of an array literal, in the order written. How many
+        // there are is checked against the length the destination's type says.
+        struct {
+            ASTExprList elements;
+        } array_lit;
+
         struct {
             ASTExpr *target;
             ASTExpr *index;
@@ -110,15 +118,6 @@ typedef struct ASTExpr {
             // Its element is what the expression yields.
             const Type *array_type;
         } index;
-
-        // 'Array T[count]'. Names a type and takes a count, so it carries a
-        // TypeExpr beside its operand the way 'new' carries one alone.
-        struct {
-            TypeExpr *type_expr;
-            ASTExpr *count;
-
-            const Type *type;
-        } array_new;
 
         struct {
             ASTExpr *target;
@@ -172,8 +171,8 @@ ASTExpr *ast_neg_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_not_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_cast_expr_create(Span span, ASTExpr *operand);
 ASTExpr *ast_new_expr_create(Span span, TypeExpr *type_expr);
+ASTExpr *ast_array_lit_expr_create(Span span, ASTExprList elements);
 ASTExpr *ast_index_expr_create(Span span, ASTExpr *target, ASTExpr *index);
-ASTExpr *ast_array_new_expr_create(Span span, TypeExpr *type_expr, ASTExpr *count);
 void ast_expr_free(ASTExpr *node);
 
 #endif

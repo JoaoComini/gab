@@ -272,6 +272,19 @@ static void test_reassigning_a_string_frees_the_old_characters() {
                          "let r: bool = f(\"a\");") == true);
 }
 
+// A string declared without one owns its slot from the declaration, so the
+// assignment that fills it frees nothing and the scope frees it once. Nothing
+// else would record the slot: an assignment reaches into the header rather than
+// replacing the value.
+static void test_a_string_declared_empty_is_freed_once() {
+    assert(test_run_int("func f(): int {\n"
+                        "    let s: String;\n"
+                        "    s = \"a\" .. \"b\";\n"
+                        "    return s.len();\n"
+                        "}\n"
+                        "let r: int = f();") == 2);
+}
+
 // 'new String' allocates a heap slot holding a header, which zeroed is the
 // empty string -- the same thing 'new Player' does for a struct's layout.
 static void test_a_new_string_is_empty() {
@@ -401,6 +414,7 @@ int main(void) {
     test_a_join_stored_into_a_field_is_freed_once();
     test_a_returned_join_survives_its_frame();
     test_reassigning_a_string_frees_the_old_characters();
+    test_a_string_declared_empty_is_freed_once();
     test_a_new_string_is_empty();
     test_a_boxed_string_holds_what_is_stored_through_it();
     test_a_heap_struct_frees_its_string_field();

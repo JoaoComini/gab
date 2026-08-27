@@ -7,6 +7,7 @@
 
 #include <assert.h>
 #include <stdlib.h>
+#include <string.h>
 
 static Type *register_builtin(TypeRegistry *registry, TypeKind kind, const char *name, size_t size,
                               size_t alignment) {
@@ -39,8 +40,14 @@ static Type *string_builtin_create(TypeRegistry *registry, bool is_ref) {
     type_layout_compute(type);
 
     // The whole difference between the two, and all of it: one frees the
-    // characters it names and one was never given anything to free. Every later
-    // question about ownership reads this rather than a bit beside it.
+    // characters it names and one was never given anything to free.
+    //
+    // Set here rather than by object_select_drop, which every other constructed
+    // type goes through: that reads type_is_owned to choose, and a string's
+    // ownership is this assignment. Nothing else distinguishes the two -- they
+    // share a kind and a layout -- so the question would have no other answer.
+    // Spelling the borrowed one as its own constructor is what would let it
+    // join the rest.
     type->drop = is_ref ? NULL : object_drop_string;
 
     return type;
@@ -84,10 +91,8 @@ void type_registry_register_builtins(TypeRegistry *registry) {
 
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
-    registry->boxes = indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
-    registry->refs = indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
-    registry->ptrs = indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
-    registry->arrays = indirect_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->applications =
+        type_app_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
     registry->strings = strings;
     type_registry_register_builtins(registry);
@@ -95,52 +100,76 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     return registry;
 }
 
-void type_registry_destroy(TypeRegistry *registry) {
-    indirect_map_destroy(registry->boxes);
-    indirect_map_destroy(registry->refs);
-    indirect_map_destroy(registry->ptrs);
-    indirect_map_destroy(registry->arrays);
+void type_registry_destroy(TypeRegistry *registry) { type_app_map_destroy(registry->applications); }
+
+// Looks an application up, and interns the argument list if it is new. The
+// caller builds its key on the stack, so the arguments are copied into the
+// arena before an entry can hold them.
+static Type **application_lookup(TypeRegistry *registry, TypeApp app) {
+    return type_app_map_lookup(registry->applications, app);
 }
 
-Type *type_registry_array_of(TypeRegistry *registry, Type *element) {
-    Type **existing = indirect_map_lookup(registry->arrays, element);
+static void application_insert(TypeRegistry *registry, TypeApp app, Type *type) {
+    TypeArg *args = arena_alloc(registry->arena, app.arg_count * sizeof(TypeArg));
+    memcpy(args, app.args, app.arg_count * sizeof(TypeArg));
+
+    app.args = args;
+    type->app = app;
+
+    type_app_map_insert(registry->applications, app, type);
+}
+
+Type *type_registry_array_of(TypeRegistry *registry, Type *element, int32_t length) {
+    TypeArg args[] = {
+        {.kind = TYPE_ARG_TYPE, .type = element},
+        {.kind = TYPE_ARG_CONST, .value = length},
+    };
+
+    TypeApp app = {
+        .ctor = TYPE_CTOR_NOMINAL,
+        .decl = registry->builtins.array_type,
+        .args = args,
+        .arg_count = 2,
+    };
+
+    Type **existing = application_lookup(registry, app);
     if (existing) {
         return *existing;
     }
 
-    // Laid out from its fields exactly as a string is, and for the same reason:
-    // the size, the alignment and what it owns all follow from them.
-    Type *type = type_struct_create(registry->arena, registry->builtins.array_type->name, 2);
-    type->kind = TYPE_ARRAY;
+    // The elements live in the array itself, so its width is the run of them
+    // and its alignment is one element's. No header, no block: an 'Array T,N'
+    // is laid out exactly as a C 'T[N]' is, which is what lets a host lay one
+    // out with sizeof.
+    Type *type = type_create(registry->arena, TYPE_ARRAY, registry->builtins.array_type->name);
 
-    type_add_field(type, string_from_cstr(registry->strings, "data"),
-                   type_registry_ptr_to(registry, element));
-    type_add_field(type, string_from_cstr(registry->strings, "length"), registry->builtins.int_type);
-    type_layout_compute(type);
+    type->size = element->size * (size_t)length;
+    type->alignment = element->alignment;
 
-    // Every array frees its block, and its elements with it. The borrowed
-    // counterpart a string has in 'str' would leave this NULL, which is the
-    // whole of what it would need.
-    type->drop = object_drop_array;
-
-    // Every array answers the same methods, which do not depend on the element:
-    // 'len' reads a count. Reached through 'owner' rather than copied into each
-    // set, the way a 'str' reaches a 'String's.
+    // Every array answers the same methods, which do not depend on the element.
+    // Reached through 'owner' rather than copied into each set, the way a 'str'
+    // reaches a 'String's.
     type->owner = registry->builtins.array_type;
 
-    // Interned before the layout is read by anything else, so a recursive
-    // element -- an 'Array' of a struct holding one -- finds this entry rather
-    // than building a second.
-    indirect_map_insert(registry->arrays, element, type);
+    // Interned before the drop is selected, so a recursive element -- an array
+    // of a struct holding one -- finds this entry rather than building a
+    // second.
+    application_insert(registry, app, type);
+
+    object_select_drop(type);
 
     return type;
 }
 
-// Both constructors, which differ only in which map interns them and which
-// kind the result carries. Written once because everything else about building
-// one -- the width, the alignment, the pointee -- is the same for both.
-static Type *indirect_to(TypeRegistry *registry, IndirectMap *map, TypeKind kind, Type *inner) {
-    Type **existing = indirect_map_lookup(map, inner);
+// The three built-in one-argument constructors, which differ only in the kind
+// the result carries. Written once because everything else about building one
+// -- the width, the alignment, the pointee -- is the same for all of them.
+static Type *indirect_to(TypeRegistry *registry, TypeCtor ctor, TypeKind kind, Type *inner) {
+    TypeArg args[] = {{.kind = TYPE_ARG_TYPE, .type = inner}};
+
+    TypeApp app = {.ctor = ctor, .decl = NULL, .args = args, .arg_count = 1};
+
+    Type **existing = application_lookup(registry, app);
     if (existing) {
         return *existing;
     }
@@ -159,43 +188,26 @@ static Type *indirect_to(TypeRegistry *registry, IndirectMap *map, TypeKind kind
     type->alignment = _Alignof(void *);
     type->inner = inner;
 
-    object_select_drop(type);
+    // Interned before the drop is selected, so a pointee reaching back here --
+    // a struct holding a pointer to its own type -- finds this entry rather
+    // than building a second.
+    application_insert(registry, app, type);
 
-    indirect_map_insert(map, inner, type);
+    object_select_drop(type);
 
     return type;
 }
 
 Type *type_registry_box_to(TypeRegistry *registry, Type *inner) {
-    return indirect_to(registry, registry->boxes, TYPE_BOX, inner);
+    return indirect_to(registry, TYPE_CTOR_BOX, TYPE_BOX, inner);
 }
 
 Type *type_registry_ref_to(TypeRegistry *registry, Type *inner) {
-    return indirect_to(registry, registry->refs, TYPE_REF, inner);
+    return indirect_to(registry, TYPE_CTOR_REF, TYPE_REF, inner);
 }
 
 Type *type_registry_ptr_to(TypeRegistry *registry, Type *pointee) {
-    Type **existing = indirect_map_lookup(registry->ptrs, pointee);
-    if (existing) {
-        return *existing;
-    }
-
-    // Structural like an indirection, so no name of its own: a diagnostic
-    // derives one from the pointee. See Type::name.
-    Type *type = type_create(registry->arena, TYPE_PTR, NULL);
-
-    type->size = sizeof(void *);
-    type->alignment = _Alignof(void *);
-    type->inner = pointee;
-
-    // Interned before the drop is selected, so a pointee reaching back here --
-    // a struct holding a pointer to its own type -- finds this entry rather
-    // than building a second.
-    indirect_map_insert(registry->ptrs, pointee, type);
-
-    object_select_drop(type);
-
-    return type;
+    return indirect_to(registry, TYPE_CTOR_PTR, TYPE_PTR, pointee);
 }
 
 Type *type_registry_error_type(TypeRegistry *registry) { return registry->builtins.error_type; }

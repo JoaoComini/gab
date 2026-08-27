@@ -54,7 +54,68 @@ typedef enum {
     TYPE_ERROR,
 } TypeKind;
 
+// The widest a laid-out type may be. A field's byte offset and an array's
+// element offset both ride in an 8-bit instruction operand, so a type wider
+// than this has members no instruction could reach.
+//
+// Stated here rather than read from the instruction encoding, because it is the
+// resolver that must reject the type: by the time codegen is picking operands,
+// the diagnostic naming the offending declaration is long gone.
+#define GAB_MAX_TYPE_BYTES 255
+
 typedef struct Type Type;
+
+/*
+    A type constructor, and what it was applied to.
+
+    Every parameterized type in the language is one of these: 'box T', 'ref T',
+    'ptr T' and 'Array T,N' differ in which constructor and how many arguments,
+    not in kind. One interning table keyed by an application therefore serves
+    all of them, and serves a generic 'List T' or 'Map K,V' with no new table --
+    which is why this is a key rather than one map per constructor.
+*/
+typedef enum {
+    // The built-in constructors, named directly by the compiler.
+    TYPE_CTOR_BOX,
+    TYPE_CTOR_REF,
+    TYPE_CTOR_PTR,
+
+    // A constructor with a declaration behind it: 'Array' today, and whatever
+    // a generic declaration introduces later.
+    TYPE_CTOR_NOMINAL,
+} TypeCtor;
+
+// One argument of an application. A type or a compile-time value: 'Array T,N'
+// is one of each. Tagged rather than promoting a value into a Type, because a
+// length has no size and no alignment to answer for, and every question asked
+// of a Type would have to special-case one that is really a number.
+typedef struct TypeArg {
+    enum {
+        TYPE_ARG_TYPE,
+        TYPE_ARG_CONST,
+    } kind;
+
+    union {
+        Type *type;
+        int32_t value;
+    };
+} TypeArg;
+
+// The interning key. Types compare by pointer identity, so two mentions of
+// 'Array int,3' must find one Type: that is what this is looked up by.
+typedef struct TypeApp {
+    TypeCtor ctor;
+
+    // The declaration a nominal constructor came from -- the bare 'Array'.
+    // NULL for the built-in constructors, which their tag already tells apart.
+    Type *decl;
+
+    const TypeArg *args;
+    size_t arg_count;
+} TypeApp;
+
+size_t type_app_hash_of(TypeApp app);
+bool type_app_equals(TypeApp app, TypeApp other);
 
 // Frees what one value of a type owns, leaving the value itself to its holder.
 // Selected once, when the layout is computed, so that freeing never asks what
@@ -123,6 +184,15 @@ struct Type {
     // 'String' -- the owning one. NULL everywhere else. Method lookup follows
     // it so that one declaration serves both.
     Type *owner;
+
+    // What this type was built by applying, for a type the registry interned.
+    // Zeroed for a builtin and for a struct, which are named rather than
+    // constructed.
+    //
+    // Kept so that the arguments stay readable off the type: an array's element
+    // and its length are what its application was given, rather than something
+    // recovered from the layout they produced.
+    TypeApp app;
 };
 
 Type *type_create(Arena *arena, TypeKind kind, String *name);
@@ -136,10 +206,11 @@ void type_layout_compute(Type *type);
 // ownership: a 'ref T' is as indirect as a 'box T'.
 bool type_is_indirect(const Type *type);
 
-// What one element of an array's block is: what the 'data' pointer names.
-// Read through here rather than off a field of its own, so that the stride a
-// walk advances by and the type that pointer carries cannot disagree.
+// What one element of an array is, and how many it holds. Both are what the
+// application was given, so the element a walk strides by and the count it
+// stops at are read from the same place the type was interned on.
 Type *type_array_element(const Type *type);
+int32_t type_array_length(const Type *type);
 
 // Whether a value of this type owns memory that must be freed when it dies.
 // True of a 'box T' and of an owning string, false of every 'ref', and true of
@@ -213,6 +284,11 @@ struct TypeExpr {
         struct {
             TypeExpr *base;
             TypeExprList args;
+
+            // How many elements, for 'Array T,N'. An integer literal rather
+            // than an argument of its own: a length is not a type, and the one
+            // constructor that takes one always takes exactly one.
+            int32_t length;
         } apply;
     };
 };
