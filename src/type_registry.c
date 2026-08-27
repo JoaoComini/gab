@@ -56,15 +56,9 @@ void type_registry_register_builtins(TypeRegistry *registry) {
 
     // The characters, which no slot holds: a 'ref str' is what names them, and
     // that reference is what carries how many there are. Zero-width because
-    // nothing is ever laid out for it.
-    Type *str = register_builtin(registry, TYPE_STR, "str");
-
-    // How far the characters run is not in their type, so no slot reserves room
-    // for one and a reference to them carries that count.
-    str->sized = false;
-    str->metadata = TYPE_META_LENGTH;
-
-    registry->builtins.str_type = str;
+    // nothing is ever laid out for it, and both of those follow from the kind
+    // rather than being set here: see type_is_sized and type_metadata_of.
+    registry->builtins.str_type = register_builtin(registry, TYPE_STR, "str");
 
     // The VM and the host both read these two fields as GabStringValue, so the
     // computed layout and the C struct are two statements of one thing.
@@ -73,6 +67,16 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     assert(string_layout->size == sizeof(GabStringValue));
     assert(string_layout->alignment == _Alignof(GabStringValue));
     (void)string_layout;
+
+    // And a reference to those characters is what a C body reads one as. The
+    // width is computed from what the reference carries rather than from this
+    // struct, so the two agreeing is a fact to check rather than one to assume.
+    const TypeLayout *str_ref_layout =
+        type_registry_layout_of(registry, type_registry_ref_to(registry, registry->builtins.str_type));
+
+    assert(str_ref_layout->size == sizeof(GabStrRef));
+    assert(str_ref_layout->alignment == _Alignof(GabStrRef));
+    (void)str_ref_layout;
 
     // The bare name every 'Array T' is interned under. Sized as the header the
     // elements make it, so that a diagnostic naming it says something true even
@@ -147,6 +151,15 @@ static void layout_of_indirect(const Type *type, size_t *size, size_t *alignment
     *size = sizeof(void *);
     *alignment = _Alignof(void *);
 
+    // A pointee whose bounds are not in its type is named by more than an
+    // address: how many elements it runs to lives with the value, so the
+    // reference carries that count beside the address.
+    //
+    // The count's width, not any one reference's: a slice answers
+    // TYPE_META_LENGTH for the reason characters do, and reaches here for the
+    // same width. What the host reads such a reference as -- 'GabStrRef' for
+    // characters -- is asserted against this rather than being what it is
+    // computed from, so a second such pointee needs no arm here.
     if (type_metadata_of(type_pointee(type)) == TYPE_META_LENGTH) {
         *size = align_up(*size + sizeof(int32_t), *alignment);
     }

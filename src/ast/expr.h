@@ -28,6 +28,16 @@ typedef enum {
     EXPR_FIELD,
     EXPR_ADDR_OF,
     EXPR_DEREF,
+
+    // A value handing over a reference to what it already holds: an owning
+    // string giving the address and count of its characters.
+    //
+    // A node rather than nothing, though the two are the same bytes today: what
+    // the reference carries is read out of the header by field offset, so a
+    // header that grows a field the reference does not carry still lends the
+    // two words it does. Without it the lend is a reinterpretation that holds
+    // only while the layouts agree, and nothing says they must.
+    EXPR_LEND,
     EXPR_NEG,
     EXPR_NOT,
     EXPR_CAST,
@@ -174,6 +184,7 @@ ASTExpr *ast_call_expr_create(Span span, ASTExpr *target, ASTExprList args);
 ASTExpr *ast_field_expr_create(Span span, ASTExpr *target, StringRef name);
 ASTExpr *ast_addr_of_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_deref_expr_create(Span span, ASTExpr *target);
+ASTExpr *ast_lend_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_move_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_neg_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_not_expr_create(Span span, ASTExpr *target);

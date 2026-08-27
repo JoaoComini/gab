@@ -102,6 +102,12 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
     }
     case EXPR_FIELD:
         return inner_depth(pass, expr->field.target);
+
+    // The characters a lend hands over are the header's, so the reference
+    // reaches exactly as far as what it was lent from.
+    case EXPR_LEND:
+        return inner_depth(pass, expr->unary.target);
+
     case EXPR_DEREF:
         // Reading through a borrow reaches no further than the borrow does: what
         // '*s' names lives as long as whatever 's' was made from, so the hops a
@@ -312,6 +318,7 @@ static void flow_pass_expr(FlowPass *pass, ASTExpr *expr) {
     }
     case EXPR_ADDR_OF:
     case EXPR_DEREF:
+    case EXPR_LEND:
     case EXPR_NEG:
     case EXPR_NOT:
         flow_pass_expr(pass, expr->unary.target);

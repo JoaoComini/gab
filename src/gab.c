@@ -223,7 +223,7 @@ void gab_arg_get_struct(GabArgs *args, int index, void *out, size_t size) {
 }
 
 const char *gab_arg_get_string(GabArgs *args, int index, int32_t *out_length) {
-    GabStringValue value = args_string(args, index);
+    GabStrRef value = args_string(args, index);
 
     if (out_length) {
         *out_length = value.length;

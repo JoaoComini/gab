@@ -843,6 +843,17 @@ static bool borrow_into(ResolverState *state, ASTExpr **slot, const Type *destin
         *slot = hop;
     }
 
+    // A value lending what it holds: the reference is built out of the header's
+    // fields rather than being the header read at a narrower width, so the two
+    // need not be the same bytes.
+    if (lends_by_value(destination, (*slot)->type)) {
+        ASTExpr *lend = ast_lend_expr_create(span, *slot);
+        lend->type = destination;
+        *slot = lend;
+
+        return true;
+    }
+
     if (!accepts_by_borrowing(destination, (*slot)->type)) {
         return true;
     }
