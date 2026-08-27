@@ -161,26 +161,6 @@ size_t gab_type_align(const GabType *type);
 // an out-parameter: a field at offset 0 is otherwise indistinguishable.
 bool gab_field_offset(const GabType *type, const char *field, size_t *out_offset);
 
-// --- Heap objects ----------------------------------------------------------
-
-// Allocates a zeroed object of 'type' and hands the host the only reference to
-// it. Ownership is unique: exactly one owner at a time, and here that is the
-// caller, who must pass it to gab_free or hand it to a script that takes it
-// over. Returns NULL if 'type' is NULL or memory ran out.
-//
-// The address is the payload's, so it can be read and written through
-// gab_field_offset exactly as a struct passed by value would be — this is the
-// same zero-marshalling layout, on the heap instead of the stack.
-void *gab_new(GabVM *vm, const GabType *type);
-
-// Frees an object and everything it owns. A 'ref T' field is not followed: it
-// names something it does not own.
-//
-// NULL-tolerant. Freeing an object a script still names is a use-after-free
-// that nothing detects — ownership is not tracked at runtime, so this is the
-// one place a host has to know what it owns.
-void gab_free(GabVM *vm, void *object);
-
 // --- Calling into a script -------------------------------------------------
 
 // Resolves a name to a callable handle once, so that calling it every frame
@@ -257,9 +237,9 @@ bool gab_arg_pointer(GabCall *call, int index, void *pointer, const GabType *inn
 // 'ret' may be NULL for a function that returns nothing; otherwise it receives
 // the return type's size in bytes, so a struct return works the same way.
 //
-// A function returning 'box T' hands over ownership: the object is the host's to
-// gab_free once it is done. A 'ref T' return does not — it names something the
-// script still owns, and freeing it would be a double free.
+// A function returning 'box T' hands over ownership, and there is no host call
+// that frees one: what a script allocated, only a script frees today. A 'ref T'
+// return owns nothing and names something the script still holds.
 GabStatus gab_call(GabVM *vm, GabCall *call, void *ret, GabError *err);
 
 #endif

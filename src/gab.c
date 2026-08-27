@@ -405,27 +405,6 @@ bool gab_field_offset(const GabType *handle, const char *field, size_t *out_offs
     return false;
 }
 
-// --- Heap objects ----------------------------------------------------------
-
-// The VM is taken but unused: an allocator is global today, and a host that
-// installs its own later would reach it through the VM rather than through a
-// changed signature.
-void *gab_new(GabVM *handle, const GabType *type) {
-    (void)handle;
-
-    if (!type) {
-        return NULL;
-    }
-
-    return object_alloc(DEFAULT_ALLOCATOR, (TypeHandle)type);
-}
-
-void gab_free(GabVM *handle, void *object) {
-    (void)handle;
-
-    object_free(DEFAULT_ALLOCATOR, object);
-}
-
 // --- Calling ---------------------------------------------------------------
 
 GabFunc *gab_lookup(GabVM *handle, const char *module, const char *name, GabError *err) {
