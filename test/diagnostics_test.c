@@ -376,8 +376,8 @@ static void test_rejects_shadowing_a_builtin() {
     test_context_free(&ctx);
 }
 
-// Without an explicit check this would surface as "unknown type 'Node'", since
-// the struct is registered only after its fields resolve.
+// A struct holding itself by value has no finite width, so its layout cannot be
+// computed at all.
 static void test_reports_self_referential_struct() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -390,6 +390,26 @@ static void test_reports_self_referential_struct() {
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_TYPE);
     assert(strcmp(diagnostic->message, "struct 'Node' cannot contain itself") == 0);
+
+    test_context_free(&ctx);
+}
+
+// Containment is a cycle over by-value fields, not a name match against the
+// struct being declared: a ring of any length is as infinite as a self-holding
+// field is.
+static void test_reports_mutual_containment_cycle() {
+    TestContext ctx;
+    test_context_init(&ctx);
+    Diagnostics *diagnostics = &ctx.diagnostics;
+
+    compile(&ctx, "struct A { b: B }\n"
+                  "struct B { a: A }\n");
+
+    assert(diagnostics_count(diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
+    assert(diagnostic->kind == GAB_ERR_TYPE);
+    assert(strcmp(diagnostic->message, "struct 'A' cannot contain itself") == 0);
 
     test_context_free(&ctx);
 }
@@ -760,6 +780,7 @@ int main(void) {
     test_reports_duplicate_struct_name();
     test_rejects_shadowing_a_builtin();
     test_reports_self_referential_struct();
+    test_reports_mutual_containment_cycle();
     test_reports_every_bad_field();
 
     test_reports_wrong_argument_count();

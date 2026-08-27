@@ -111,24 +111,12 @@ Type *type_registry_declare_struct(TypeRegistry *registry, const Scope *scope, S
                                    size_t max_fields) {
     Type *type = type_struct_create(registry->arena, name, max_fields);
 
-    // Registered before its fields are known, so a field naming the struct
-    // being declared finds this entry rather than building a second.
+    // Interned as soon as its name is bound, so that every field naming it --
+    // in this declaration or in one further down the file -- finds this entry
+    // rather than building a second.
     nominal_key_insert(registry->nominals, (NominalKey){.scope = scope, .name = name}, type);
 
     return type;
-}
-
-TypeHandle type_registry_finish_struct(TypeRegistry *registry, Type *type) {
-    (void)registry;
-
-    type_layout_compute(type);
-    object_select_drop(type);
-
-    return type;
-}
-
-void type_registry_withdraw_struct(TypeRegistry *registry, const Scope *scope, String *name) {
-    nominal_key_delete(registry->nominals, (NominalKey){.scope = scope, .name = name});
 }
 
 TypeHandle type_registry_find_builtin(TypeRegistry *registry, String *name) {
