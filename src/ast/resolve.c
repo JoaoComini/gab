@@ -389,6 +389,9 @@ static const Type *receiver_base_type(const Type *type) {
 // by both call forms, which differ only in where their parameter list starts:
 // a method's skips the receiver.
 static bool type_accepts(const Type *to, const Type *from);
+static bool accepts_by_borrowing(const Type *to, const Type *from);
+static bool lends_by_value(const Type *to, const Type *from);
+static bool lends_by_pointer(const Type *to, const Type *from);
 static bool borrow_into(ResolverState *state, ASTExpr **slot, const Type *destination, Span span);
 static void check_implicit_copy(ResolverState *state, ASTExpr *value, const Type *destination, Span span);
 
@@ -441,12 +444,21 @@ static void check_call_args(ResolverState *state, ASTExprList *args, const Type 
 //
 // Runs after the call is fully checked, so the diagnostics above all report
 // against what the user wrote rather than against the rewrite.
-// How a receiver reaches parameter zero. A 'box T' method called on a 'T' takes
-// its address; a 'T' method called through a 'box T' copies the inner in.
-typedef enum {
-    RECEIVER_AS_IS,
-    RECEIVER_ADDRESS_OF,
-    RECEIVER_DEREF,
+// How a receiver reaches parameter zero: how many levels to reach through
+// first, and whether its address is taken once there.
+//
+// The two are one answer rather than two, because the search that finds a
+// method is what settles both -- and the walk that lowers the call must make
+// exactly the hops that search stopped at. Recording the count is what keeps
+// the two from having to agree by rederiving it.
+typedef struct {
+    // Levels of indirection to reach through before the receiver is at the type
+    // the method was found on. Zero for a receiver already there.
+    size_t derefs;
+
+    // Whether the method wants a pointer to what those hops reached, which a
+    // value receiver at that level has to be given by taking its address.
+    bool address_of;
 } ReceiverAdjustment;
 
 // Rewrites 'recv.m(a)' — parsed as a call over the field expression 'recv.m' —
@@ -477,33 +489,18 @@ static void lower_method_call(ASTExpr *expr, Symbol *method, ReceiverAdjustment 
     target->field.target = NULL;
     ast_expr_free(target);
 
-    switch (adjustment) {
-    case RECEIVER_ADDRESS_OF:
+    // Exactly the hops the search stopped at, in the order it made them: reach
+    // through each level, then take the address if the method asked for one.
+    for (size_t i = 0; i < adjustment.derefs; i++) {
+        const Type *inner = type_pointee(receiver->type);
+
+        receiver = ast_deref_expr_create(span, receiver);
+        receiver->type = inner;
+    }
+
+    if (adjustment.address_of) {
         receiver = ast_addr_of_expr_create(span, receiver);
         receiver->type = method->func.params[0];
-        break;
-    case RECEIVER_DEREF: {
-        // One hop per level between the receiver and what parameter zero
-        // accepts. Usually one -- a 'T' method reached through a 'box T' -- but
-        // a 'ref box T' receiver is two away from the struct, and the last hop
-        // is the one whose type the parameter settles.
-        const Type *declared = method->func.params[0];
-
-        // The stop condition is this level matching, never type_accepts: that
-        // one chains, so it is already true at the level furthest out and would
-        // emit no hop at all.
-        while (type_is_indirect(receiver->type) && receiver->type != declared &&
-               type_pointee(declared) != type_pointee(receiver->type)) {
-            const Type *inner = type_pointee(receiver->type);
-
-            receiver = ast_deref_expr_create(span, receiver);
-            receiver->type = inner;
-        }
-
-        break;
-    }
-    case RECEIVER_AS_IS:
-        break;
     }
 
     // A fresh list, since the receiver has to lead and the list only appends.
@@ -527,94 +524,80 @@ static void lower_method_call(ASTExpr *expr, Symbol *method, ReceiverAdjustment 
 // 'out'. Returns false when no adjustment bridges the two, having said why.
 static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *receiver, const Type *declared,
                                const Type *actual, const String *name, ReceiverAdjustment *out) {
-    if (declared == actual) {
-        *out = RECEIVER_AS_IS;
-        return true;
-    }
-
-    // An owning string reaching a method that takes a reference to characters:
-    // the header already is that address and count, so it is lent as it stands
-    // rather than having its address taken. A pointer to one is followed first,
-    // the way a receiver reaches through any indirection.
-    if (type_is_str_ref(declared)) {
-        if (actual->kind == TYPE_STRING) {
-            *out = RECEIVER_AS_IS;
-            return true;
-        }
-
-        if (type_is_indirect(actual) && receiver_base_type(actual) == type_pointee(declared)->owner) {
-            *out = RECEIVER_DEREF;
-            return true;
-        }
-    }
-
-    if (type_is_indirect(declared) && !type_is_indirect(actual)) {
-        // The address of this receiver has to be the pointer the method asked
-        // for. A method set is shared between a type and what borrows it, so
-        // lookup can reach one whose receiver names the other -- and taking the
-        // address of a 'str' would hand a 'ref str' where a 'ref String' was
-        // declared.
-        if (type_pointee(declared) != actual) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot call '%s' on %s", name->data,
-                       type_name(state, actual));
-            return false;
-        }
-
-        if (!is_addressable(receiver)) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                       "cannot call '%s' on a temporary, since it takes a pointer receiver", name->data);
-            return false;
-        }
-
-        // The address is loose for the duration of the call, so the slot it
-        // names must survive the whole block — exactly as for 'ref x'.
-        Symbol *addressed = addressed_symbol(receiver);
-        if (addressed) {
-            addressed->pinned = true;
-        }
-
-        *out = RECEIVER_ADDRESS_OF;
-        return true;
-    }
-
-    if (!type_is_indirect(declared) && type_is_indirect(actual)) {
-        *out = RECEIVER_DEREF;
-        return true;
-    }
-
-    // A pointer receiver still a level or more away from what the method takes:
-    // a 'ref box T' calling a 'ref T' method reaches the 'box T' inside it,
-    // which then lends. Checked before the widening below, since that one only
-    // recognises a receiver already at the right level.
-    if (type_is_indirect(actual) && type_is_indirect(type_pointee(actual)) &&
-        type_accepts(declared, type_pointee(actual))) {
-        *out = RECEIVER_DEREF;
-        return true;
-    }
-
-    // An owned 'box T' calling a 'ref T' method, which is the only pointer-to-
-    // pointer case left: a receiver is declared 'ref T' or it is not a pointer
-    // at all, so 'declared' is never an owning pointer here.
+    // Every level the receiver can be reached through, nearest first: the
+    // receiver itself, what it points at, what that points at. At each rung the
+    // method is tried by value and then by address, and the first rung that
+    // answers wins -- which is what keeps the nearest reading of an ambiguous
+    // receiver the one taken.
     //
-    // Lending is what the method asked for, and the caller goes on owning what
-    // it lent. The same widening type_accepts allows for any argument — which
-    // is what a receiver is — and 'declared == actual' above does not catch it
-    // only because the two are distinct interned types.
-    if (type_accepts(declared, actual)) {
-        *out = RECEIVER_AS_IS;
-        return true;
+    // Rust's method call resolves this way, and for the same reason: the shapes
+    // a receiver may take are a chain rather than a set of pairs, and walking it
+    // is what a pile of pairwise cases was approximating.
+    const Type *at = actual;
+
+    for (size_t derefs = 0;; derefs++) {
+        // Already what the method takes, at this level.
+        if (declared == at) {
+            *out = (ReceiverAdjustment){.derefs = derefs, .address_of = false};
+            return true;
+        }
+
+        // Taking the receiver's address, which is what a 'ref T' method called
+        // on a T asks for: what it names is the slot the receiver sits in.
+        //
+        // Asked before lending because the two run in opposite directions and
+        // one pair answers to both. A T reaching a 'ref T' is this -- the
+        // address of its own storage -- while lending reaches through a
+        // receiver to something it already holds. Which of the two a pair is
+        // decides what the tree gets, so it is read off the relation rather
+        // than off which test was written first.
+        if (accepts_by_borrowing(declared, at)) {
+            if (!is_addressable(receiver)) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                           "cannot call '%s' on a temporary, since it takes a pointer receiver", name->data);
+                return false;
+            }
+
+            // The address is loose for the duration of the call, so the slot it
+            // names must survive the whole block — exactly as for 'ref x'.
+            Symbol *addressed = addressed_symbol(receiver);
+            if (addressed) {
+                addressed->pinned = true;
+            }
+
+            *out = (ReceiverAdjustment){.derefs = derefs, .address_of = true};
+            return true;
+        }
+
+        // Lending: the receiver already holds what the method wants, so it is
+        // handed over as it stands. A 'box T' gives the 'ref T' it points at,
+        // and an owning string gives the address and count it already is.
+        //
+        // One level at a time, never type_accepts: that one walks the chain
+        // itself and would answer from the outermost level, reporting no hops
+        // where the receiver still has levels to go.
+        if (lends_by_value(declared, at) || lends_by_pointer(declared, at)) {
+            *out = (ReceiverAdjustment){.derefs = derefs, .address_of = false};
+            return true;
+        }
+
+        // A method declared on the type this level reaches through 'owner': the
+        // bare 'Array' every 'Array T,N' hangs its set on. What such a method
+        // reads is the header, which every array has the same shape of, so the
+        // element it was written over does not enter into it.
+        if (at->kind == TYPE_ARRAY && declared == at->owner) {
+            *out = (ReceiverAdjustment){.derefs = derefs, .address_of = false};
+            return true;
+        }
+
+        if (!type_is_indirect(at)) {
+            break;
+        }
+
+        at = type_pointee(at);
     }
 
-    // A method declared on the type this one reaches through 'owner', which for
-    // an array is the bare 'Array' its whole set hangs on. What it reads is the
-    // header, which every array has the same shape of, so the element the
-    // receiver was written over does not enter into it.
-    if (actual->kind == TYPE_ARRAY && declared == actual->owner) {
-        *out = RECEIVER_AS_IS;
-        return true;
-    }
-
-    // A 'box box Player', or some other shape no coercion bridges.
+    // A 'box box Player', or some other shape no rung of the chain bridges.
     diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot call '%s' on %s", name->data,
                type_name(state, actual));
     return false;
@@ -719,66 +702,73 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 // The reverse is deliberately absent: promoting 'ref T' to 'box T' would hand out
 // ownership nobody granted, and the object already has an owner that will free
 // it.
+// A value handing over a reference to what it already holds. An owning string
+// is laid out as the address of its characters and their count, which is
+// exactly what a reference to them is, so it lends one rather than being
+// pointed at.
+//
+// Written for the one owner there is. The rule it is an instance of -- a value
+// already laid out as an address and its metadata lends a reference to what it
+// names -- is what a growable buffer lending a slice would want too, and is
+// worth generalising once there is a second owner to check it against.
+//
+// The reverse is refused, as every borrow-to-owner is: the characters a
+// reference names belong to someone else, and an owning slot would free what it
+// never allocated.
+static bool lends_by_value(const Type *to, const Type *from) {
+    return type_is_str_ref(to) && from && from->kind == TYPE_STRING;
+}
+
+// A pointer handing over a reference to what it points at, reaching through
+// exactly one level.
+//
+// The single step type_accepts chains. Kept apart from that walk so a caller
+// that must know which level answered can ask one level at a time -- which the
+// walk cannot tell it, since it reports only that some level did.
+static bool lends_by_pointer(const Type *to, const Type *from) {
+    return to->kind == TYPE_REF && type_is_indirect(from) && type_pointee(to) == type_pointee(from);
+}
+
+static bool accepts_by_borrowing(const Type *to, const Type *from) {
+    return to != from && to->kind == TYPE_REF && type_pointee(to) == from;
+}
+
 static bool type_accepts(const Type *to, const Type *from) {
     if (to == from) {
         return true;
     }
 
-    // An owning string lends a reference to its characters: the header already
-    // holds their address and their count, which is exactly what such a
-    // reference is, so it is handed over rather than pointed at.
-    //
-    // Written for the one owner there is. The rule it is an instance of -- a
-    // value already laid out as an address and its metadata lends a reference
-    // to what it names -- is what a growable buffer lending a slice would want
-    // too, and is worth generalising once there is a second owner to check it
-    // against.
-    //
-    // The reverse is refused, as every borrow-to-owner is: the characters a
-    // reference names belong to someone else, and an owning slot would free
-    // what it never allocated.
-    if (type_is_str_ref(to) && from && from->kind == TYPE_STRING) {
+    // The two relations a destination may accept a value by, which run in
+    // opposite directions: borrowing names the slot 'from' itself sits in, while
+    // lending reaches through it to what it already holds. A pair is one or the
+    // other, never both -- a pointer equal to what 'to' names cannot also name
+    // it -- so asking for either is the whole question here.
+    if (accepts_by_borrowing(to, from)) {
         return true;
     }
 
-    if (to->kind != TYPE_REF) {
-        return false;
-    }
-
-    // Borrowing: the destination names what 'from' itself sits in. A 'box T'
-    // reaching a 'ref box T' takes this arm -- the address of the slot, not the
-    // pointer it holds.
-    if (type_pointee(to) == from) {
-        return true;
-    }
-
-    // Lending what is already a pointer. Chained through every level, so a
-    // 'box box T' reaches a 'ref T' by way of the 'box T' it holds, and stops at
-    // the first level that matches -- which is what keeps the nearer destination
-    // winning when both are declarable.
+    // Lending, at every level the value can be reached through: a 'box box T'
+    // reaches a 'ref T' by way of the 'box T' it holds, and a 'ref String'
+    // reaches a 'ref str' by way of the header it names. The first level that
+    // answers wins, which is what keeps the nearer destination winning when
+    // both are declarable.
+    //
+    // The same chain a method receiver walks, so what an argument accepts and
+    // what a receiver reaches are one rule rather than two that drift.
     //
     // A borrow is walked like an owning level: lending confers no ownership, so
     // reaching through one produces another borrow rather than giving anything
     // away. What must hold is that the inner outlives the borrow, which is a
     // lifetime question and belongs to the flow pass rather than here.
-    //
-    // Disjoint from the arm above at every step, since a pointer equal to
-    // what 'to' points at cannot also point at what 'to' points at.
-    while (type_is_indirect(from)) {
-        if (type_pointee(to) == type_pointee(from)) {
+    for (const Type *at = from;; at = type_pointee(at)) {
+        if (lends_by_value(to, at) || lends_by_pointer(to, at)) {
             return true;
         }
 
-        from = type_pointee(from);
+        if (!type_is_indirect(at)) {
+            return false;
+        }
     }
-
-    return false;
-}
-
-// Whether 'to' accepts 'from' only by taking its address, which is the case
-// needing a node in the tree rather than a widening at the check.
-static bool accepts_by_borrowing(const Type *to, const Type *from) {
-    return to != from && to->kind == TYPE_REF && type_pointee(to) == from;
 }
 
 // Materialises the borrow a 'ref T' destination asks for. Borrowing is implicit,

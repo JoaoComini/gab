@@ -437,6 +437,20 @@ static void test_a_method_through_a_ref_mutates_the_owned_object() {
 // A method never owns its receiver, so declaring one 'box T' spells an ownership
 // it cannot have -- and would let one method be written two ways that behave
 // identically. 'ref T' is the one form, and 'T' by value the other.
+// A receiver two levels out from what the method takes: 'ref box Box' reaching
+// a 'ref Box' method, which is one hop to the 'box Box' and a lend from there.
+static void test_a_receiver_two_levels_out_reaches_the_method() {
+    assert(test_run_int("struct Box { n: int }\n"
+                        "func (b: ref Box) get(): int { return b.n; }\n"
+                        "func main(): int {\n"
+                        "    let owner: box Box = new Box;\n"
+                        "    owner.n = 7;\n"
+                        "    let outer: ref box Box = owner;\n"
+                        "    return outer.get();\n"
+                        "}\n"
+                        "let r: int = main();") == 7);
+}
+
 static void test_an_owning_receiver_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func (b: box Box) peek(): int { return b.n; }\n"));
@@ -511,6 +525,7 @@ int main(void) {
     test_a_pointer_receiver_is_dereferenced();
     test_a_method_on_a_ref_receiver();
     test_a_method_through_a_ref_mutates_the_owned_object();
+    test_a_receiver_two_levels_out_reaches_the_method();
     test_an_owning_receiver_is_refused();
     test_a_pointer_method_on_a_temporary_is_refused();
     test_arity_errors_exclude_the_receiver();
