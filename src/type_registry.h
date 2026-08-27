@@ -155,7 +155,25 @@ Symbol *type_registry_find_method(TypeRegistry *registry, TypeHandle type, const
 // alike their fields.
 Type *type_registry_declare_struct(TypeRegistry *registry, const Scope *scope, String *name,
                                    size_t max_fields);
-void type_registry_finish_struct(TypeRegistry *registry, Type *type);
+
+// Computes the layout and hands back the handle. The only way a declared type
+// becomes one anything else may hold: until this runs it has no width, and
+// laying out whatever holds it would read a size of zero.
+TypeHandle type_registry_finish_struct(TypeRegistry *registry, Type *type);
+
+// Takes a failed declaration back out. A struct is registered before its fields
+// resolve, so one that fails has to be removed rather than left half-built for
+// the next lookup to find.
+void type_registry_withdraw_struct(TypeRegistry *registry, const Scope *scope, String *name);
+
+// A type, by the declaration that names it.
+//
+// May be one still resolving its fields: a struct is registered before them so
+// that a field may point at the struct it is declared in, which is what makes
+// 'struct Node { next: box Node }' resolve. Such a type has no layout yet, so
+// what may be done with one is take its address -- 'type_is_sized' and the
+// containment check are what keep it from being held by value before its width
+// is known.
 TypeHandle type_registry_find_struct(TypeRegistry *registry, const Scope *scope, String *name);
 
 // A builtin, by the name it goes by. Declared under no scope, since it belongs

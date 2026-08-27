@@ -546,6 +546,27 @@ static void test_a_builtin_is_interned_and_found_by_its_kind() {
     test_context_free(&ctx);
 }
 
+// A declaration that fails leaves nothing behind. Half a type is worse than
+// none: its layout was never computed, so anything finding it would read a size
+// of zero and lay out whatever holds it wrongly.
+static void test_a_withdrawn_declaration_leaves_nothing_findable() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope scope;
+    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+
+    TypeRegistry *registry = scope.type_registry;
+    String *name = string_from_cstr(&ctx.strings, "Broken");
+
+    type_registry_declare_struct(registry, &scope, name, 1);
+    type_registry_withdraw_struct(registry, &scope, name);
+
+    assert(type_registry_find_struct(registry, &scope, name) == NULL);
+
+    test_context_free(&ctx);
+}
+
 int main(void) {
     test_a_raw_pointer_carries_a_stride_and_drops_nothing();
     test_a_string_owns_and_a_reference_to_one_does_not();
@@ -553,6 +574,7 @@ int main(void) {
     test_methods_live_beside_the_type_not_in_it();
     test_every_type_comes_from_the_registry();
     test_a_builtin_is_interned_and_found_by_its_kind();
+    test_a_withdrawn_declaration_leaves_nothing_findable();
     test_an_array_is_its_elements_laid_end_to_end();
     test_an_array_owns_exactly_when_its_element_does();
     test_a_type_that_owns_nothing_has_no_drop();

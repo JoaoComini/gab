@@ -118,11 +118,17 @@ Type *type_registry_declare_struct(TypeRegistry *registry, const Scope *scope, S
     return type;
 }
 
-void type_registry_finish_struct(TypeRegistry *registry, Type *type) {
+TypeHandle type_registry_finish_struct(TypeRegistry *registry, Type *type) {
     (void)registry;
 
     type_layout_compute(type);
     object_select_drop(type);
+
+    return type;
+}
+
+void type_registry_withdraw_struct(TypeRegistry *registry, const Scope *scope, String *name) {
+    nominal_key_delete(registry->nominals, (NominalKey){.scope = scope, .name = name});
 }
 
 TypeHandle type_registry_find_builtin(TypeRegistry *registry, String *name) {

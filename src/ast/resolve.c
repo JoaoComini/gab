@@ -1686,9 +1686,10 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
             continue;
         }
 
-        // The struct is registered only after its fields resolve, so a
-        // self-reference would otherwise surface as "unknown type". A
-        // pointer to self is not containment, so only depth 0 is rejected.
+        // The struct is already registered, so a field naming it resolves
+        // rather than surfacing as "unknown type" -- which is what this has to
+        // reject instead. A pointer to self is not containment, so only a field
+        // holding one by value is refused.
         if (field->type_expr->kind == TYPE_EXPR_NAME &&
             string_ref_equals_ref(field->type_expr->name, stmt->struct_decl.name)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, field->span, "struct '%s' cannot contain itself",
@@ -1708,16 +1709,16 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
     }
 
     // Registered before its fields resolved, so a struct that failed has to be
-    // taken back out: with no layout computed, anything naming it would read a
-    // size of zero.
+    // taken back out of both the scope that names it and the registry that owns
+    // it: with no layout computed, anything finding it would read a size of
+    // zero.
     if (poisoned) {
         scope_withdraw_type(state->current_scope, struct_name);
+        type_registry_withdraw_struct(state->current_scope->type_registry, state->current_scope, struct_name);
         return;
     }
 
-    type_registry_finish_struct(state->current_scope->type_registry, type);
-
-    stmt->struct_decl.type = type;
+    stmt->struct_decl.type = type_registry_finish_struct(state->current_scope->type_registry, type);
 }
 
 // Declares the function's name, return type, and parameter types — everything a
