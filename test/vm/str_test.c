@@ -94,21 +94,36 @@ static void test_clone_belongs_to_the_owning_string() {
                                 "}\n"));
 }
 
-// 'ref String' is the address of a slot holding a header, which is what 'ref'
-// means for a sized type. Not what 'ref str' is, and nothing bridges them.
-static void test_a_reference_to_a_header_is_not_a_reference_to_characters() {
+// 'ref String' is the address of a slot holding a header, and the characters
+// are reached through it: the header it names lends them, so an argument
+// position takes one where the other was declared.
+static void test_a_reference_to_a_header_reaches_the_characters() {
     assert(test_compiles_on_vm("func f(): int {\n"
                                "    let o: String = \"hi\".to_owned();\n"
                                "    let p: ref String = o;\n"
                                "    return 0;\n"
                                "}\n"));
 
-    assert(!test_compiles_on_vm("func g(s: ref str): int { return 0; }\n"
-                                "func f(): int {\n"
-                                "    let o: String = \"hi\".to_owned();\n"
-                                "    let p: ref String = o;\n"
-                                "    return g(p);\n"
-                                "}\n"));
+    assert(test_run_int("func g(s: ref str): int { return s.len(); }\n"
+                        "func f(): int {\n"
+                        "    let o: String = \"hi\".to_owned();\n"
+                        "    let p: ref String = o;\n"
+                        "    return g(p);\n"
+                        "}\n"
+                        "let r: int = f();") == 2);
+}
+
+// Two levels out from what the parameter takes: a 'ref box String' reaches a
+// 'ref str' by the 'box String' it names and the header inside that.
+static void test_a_header_two_levels_out_reaches_the_characters() {
+    assert(test_run_int("func g(s: ref str): int { return s.len(); }\n"
+                        "func f(): int {\n"
+                        "    let o: box String = new String;\n"
+                        "    *o = \"hey\".to_owned();\n"
+                        "    let p: ref box String = o;\n"
+                        "    return g(p);\n"
+                        "}\n"
+                        "let r: int = f();") == 3);
 }
 
 // Reaching through a 'ref String' is spelled the way it is for any pointer: the
@@ -152,7 +167,8 @@ int main(void) {
     test_a_reference_cannot_borrow_a_temporary();
     test_a_reference_may_not_outlive_what_it_borrows();
     test_clone_belongs_to_the_owning_string();
-    test_a_reference_to_a_header_is_not_a_reference_to_characters();
+    test_a_reference_to_a_header_reaches_the_characters();
+    test_a_header_two_levels_out_reaches_the_characters();
     test_a_ref_string_reaches_the_characters_by_dereferencing();
     test_either_naming_compares_and_joins();
 
