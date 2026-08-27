@@ -614,13 +614,13 @@ static void test_break_and_continue() {
 // rather than what a fixed-width encoding can count, so a spelling deeper than
 // any such width still parses.
 static void test_a_type_is_a_tree() {
-    ASTUnit *unit = assert_parse("struct Holder { a: ref box Array int }");
+    ASTUnit *unit = assert_parse("struct Holder { a: ref box Array int,3 }");
 
     ASTStmt *stmt = unit->statements.data[0];
     ASTFieldList fields = stmt->struct_decl.fields;
 
-    // 'ref box Array int' reads outermost first: a borrow of an owning pointer
-    // to an array of ints.
+    // 'ref box Array int,3' reads outermost first: a borrow of an owning
+    // pointer to an array of ints.
     TypeExpr *ref = fields.data[0]->type_expr;
     assert(ref->kind == TYPE_EXPR_REF);
 
@@ -632,10 +632,12 @@ static void test_a_type_is_a_tree() {
     assert(string_ref_equals_cstr(array->apply.base->name, "Array"));
 
     // The arguments are a list, so a constructor taking more than one needs no
-    // second field to hold them.
+    // second field to hold them. A length is not one of them: it is not a type,
+    // and it rides beside them.
     assert(array->apply.args.size == 1);
     assert(array->apply.args.data[0]->kind == TYPE_EXPR_NAME);
     assert(string_ref_equals_cstr(array->apply.args.data[0]->name, "int"));
+    assert(array->apply.length == 3);
 
     ast_unit_destroy(unit);
 }

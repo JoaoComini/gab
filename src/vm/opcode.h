@@ -198,11 +198,16 @@ typedef enum {
     // The block carries no ObjectHeader. Nothing reads one on a block -- a
     // drop walk reads its element off the header that names the block -- so the
     // word it would cost buys nothing, and OP_FREE is told the size instead.
+    //
+    // No emitter today: an 'Array T,N' holds its elements inline, and the
+    // resizable vector that will allocate a block is not written yet.
     OP_ALLOC,
 
     // Frees the block whose address is at rd, whose size is in r1. The
     // counterpart of OP_ALLOC and sized for the same reason: a raw block says
     // nothing about itself, so what is freed is what the caller kept.
+    //
+    // No emitter today, for the reason OP_ALLOC has none.
     OP_FREE,
 
     // As OP_ADD_PTR, with the offset read from a register rather than an
@@ -210,9 +215,10 @@ typedef enum {
     // known until the index is.
     OP_ADD_PTR_REG,
 
-    // Traps unless 0 <= r1 < the length in the header at rd. Separate from the
-    // access that follows so that the access stays the same instruction a field
-    // uses -- a bounds check is about the index, not about the load.
+    // Traps unless 0 <= r1 < the length in r2, which an array's type supplies
+    // as an immediate. Separate from the access that follows so that the access
+    // stays the same instruction a field uses -- a bounds check is about the
+    // index, not about the load.
     OP_BOUNDS_CHECK,
 
     // Copies a run of slots to or from the address a slot pair holds. The slot

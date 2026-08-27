@@ -188,7 +188,7 @@ static unsigned int codegen_not_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_cast_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_new_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_index_expr(CodegenState *state, ASTExpr *node);
-static unsigned int codegen_array_new_expr(CodegenState *state, ASTExpr *node);
+static unsigned int codegen_array_lit_expr(CodegenState *state, ASTExpr *node);
 
 // Field and pointer access, against a struct in registers or through a pointer.
 static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *node, bool auto_deref);
@@ -276,6 +276,11 @@ static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned 
 static unsigned int type_slot_count(const Type *type);
 static unsigned int type_align_slots(const Type *type);
 static bool type_is_struct(const Type *type);
+
+// Whether declaring a value of this type is what records its ownership, rather
+// than the assignment that fills it.
+static bool type_owns_through_members(const Type *type);
+
 static bool type_moves_as_slots(const Type *type);
 static OpCode field_opcode_for(size_t size, bool load, bool indirect, bool *ok);
 
@@ -540,10 +545,15 @@ static void codegen_walk_owning_slots(CodegenState *state, const Type *type, uns
         return;
     }
 
-    // A header owns as one value rather than through its 'data' field, which is
-    // a raw address claiming nothing: what must be freed is the block, and the
-    // count saying how far to walk it sits in the slot beside that pointer.
-    // Descending into the field would hand the free path the pointer alone.
+    // A string header owns as one value rather than through its 'data' field,
+    // which is a raw address claiming nothing: what must be freed is the block,
+    // and the count saying how far to walk it sits in the slot beside that
+    // pointer. Descending into the field would hand the free path the pointer
+    // alone.
+    //
+    // An array is here for the same reason and a different one: it owns through
+    // elements its type says how to walk, so one release naming it frees them
+    // all -- the way one release naming a struct frees every field that owns.
     if (type && (type->kind == TYPE_ARRAY || type->kind == TYPE_STRING)) {
         if (!type_is_owned(type)) {
             return;
@@ -597,11 +607,10 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
 
             codegen_walk_owning_slots(state, ast->symbol->var.type, slot, OWNING_SLOT_NULL);
 
-            // A struct's fields are owned from here, since a store into one
-            // reaches through the struct rather than replacing it, and nothing
-            // else would record them. A bare pointer takes ownership where it
-            // is assigned instead.
-            if (type_is_struct(ast->symbol->var.type)) {
+            // Owned from here, since a store reaches into the value rather
+            // than replacing it and nothing else would record it. A bare
+            // pointer takes ownership where it is assigned instead.
+            if (type_owns_through_members(ast->symbol->var.type)) {
                 codegen_walk_owning_slots(state, ast->symbol->var.type, slot, OWNING_SLOT_OWN);
             }
         }
@@ -1434,8 +1443,8 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
         return codegen_new_expr(state, ast);
     case EXPR_INDEX:
         return codegen_index_expr(state, ast);
-    case EXPR_ARRAY_NEW:
-        return codegen_array_new_expr(state, ast);
+    case EXPR_ARRAY_LIT:
+        return codegen_array_lit_expr(state, ast);
     }
 
     assert(0 && "unknown expression kind");
@@ -1675,44 +1684,6 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
     return dest;
 }
 
-// The array header an index is taken against, as a slot pair holding the block
-// address and the count. A target that already is the header names its slots;
-// one behind a pointer has the header copied out, since the block address must
-// be read from somewhere the instructions can name.
-static unsigned int codegen_index_header(CodegenState *state, ASTExpr *target) {
-    if (!type_is_indirect(target->type)) {
-        return codegen_expr(state, target);
-    }
-
-    unsigned int pointer = codegen_expr(state, target);
-
-    // Every level, as a field access reaches through every level: a
-    // 'ref box Array int' is two hops from the header.
-    const Type *type = target->type;
-
-    while (type_is_indirect(type->inner)) {
-        unsigned int next = codegen_alloc_slots(state, VM_INDIRECT_SLOTS, VM_INDIRECT_SLOTS, target->span);
-
-        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_LOAD_PTR_N, next, pointer, VM_INDIRECT_SLOTS));
-
-        pointer = next;
-        type = type->inner;
-    }
-
-    unsigned int header =
-        codegen_alloc_slots(state, type_slot_count(type->inner), type_align_slots(type->inner), target->span);
-
-    chunk_add_instruction(state->chunk,
-                          VM_ENCODE_R(OP_LOAD_PTR_N, header, pointer, type_slot_count(type->inner)));
-
-    return header;
-}
-
-// The address of 'xs[i]', bounds-checked, left in a fresh pointer pair. The
-// element is at 'data + i * stride', so this is the one access whose offset is
-// computed rather than folded into the instruction -- which is why it lands in
-// an indirect FieldTarget and every read and write of it goes through the same
-// paths a field reached through a pointer does.
 // Writes 'count' times 'stride' into 'dest'. A stride wider than an operand
 // takes the register form, which costs a load of the width rather than refusing
 // the element.
@@ -1730,16 +1701,52 @@ static void codegen_scale_by_stride(CodegenState *state, unsigned int dest, unsi
     chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_MULI, dest, count, width));
 }
 
+// The address of the array itself, whichever way the target names it. The
+// elements are the array, so this is where they begin -- a local names its own
+// slots, and a target behind a pointer is that pointer.
+static unsigned int codegen_index_base(CodegenState *state, ASTExpr *target) {
+    if (!type_is_indirect(target->type)) {
+        unsigned int base = codegen_alloc_slots(state, VM_INDIRECT_SLOTS, VM_INDIRECT_SLOTS, target->span);
+
+        codegen_addr_of_into(state, target, base, target->span);
+
+        return base;
+    }
+
+    unsigned int pointer = codegen_expr(state, target);
+
+    // Every level, as a field access reaches through every level: a
+    // 'ref box Array int,3' is two hops from the elements.
+    const Type *type = target->type;
+
+    while (type_is_indirect(type->inner)) {
+        unsigned int next = codegen_alloc_slots(state, VM_INDIRECT_SLOTS, VM_INDIRECT_SLOTS, target->span);
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_LOAD_PTR_N, next, pointer, VM_INDIRECT_SLOTS));
+
+        pointer = next;
+        type = type->inner;
+    }
+
+    return pointer;
+}
+
+// The address of 'xs[i]', bounds-checked, left in a fresh pointer pair. The
+// element is at 'base + i * stride', so this is the one access whose offset is
+// computed rather than folded into the instruction -- which is why it lands in
+// an indirect FieldTarget and every read and write of it goes through the same
+// paths a field reached through a pointer does.
 static unsigned int codegen_index_address(CodegenState *state, ASTExpr *node) {
     const Type *array_type = node->index.array_type;
     const Type *element = type_array_element(array_type);
 
-    // The header, whichever way the target reaches it: indexing looks through
-    // a pointer exactly as a field access does.
-    unsigned int header = codegen_index_header(state, node->index.target);
+    unsigned int base = codegen_index_base(state, node->index.target);
     unsigned int index = codegen_expr(state, node->index.index);
 
-    chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_BOUNDS_CHECK, header, index, 0));
+    // The length is the type's, so the bound is an immediate rather than
+    // something read from the value being indexed.
+    chunk_add_instruction(state->chunk, VM_ENCODE_RK(OP_BOUNDS_CHECK, base, index,
+                                                     (unsigned int)type_array_length(array_type), 1));
 
     unsigned int offset = codegen_alloc_register(state, node->span);
 
@@ -1747,11 +1754,37 @@ static unsigned int codegen_index_address(CodegenState *state, ASTExpr *node) {
 
     unsigned int address = codegen_alloc_slots(state, VM_INDIRECT_SLOTS, VM_INDIRECT_SLOTS, node->span);
 
-    // The 'data' field is first in the header, so the block's address is the
-    // header's own slot pair.
-    chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_ADD_PTR_REG, address, header, offset));
+    chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_ADD_PTR_REG, address, base, offset));
 
     return address;
+}
+
+// '[a, b, c]' fills the array's own slots, in order. The elements are the
+// array, so each is generated straight into where it lands rather than into a
+// temporary the whole run is then copied from.
+static unsigned int codegen_array_lit_expr(CodegenState *state, ASTExpr *node) {
+    const Type *type = node->type;
+    const Type *element = type_array_element(type);
+
+    unsigned int rd = codegen_alloc_slots(state, type_slot_count(type), type_align_slots(type), node->span);
+
+    unsigned int element_slots = type_slot_count(element);
+
+    for (size_t i = 0; i < node->array_lit.elements.size; i++) {
+        ASTExpr *value = node->array_lit.elements.data[i];
+
+        // Each element sits a whole element's width along, which is the stride
+        // an index computes too.
+        unsigned int slot = rd + (unsigned int)i * element_slots;
+
+        if (!codegen_expr_into(state, value, slot)) {
+            codegen_copy_slots(state, slot, codegen_expr(state, value), element_slots);
+        }
+
+        codegen_own_slot(state, slot, element);
+    }
+
+    return rd;
 }
 
 // The FieldTarget an element access reads and writes through: always indirect,
@@ -2026,50 +2059,6 @@ static unsigned int codegen_new_expr(CodegenState *state, ASTExpr *node) {
 
     relocation_list_add(&state->unit->type_relocations,
                         (Relocation){.chunk = state->chunk, .offset = offset});
-
-    return rd;
-}
-
-// 'Array T[n]' leaves the header in two slots: the count written first, then
-// the block allocated against it. Nothing here names a type -- the element's
-// width is folded into the byte count, so the allocation is the same
-// instruction whatever the array holds.
-static unsigned int codegen_array_new_expr(CodegenState *state, ASTExpr *node) {
-    const Type *type = node->array_new.type;
-
-    unsigned int rd = codegen_alloc_slots(state, type_slot_count(type), type_align_slots(type), node->span);
-
-    unsigned int count = codegen_expr(state, node->array_new.count);
-
-    size_t length_offset = type->fields[1].offset;
-
-    bool ok;
-    OpCode store = field_opcode_for(type->fields[1].type->size, false, false, &ok);
-
-    if (!ok) {
-        state->failed = true;
-        return rd;
-    }
-
-    chunk_add_instruction(state->chunk, VM_ENCODE_R(store, rd, count, (unsigned int)length_offset));
-
-    // The count is checked for negativity by the allocation, so the byte count
-    // is computed from it rather than the other way round: a negative length
-    // times a width would be a plausible-looking positive.
-    unsigned int bytes = codegen_alloc_register(state, node->span);
-
-    const Type *element = type_array_element(type);
-
-    codegen_scale_by_stride(state, bytes, count, element->size, node->span);
-
-    unsigned int block = codegen_alloc_slots(state, VM_INDIRECT_SLOTS, VM_INDIRECT_SLOTS, node->span);
-
-    chunk_add_instruction(state->chunk,
-                          VM_ENCODE_RK(OP_ALLOC, block, bytes, (unsigned int)element->alignment, 1));
-
-    // The 'data' field is first in the header, so the block's address lands at
-    // the header's own offset.
-    codegen_copy_slots(state, rd, block, VM_INDIRECT_SLOTS);
 
     return rd;
 }
@@ -2686,9 +2675,6 @@ static bool expr_yields_owned(const ASTExpr *expr) {
     case EXPR_NEW:
     case EXPR_CALL:
 
-    // An array allocates the block it names, which the slot it lands in frees.
-    case EXPR_ARRAY_NEW:
-
     // A move hands the source's reference over, so the destination owns it
     // exactly as it would a fresh one -- and the source has been disowned, so
     // no second slot will free it.
@@ -2917,6 +2903,18 @@ static unsigned int type_align_slots(const Type *type) {
 }
 
 static bool type_is_struct(const Type *type) { return type && type->kind == TYPE_STRUCT; }
+
+// A struct is written through its fields and an array through its elements: the
+// slot goes on holding the same value while what it owns changes underneath, so
+// no assignment would ever record it. A pointer is the other case -- assigning
+// one replaces the value, and that is where it takes ownership.
+//
+// Derived from the same two questions the owning walk asks rather than from a
+// list of kinds, so a shape that starts owning through members cannot be added
+// to one and forgotten in the other.
+static bool type_owns_through_members(const Type *type) {
+    return type_is_owned(type) && !type_is_indirect(type);
+}
 
 // Whether a field is moved as a run of slots rather than through a width-tagged
 // field opcode. Anything laid out from fields is, because those slots sit

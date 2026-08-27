@@ -99,21 +99,19 @@ ASTExpr *ast_new_expr_create(Span span, TypeExpr *type_expr) {
     return node;
 }
 
+ASTExpr *ast_array_lit_expr_create(Span span, ASTExprList elements) {
+    ASTExpr *node = ast_expr_create(span);
+    node->kind = EXPR_ARRAY_LIT;
+    node->array_lit.elements = elements;
+    return node;
+}
+
 ASTExpr *ast_index_expr_create(Span span, ASTExpr *target, ASTExpr *index) {
     ASTExpr *node = ast_expr_create(span);
     node->kind = EXPR_INDEX;
     node->index.target = target;
     node->index.index = index;
     node->index.array_type = NULL;
-    return node;
-}
-
-ASTExpr *ast_array_new_expr_create(Span span, TypeExpr *type_expr, ASTExpr *count) {
-    ASTExpr *node = ast_expr_create(span);
-    node->kind = EXPR_ARRAY_NEW;
-    node->array_new.type_expr = type_expr;
-    node->array_new.count = count;
-    node->array_new.type = NULL;
     return node;
 }
 
@@ -151,13 +149,16 @@ void ast_expr_free(ASTExpr *expr) {
     case EXPR_NEW:
         type_expr_destroy(expr->new_expr.type_expr);
         break;
+    case EXPR_ARRAY_LIT:
+        for (size_t i = 0; i < expr->array_lit.elements.size; i++) {
+            ast_expr_free(expr->array_lit.elements.data[i]);
+        }
+        ast_expr_list_free(&expr->array_lit.elements);
+        break;
     case EXPR_INDEX:
         ast_expr_free(expr->index.target);
         ast_expr_free(expr->index.index);
         break;
-    case EXPR_ARRAY_NEW:
-        type_expr_destroy(expr->array_new.type_expr);
-        ast_expr_free(expr->array_new.count);
         break;
     default:
         break;

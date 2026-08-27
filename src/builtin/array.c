@@ -5,9 +5,10 @@
 #include "vm/args.h"
 #include "vm/vm.h"
 
-// 'xs.len()'. Reads the count the receiver's header already carries, which is
-// the same count every bounds check reads.
-static void array_len(Args *args) { args_return_int(args, args_array(args, 0).length); }
+// 'xs.len()'. Never runs: the resolver folds the call to the length its type
+// carries. Registered so that the name resolves and its arity is checked where
+// every other method's is.
+static void array_len(Args *args) { (void)args; }
 
 void builtin_register_array(VM *vm) {
     TypeRegistry *registry = vm->env.global_scope.type_registry;

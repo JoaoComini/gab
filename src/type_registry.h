@@ -22,15 +22,23 @@ typedef struct {
 
 GAB_HASH_MAP(TypeMap, type_map, String *, TypeBinding)
 
-// An indirection is interned on what it names, so that every mention of
-// 'box T' yields the same Type *: the whole type system compares by pointer
-// identity, and a fresh Type per mention would silently break every comparison.
-// One map per constructor, so a 'box T' and a 'ref T' never collide.
-#define indirect_map_hash(key) (size_t)key
-#define indirect_map_key_equals(key, other) key == other
-#define indirect_map_key_dup(key) key
+// Every constructed type is interned on the application that built it, so that
+// two mentions of 'box T' or of 'Array int,3' yield the same Type *: the whole
+// type system compares by pointer identity, and a fresh Type per mention would
+// silently break every comparison.
+//
+// One table for every constructor rather than one table each. The key carries
+// which constructor and how many arguments, so 'box T' and 'ref T' cannot
+// collide, and a generic 'List T' or 'Map K,V' needs no table of its own.
+//
+// The key's argument array is copied into the registry's arena on insert: a
+// caller builds one on its stack to look up with, and an entry has to outlive
+// that.
+#define type_app_map_hash(key) type_app_hash_of(key)
+#define type_app_map_key_equals(key, other) type_app_equals(key, other)
+#define type_app_map_key_dup(key) key
 
-GAB_HASH_MAP(IndirectMap, indirect_map, Type *, Type *)
+GAB_HASH_MAP(TypeAppMap, type_app_map, TypeApp, Type *)
 
 typedef struct {
     Type *int_type;
@@ -71,22 +79,11 @@ typedef struct TypeRegistry {
 
     StringPool *strings;
 
-    // Owning 'box T' types.
-    IndirectMap *boxes;
-
-    // Borrowing 'ref T' types, interned apart from the owning ones so that
-    // pointer-identity comparison keeps telling them apart.
-    IndirectMap *refs;
-
-    // Raw 'ptr T' types, interned on the pointee. A third map rather than a
-    // flag on the other two, because a raw pointer is neither owning nor
-    // borrowing and must not compare equal to either.
-    IndirectMap *ptrs;
-
-    // 'Array T' types, interned on the element for the same reason: the type
-    // system compares by pointer identity, so two mentions of 'Array int' must
-    // be one Type.
-    IndirectMap *arrays;
+    // Every type built by applying a constructor: 'box T', 'ref T', 'ptr T',
+    // 'Array T,N', and whatever a generic declaration adds. Keyed by the
+    // application, so the constructor is part of what is looked up and two
+    // constructors given the same argument never collide.
+    TypeAppMap *applications;
 
     TypeBuiltins builtins;
 } TypeRegistry;
@@ -102,7 +99,7 @@ Type *type_registry_error_type(TypeRegistry *registry);
 // elements. One per element type, and the type that carries the element -- the
 // raw address naming the block does not, so this is what supplies the walk that
 // frees them.
-Type *type_registry_array_of(TypeRegistry *registry, Type *element);
+Type *type_registry_array_of(TypeRegistry *registry, Type *element, int32_t length);
 
 // The interned 'box inner' and 'ref inner'. Two constructors rather than one
 // taking a flag: which of them a type is decides whether a slot holding it

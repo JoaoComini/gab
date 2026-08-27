@@ -61,36 +61,22 @@ static void drop_fields(Allocator allocator, const Type *type, void *value) {
     }
 }
 
-// Frees the block an array header names, and everything its elements own. The
-// count is the header's own 'length': the block records nothing, so this is the
-// only thing that knows how far the live elements run.
+// Frees what an array's elements own. The elements live in the array itself, so
+// there is no block to free -- only the run of them to walk, as many as the
+// type says.
 //
-// Its own function rather than a case in the field walk, because its bounds are
-// not in the type -- which is the shape DropFn was given a type parameter for.
+// Its own function rather than a case in the field walk, because an array has
+// no fields: one element type repeated is what it holds, which is the shape
+// DropFn was given a type parameter for.
 void object_drop_array(Allocator allocator, const Type *type, void *value) {
-    GabArrayValue array;
-    memcpy(&array, value, sizeof(array));
-
-    if (!array.data) {
-        return;
-    }
-
-    // What the 'data' pointer names, not anything the allocation says: a block
-    // carries no header, so the type is the only thing that knows its stride.
     const Type *element = type_array_element(type);
+    int32_t length = type_array_length(type);
 
-    // Only when an element owns something itself. An array of ints frees its
-    // block without touching a single element.
-    if (element->drop) {
-        for (int32_t i = 0; i < array.length; i++) {
-            element->drop(allocator, element, (char *)array.data + (size_t)i * element->size);
-        }
+    // Selected only when the element owns something, so reaching here at all
+    // means there is something in each to free.
+    for (int32_t i = 0; i < length; i++) {
+        element->drop(allocator, element, (char *)value + (size_t)i * element->size);
     }
-
-    // Sized rather than recovered from a header: a block carries none, so how
-    // many bytes it holds is the length beside the pointer times the width the
-    // element type says.
-    allocator.free_sized(allocator.ctx, array.data, (size_t)array.length * element->size);
 }
 
 // Frees the characters a string header owns. Its own function for the reason
@@ -113,18 +99,37 @@ void object_drop_string(Allocator allocator, const Type *type, void *value) {
 }
 
 void object_select_drop(Type *type) {
-    assert(type->kind != TYPE_STRING && type->kind != TYPE_ARRAY &&
-           "a header's drop is set where it is built, not inferred from its kind");
-
     // Asked of the type rather than of its kind, so that a struct earns a drop
     // exactly when some field of it owns, and every 'ref' is excluded here
     // rather than being tested again on each free.
+    //
+    // Every constructed type comes through here, so which glue frees what is
+    // decided in one place: a constructor builds a type and says nothing about
+    // freeing it.
     if (!type_is_owned(type)) {
         type->drop = NULL;
         return;
     }
 
-    type->drop = type->kind == TYPE_BOX ? drop_box : drop_fields;
+    switch (type->kind) {
+    case TYPE_BOX:
+        type->drop = drop_box;
+        break;
+
+    // A run of elements and a block of characters each know their own bounds,
+    // which the field walk cannot read: one counts by a length its type says,
+    // the other frees what an address names.
+    case TYPE_ARRAY:
+        type->drop = object_drop_array;
+        break;
+    case TYPE_STRING:
+        type->drop = object_drop_string;
+        break;
+
+    default:
+        type->drop = drop_fields;
+        break;
+    }
 }
 
 size_t type_release_width(const Type *type) {

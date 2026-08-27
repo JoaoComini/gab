@@ -300,20 +300,24 @@ static void test_a_header_carries_its_own_drop() {
     assert(!type_is_copyable(owning));
     assert(type_is_copyable(borrowing));
 
-    // An array owns its block, so it carries a drop the same way.
-    Type *ints = type_registry_array_of(registry, registry->builtins.int_type);
+    // An array of an owning element frees each of them, so it carries a drop
+    // the same way. An array of ints owns nothing and has none.
+    Type *ints = type_registry_array_of(registry, registry->builtins.int_type, 4);
 
-    assert(ints->drop != NULL);
-    assert(type_is_owned(ints));
+    assert(ints->drop == NULL);
+    assert(!type_is_owned(ints));
+
+    Type *strings = type_registry_array_of(registry, owning, 2);
+
+    assert(strings->drop != NULL);
+    assert(type_is_owned(strings));
 
     test_context_free(&ctx);
 }
 
-// An array's element is what its 'data' pointer names. One statement of it
-// rather than two: a second field beside the pointer could disagree with it,
-// and the stride a walk over the block advances by would then depend on which
-// of them was asked.
-static void test_an_arrays_element_is_what_its_pointer_names() {
+// An array's element and its length are what its type was applied to, so they
+// are read from one place rather than recovered from the layout they produced.
+static void test_an_array_is_its_elements_laid_end_to_end() {
     TestContext ctx;
     test_context_init(&ctx);
 
@@ -322,17 +326,59 @@ static void test_an_arrays_element_is_what_its_pointer_names() {
 
     TypeRegistry *registry = scope.type_registry;
 
-    // A float element, so that reading the wrong field of the header -- the
-    // length, which is an int -- gives a different answer than the pointer.
-    Type *floats = type_registry_array_of(registry, registry->builtins.float_type);
-
-    const TypeField *data = type_find_field(floats, string_from_cstr(&ctx.strings, "data"));
-
-    assert(data);
-    assert(data->type->kind == TYPE_PTR);
-    assert(data->type->inner == registry->builtins.float_type);
+    Type *floats = type_registry_array_of(registry, registry->builtins.float_type, 3);
 
     assert(type_array_element(floats) == registry->builtins.float_type);
+    assert(type_array_length(floats) == 3);
+
+    // The whole run and nothing else: what a C 'float[3]' occupies.
+    assert(floats->size == registry->builtins.float_type->size * 3);
+    assert(floats->alignment == registry->builtins.float_type->alignment);
+
+    // Interned on both arguments, so a second length is a second type.
+    assert(type_registry_array_of(registry, registry->builtins.float_type, 3) == floats);
+    assert(type_registry_array_of(registry, registry->builtins.float_type, 4) != floats);
+
+    test_context_free(&ctx);
+}
+
+// An array owns exactly when its element does, which the type says without
+// consulting the glue that frees it: the element is what the array was applied
+// to, so the question is answered where every other ownership question is.
+static void test_an_array_owns_exactly_when_its_element_does() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope scope;
+    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+
+    TypeRegistry *registry = scope.type_registry;
+
+    Type *ints = type_registry_array_of(registry, registry->builtins.int_type, 4);
+
+    assert(!type_is_owned(ints));
+    assert(type_is_copyable(ints));
+
+    Type *boxes = type_registry_array_of(registry, type_registry_box_to(registry, ints), 2);
+
+    assert(type_is_owned(boxes));
+    assert(!type_is_copyable(boxes));
+
+    // An array of arrays owns through both levels, so the inner element is what
+    // the outer one's answer rests on.
+    Type *nested = type_registry_array_of(registry, boxes, 3);
+
+    assert(type_is_owned(nested));
+
+    // Asked of the element rather than of the glue: clearing the drop leaves the
+    // answer where it was, since what an array owns is what it holds and not
+    // which function was chosen to free it.
+    DropFn glue = nested->drop;
+    nested->drop = NULL;
+
+    assert(type_is_owned(nested));
+
+    nested->drop = glue;
 
     test_context_free(&ctx);
 }
@@ -340,7 +386,8 @@ static void test_an_arrays_element_is_what_its_pointer_names() {
 int main(void) {
     test_a_raw_pointer_carries_a_stride_and_drops_nothing();
     test_a_header_carries_its_own_drop();
-    test_an_arrays_element_is_what_its_pointer_names();
+    test_an_array_is_its_elements_laid_end_to_end();
+    test_an_array_owns_exactly_when_its_element_does();
     test_a_type_that_owns_nothing_has_no_drop();
     test_alloc_and_free_are_one_allocation();
     test_the_payload_follows_the_header();

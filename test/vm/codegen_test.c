@@ -757,30 +757,6 @@ static void test_every_chunk_ends_in_a_return() {
     test_program_free(&program);
 }
 
-// Allocating a block names no type: how many bytes and at what alignment is
-// everything the instruction says, so one opcode serves an array of any
-// element and would serve any other collection. Nothing about it is relocated,
-// which is what a type index would have required.
-static void test_allocating_a_block_names_no_type() {
-    TestProgram program = test_compile("func f(): int {\n"
-                                       "    let xs: Array int = Array int[3];\n"
-                                       "    return 0;\n"
-                                       "}\n");
-
-    Chunk *chunk = test_func_chunk(&program, 0);
-
-    assert(test_count_opcode(chunk, OP_ALLOC) == 1);
-
-    // The element's width rides in the immediate, so the byte count is computed
-    // from the length rather than read from a type the instruction names.
-    Instruction alloc = test_instruction(chunk, (size_t)test_find_opcode(chunk, OP_ALLOC));
-
-    assert(VM_DECODE_R_K(alloc) == 1);
-    assert(VM_DECODE_R_R2(alloc) == sizeof(int32_t));
-
-    test_program_free(&program);
-}
-
 int main() {
     test_a_constant_expression_folds_to_one_load();
     test_a_constant_float_expression_folds();
@@ -820,7 +796,6 @@ int main() {
     test_a_struct_write_through_a_pointer_is_one_instruction();
 
     test_new_encodes_the_type_index_the_vm_holds();
-    test_allocating_a_block_names_no_type();
 
     test_a_signature_too_wide_for_a_frame_is_refused();
 

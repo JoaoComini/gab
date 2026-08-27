@@ -686,6 +686,26 @@ static TypeExpr *parse_type_expr(Parser *parser) {
 
         type_expr_list_add(&apply->apply.args, argument);
 
+        // The length belongs to the type, so it is written with it. A literal
+        // and only a literal: interning a type on its length means the length
+        // has to be known where the type is named.
+        if (!parser_expect(parser, TOKEN_COMMA, "expected ',' and a length, as 'Array int,3'")) {
+            type_expr_destroy(apply);
+            return NULL;
+        }
+
+        parser_next_token(parser); // eat ','
+
+        if (parser->current.type != TOKEN_INT) {
+            parser_error(parser, "an array's length must be an integer literal");
+            type_expr_destroy(apply);
+            return NULL;
+        }
+
+        apply->apply.length = parser->current.value.as_int;
+
+        parser_next_token(parser); // eat the length
+
         return apply;
     }
 
@@ -1125,34 +1145,44 @@ static ASTExpr *parse_unary(Parser *parser) {
         return ast_new_expr_create(span, spec);
     }
 
-    // 'Array T[n]' allocates a run of elements and yields the header naming
-    // them, which is a value like a string's. No 'new': what a slot holds is
-    // the header itself, and 'new' is for what a slot points at.
-    if (parser->current.type == TOKEN_IDENT && string_ref_equals_cstr(parser->current.lexeme, "Array")) {
-        TypeExpr *spec = parse_type_expr(parser);
-
-        if (!spec) {
-            return NULL;
-        }
-
-        if (!parser_expect(parser, TOKEN_LBRACKET, "expected '[' and a length after an array's element")) {
-            type_expr_destroy(spec);
-            return NULL;
-        }
-
+    // '[a, b, c]' writes out an array's elements. A prefix '[' is unambiguous:
+    // the postfix one indexes, and that only ever follows an operand.
+    if (parser->current.type == TOKEN_LBRACKET) {
         parser_next_token(parser); // eat '['
 
-        ASTExpr *count = parse_expression(parser);
+        ASTExprList elements = ast_expr_list_create();
 
-        if (!count || !parser_expect(parser, TOKEN_RBRACKET, "expected ']' after an array's length")) {
-            type_expr_destroy(spec);
-            ast_expr_free(count);
+        while (parser->current.type != TOKEN_RBRACKET) {
+            if (parser->current.type == TOKEN_EOF) {
+                parser_error(parser, "expected ']' to close the elements");
+                ast_expr_list_free(&elements);
+                return NULL;
+            }
+
+            ASTExpr *element = parse_expression(parser);
+
+            if (!element) {
+                ast_expr_list_free(&elements);
+                return NULL;
+            }
+
+            ast_expr_list_add(&elements, element);
+
+            if (parser->current.type != TOKEN_COMMA) {
+                break;
+            }
+
+            parser_next_token(parser); // eat ','
+        }
+
+        if (!parser_expect(parser, TOKEN_RBRACKET, "expected ']' after an array's elements")) {
+            ast_expr_list_free(&elements);
             return NULL;
         }
 
         parser_next_token(parser); // eat ']'
 
-        return ast_array_new_expr_create(span, spec, count);
+        return ast_array_lit_expr_create(span, elements);
     }
 
     // 'move x' transfers ownership out of 'x'. It takes an operand rather
