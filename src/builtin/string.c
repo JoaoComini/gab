@@ -156,28 +156,34 @@ void builtin_register_string(VM *vm) {
     const Type *const int_param[] = {int_type};
     const Type *const string_param[] = {str_type};
 
-    builtin_register_method(vm, string_type, str_type, "len", string_len, int_type, NULL, 0);
-    builtin_register_method(vm, string_type, str_type, "is_empty", string_is_empty, bool_type, NULL, 0);
-    builtin_register_method(vm, string_type, str_type, "at", string_at, int_type, int_param, 1);
-    builtin_register_method(vm, string_type, str_type, "starts_with", string_starts_with, bool_type,
+    builtin_register_method(vm, registry->builtins.str_type, str_type, "len", string_len, int_type, NULL, 0);
+    builtin_register_method(vm, registry->builtins.str_type, str_type, "is_empty", string_is_empty, bool_type,
+                            NULL, 0);
+    builtin_register_method(vm, registry->builtins.str_type, str_type, "at", string_at, int_type, int_param,
+                            1);
+    builtin_register_method(vm, registry->builtins.str_type, str_type, "starts_with", string_starts_with,
+                            bool_type, string_param, 1);
+    builtin_register_method(vm, registry->builtins.str_type, str_type, "ends_with", string_ends_with,
+                            bool_type, string_param, 1);
+    builtin_register_method(vm, registry->builtins.str_type, str_type, "contains", string_contains, bool_type,
                             string_param, 1);
-    builtin_register_method(vm, string_type, str_type, "ends_with", string_ends_with, bool_type, string_param,
-                            1);
-    builtin_register_method(vm, string_type, str_type, "contains", string_contains, bool_type, string_param,
-                            1);
-    builtin_register_method(vm, string_type, str_type, "index_of", string_index_of, int_type, string_param,
-                            1);
-    builtin_register_method(vm, string_type, str_type, "count", string_count, int_type, string_param, 1);
+    builtin_register_method(vm, registry->builtins.str_type, str_type, "index_of", string_index_of, int_type,
+                            string_param, 1);
+    builtin_register_method(vm, registry->builtins.str_type, str_type, "count", string_count, int_type,
+                            string_param, 1);
 
-    // Returns the owning string, not the borrowed one every other method takes:
-    // what it hands back is a fresh allocation the caller frees.
-    builtin_register_method(vm, string_type, str_type, "to_owned", string_to_owned,
+    // Declared on the characters like every other reader, and returning the
+    // owning string rather than the borrowed one: what it hands back is a fresh
+    // allocation the caller frees.
+    builtin_register_method(vm, registry->builtins.str_type, str_type, "to_owned", string_to_owned,
                             registry->builtins.string_type, NULL, 0);
 
-    // The one method here reaching its receiver through a pointer to the header.
-    // A receiver by value would have to copy it, which an owning string cannot
-    // do; and 'ref String' is the address of a slot holding one, which is not
-    // what a 'ref str' is.
+    // The one method belonging to the owner rather than to the characters: what
+    // it duplicates is the allocation, which only a 'String' has.
+    //
+    // Its receiver is a pointer to the header. A receiver by value would have to
+    // copy it, which an owning string cannot do; and 'ref String' is the address
+    // of a slot holding one, which is not what a 'ref str' is.
     builtin_register_method(vm, string_type, ref_string, "clone", string_clone,
                             registry->builtins.string_type, NULL, 0);
 }

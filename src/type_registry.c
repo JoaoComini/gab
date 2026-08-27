@@ -63,7 +63,6 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     // for one and a reference to them carries that count.
     str->sized = false;
     str->metadata = TYPE_META_LENGTH;
-    str->owner = registry->builtins.string_type;
 
     registry->builtins.str_type = str;
 
@@ -296,16 +295,10 @@ Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, cons
         return *found;
     }
 
-    // A type sharing another's identity reads its set: a borrowed string reaches
-    // an owning one's, and every 'Array T,N' reaches the bare 'Array's. Its own
-    // is consulted first, since what the two do not share is what tells them
-    // apart.
-    //
-    // Finding a method this way is not yet a call that resolves: the owner's
-    // methods declare an owning receiver, which a borrow does not satisfy. So
-    // 'clone' is found from a borrow and then refused where the receiver is
-    // reconciled.
-    return type_registry_find_method(registry, type->owner, name);
+    // An instantiation answers what its declaration declares: every
+    // 'Array T,N' reaches the bare 'Array's set. Its own is consulted first,
+    // since what the two do not share is what tells them apart.
+    return type_registry_find_method(registry, type->decl, name);
 }
 
 // Looks an application up, and interns the argument list if it is new. The
@@ -351,10 +344,9 @@ const Type *type_registry_array_of(TypeRegistry *registry, const Type *element, 
     type->array.element = element;
     type->array.length = length;
 
-    // Every array answers the same methods, which do not depend on the element.
-    // Reached through 'owner' rather than copied into each set, the way a 'str'
-    // reaches a 'String's.
-    type->owner = registry->builtins.array_type;
+    // The declaration this instantiates, which is where its methods are
+    // declared while none of them reads the element.
+    type->decl = registry->builtins.array_type;
 
     // Interned before the drop is selected, so a recursive element -- an array
     // of a struct holding one -- finds this entry rather than building a

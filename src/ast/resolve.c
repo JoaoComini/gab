@@ -385,6 +385,29 @@ static const Type *receiver_base_type(const Type *type) {
     return type;
 }
 
+static const Type *derefs_to(TypeRegistry *registry, const Type *type);
+
+// The method a receiver of this type answers to, found by walking from the type
+// itself down through what it derefs to.
+//
+// An owner reaches its borrowed view this way: a 'String' finds a 'str's
+// methods because it is laid out as one, which is the relation Rust spells
+// Deref and applies at exactly this point.
+static Symbol *find_method_on_chain(TypeRegistry *registry, const Type *type, const String *name,
+                                    const Type **out_base) {
+    for (const Type *at = receiver_base_type(type); at; at = derefs_to(registry, at)) {
+        Symbol *found = type_registry_find_method(registry, at, name);
+
+        if (found) {
+            *out_base = at;
+            return found;
+        }
+    }
+
+    *out_base = receiver_base_type(type);
+    return NULL;
+}
+
 // Checks each argument against the parameter type in the same position. Shared
 // by both call forms, which differ only in where their parameter list starts:
 // a method's skips the receiver.
@@ -581,11 +604,11 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
             return true;
         }
 
-        // A method declared on the type this level reaches through 'owner': the
+        // A method declared on the declaration this level instantiates: the
         // bare 'Array' every 'Array T,N' hangs its set on. What such a method
         // reads is the header, which every array has the same shape of, so the
         // element it was written over does not enter into it.
-        if (at->kind == TYPE_ARRAY && declared == at->owner) {
+        if (declared == at->decl) {
             *out = (ReceiverAdjustment){.derefs = derefs, .address_of = false};
             return true;
         }
@@ -637,11 +660,13 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     }
 
     // 'box Player' and 'Player' share one method set, so the lookup and every
-    // message below name the type itself rather than what was written.
-    const Type *base = receiver_base_type(receiver_type);
-
+    // message below name the type itself rather than what was written -- and a
+    // borrowed view finds what it borrows by lending, which the walk follows.
     String *method_name = resolver_intern(state, name);
-    Symbol *method = type_registry_find_method(state->current_scope->type_registry, base, method_name);
+
+    const Type *base = NULL;
+    Symbol *method =
+        find_method_on_chain(state->current_scope->type_registry, receiver_type, method_name, &base);
 
     if (!method) {
         // type_name rather than the name field: a pointer type has none, and a
@@ -717,6 +742,21 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 // never allocated.
 static bool lends_by_value(const Type *to, const Type *from) {
     return type_is_str_ref(to) && from && from->kind == TYPE_STRING;
+}
+
+// What a value derefs to, or NULL for a type that derefs to nothing. An owning
+// string is laid out as the address and count of its characters, so what it
+// names is a 'str' and its methods are the ones written for characters.
+//
+// The direction an owner reaches its borrowed view, never the reverse: methods
+// that only read characters belong to the characters, and an owner reaches them
+// by being one. What belongs to the owner -- duplicating the allocation -- is
+// not reachable from a borrow, which is the whole point of the direction.
+//
+// Written for the one such pair there is. A buffer and its slice would be the
+// second, and would add an arm here rather than a case wherever this is walked.
+static const Type *derefs_to(TypeRegistry *registry, const Type *type) {
+    return type && type->kind == TYPE_STRING ? registry->builtins.str_type : NULL;
 }
 
 // A pointer handing over a reference to what it points at, reaching through
