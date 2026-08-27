@@ -140,7 +140,10 @@ void builtin_register_string(VM *vm) {
     // route to the borrow's own set. What each takes stays the borrow, so a
     // 'String' receiver lends where the parameter says 'str'.
     Type *string_type = registry->builtins.string_type;
-    Type *str_type = registry->builtins.str_type;
+
+    // What every method takes and what a literal is: characters named by a
+    // reference that carries how many. The owning string lends one.
+    Type *str_type = type_registry_ref_to(registry, registry->builtins.str_type);
 
     // What 'clone' takes. A receiver by value would have to copy it, which an
     // owning string cannot do -- the rule a script's own method obeys -- so it
@@ -168,13 +171,13 @@ void builtin_register_string(VM *vm) {
 
     // Returns the owning string, not the borrowed one every other method takes:
     // what it hands back is a fresh allocation the caller frees.
-    builtin_register_method(vm, str_type, str_type, "to_owned", string_to_owned,
+    builtin_register_method(vm, string_type, str_type, "to_owned", string_to_owned,
                             registry->builtins.string_type, NULL, 0);
 
-    // The one method here reaching its receiver through a pointer. A receiver by
-    // value would have to copy it, which an owning string cannot do; and the
-    // pointer is what keeps it off a 'str', since the address of one is not the
-    // 'ref String' this declares.
+    // The one method here reaching its receiver through a pointer to the header.
+    // A receiver by value would have to copy it, which an owning string cannot
+    // do; and 'ref String' is the address of a slot holding one, which is not
+    // what a 'ref str' is.
     builtin_register_method(vm, string_type, ref_string, "clone", string_clone,
                             registry->builtins.string_type, NULL, 0);
 }

@@ -78,9 +78,18 @@ bool args_bool(Args *args, int index) {
     return value != 0;
 }
 
+// The characters a borrowed string names, read from the reference itself: a
+// 'ref str' is the address and the count side by side, which is the same two
+// words an owning header holds and the same two the host reads.
 GabStringValue args_string(Args *args, int index) {
+    const Type *type = NULL;
+    uint8_t *at = args_address(args, index, &type);
+
+    assert(type_is_str_ref(type) &&
+           "a C body read a parameter as a borrowed string when it was not declared one");
+
     GabStringValue value;
-    memcpy(&value, args_address_of_kind(args, index, TYPE_STRING), sizeof(value));
+    memcpy(&value, at, sizeof(value));
 
     return value;
 }

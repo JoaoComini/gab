@@ -484,6 +484,22 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
         return true;
     }
 
+    // An owning string reaching a method that takes a reference to characters:
+    // the header already is that address and count, so it is lent as it stands
+    // rather than having its address taken. A pointer to one is followed first,
+    // the way a receiver reaches through any indirection.
+    if (type_is_str_ref(declared)) {
+        if (actual->kind == TYPE_STRING) {
+            *out = RECEIVER_AS_IS;
+            return true;
+        }
+
+        if (type_is_indirect(actual) && receiver_base_type(actual) == declared->inner->owner) {
+            *out = RECEIVER_DEREF;
+            return true;
+        }
+    }
+
     if (type_is_indirect(declared) && !type_is_indirect(actual)) {
         // The address of this receiver has to be the pointer the method asked
         // for. A method set is shared between a type and what borrows it, so
@@ -660,15 +676,21 @@ static bool type_accepts(Type *to, Type *from) {
         return true;
     }
 
-    // An owning string lends to a view of one. The reverse is refused: the
-    // characters a view names belong to someone else, and an owning slot would
-    // free what it never allocated.
+    // An owning string lends a reference to its characters: the header already
+    // holds their address and their count, which is exactly what such a
+    // reference is, so it is handed over rather than pointed at.
     //
-    // Which of the two is the view is read off what it owns rather than off a
-    // bit beside it: a 'str' holds its characters through a borrowing field and
-    // a 'String' through an owning one, so the field walk already answers.
-    if (to->kind == TYPE_STRING && from && from->kind == TYPE_STRING) {
-        return !type_is_owned(to);
+    // Written for the one owner there is. The rule it is an instance of -- a
+    // value already laid out as an address and its metadata lends a reference
+    // to what it names -- is what a growable buffer lending a slice would want
+    // too, and is worth generalising once there is a second owner to check it
+    // against.
+    //
+    // The reverse is refused, as every borrow-to-owner is: the characters a
+    // reference names belong to someone else, and an owning slot would free
+    // what it never allocated.
+    if (type_is_str_ref(to) && from && from->kind == TYPE_STRING) {
+        return true;
     }
 
     if (to->kind != TYPE_REF) {
@@ -721,8 +743,8 @@ static bool borrow_into(ResolverState *state, ASTExpr **slot, Type *destination,
     // Only something with a home in memory can be lent. A string that owns and
     // has no home is a temporary -- a concatenation -- and its characters are
     // freed where the expression ends, so the borrow would name freed memory.
-    if (destination->kind == TYPE_STRING && !type_is_owned(destination) && (*slot)->type &&
-        (*slot)->type->kind == TYPE_STRING && type_is_owned((*slot)->type) && !is_addressable(*slot)) {
+    if (type_is_str_ref(destination) && (*slot)->type && (*slot)->type->kind == TYPE_STRING &&
+        !is_addressable(*slot)) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, span,
                    "cannot borrow a string that nothing holds, since its characters are freed where the "
                    "expression ends");
@@ -775,13 +797,33 @@ bool is_boolean_type(Type *t) { return t->kind == TYPE_BOOL; }
 
 bool is_ordered_type(Type *t) { return is_numeric_type(t) || is_boolean_type(t); }
 
-bool is_string_type(Type *t) { return t->kind == TYPE_STRING; }
+// Characters, however they are named: the owning header or a reference to
+// someone else's. Comparison and joining read the same two words from either,
+// so what may be compared or joined is the pair rather than one of them.
+bool is_string_type(Type *t) { return t->kind == TYPE_STRING || type_is_str_ref(t); }
 
 // Ordering is left out: '<' on text asks which comes first, and no order is
 // defined for it. Equality asks only whether two strings spell the same thing.
 bool is_comparable_type(Type *t) { return is_numeric_type(t) || is_boolean_type(t) || is_string_type(t); }
 
 static Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span);
+
+// Rejects a type nothing can hold. How far an unsized value runs is not in its
+// type, so a slot, a field or a parameter has no width to reserve for one: a
+// reference carries that count and is what every use of it goes through.
+//
+// Asked where a value is held rather than where the name resolves, since 'ref
+// str' resolves the same name and is exactly what is wanted.
+static bool reject_unsized(ResolverState *state, Type *type, Span span, const char *held_as) {
+    if (!type || type_is_sized(type)) {
+        return false;
+    }
+
+    diag_error(state->diagnostics, GAB_ERR_TYPE, span,
+               "nothing holds a '%s', so it cannot be %s; write 'ref %s'", type_name(state, type), held_as,
+               type_name(state, type));
+    return true;
+}
 
 // Whether a binary operator accepts operands of this type, reporting why not
 // when it does not. Both operands are already known to share the type.
@@ -1403,8 +1445,12 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
         // outlive every value that reads them and are freed with the unit. So
         // it borrows: nothing in a frame allocated them, and nothing there may
         // free them.
-        expr->type = expr->lit.kind == TYPE_STRING ? registry->builtins.str_type
-                                                   : type_registry_get_builtin(registry, expr->lit.kind);
+        // A literal names characters the unit's arena holds, which outlive every
+        // value that reads them. What names them is a reference: no slot holds
+        // the characters themselves, so the count rides with the address.
+        expr->type = expr->lit.kind == TYPE_STRING
+                         ? type_registry_ref_to(registry, registry->builtins.str_type)
+                         : type_registry_get_builtin(registry, expr->lit.kind);
         break;
     }
     default:
@@ -1518,6 +1564,10 @@ static Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) 
         Type *element = resolve_type_expr(state, expr->apply.args.data[0], span);
 
         if (is_error_type(element)) {
+            return resolver_error_type(state);
+        }
+
+        if (reject_unsized(state, element, span, "an array's element")) {
             return resolver_error_type(state);
         }
 
@@ -1642,7 +1692,7 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
 
         Type *field_type = resolve_type_expr(state, field->type_expr, field->span);
 
-        if (is_error_type(field_type)) {
+        if (is_error_type(field_type) || reject_unsized(state, field_type, field->span, "a field")) {
             poisoned = true;
             continue;
         }
@@ -1674,7 +1724,13 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
 // nothing. Which one a signature declares is what a call site reads to know
 // whether it must move, so the two may not be written interchangeably.
 static Type *resolve_param_type(ResolverState *state, ASTField *param) {
-    return resolve_type_expr(state, param->type_expr, param->span);
+    Type *type = resolve_type_expr(state, param->type_expr, param->span);
+
+    if (reject_unsized(state, type, param->span, "a parameter")) {
+        return resolver_error_type(state);
+    }
+
+    return type;
 }
 
 // which is what lets a function call one declared below it.
@@ -1742,6 +1798,10 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
     }
 
     Type *return_type = resolve_type_expr(state, stmt->func_decl.return_type, stmt->span);
+
+    if (reject_unsized(state, return_type, stmt->span, "returned")) {
+        return_type = resolver_error_type(state);
+    }
 
     stmt->func_decl.resolved_return_type = return_type;
 
@@ -1939,6 +1999,10 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         // has the annotation to take one from.
         Type *declared =
             stmt->var_decl.type_expr ? resolve_type_expr(state, stmt->var_decl.type_expr, stmt->span) : NULL;
+
+        if (reject_unsized(state, declared, stmt->span, "a variable")) {
+            declared = resolver_error_type(state);
+        }
 
         resolve_expr(state, stmt->var_decl.initializer, declared);
 

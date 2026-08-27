@@ -32,6 +32,11 @@ typedef enum {
     // rather than structural, so it is interned once like the other builtins.
     TYPE_STRING,
 
+    // The characters themselves, however many there are. Unsized: no slot holds
+    // one, because how far it runs is not in the type. Reached only through a
+    // 'ref str', which carries that count beside the address.
+    TYPE_STR,
+
     // A header owning a run of elements: where they are and how many. Laid out
     // like a string and freed like one, differing in that its element is
     // whatever it was written over rather than always a byte.
@@ -64,6 +69,31 @@ typedef enum {
 #define GAB_MAX_TYPE_BYTES 255
 
 typedef struct Type Type;
+
+/*
+    What a reference to a type must carry besides the address.
+
+    A value whose bounds are its own -- an int, a struct, an owning header --
+    needs nothing: its type says how wide it is, so an address is the whole
+    reference. A run of characters or elements does not: how many there are
+    lives with the value rather than with the type, so a reference to one
+    carries a count beside the address and is two words instead of one.
+
+    Carried by the pointee rather than by each reference, so that what a 'ref T'
+    costs follows from what T is and cannot disagree with it. A slice would
+    answer TYPE_META_LENGTH for the same reason characters do, and a value
+    reached through a table of methods would answer with that table -- the kind
+    of naming a reference carries is what grows here, not the fact that it
+    carries one.
+*/
+typedef enum {
+    // Nothing: the pointee's type says how wide it is.
+    TYPE_META_NONE,
+
+    // How many elements the pointee runs to, for a type whose length is not in
+    // its type: 'str' today, and a slice when one exists.
+    TYPE_META_LENGTH,
+} TypeMetadata;
 
 /*
     A type constructor, and what it was applied to.
@@ -165,6 +195,18 @@ struct Type {
     size_t size;
     size_t alignment;
 
+    // The same layout question asked of a reference rather than of a value:
+    // whether a slot may hold one at all, and what naming it takes besides the
+    // address. Beside the width for that reason -- a type that has no width of
+    // its own is exactly one whose reference carries what it lacks.
+    //
+    // Two facts rather than one read off the other: a sized type may want
+    // nothing carried, and an unsized one may want something other than a
+    // count. Set where the type is built, so a type says what it is once rather
+    // than being added to a switch elsewhere that would have to be found.
+    bool sized;
+    TypeMetadata metadata;
+
     TypeField *fields;
     size_t field_count;
 
@@ -200,6 +242,20 @@ Type *type_struct_create(Arena *arena, String *name, size_t max_fields);
 
 void type_add_field(Type *type, String *name, Type *field_type);
 void type_layout_compute(Type *type);
+
+// What a reference to this type carries besides the address.
+TypeMetadata type_metadata_of(const Type *type);
+
+// Whether this is a reference to characters -- the borrowed way of naming them,
+// as an owning 'String' is the other. Its own predicate because the shape is
+// two levels deep and asked in several places: what accepts a lend, what a
+// receiver reconciles to, what a C body reads, and what '==' and '..' take.
+bool type_is_str_ref(const Type *type);
+
+// Whether a value of this type can be held at all: an unsized type names
+// something no slot, field or parameter may contain, and is reached only
+// through a reference.
+bool type_is_sized(const Type *type);
 
 // Whether reaching the value means going through an indirection -- what a
 // deref, an auto-deref, and a field access all ask. Says nothing about

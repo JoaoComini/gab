@@ -23,6 +23,11 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->drop = NULL;
     type->app = (TypeApp){0};
 
+    // Held by a slot and named by a bare address, which is what all but the
+    // handful that say otherwise are.
+    type->metadata = TYPE_META_NONE;
+    type->sized = true;
+
     return type;
 }
 
@@ -93,6 +98,14 @@ bool type_field_offset(const Type *type, const String *name, size_t *out_offset)
 // language-level path -- an auto-deref, a lend, a field access -- and a 'ptr T'
 // is reachable from none of them: it names a block the header beside it
 // describes, and reaching through it is that header's business.
+TypeMetadata type_metadata_of(const Type *type) { return type ? type->metadata : TYPE_META_NONE; }
+
+bool type_is_str_ref(const Type *type) {
+    return type && type->kind == TYPE_REF && type->inner && type->inner->kind == TYPE_STR;
+}
+
+bool type_is_sized(const Type *type) { return !type || type->sized; }
+
 bool type_is_indirect(const Type *type) { return type && (type->kind == TYPE_BOX || type->kind == TYPE_REF); }
 
 Type *type_array_element(const Type *type) {
@@ -130,13 +143,16 @@ bool type_is_owned(const Type *type) {
     case TYPE_ARRAY:
         return type_is_owned(type_array_element(type));
 
-    // A string owns exactly what it was built to free. Its fields cannot say --
-    // the address naming its characters claims nothing about them -- so the
-    // drop chosen where the type was built is what tells a 'String' from a
-    // 'str'. The one place ownership is read off the glue rather than derived,
-    // and what a borrowed view spelled as its own constructor would retire.
+    // A string owns its characters, always: what borrows them is a 'ref str',
+    // and no reference owns anything. So the kind is the whole answer here, as
+    // it is for the two indirections.
     case TYPE_STRING:
-        return type->drop != NULL;
+        return true;
+
+    // Characters nothing holds. A 'ref str' names them and owns nothing; the
+    // type itself is never a value, so it is never a value that owns.
+    case TYPE_STR:
+        return false;
 
     default:
         break;
@@ -181,10 +197,15 @@ bool type_is_copyable(const Type *type) {
     case TYPE_ARRAY:
         return type_is_copyable(type_array_element(type));
 
-    // A string that frees its characters cannot be copied, for the same reason
-    // an owning pointer cannot: two headers would free them.
+    // A string frees its characters, so copying one would make a second header
+    // that frees them too.
     case TYPE_STRING:
-        return type->drop == NULL;
+        return false;
+
+    // Never held, so never copied. What names characters is a reference, and
+    // copying one of those duplicates no ownership.
+    case TYPE_STR:
+        return true;
 
     default:
         break;
