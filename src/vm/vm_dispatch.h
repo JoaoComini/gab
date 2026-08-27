@@ -69,8 +69,8 @@
 // address computation between the step and the load -- on the dependency chain
 // every dispatch waits for. The frame keeps an index, which is what survives a
 // chunk being reached again, so the two forms are converted at the boundary.
-#define VM_SAVE_IP() (vm->instruction_pointer = (ptrdiff_t)(pc - code))
-#define VM_LOAD_IP() (pc = code + vm->instruction_pointer)
+#define VM_SAVE_IP() (vm->instruction_pointer = pc)
+#define VM_LOAD_IP() (pc = vm->instruction_pointer)
 
 // Where the running frame's registers begin, for the same reason the pointer
 // lives in a local: a handler writing through 'vm' could be writing this field,

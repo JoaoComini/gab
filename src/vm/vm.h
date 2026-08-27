@@ -19,7 +19,7 @@
 typedef struct {
     const FuncPrototype *proto;
 
-    ptrdiff_t return_ip;
+    const Instruction *return_ip;
 
     // Byte offset into the stack, not a slot index.
     size_t base;
@@ -148,10 +148,9 @@ typedef struct VM {
     CallFrame frames[VM_MAX_CALL_DEPTH];
     size_t frame_count;
 
-    // Signed, because a jump offset is: an index that went negative wraps to a
-    // huge unsigned value, which reads as 'past the end' and would end the run
-    // quietly instead of tripping a bound.
-    ptrdiff_t instruction_pointer;
+    // Where in its chunk the running frame is, as a pointer: the loop holds one
+    // too, so the two need no conversion at the boundary between them.
+    const Instruction *instruction_pointer;
 
     // Why the last run stopped. Cleared at the start of every run.
     VmError error;

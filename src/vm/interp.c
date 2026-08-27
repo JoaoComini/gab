@@ -22,7 +22,7 @@
 // does, which a moving buffer cannot promise.
 static bool vm_reserve_stack(const VM *vm, size_t needed) { return needed <= vm->stack_capacity; }
 
-static bool vm_push_frame(VM *vm, const FuncPrototype *proto, size_t base, ptrdiff_t return_ip,
+static bool vm_push_frame(VM *vm, const FuncPrototype *proto, size_t base, const Instruction *return_ip,
                           unsigned int dest) {
     if (vm->frame_count == VM_MAX_CALL_DEPTH) {
         return false;
@@ -41,7 +41,7 @@ static bool vm_push_frame(VM *vm, const FuncPrototype *proto, size_t base, ptrdi
     };
 
     vm->registers = vm->stack + base;
-    vm->instruction_pointer = 0;
+    vm->instruction_pointer = proto->chunk->instructions.data;
 
     return true;
 }
@@ -738,7 +738,7 @@ static void vm_run_loop(VM *vm) {
                 // arguments the caller already placed above dest.
                 size_t base = frame->base + dest * VM_SLOT_SIZE;
 
-                if (!vm_push_frame(vm, proto, base, (pc - code) + 1, dest)) {
+                if (!vm_push_frame(vm, proto, base, pc + 1, dest)) {
                     // Unwinding here is what makes the failure safe; the reason is
                     // left on the VM because the loop has no caller to return to.
                     vm_fail(vm, VM_RUN_ERR_CALL_DEPTH, "call depth exceeded");
