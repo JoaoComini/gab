@@ -284,10 +284,20 @@ struct Type {
     bool sized;
     TypeMetadata metadata;
 
-    // For a type that shares another's identity -- 'str' reaching 'String's
-    // methods, every 'Array T,N' reaching the bare 'Array's -- the one whose
-    // set is followed. NULL everywhere else.
-    const Type *owner;
+    // The declaration an application instantiates: every 'Array T,N' names the
+    // bare 'Array'. NULL for a type that is not an instantiation.
+    //
+    // Only the constructor, never the arguments -- those are the application
+    // this type was interned on. What it buys today is the method set, which
+    // every instantiation of a declaration shares because the one method there
+    // is does not read its element. A method that did could not be shared, and
+    // this becomes the key an instantiated set is built from rather than a link
+    // followed to another type's.
+    //
+    // Distinct from the relation a borrowed view has to what it borrows: 'str'
+    // is reached from 'String' by lending, which is a step down the chain a
+    // receiver already walks, not a set held somewhere else.
+    const Type *decl;
 
     /*
         What the kind gives it, and nothing another kind would give.

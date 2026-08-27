@@ -87,6 +87,8 @@ static void test_clone_belongs_to_the_owning_string() {
                          "}\n"
                          "let r: bool = f();") == true);
 
+    // Not reachable at all from a borrow, rather than found and then refused:
+    // 'clone' belongs to the owner, and a borrow does not deref to one.
     assert(!test_compiles_on_vm("func f(): int {\n"
                                 "    let s: ref str = \"hi\";\n"
                                 "    let c: String = s.clone();\n"

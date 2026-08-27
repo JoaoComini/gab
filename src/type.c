@@ -12,7 +12,7 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     Type *type = arena_alloc(arena, sizeof(Type));
     type->kind = kind;
     type->name = name;
-    type->owner = NULL;
+    type->decl = NULL;
 
     // Held by a slot and named by a bare address, which is what all but the
     // handful that say otherwise are.
