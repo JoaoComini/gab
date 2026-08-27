@@ -25,7 +25,7 @@
 // a 'str' is a header copy rather than an address, so nothing is
 // inserted into the tree for it -- and the declared type is what says one was
 // formed at all.
-void flow_pass_run(Arena *arena, ASTStmt *body, Symbol **params, size_t param_count, TypeHandle return_type,
+void flow_pass_run(Arena *arena, ASTStmt *body, Symbol **params, size_t param_count, const Type *return_type,
                    Diagnostics *diagnostics);
 
 #endif

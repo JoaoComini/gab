@@ -10,8 +10,8 @@
 
 #include <stddef.h>
 
-void builtin_register_method(VM *vm, TypeHandle declared_on, TypeHandle receiver, const char *name,
-                             GabExternFn body, TypeHandle return_type, TypeHandle const *params,
+void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiver, const char *name,
+                             GabExternFn body, const Type *return_type, const Type *const *params,
                              size_t param_count) {
     Arena *arena = vm->env.arena;
 
@@ -19,7 +19,7 @@ void builtin_register_method(VM *vm, TypeHandle declared_on, TypeHandle receiver
     symbol->kind = SYMBOL_FUNC;
     symbol->func.return_type = return_type;
     symbol->func.param_count = param_count + 1;
-    symbol->func.params = arena_alloc(arena, sizeof(TypeHandle) * (param_count + 1));
+    symbol->func.params = arena_alloc(arena, sizeof(const Type *) * (param_count + 1));
     symbol->func.is_extern = true;
     symbol->func.name = string_from_cstr(&vm->env.strings, name);
     symbol->func.module = NULL;

@@ -56,7 +56,7 @@ typedef struct StructDecl {
 GAB_LIST(StructDeclList, struct_decl_list, StructDecl *)
 
 typedef struct {
-    TypeHandle return_type;
+    const Type *return_type;
 
     // Enclosing loops, so 'break' and 'continue' can tell that they have one.
     unsigned int loop_depth;
@@ -100,7 +100,7 @@ typedef struct {
 // thing that will own the result, never from whichever arena was passed in.
 static Arena *resolver_owner_arena(ResolverState *state) { return state->global_scope->arena; }
 
-static TypeHandle resolver_error_type(ResolverState *state) {
+static const Type *resolver_error_type(ResolverState *state) {
     return type_registry_error_type(state->current_scope->type_registry);
 }
 
@@ -180,13 +180,13 @@ static String *resolver_expr_member(ResolverState *state, StringRef name) {
 
 // A type that is already poisoned had its error reported at the origin, so any
 // further check involving it silently succeeds rather than cascading.
-static bool is_error_type(TypeHandle type) { return !type || type->kind == TYPE_ERROR; }
+static bool is_error_type(const Type *type) { return !type || type->kind == TYPE_ERROR; }
 
 // The printable form of a type. A pointer's name is derived from its inner
 // rather than stored, so 'box box Player' formats without interning two
 // intermediate names. Built in the compile arena: only diagnostics ask, and
 // they are already on the failing path.
-static const char *type_name(ResolverState *state, TypeHandle type) {
+static const char *type_name(ResolverState *state, const Type *type) {
     if (!type) {
         return "none";
     }
@@ -377,7 +377,7 @@ static bool is_addressable(const ASTExpr *expr) {
 //
 // A builtin qualifies: methods hang on the Type, and nothing about the map
 // requires the type to be one a unit declared.
-static TypeHandle receiver_base_type(TypeHandle type) {
+static const Type *receiver_base_type(const Type *type) {
     while (type_is_indirect(type)) {
         type = type_pointee(type);
     }
@@ -388,14 +388,14 @@ static TypeHandle receiver_base_type(TypeHandle type) {
 // Checks each argument against the parameter type in the same position. Shared
 // by both call forms, which differ only in where their parameter list starts:
 // a method's skips the receiver.
-static bool type_accepts(TypeHandle to, TypeHandle from);
-static bool borrow_into(ResolverState *state, ASTExpr **slot, TypeHandle destination, Span span);
-static void check_implicit_copy(ResolverState *state, ASTExpr *value, TypeHandle destination, Span span);
+static bool type_accepts(const Type *to, const Type *from);
+static bool borrow_into(ResolverState *state, ASTExpr **slot, const Type *destination, Span span);
+static void check_implicit_copy(ResolverState *state, ASTExpr *value, const Type *destination, Span span);
 
-static void check_call_args(ResolverState *state, ASTExprList *args, TypeHandle *params) {
+static void check_call_args(ResolverState *state, ASTExprList *args, const Type **params) {
     for (size_t i = 0; i < args->size; i++) {
         ASTExpr *arg = args->data[i];
-        TypeHandle param_type = params[i];
+        const Type *param_type = params[i];
 
         if (is_error_type(arg->type) || is_error_type(param_type)) {
             continue;
@@ -487,14 +487,14 @@ static void lower_method_call(ASTExpr *expr, Symbol *method, ReceiverAdjustment 
         // accepts. Usually one -- a 'T' method reached through a 'box T' -- but
         // a 'ref box T' receiver is two away from the struct, and the last hop
         // is the one whose type the parameter settles.
-        TypeHandle declared = method->func.params[0];
+        const Type *declared = method->func.params[0];
 
         // The stop condition is this level matching, never type_accepts: that
         // one chains, so it is already true at the level furthest out and would
         // emit no hop at all.
         while (type_is_indirect(receiver->type) && receiver->type != declared &&
                type_pointee(declared) != type_pointee(receiver->type)) {
-            TypeHandle inner = type_pointee(receiver->type);
+            const Type *inner = type_pointee(receiver->type);
 
             receiver = ast_deref_expr_create(span, receiver);
             receiver->type = inner;
@@ -525,8 +525,8 @@ static void lower_method_call(ASTExpr *expr, Symbol *method, ReceiverAdjustment 
 
 // How the receiver has to be adjusted to reach parameter zero, reported through
 // 'out'. Returns false when no adjustment bridges the two, having said why.
-static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *receiver, TypeHandle declared,
-                               TypeHandle actual, const String *name, ReceiverAdjustment *out) {
+static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *receiver, const Type *declared,
+                               const Type *actual, const String *name, ReceiverAdjustment *out) {
     if (declared == actual) {
         *out = RECEIVER_AS_IS;
         return true;
@@ -624,7 +624,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
 // destination is not known before the value is. Only an array literal reads it:
 // '[1, 2, 3]' has no type of its own, so what it must be is whatever it is
 // being stored into.
-static void resolve_expr(ResolverState *state, ASTExpr *expr, TypeHandle expected);
+static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expected);
 
 // A call whose target is a field expression: 'recv.m(args)'. Resolves the
 // method against the receiver's type, checks the call, and lowers the whole
@@ -646,7 +646,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         resolve_expr(state, expr->call.args.data[i], NULL);
     }
 
-    TypeHandle receiver_type = receiver->type;
+    const Type *receiver_type = receiver->type;
 
     if (is_error_type(receiver_type)) {
         expr->type = resolver_error_type(state);
@@ -655,7 +655,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 
     // 'box Player' and 'Player' share one method set, so the lookup and every
     // message below name the type itself rather than what was written.
-    TypeHandle base = receiver_base_type(receiver_type);
+    const Type *base = receiver_base_type(receiver_type);
 
     String *method_name = resolver_intern(state, name);
     Symbol *method = type_registry_find_method(state->current_scope->type_registry, base, method_name);
@@ -671,7 +671,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 
     // Parameter zero is the receiver, so the declared parameters — the ones the
     // caller actually writes — are everything after it.
-    TypeHandle declared_receiver = method->func.params[0];
+    const Type *declared_receiver = method->func.params[0];
     size_t declared_params = method->func.param_count - 1;
 
     ReceiverAdjustment adjustment;
@@ -719,7 +719,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 // The reverse is deliberately absent: promoting 'ref T' to 'box T' would hand out
 // ownership nobody granted, and the object already has an owner that will free
 // it.
-static bool type_accepts(TypeHandle to, TypeHandle from) {
+static bool type_accepts(const Type *to, const Type *from) {
     if (to == from) {
         return true;
     }
@@ -777,7 +777,7 @@ static bool type_accepts(TypeHandle to, TypeHandle from) {
 
 // Whether 'to' accepts 'from' only by taking its address, which is the case
 // needing a node in the tree rather than a widening at the check.
-static bool accepts_by_borrowing(TypeHandle to, TypeHandle from) {
+static bool accepts_by_borrowing(const Type *to, const Type *from) {
     return to != from && to->kind == TYPE_REF && type_pointee(to) == from;
 }
 
@@ -787,7 +787,7 @@ static bool accepts_by_borrowing(TypeHandle to, TypeHandle from) {
 // adjustment, and the same shape: a real node, typed as the destination.
 //
 // Returns false for a temporary, which has no address to take.
-static bool borrow_into(ResolverState *state, ASTExpr **slot, TypeHandle destination, Span span) {
+static bool borrow_into(ResolverState *state, ASTExpr **slot, const Type *destination, Span span) {
     // Only something with a home in memory can be lent. A string that owns and
     // has no home is a temporary -- a concatenation -- and its characters are
     // freed where the expression ends, so the borrow would name freed memory.
@@ -806,7 +806,7 @@ static bool borrow_into(ResolverState *state, ASTExpr **slot, TypeHandle destina
     // read a pointer where the object should be.
     while (type_is_indirect((*slot)->type) && type_pointee(destination) != type_pointee((*slot)->type) &&
            type_pointee(destination) != (*slot)->type) {
-        TypeHandle inner = type_pointee((*slot)->type);
+        const Type *inner = type_pointee((*slot)->type);
 
         ASTExpr *hop = ast_deref_expr_create(span, *slot);
         hop->type = inner;
@@ -837,26 +837,26 @@ static bool borrow_into(ResolverState *state, ASTExpr **slot, TypeHandle destina
     return true;
 }
 
-bool is_numeric_type(TypeHandle t) { return t->kind == TYPE_INT || t->kind == TYPE_FLOAT; }
+bool is_numeric_type(const Type *t) { return t->kind == TYPE_INT || t->kind == TYPE_FLOAT; }
 
-bool is_integer_type(TypeHandle t) { return t->kind == TYPE_INT; }
+bool is_integer_type(const Type *t) { return t->kind == TYPE_INT; }
 
-bool is_boolean_type(TypeHandle t) { return t->kind == TYPE_BOOL; }
+bool is_boolean_type(const Type *t) { return t->kind == TYPE_BOOL; }
 
-bool is_ordered_type(TypeHandle t) { return is_numeric_type(t) || is_boolean_type(t); }
+bool is_ordered_type(const Type *t) { return is_numeric_type(t) || is_boolean_type(t); }
 
 // Characters, however they are named: the owning header or a reference to
 // someone else's. Comparison and joining read the same two words from either,
 // so what may be compared or joined is the pair rather than one of them.
-bool is_string_type(TypeHandle t) { return t->kind == TYPE_STRING || type_is_str_ref(t); }
+bool is_string_type(const Type *t) { return t->kind == TYPE_STRING || type_is_str_ref(t); }
 
 // Ordering is left out: '<' on text asks which comes first, and no order is
 // defined for it. Equality asks only whether two strings spell the same thing.
-bool is_comparable_type(TypeHandle t) {
+bool is_comparable_type(const Type *t) {
     return is_numeric_type(t) || is_boolean_type(t) || is_string_type(t);
 }
 
-static TypeHandle resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span);
+static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span);
 
 // Computes the layout this type owes if it is held by value, and reports back
 // the declaration a cycle closes on when that layout is waiting on itself.
@@ -867,7 +867,7 @@ static TypeHandle resolve_type_expr(ResolverState *state, TypeExpr *expr, Span s
 // layout-level questions are exactly the by-value ones: how wide a field is,
 // how far an array strides. An indirection asks none of them, which is why it
 // is not one of these and why a ring through a 'box' stays finite.
-static StructDecl *element_completes_a_cycle(ResolverState *state, TypeHandle type);
+static StructDecl *element_completes_a_cycle(ResolverState *state, const Type *type);
 
 // Rejects a type nothing can hold. How far an unsized value runs is not in its
 // type, so a slot, a field or a parameter has no width to reserve for one: a
@@ -875,7 +875,7 @@ static StructDecl *element_completes_a_cycle(ResolverState *state, TypeHandle ty
 //
 // Asked where a value is held rather than where the name resolves, since 'ref
 // str' resolves the same name and is exactly what is wanted.
-static bool reject_unsized(ResolverState *state, TypeHandle type, Span span, const char *held_as) {
+static bool reject_unsized(ResolverState *state, const Type *type, Span span, const char *held_as) {
     if (!type || type_is_sized(type)) {
         return false;
     }
@@ -892,7 +892,7 @@ static bool reject_unsized(ResolverState *state, TypeHandle type, Span span, con
 // Shared with compound assignment, which applies the same operator to its
 // target and its value: 'a %= b' is accepted exactly where 'a % b' is, and
 // keeping one copy of the rules is what makes that true rather than intended.
-static bool bin_op_accepts(ResolverState *state, BinOp op, TypeHandle type, Span span) {
+static bool bin_op_accepts(ResolverState *state, BinOp op, const Type *type, Span span) {
     const char *op_name = bin_op_name(op);
 
     switch (op) {
@@ -992,7 +992,7 @@ static bool bin_op_yields_bool(BinOp op) {
 // same union, so the operand is lifted out and the argument list freed before
 // anything is written back over them.
 static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
-    TypeHandle target =
+    const Type *target =
         scope_type_lookup(state->current_scope, resolver_intern(state, expr->call.target->var.name));
 
     if (!target) {
@@ -1027,7 +1027,7 @@ static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
 
     resolve_expr(state, operand, NULL);
 
-    TypeHandle from = operand->type;
+    const Type *from = operand->type;
 
     if (is_error_type(from)) {
         expr->type = resolver_error_type(state);
@@ -1050,7 +1050,7 @@ static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
     return true;
 }
 
-static void resolve_expr(ResolverState *state, ASTExpr *expr, TypeHandle expected) {
+static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expected) {
     if (!expr) {
         return;
     }
@@ -1060,8 +1060,8 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, TypeHandle expecte
         resolve_expr(state, expr->bin_op.left, NULL);
         resolve_expr(state, expr->bin_op.right, NULL);
 
-        TypeHandle left_type = expr->bin_op.left->type;
-        TypeHandle right_type = expr->bin_op.right->type;
+        const Type *left_type = expr->bin_op.left->type;
+        const Type *right_type = expr->bin_op.right->type;
 
         if (is_error_type(left_type) || is_error_type(right_type)) {
             expr->type = resolver_error_type(state);
@@ -1183,7 +1183,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, TypeHandle expecte
         resolve_expr(state, expr->index.target, NULL);
         resolve_expr(state, expr->index.index, NULL);
 
-        TypeHandle target_type = expr->index.target->type;
+        const Type *target_type = expr->index.target->type;
 
         if (is_error_type(target_type) || is_error_type(expr->index.index->type)) {
             expr->type = resolver_error_type(state);
@@ -1217,7 +1217,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, TypeHandle expecte
     case EXPR_FIELD: {
         resolve_expr(state, expr->field.target, NULL);
 
-        TypeHandle target_type = expr->field.target->type;
+        const Type *target_type = expr->field.target->type;
 
         if (is_error_type(target_type)) {
             expr->type = resolver_error_type(state);
@@ -1249,7 +1249,9 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, TypeHandle expecte
             break;
         }
 
-        expr->field.field = field;
+        expr->field.owner = target_type;
+        expr->field.index = (size_t)(field - type_fields(target_type));
+
         expr->type = field->type;
 
         // Field access addresses the target's slots, so it inherits the
@@ -1261,7 +1263,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, TypeHandle expecte
     case EXPR_MOVE: {
         resolve_expr(state, expr->unary.target, NULL);
 
-        TypeHandle target_type = expr->unary.target->type;
+        const Type *target_type = expr->unary.target->type;
 
         if (is_error_type(target_type)) {
             expr->type = resolver_error_type(state);
@@ -1287,7 +1289,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, TypeHandle expecte
     case EXPR_ADDR_OF: {
         resolve_expr(state, expr->unary.target, NULL);
 
-        TypeHandle target_type = expr->unary.target->type;
+        const Type *target_type = expr->unary.target->type;
 
         if (is_error_type(target_type)) {
             expr->type = resolver_error_type(state);
@@ -1340,7 +1342,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, TypeHandle expecte
     case EXPR_DEREF: {
         resolve_expr(state, expr->unary.target, NULL);
 
-        TypeHandle target_type = expr->unary.target->type;
+        const Type *target_type = expr->unary.target->type;
 
         if (is_error_type(target_type)) {
             expr->type = resolver_error_type(state);
@@ -1364,7 +1366,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, TypeHandle expecte
     case EXPR_NEG: {
         resolve_expr(state, expr->unary.target, NULL);
 
-        TypeHandle target_type = expr->unary.target->type;
+        const Type *target_type = expr->unary.target->type;
 
         if (is_error_type(target_type)) {
             expr->type = resolver_error_type(state);
@@ -1388,7 +1390,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, TypeHandle expecte
     case EXPR_NOT: {
         resolve_expr(state, expr->unary.target, NULL);
 
-        TypeHandle target_type = expr->unary.target->type;
+        const Type *target_type = expr->unary.target->type;
 
         if (is_error_type(target_type)) {
             expr->type = resolver_error_type(state);
@@ -1411,7 +1413,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, TypeHandle expecte
         break;
     }
     case EXPR_NEW: {
-        TypeHandle type = resolve_type_expr(state, expr->new_expr.type_expr, expr->span);
+        const Type *type = resolve_type_expr(state, expr->new_expr.type_expr, expr->span);
 
         if (is_error_type(type)) {
             expr->type = resolver_error_type(state);
@@ -1458,7 +1460,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, TypeHandle expecte
         }
 
         int32_t length = type_array_length(expected);
-        TypeHandle element = type_array_element(expected);
+        const Type *element = type_array_element(expected);
 
         if ((int32_t)expr->array_lit.elements.size != length) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %d element(s), found %zu",
@@ -1527,7 +1529,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, TypeHandle expecte
 // Only a value read out of a named slot can be implicitly copied. A temporary
 // -- 'new Box', a call's owned return -- is already nobody else's, so binding
 // it transfers what it made rather than duplicating what someone holds.
-static void check_implicit_copy(ResolverState *state, ASTExpr *value, TypeHandle destination, Span span) {
+static void check_implicit_copy(ResolverState *state, ASTExpr *value, const Type *destination, Span span) {
     if (!value || value->kind == EXPR_MOVE || is_error_type(value->type)) {
         return;
     }
@@ -1550,7 +1552,7 @@ static void check_implicit_copy(ResolverState *state, ASTExpr *value, TypeHandle
     // Only advise the clone where there is one to call. A type that declares
     // none is told so instead, since sending the programmer to a method that
     // does not exist costs them the round trip to find that out.
-    TypeHandle base = receiver_base_type(value->type);
+    const Type *base = receiver_base_type(value->type);
 
     if (base && type_registry_find_method(state->current_scope->type_registry, base,
                                           resolver_intern(state, string_ref_create("clone")))) {
@@ -1569,7 +1571,7 @@ static void check_implicit_copy(ResolverState *state, ASTExpr *value, TypeHandle
 
 // Returns NULL when there is no spec to resolve (an omitted type), and the
 // poison type when the spec names something that does not exist.
-static TypeHandle resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) {
+static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) {
     if (!expr) {
         return NULL;
     }
@@ -1579,7 +1581,7 @@ static TypeHandle resolve_type_expr(ResolverState *state, TypeExpr *expr, Span s
     switch (expr->kind) {
     case TYPE_EXPR_BOX:
     case TYPE_EXPR_REF: {
-        TypeHandle inner = resolve_type_expr(state, expr->indirect.inner, span);
+        const Type *inner = resolve_type_expr(state, expr->indirect.inner, span);
 
         if (is_error_type(inner)) {
             return resolver_error_type(state);
@@ -1597,7 +1599,7 @@ static TypeHandle resolve_type_expr(ResolverState *state, TypeExpr *expr, Span s
         // before this ever saw it.
         Scope *base_scope = resolver_expr_scope(state, expr->apply.base->name);
 
-        TypeHandle base =
+        const Type *base =
             base_scope ? scope_type_lookup(base_scope, resolver_expr_member(state, expr->apply.base->name))
                        : NULL;
 
@@ -1623,7 +1625,7 @@ static TypeHandle resolve_type_expr(ResolverState *state, TypeExpr *expr, Span s
             return resolver_error_type(state);
         }
 
-        TypeHandle element = resolve_type_expr(state, expr->apply.args.data[0], span);
+        const Type *element = resolve_type_expr(state, expr->apply.args.data[0], span);
 
         if (is_error_type(element)) {
             return resolver_error_type(state);
@@ -1648,7 +1650,9 @@ static TypeHandle resolve_type_expr(ResolverState *state, TypeExpr *expr, Span s
 
         // A zero-width element would make every index the same address, so
         // there would be nothing for a length to count.
-        if (element->size == 0) {
+        size_t element_size = type_registry_size_of(registry, element);
+
+        if (element_size == 0) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, span, "an array's element must have a size");
             return resolver_error_type(state);
         }
@@ -1665,7 +1669,7 @@ static TypeHandle resolve_type_expr(ResolverState *state, TypeExpr *expr, Span s
         // The elements live in the frame, so the whole run has to be reachable
         // by the operands that address it: a slot index names where the array
         // starts, and a byte offset reaches the element within it.
-        size_t bytes = element->size * (size_t)length;
+        size_t bytes = element_size * (size_t)length;
 
         if (bytes > GAB_MAX_TYPE_BYTES) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, span,
@@ -1687,7 +1691,7 @@ static TypeHandle resolve_type_expr(ResolverState *state, TypeExpr *expr, Span s
     // root-namespace one and 'int' resolves with no import. A 'Module::Type'
     // expression resolved to that module's scope above, and its bare member
     // name is what that scope holds.
-    TypeHandle type = scope ? scope_type_lookup(scope, resolver_expr_member(state, expr->name)) : NULL;
+    const Type *type = scope ? scope_type_lookup(scope, resolver_expr_member(state, expr->name)) : NULL;
 
     if (!type) {
         char *name = string_ref_to_cstr(expr->name);
@@ -1720,7 +1724,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt);
 //
 // A linear scan because the list is one unit's structs and the question is
 // asked once per field of each.
-static StructDecl *decl_held_by_value(ResolverState *state, TypeHandle type) {
+static StructDecl *decl_held_by_value(ResolverState *state, const Type *type) {
     while (type && type->kind == TYPE_ARRAY) {
         type = type_array_element(type);
     }
@@ -1785,7 +1789,7 @@ static void layout_struct(ResolverState *state, StructDecl *decl);
 //
 // That declaration is what the diagnostic names rather than the one being laid
 // out: it is the one the ring closes on.
-static StructDecl *element_completes_a_cycle(ResolverState *state, TypeHandle type) {
+static StructDecl *element_completes_a_cycle(ResolverState *state, const Type *type) {
     StructDecl *decl = decl_held_by_value(state, type);
 
     if (!decl) {
@@ -1803,7 +1807,7 @@ static StructDecl *element_completes_a_cycle(ResolverState *state, TypeHandle ty
 
 // Whether the field's type is a declaration whose own layout failed. Asked
 // after the cycle walk, which is what forced that layout.
-static bool field_type_failed(ResolverState *state, TypeHandle type) {
+static bool field_type_failed(ResolverState *state, const Type *type) {
     StructDecl *decl = decl_held_by_value(state, type);
 
     return decl && decl->state == STRUCT_POISONED;
@@ -1845,7 +1849,7 @@ static void layout_struct(ResolverState *state, StructDecl *decl) {
             continue;
         }
 
-        TypeHandle field_type = resolve_type_expr(state, field->type_expr, field->span);
+        const Type *field_type = resolve_type_expr(state, field->type_expr, field->span);
 
         if (is_error_type(field_type)) {
             poisoned = true;
@@ -1892,7 +1896,7 @@ static void layout_struct(ResolverState *state, StructDecl *decl) {
         return;
     }
 
-    type_layout_compute(type);
+    type_registry_layout_of(state->current_scope->type_registry, type);
     type_registry_drop_of(state->current_scope->type_registry, type);
 
     decl->state = STRUCT_LAID_OUT;
@@ -1908,8 +1912,8 @@ static void layout_struct(ResolverState *state, StructDecl *decl) {
 // what it is given and frees it when the call ends, 'ref T' borrows and frees
 // nothing. Which one a signature declares is what a call site reads to know
 // whether it must move, so the two may not be written interchangeably.
-static TypeHandle resolve_param_type(ResolverState *state, ASTField *param) {
-    TypeHandle type = resolve_type_expr(state, param->type_expr, param->span);
+static const Type *resolve_param_type(ResolverState *state, ASTField *param) {
+    const Type *type = resolve_type_expr(state, param->type_expr, param->span);
 
     if (reject_unsized(state, type, param->span, "a parameter")) {
         return resolver_error_type(state);
@@ -1929,12 +1933,12 @@ static TypeHandle resolve_param_type(ResolverState *state, ASTField *param) {
 static void declare_method(ResolverState *state, ASTStmt *stmt) {
     ASTField *receiver = stmt->func_decl.receiver;
 
-    TypeHandle receiver_type = resolve_type_expr(state, receiver->type_expr, receiver->span);
+    const Type *receiver_type = resolve_type_expr(state, receiver->type_expr, receiver->span);
 
     if (is_error_type(receiver_type)) {
         return;
     }
-    TypeHandle base = receiver_base_type(receiver_type);
+    const Type *base = receiver_base_type(receiver_type);
 
     // A unit declares methods on its own structs only. A builtin carries the
     // ones the VM registered, and a second set declared over them would have no
@@ -1982,7 +1986,7 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
         return;
     }
 
-    TypeHandle return_type = resolve_type_expr(state, stmt->func_decl.return_type, stmt->span);
+    const Type *return_type = resolve_type_expr(state, stmt->func_decl.return_type, stmt->span);
 
     if (reject_unsized(state, return_type, stmt->span, "returned")) {
         return_type = resolver_error_type(state);
@@ -2011,7 +2015,7 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
     // The receiver is parameter zero, so the declared parameters shift up one.
     size_t param_count = stmt->func_decl.params.size + 1;
 
-    method->func.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(TypeHandle));
+    method->func.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(const Type *));
     method->func.param_count = param_count;
     method->func.params[0] = receiver_type;
 
@@ -2058,7 +2062,7 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
     }
 
     StringRef func_name = stmt->func_decl.name;
-    TypeHandle func_return_type = resolve_type_expr(state, stmt->func_decl.return_type, stmt->span);
+    const Type *func_return_type = resolve_type_expr(state, stmt->func_decl.return_type, stmt->span);
 
     stmt->func_decl.resolved_return_type = func_return_type;
 
@@ -2085,7 +2089,7 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
     size_t param_count = stmt->func_decl.params.size;
 
     if (func && param_count > 0) {
-        func->func.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(TypeHandle));
+        func->func.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(const Type *));
         func->func.param_count = param_count;
 
         for (size_t i = 0; i < param_count; i++) {
@@ -2110,7 +2114,7 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
     ASTField *receiver = stmt->func_decl.receiver;
 
     if (receiver) {
-        TypeHandle receiver_type = resolve_type_expr(state, receiver->type_expr, receiver->span);
+        const Type *receiver_type = resolve_type_expr(state, receiver->type_expr, receiver->span);
 
         receiver->symbol =
             scope_decl_var(state->current_scope, resolver_intern(state, receiver->name), receiver_type);
@@ -2120,7 +2124,7 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
         ASTField *param = stmt->func_decl.params.data[i];
 
         String *param_name = resolver_intern(state, param->name);
-        TypeHandle param_type = resolve_type_expr(state, param->type_expr, param->span);
+        const Type *param_type = resolve_type_expr(state, param->type_expr, param->span);
 
         Symbol *symbol = scope_decl_var(state->current_scope, param_name, param_type);
 
@@ -2182,7 +2186,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
     case STMT_VAR_DECL: {
         // Resolved before the initializer, so a value with no type of its own
         // has the annotation to take one from.
-        TypeHandle declared =
+        const Type *declared =
             stmt->var_decl.type_expr ? resolve_type_expr(state, stmt->var_decl.type_expr, stmt->span) : NULL;
 
         if (reject_unsized(state, declared, stmt->span, "a variable")) {
@@ -2191,12 +2195,12 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
 
         resolve_expr(state, stmt->var_decl.initializer, declared);
 
-        TypeHandle type;
+        const Type *type;
         if (stmt->var_decl.type_expr) {
-            TypeHandle decl_type = declared;
+            const Type *decl_type = declared;
 
             if (stmt->var_decl.initializer) {
-                TypeHandle init_type = stmt->var_decl.initializer->type;
+                const Type *init_type = stmt->var_decl.initializer->type;
 
                 if (!is_error_type(decl_type) && !is_error_type(init_type) &&
                     !type_accepts(decl_type, init_type)) {
@@ -2291,8 +2295,8 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         // to be -- which a value with no type of its own needs told.
         resolve_expr(state, stmt->assign.value, stmt->assign.target->type);
 
-        TypeHandle target_type = stmt->assign.target->type;
-        TypeHandle value_type = stmt->assign.value->type;
+        const Type *target_type = stmt->assign.target->type;
+        const Type *value_type = stmt->assign.value->type;
 
         if (!is_error_type(target_type) && !is_error_type(value_type) &&
             !type_accepts(target_type, value_type)) {
@@ -2331,8 +2335,8 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         resolve_expr(state, stmt->compound_assign.target, NULL);
         resolve_expr(state, stmt->compound_assign.value, NULL);
 
-        TypeHandle target_type = stmt->compound_assign.target->type;
-        TypeHandle value_type = stmt->compound_assign.value->type;
+        const Type *target_type = stmt->compound_assign.target->type;
+        const Type *value_type = stmt->compound_assign.value->type;
 
         if (is_error_type(target_type) || is_error_type(value_type)) {
             break;
@@ -2370,7 +2374,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         // thing the jump opcodes read. An already-poisoned condition has
         // reported its own error, so it is let through rather than complained
         // about twice.
-        TypeHandle condition_type = stmt->ifstmt.condition->type;
+        const Type *condition_type = stmt->ifstmt.condition->type;
 
         if (condition_type && !is_error_type(condition_type) && !is_boolean_type(condition_type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->ifstmt.condition->span,
@@ -2394,7 +2398,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         if (stmt->forstmt.condition) {
             resolve_expr(state, stmt->forstmt.condition, NULL);
 
-            TypeHandle condition_type = stmt->forstmt.condition->type;
+            const Type *condition_type = stmt->forstmt.condition->type;
 
             if (condition_type && !is_error_type(condition_type) && !is_boolean_type(condition_type)) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->forstmt.condition->span,
@@ -2437,8 +2441,8 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
     case STMT_RETURN: {
         resolve_expr(state, stmt->ret.result, state->func_context.return_type);
 
-        TypeHandle expected = state->func_context.return_type;
-        TypeHandle actual = stmt->ret.result ? stmt->ret.result->type : NULL;
+        const Type *expected = state->func_context.return_type;
+        const Type *actual = stmt->ret.result ? stmt->ret.result->type : NULL;
 
         // A NULL type here means "no value", which is a distinct case from a
         // poisoned one: it must still be checked against the declared type.

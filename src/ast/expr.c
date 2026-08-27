@@ -45,7 +45,8 @@ ASTExpr *ast_field_expr_create(Span span, ASTExpr *target, StringRef name) {
     node->kind = EXPR_FIELD;
     node->field.target = target;
     node->field.name = name;
-    node->field.field = NULL;
+    node->field.owner = NULL;
+    node->field.index = 0;
     return node;
 }
 
@@ -165,4 +166,12 @@ void ast_expr_free(ASTExpr *expr) {
     }
 
     free(expr);
+}
+
+const TypeField *ast_field_of(const ASTExpr *expr) {
+    if (!expr->field.owner) {
+        return NULL;
+    }
+
+    return &type_fields(expr->field.owner)[expr->field.index];
 }

@@ -36,11 +36,16 @@ struct GabVM;
 struct GabFunc {
     const Symbol *symbol;
 
+    // The registry the signature's types were interned in, captured at lookup.
+    // What a parameter occupies is a layout question, and this is what answers
+    // it: a call carries no VM, so the handle is where the registry has to be.
+    TypeRegistry *registry;
+
     // The signature this handle was built against, captured at lookup. Every
     // cached field below is derived from it, which is what lets the call path
     // build a frame without walking the symbol again.
     size_t sig_param_count;
-    TypeHandle *sig_params;
+    const Type **sig_params;
 
     // Slot layout of the call block, mirroring what codegen emits for a call:
     // slot 0 is the return slot and the arguments tile from slot 1.
@@ -96,7 +101,7 @@ static void gab_func_bind(GabFunc *fn);
 
 // The slots a call block needs for this signature: one per parameter's worth of
 // slots, plus slot 0 for the return value.
-static unsigned int gab_signature_slots(const Symbol *symbol);
+static unsigned int gab_signature_slots(TypeRegistry *registry, const Symbol *symbol);
 
 // The handle's per-parameter arrays, in one allocation separate from the
 // struct, so that the struct itself never moves under the pointer gab_lookup
@@ -108,7 +113,7 @@ static unsigned int gab_signature_slots(const Symbol *symbol);
 // pre-empt.
 static bool gab_func_alloc_params(GabFunc *fn, size_t param_count) {
     size_t sig_params_at = 0;
-    size_t bytes = param_count * sizeof(TypeHandle);
+    size_t bytes = param_count * sizeof(const Type *);
 
     size_t param_slot_at = bytes;
     bytes += param_count * sizeof(unsigned int);
@@ -133,7 +138,7 @@ static bool gab_func_alloc_params(GabFunc *fn, size_t param_count) {
     free(fn->params_block);
 
     fn->params_block = block;
-    fn->sig_params = (TypeHandle *)((char *)block + sig_params_at);
+    fn->sig_params = (const Type **)((char *)block + sig_params_at);
     fn->param_slot = (unsigned int *)((char *)block + param_slot_at);
 
     return true;
@@ -377,16 +382,29 @@ const GabType *gab_find_type(GabVM *handle, const char *module, const char *name
     return (const GabType *)scope_type_lookup(scope, interned);
 }
 
-size_t gab_type_size(const GabType *type) { return type ? ((TypeHandle)type)->size : 0; }
+// The registry every type a host can name was interned in, and whose layouts
+// therefore describe them.
+static TypeRegistry *gab_registry(GabVM *handle) {
+    VM *vm = (VM *)handle;
 
-size_t gab_type_align(const GabType *type) { return type ? ((TypeHandle)type)->alignment : 0; }
+    return vm ? vm->env.global_scope.type_registry : NULL;
+}
 
-bool gab_field_offset(const GabType *handle, const char *field, size_t *out_offset) {
-    if (!handle || !field) {
+size_t gab_type_size(GabVM *vm, const GabType *type) {
+    return type && vm ? type_registry_size_of(gab_registry(vm), (const Type *)type) : 0;
+}
+
+size_t gab_type_align(GabVM *vm, const GabType *type) {
+    return type && vm ? type_registry_align_of(gab_registry(vm), (const Type *)type) : 0;
+}
+
+bool gab_field_offset(GabVM *handle, const GabType *type_handle, const char *field, size_t *out_offset) {
+    if (!handle || !type_handle || !field) {
         return false;
     }
 
-    TypeHandle type = (TypeHandle)handle;
+    const Type *type = (const Type *)type_handle;
+    const TypeLayout *layout = type_registry_layout_of(gab_registry(handle), type);
 
     // Field names are interned, but this compares text so that a host can ask
     // about a name the pool has never seen without inserting it.
@@ -395,7 +413,7 @@ bool gab_field_offset(const GabType *handle, const char *field, size_t *out_offs
 
         if (candidate->name && strcmp(candidate->name->data, field) == 0) {
             if (out_offset) {
-                *out_offset = candidate->offset;
+                *out_offset = layout->offsets[i];
             }
 
             return true;
@@ -473,6 +491,7 @@ GabFunc *gab_lookup(GabVM *handle, const char *module, const char *name, GabErro
     }
 
     fn->symbol = symbol;
+    fn->registry = gab_registry(handle);
 
     gab_func_bind(fn);
 
@@ -486,11 +505,11 @@ GabFunc *gab_lookup(GabVM *handle, const char *module, const char *name, GabErro
 
 int gab_func_arity(const GabFunc *fn) { return fn ? (int)fn->sig_param_count : 0; }
 
-static unsigned int gab_signature_slots(const Symbol *symbol) {
+static unsigned int gab_signature_slots(TypeRegistry *registry, const Symbol *symbol) {
     unsigned int slots = 1;
 
     for (size_t i = 0; i < symbol->func.param_count; i++) {
-        slots += args_type_slots(symbol->func.params[i]);
+        slots += args_type_slots(registry, symbol->func.params[i]);
     }
 
     return slots;
@@ -511,11 +530,11 @@ static void gab_func_bind(GabFunc *fn) {
     for (size_t i = 0; i < symbol->func.param_count; i++) {
         fn->sig_params[i] = symbol->func.params[i];
         fn->param_slot[i] = offset;
-        offset += args_type_slots(symbol->func.params[i]);
+        offset += args_type_slots(fn->registry, symbol->func.params[i]);
     }
 
     fn->arg_slots = offset - 1;
-    fn->return_size = symbol->func.return_type ? symbol->func.return_type->size : 0;
+    fn->return_size = type_registry_size_of(fn->registry, symbol->func.return_type);
 }
 
 // Sizes a call's staging buffer for its function's signature and clears
@@ -592,7 +611,7 @@ void gab_call_free(GabCall *call) {
 // setter may write. 'accepts' answers that: a kind comparison for most setters,
 // and for a pointer the pair of constructors, since a host stages an address
 // without saying whether the script owns what it names.
-static uint8_t *gab_arg_slot_where(GabCall *call, int index, bool (*accepts)(TypeHandle, TypeKind),
+static uint8_t *gab_arg_slot_where(GabCall *call, int index, bool (*accepts)(const Type *, TypeKind),
                                    TypeKind expected) {
     if (!call) {
         return NULL;
@@ -604,7 +623,7 @@ static uint8_t *gab_arg_slot_where(GabCall *call, int index, bool (*accepts)(Typ
         return NULL;
     }
 
-    TypeHandle param = fn->sig_params[index];
+    const Type *param = fn->sig_params[index];
 
     if (!param || !accepts(param, expected)) {
         return NULL;
@@ -620,13 +639,13 @@ static uint8_t *gab_arg_slot_where(GabCall *call, int index, bool (*accepts)(Typ
     return call->args + (size_t)fn->param_slot[index] * VM_SLOT_SIZE;
 }
 
-static bool accepts_indirect(TypeHandle type, TypeKind expected) {
+static bool accepts_indirect(const Type *type, TypeKind expected) {
     (void)expected;
 
     return type_is_indirect(type);
 }
 
-static bool accepts_kind(TypeHandle type, TypeKind expected) { return type->kind == expected; }
+static bool accepts_kind(const Type *type, TypeKind expected) { return type->kind == expected; }
 
 static uint8_t *gab_arg_slot(GabCall *call, int index, TypeKind expected) {
     return gab_arg_slot_where(call, index, accepts_kind, expected);
@@ -673,9 +692,10 @@ bool gab_arg_struct(GabCall *call, int index, const void *data, size_t size) {
     // is claimed, so a rejected struct leaves the parameter unset rather than
     // counting as supplied.
     if (call && index >= 0 && (size_t)index < call->fn->sig_param_count) {
-        TypeHandle param = call->fn->sig_params[index];
+        const Type *param = call->fn->sig_params[index];
 
-        if (param && param->kind == TYPE_STRUCT && (!data || size != param->size)) {
+        if (param && param->kind == TYPE_STRUCT &&
+            (!data || size != type_registry_size_of(call->fn->registry, param))) {
             return false;
         }
     }
@@ -695,9 +715,9 @@ bool gab_arg_pointer(GabCall *call, int index, void *pointer, const GabType *inn
     // leaves the parameter unset rather than counting as supplied. Pointer types
     // are interned, so this is a pointer compare rather than a structural one.
     if (call && index >= 0 && (size_t)index < call->fn->sig_param_count) {
-        TypeHandle param = call->fn->sig_params[index];
+        const Type *param = call->fn->sig_params[index];
 
-        if (param && type_is_indirect(param) && type_pointee(param) != (TypeHandle)inner) {
+        if (param && type_is_indirect(param) && type_pointee(param) != (const Type *)inner) {
             return false;
         }
     }

@@ -154,12 +154,16 @@ void gab_error(GabArgs *args, const char *message);
 // from everywhere.
 const GabType *gab_find_type(GabVM *vm, const char *module, const char *name);
 
-size_t gab_type_size(const GabType *type);
-size_t gab_type_align(const GabType *type);
+// How a value of the type sits in memory. Asked of the VM because that is what
+// owns the layout: a type is interned once, while how wide it is follows from
+// what its parts are laid out as, and the two are kept apart so that neither
+// can disagree with the other.
+size_t gab_type_size(GabVM *vm, const GabType *type);
+size_t gab_type_align(GabVM *vm, const GabType *type);
 
 // Returns false when there is no such field, which is why this reports through
 // an out-parameter: a field at offset 0 is otherwise indistinguishable.
-bool gab_field_offset(const GabType *type, const char *field, size_t *out_offset);
+bool gab_field_offset(GabVM *vm, const GabType *type, const char *field, size_t *out_offset);
 
 // --- Calling into a script -------------------------------------------------
 

@@ -16,7 +16,7 @@ void builtin_register_array(VM *vm) {
     // Declared on the bare 'Array', which no slot ever holds: what reaches this
     // set is each 'Array T' through its 'owner'. The receiver is that same bare
     // type, so the method is written once however many element types exist.
-    TypeHandle array_type = registry->builtins.array_type;
+    const Type *array_type = registry->builtins.array_type;
 
     builtin_register_method(vm, array_type, array_type, "len", array_len, registry->builtins.int_type, NULL,
                             0);

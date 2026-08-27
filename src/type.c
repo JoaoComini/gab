@@ -1,7 +1,5 @@
 #include "type.h"
 
-#include "util/align.h"
-
 #include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -14,8 +12,6 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     Type *type = arena_alloc(arena, sizeof(Type));
     type->kind = kind;
     type->name = name;
-    type->size = 0;
-    type->alignment = 1;
     type->owner = NULL;
 
     // Held by a slot and named by a bare address, which is what all but the
@@ -40,37 +36,16 @@ Type *type_struct_create(Arena *arena, String *name, size_t max_fields) {
     return type;
 }
 
-void type_add_field(Type *type, String *name, TypeHandle field_type) {
+void type_add_field(Type *type, String *name, const Type *field_type) {
     assert(type->record.fields && "struct was created without room for fields");
 
     type->record.fields[type->record.field_count++] = (TypeField){
         .name = name,
         .type = field_type,
-        .offset = 0,
     };
 }
 
-void type_layout_compute(Type *type) {
-    size_t offset = 0;
-    size_t alignment = 1;
-
-    for (size_t i = 0; i < type->record.field_count; i++) {
-        TypeField *field = &type->record.fields[i];
-
-        offset = align_up(offset, field->type->alignment);
-        field->offset = offset;
-        offset += field->type->size;
-
-        if (field->type->alignment > alignment) {
-            alignment = field->type->alignment;
-        }
-    }
-
-    type->alignment = alignment;
-    type->size = align_up(offset, alignment);
-}
-
-const TypeField *type_find_field(TypeHandle type, const String *name) {
+const TypeField *type_find_field(const Type *type, const String *name) {
     for (size_t i = 0; i < type->record.field_count; i++) {
         const TypeField *field = &type->record.fields[i];
 
@@ -82,31 +57,20 @@ const TypeField *type_find_field(TypeHandle type, const String *name) {
     return NULL;
 }
 
-bool type_field_offset(TypeHandle type, const String *name, size_t *out_offset) {
-    const TypeField *field = type_find_field(type, name);
-
-    if (!field) {
-        return false;
-    }
-
-    *out_offset = field->offset;
-    return true;
-}
-
 // A raw pointer is deliberately not one of these. Every caller is a
 // language-level path -- an auto-deref, a lend, a field access -- and a 'ptr T'
 // is reachable from none of them: it names a block the header beside it
 // describes, and reaching through it is that header's business.
-TypeMetadata type_metadata_of(TypeHandle type) { return type ? type->metadata : TYPE_META_NONE; }
+TypeMetadata type_metadata_of(const Type *type) { return type ? type->metadata : TYPE_META_NONE; }
 
-bool type_is_str_ref(TypeHandle type) {
+bool type_is_str_ref(const Type *type) {
     return type && type->kind == TYPE_REF && type->indirect.pointee &&
            type->indirect.pointee->kind == TYPE_STR;
 }
 
-bool type_is_sized(TypeHandle type) { return !type || type->sized; }
+bool type_is_sized(const Type *type) { return !type || type->sized; }
 
-TypeHandle type_pointee(TypeHandle type) {
+const Type *type_pointee(const Type *type) {
     if (!type) {
         return NULL;
     }
@@ -122,7 +86,7 @@ TypeHandle type_pointee(TypeHandle type) {
     }
 }
 
-const TypeField *type_fields(TypeHandle type) {
+const TypeField *type_fields(const Type *type) {
     if (!type) {
         return NULL;
     }
@@ -138,7 +102,7 @@ const TypeField *type_fields(TypeHandle type) {
     }
 }
 
-size_t type_field_count(TypeHandle type) {
+size_t type_field_count(const Type *type) {
     if (!type) {
         return 0;
     }
@@ -154,21 +118,21 @@ size_t type_field_count(TypeHandle type) {
     }
 }
 
-bool type_is_indirect(TypeHandle type) { return type && (type->kind == TYPE_BOX || type->kind == TYPE_REF); }
+bool type_is_indirect(const Type *type) { return type && (type->kind == TYPE_BOX || type->kind == TYPE_REF); }
 
-TypeHandle type_array_element(TypeHandle type) {
+const Type *type_array_element(const Type *type) {
     assert(type && type->kind == TYPE_ARRAY && "only an array has an element");
 
     return type->array.element;
 }
 
-int32_t type_array_length(TypeHandle type) {
+int32_t type_array_length(const Type *type) {
     assert(type && type->kind == TYPE_ARRAY && "only an array has a length");
 
     return type->array.length;
 }
 
-bool type_is_owned(TypeHandle type) {
+bool type_is_owned(const Type *type) {
     if (!type) {
         return false;
     }
@@ -225,7 +189,7 @@ bool type_is_owned(TypeHandle type) {
 // Derived from the type rather than declared on it, so a struct becomes
 // non-copyable the moment it is given a field that owns, and no declaration
 // can disagree with what the type holds.
-bool type_is_copyable(TypeHandle type) {
+bool type_is_copyable(const Type *type) {
     if (!type) {
         return true;
     }

@@ -17,7 +17,7 @@ typedef struct Symbol Symbol;
 // The named types of one scope. Scope owns these and chains them, the same way
 // it chains symbol tables.
 typedef struct {
-    TypeHandle type;
+    const Type *type;
 } TypeBinding;
 
 #define type_map_hash(key) (size_t)key
@@ -45,15 +45,15 @@ GAB_HASH_MAP(TypeMap, type_map, String *, TypeBinding)
 GAB_HASH_MAP(TypeAppMap, type_app_map, TypeApp, Type *)
 
 typedef struct {
-    TypeHandle int_type;
+    const Type *int_type;
 
     // One byte, which is what a string's characters are. Not spellable in the
     // language: it exists so that the pointer naming those characters carries a
     // stride, the way every other 'ptr T' does.
-    TypeHandle byte_type;
-    TypeHandle float_type;
-    TypeHandle bool_type;
-    TypeHandle string_type;
+    const Type *byte_type;
+    const Type *float_type;
+    const Type *bool_type;
+    const Type *string_type;
 
     // 'str'. The characters of a string, borrowed: the same two slots as a
     // 'String' and copied like one, owning nothing. A distinct interned Type
@@ -62,14 +62,14 @@ typedef struct {
     //
     // Not what 'ref String' names. That is an indirection to a slot holding a
     // header, which is what 'ref' builds for every type in the language.
-    TypeHandle str_type;
+    const Type *str_type;
 
     // 'Array', the bare name. Not a usable type on its own -- every array is
     // 'Array T' for some element -- but the name a spec resolves to before its
     // element is applied, and what a diagnostic prints when one is missing.
-    TypeHandle array_type;
+    const Type *array_type;
 
-    TypeHandle error_type;
+    const Type *error_type;
 } TypeBuiltins;
 
 // Interning, not naming. One registry per VM holds the builtins and every
@@ -86,7 +86,7 @@ typedef struct {
 // what a type is was settled when it was interned. Keeping them apart is what
 // lets a type be finished when the registry hands it over.
 typedef struct MethodKey {
-    TypeHandle type;
+    const Type *type;
     const String *name;
 } MethodKey;
 
@@ -116,6 +116,24 @@ GAB_HASH_MAP(MethodTable, method_key, MethodKey, Symbol *)
 
 GAB_HASH_MAP(DropTable, drop_key, const Type *, const DropPlan *)
 
+/*
+    Where a value of each type sits in memory, by the type it was derived from.
+
+    Beside the types for the reason a drop plan is, and computed the same way:
+    on first demand, from what the type is built of, and memoized so that two
+    mentions of a width agree. What a generic instantiation lays out will be
+    another entry here rather than another Type field to keep in step.
+
+    Owned by the registry's arena, so a layout outlives every compile that reads
+    it and is freed with the types it describes.
+*/
+#define layout_key_hash(key) (size_t)key
+#define layout_key_key_equals(key, other) key == other
+#define layout_key_key_dup(key) key
+#define layout_key_entry_free(key, value)
+
+GAB_HASH_MAP(LayoutTable, layout_key, const Type *, const TypeLayout *)
+
 typedef struct TypeRegistry {
     Arena *arena;
 
@@ -134,14 +152,17 @@ typedef struct TypeRegistry {
     // What freeing a value of each type does.
     DropTable *drops;
 
+    // How wide a value of each type is, and where its fields begin.
+    LayoutTable *layouts;
+
     TypeBuiltins builtins;
 } TypeRegistry;
 
 // Declares a method, or fails if the type already answers that name. Finds one
 // by following 'owner' when the type itself does not answer, so that a type
 // sharing another's identity reaches its set.
-bool type_registry_add_method(TypeRegistry *registry, TypeHandle type, String *name, Symbol *method);
-Symbol *type_registry_find_method(TypeRegistry *registry, TypeHandle type, const String *name);
+bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method);
+Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name);
 
 // Declares a nominal type, and hands back the Type nothing else may build.
 //
@@ -161,28 +182,45 @@ Type *type_registry_declare_struct(TypeRegistry *registry, String *name, size_t 
 */
 const DropPlan *type_registry_drop_of(TypeRegistry *registry, const Type *type);
 
+/*
+    How wide a value of this type is, what it aligns to, and where its fields
+    begin. Never NULL: a type with no width of its own answers zero, which is
+    what an unsized type and a bare declaration both are.
+
+    Derived on first demand and memoized. A struct's layout follows from its
+    fields, so asking for one before every field type is interned would settle a
+    width from types not yet laid out -- which is why the resolver asks for it
+    where the struct is completed rather than where it is declared.
+*/
+const TypeLayout *type_registry_layout_of(TypeRegistry *registry, const Type *type);
+
+// The two questions a layout is most often asked, for callers that want a
+// number rather than the layout it came from.
+size_t type_registry_size_of(TypeRegistry *registry, const Type *type);
+size_t type_registry_align_of(TypeRegistry *registry, const Type *type);
+
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings);
 
 void type_registry_destroy(TypeRegistry *registry);
 
-TypeHandle type_registry_get_builtin(TypeRegistry *registry, TypeKind type);
-TypeHandle type_registry_error_type(TypeRegistry *registry);
+const Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind type);
+const Type *type_registry_error_type(TypeRegistry *registry);
 
 // The interned 'Array element': a header of {data, length} owning a block of
 // elements. One per element type, and the type that carries the element -- the
 // raw address naming the block does not, so this is what supplies the walk that
 // frees them.
-TypeHandle type_registry_array_of(TypeRegistry *registry, TypeHandle element, int32_t length);
+const Type *type_registry_array_of(TypeRegistry *registry, const Type *element, int32_t length);
 
 // The interned 'box inner' and 'ref inner'. Two constructors rather than one
 // taking a flag: which of them a type is decides whether a slot holding it
 // frees what it names, and that is the question the kind exists to answer.
-TypeHandle type_registry_box_to(TypeRegistry *registry, TypeHandle inner);
-TypeHandle type_registry_ref_to(TypeRegistry *registry, TypeHandle inner);
+const Type *type_registry_box_to(TypeRegistry *registry, const Type *inner);
+const Type *type_registry_ref_to(TypeRegistry *registry, const Type *inner);
 
 // The interned 'ptr pointee': an address the size of a machine pointer, owning
 // nothing. Distinct from both indirections of the same pointee, since what a
 // slot must free is read off the type.
-TypeHandle type_registry_ptr_to(TypeRegistry *registry, TypeHandle pointee);
+const Type *type_registry_ptr_to(TypeRegistry *registry, const Type *pointee);
 
 #endif

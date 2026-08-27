@@ -2,21 +2,28 @@
 
 #include "object.h"
 #include "symbol_table.h"
+#include "type_registry.h"
 #include "vm/interp.h"
 #include "vm/opcode.h"
 
 #include <assert.h>
 #include <string.h>
 
-unsigned int args_type_slots(TypeHandle type) {
+unsigned int args_type_slots(TypeRegistry *registry, const Type *type) {
     if (!type) {
         return 1;
     }
 
-    return (unsigned int)((type->size + VM_SLOT_SIZE - 1) / VM_SLOT_SIZE);
+    return (unsigned int)((type_registry_size_of(registry, type) + VM_SLOT_SIZE - 1) / VM_SLOT_SIZE);
 }
 
-uint8_t *args_address(Args *args, int index, TypeHandle *out_type) {
+// The registry the frame's types were interned in, which is the one every
+// layout a C body asks about was computed in. Reached through the VM because a
+// call carries no registry of its own: a run needs no types, and this path is
+// the one place where a host asks a width of one.
+static TypeRegistry *args_registry(Args *args) { return args->vm->env.global_scope.type_registry; }
+
+uint8_t *args_address(Args *args, int index, const Type **out_type) {
     assert(args && "a C body was called without a frame");
 
     const Symbol *symbol = args->symbol;
@@ -27,7 +34,7 @@ uint8_t *args_address(Args *args, int index, TypeHandle *out_type) {
     unsigned int slot = 1;
 
     for (int i = 0; i < index; i++) {
-        slot += args_type_slots(symbol->func.params[i]);
+        slot += args_type_slots(args_registry(args), symbol->func.params[i]);
     }
 
     if (out_type) {
@@ -48,7 +55,7 @@ uint8_t *args_return_address(Args *args) {
 // rather than converting them -- which is why the declaration is what says
 // whether a read is the right one.
 static uint8_t *args_address_of_kind(Args *args, int index, TypeKind kind) {
-    TypeHandle type = NULL;
+    const Type *type = NULL;
     uint8_t *at = args_address(args, index, &type);
 
     assert(type && type->kind == kind && "a C body read a parameter as a type it was not declared");
@@ -82,7 +89,7 @@ bool args_bool(Args *args, int index) {
 // 'ref str' is the address and the count side by side, which is the same two
 // words an owning header holds and the same two the host reads.
 GabStringValue args_string(Args *args, int index) {
-    TypeHandle type = NULL;
+    const Type *type = NULL;
     uint8_t *at = args_address(args, index, &type);
 
     assert(type_is_str_ref(type) &&
@@ -116,7 +123,7 @@ GabArrayValue args_array(Args *args, int index) {
 }
 
 void *args_pointer(Args *args, int index) {
-    TypeHandle type = NULL;
+    const Type *type = NULL;
     uint8_t *at = args_address(args, index, &type);
 
     // Either constructor: a C body is handed an address, and whether the script
@@ -130,11 +137,12 @@ void *args_pointer(Args *args, int index) {
 }
 
 void args_struct(Args *args, int index, void *out, size_t size) {
-    TypeHandle type = NULL;
+    const Type *type = NULL;
     const uint8_t *at = args_address(args, index, &type);
 
     assert(out && "a C body read a struct argument into nothing");
-    assert(type && type->size == size && "a struct argument was read at a size its type does not have");
+    assert(type && type_registry_size_of(args_registry(args), type) == size &&
+           "a struct argument was read at a size its type does not have");
     (void)size;
 
     memcpy(out, at, size);
@@ -178,9 +186,9 @@ bool args_return_string_copy(Args *args, const char *data, int32_t length) {
 void args_return_struct(Args *args, const void *data, size_t size) {
     assert(data && "a C body returned a struct from nothing");
 
-    TypeHandle return_type = args->symbol->func.return_type;
+    const Type *return_type = args->symbol->func.return_type;
 
-    assert(return_type && return_type->size == size &&
+    assert(return_type && type_registry_size_of(args_registry(args), return_type) == size &&
            "a struct was returned at a size the declared return type does not have");
     (void)return_type;
     (void)size;

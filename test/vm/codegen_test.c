@@ -546,7 +546,7 @@ static void test_a_release_names_what_it_frees() {
 
     // An owning indirection to the struct that was allocated: freeing the slot
     // follows the pointer, which is what 'box Node's drop does.
-    TypeHandle type = program.vm->program.shape_types.data[released];
+    const Type *type = program.vm->program.shape_types.data[released];
 
     assert(type->kind == TYPE_BOX);
     assert(type_pointee(type)->name && strcmp(type_pointee(type)->name->data, "Node") == 0);

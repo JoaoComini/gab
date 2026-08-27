@@ -41,13 +41,18 @@ typedef struct {
     int32_t tag;
 } BoxRingC;
 
-static TypeHandle resolve_struct(TestContext *ctx, const char *source, const char *name) {
+static const Type *resolve_struct(TestContext *ctx, const char *source, const char *name,
+                                  TypeRegistry **out_registry) {
     Lexer lexer = lexer_create(test_in_a_module(source), ctx->arena, &ctx->strings, &ctx->diagnostics);
     Parser parser = parser_create(&lexer, &ctx->diagnostics);
     ASTUnit *unit = ast_unit_create();
 
     Scope global_scope;
     scope_init(&global_scope, ctx->arena, &ctx->strings, NULL);
+
+    if (out_registry) {
+        *out_registry = global_scope.type_registry;
+    }
 
     if (parser_parse(&parser, unit)) {
         resolve_unit(ctx->arena, unit, &global_scope, NULL, &ctx->diagnostics);
@@ -64,31 +69,32 @@ static TypeHandle resolve_struct(TestContext *ctx, const char *source, const cha
     return scope_type_lookup(&global_scope, string_from_cstr(&ctx->strings, name));
 }
 
-static size_t offset_of(TestContext *ctx, TypeHandle type, const char *field) {
-    size_t offset = 0;
-    bool found = type_field_offset(type, string_from_cstr(&ctx->strings, field), &offset);
+static size_t offset_of(TestContext *ctx, TypeRegistry *registry, const Type *type, const char *field) {
+    const TypeField *found = type_find_field(type, string_from_cstr(&ctx->strings, field));
 
     assert(found);
 
-    return offset;
+    return type_registry_layout_of(registry, type)->offsets[found - type_fields(type)];
 }
 
 static void test_homogeneous_struct() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    TypeHandle type = resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float }", "Vec3");
+    TypeRegistry *registry = NULL;
+    const Type *type =
+        resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float }", "Vec3", &registry);
 
     assert(type != NULL);
     assert(type->kind == TYPE_STRUCT);
     assert(type_field_count(type) == 3);
 
-    assert(type->size == sizeof(Vec3C));
-    assert(type->alignment == _Alignof(Vec3C));
+    assert(type_registry_size_of(registry, type) == sizeof(Vec3C));
+    assert(type_registry_align_of(registry, type) == _Alignof(Vec3C));
 
-    assert(offset_of(&ctx, type, "x") == offsetof(Vec3C, x));
-    assert(offset_of(&ctx, type, "y") == offsetof(Vec3C, y));
-    assert(offset_of(&ctx, type, "z") == offsetof(Vec3C, z));
+    assert(offset_of(&ctx, registry, type, "x") == offsetof(Vec3C, x));
+    assert(offset_of(&ctx, registry, type, "y") == offsetof(Vec3C, y));
+    assert(offset_of(&ctx, registry, type, "z") == offsetof(Vec3C, z));
 
     test_context_free(&ctx);
 }
@@ -99,13 +105,14 @@ static void test_interior_padding() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    TypeHandle type = resolve_struct(&ctx, "struct Pad { flag: bool, value: int }", "Pad");
+    TypeRegistry *registry = NULL;
+    const Type *type = resolve_struct(&ctx, "struct Pad { flag: bool, value: int }", "Pad", &registry);
 
-    assert(type->size == sizeof(LeadingPadC));
-    assert(type->alignment == _Alignof(LeadingPadC));
+    assert(type_registry_size_of(registry, type) == sizeof(LeadingPadC));
+    assert(type_registry_align_of(registry, type) == _Alignof(LeadingPadC));
 
-    assert(offset_of(&ctx, type, "flag") == offsetof(LeadingPadC, flag));
-    assert(offset_of(&ctx, type, "value") == offsetof(LeadingPadC, value));
+    assert(offset_of(&ctx, registry, type, "flag") == offsetof(LeadingPadC, flag));
+    assert(offset_of(&ctx, registry, type, "value") == offsetof(LeadingPadC, value));
 
     test_context_free(&ctx);
 }
@@ -115,11 +122,12 @@ static void test_trailing_padding() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    TypeHandle type = resolve_struct(&ctx, "struct Pad { value: int, flag: bool }", "Pad");
+    TypeRegistry *registry = NULL;
+    const Type *type = resolve_struct(&ctx, "struct Pad { value: int, flag: bool }", "Pad", &registry);
 
-    assert(type->size == sizeof(TrailingPadC));
-    assert(offset_of(&ctx, type, "value") == offsetof(TrailingPadC, value));
-    assert(offset_of(&ctx, type, "flag") == offsetof(TrailingPadC, flag));
+    assert(type_registry_size_of(registry, type) == sizeof(TrailingPadC));
+    assert(offset_of(&ctx, registry, type, "value") == offsetof(TrailingPadC, value));
+    assert(offset_of(&ctx, registry, type, "flag") == offsetof(TrailingPadC, flag));
 
     test_context_free(&ctx);
 }
@@ -129,20 +137,21 @@ static void test_nested_struct() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    TypeHandle type = resolve_struct(&ctx,
-                                     "struct Vec3 { x: float, y: float, z: float }"
-                                     "struct Nested { flag: bool, position: Vec3 }",
-                                     "Nested");
+    TypeRegistry *registry = NULL;
+    const Type *type = resolve_struct(&ctx,
+                                      "struct Vec3 { x: float, y: float, z: float }"
+                                      "struct Nested { flag: bool, position: Vec3 }",
+                                      "Nested", &registry);
 
-    assert(type->size == sizeof(NestedC));
-    assert(type->alignment == _Alignof(NestedC));
+    assert(type_registry_size_of(registry, type) == sizeof(NestedC));
+    assert(type_registry_align_of(registry, type) == _Alignof(NestedC));
 
-    assert(offset_of(&ctx, type, "flag") == offsetof(NestedC, flag));
-    assert(offset_of(&ctx, type, "position") == offsetof(NestedC, position));
+    assert(offset_of(&ctx, registry, type, "flag") == offsetof(NestedC, flag));
+    assert(offset_of(&ctx, registry, type, "position") == offsetof(NestedC, position));
 
     const TypeField *position = type_find_field(type, string_from_cstr(&ctx.strings, "position"));
     assert(position->type->kind == TYPE_STRUCT);
-    assert(position->type->size == sizeof(Vec3C));
+    assert(type_registry_size_of(registry, position->type) == sizeof(Vec3C));
 
     test_context_free(&ctx);
 }
@@ -151,11 +160,12 @@ static void test_single_field_struct() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    TypeHandle type = resolve_struct(&ctx, "struct Single { only: int }", "Single");
+    TypeRegistry *registry = NULL;
+    const Type *type = resolve_struct(&ctx, "struct Single { only: int }", "Single", &registry);
 
-    assert(type->size == sizeof(SingleC));
-    assert(type->alignment == _Alignof(SingleC));
-    assert(offset_of(&ctx, type, "only") == offsetof(SingleC, only));
+    assert(type_registry_size_of(registry, type) == sizeof(SingleC));
+    assert(type_registry_align_of(registry, type) == _Alignof(SingleC));
+    assert(offset_of(&ctx, registry, type, "only") == offsetof(SingleC, only));
 
     test_context_free(&ctx);
 }
@@ -164,12 +174,13 @@ static void test_empty_struct() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    TypeHandle type = resolve_struct(&ctx, "struct Empty { }", "Empty");
+    TypeRegistry *registry = NULL;
+    const Type *type = resolve_struct(&ctx, "struct Empty { }", "Empty", &registry);
 
     assert(type != NULL);
     assert(type_field_count(type) == 0);
-    assert(type->size == 0);
-    assert(type->alignment == 1);
+    assert(type_registry_size_of(registry, type) == 0);
+    assert(type_registry_align_of(registry, type) == 1);
 
     test_context_free(&ctx);
 }
@@ -178,10 +189,12 @@ static void test_trailing_comma_allowed() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    TypeHandle type = resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float, }", "Vec3");
+    TypeRegistry *registry = NULL;
+    const Type *type =
+        resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float, }", "Vec3", &registry);
 
     assert(type_field_count(type) == 3);
-    assert(type->size == sizeof(Vec3C));
+    assert(type_registry_size_of(registry, type) == sizeof(Vec3C));
 
     test_context_free(&ctx);
 }
@@ -214,10 +227,10 @@ static void test_field_lookup_misses() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    TypeHandle type = resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float }", "Vec3");
+    TypeRegistry *registry = NULL;
+    const Type *type =
+        resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float }", "Vec3", &registry);
 
-    size_t offset = 0;
-    assert(!type_field_offset(type, string_from_cstr(&ctx.strings, "w"), &offset));
     assert(type_find_field(type, string_from_cstr(&ctx.strings, "w")) == NULL);
 
     test_context_free(&ctx);
@@ -231,16 +244,16 @@ static void test_builtin_widths() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
     TypeRegistry *registry = global_scope.type_registry;
 
-    TypeHandle int_type = type_registry_get_builtin(registry, TYPE_INT);
-    TypeHandle float_type = type_registry_get_builtin(registry, TYPE_FLOAT);
-    TypeHandle bool_type = type_registry_get_builtin(registry, TYPE_BOOL);
+    const Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+    const Type *float_type = type_registry_get_builtin(registry, TYPE_FLOAT);
+    const Type *bool_type = type_registry_get_builtin(registry, TYPE_BOOL);
 
-    assert(int_type->size == sizeof(int32_t));
-    assert(int_type->alignment == _Alignof(int32_t));
-    assert(float_type->size == sizeof(float));
-    assert(float_type->alignment == _Alignof(float));
-    assert(bool_type->size == sizeof(_Bool));
-    assert(bool_type->alignment == _Alignof(_Bool));
+    assert(type_registry_size_of(registry, int_type) == sizeof(int32_t));
+    assert(type_registry_align_of(registry, int_type) == _Alignof(int32_t));
+    assert(type_registry_size_of(registry, float_type) == sizeof(float));
+    assert(type_registry_align_of(registry, float_type) == _Alignof(float));
+    assert(type_registry_size_of(registry, bool_type) == sizeof(_Bool));
+    assert(type_registry_align_of(registry, bool_type) == _Alignof(_Bool));
 
     test_context_free(&ctx);
 }
@@ -258,9 +271,9 @@ static void test_raw_pointer_owns_nothing() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
     TypeRegistry *registry = global_scope.type_registry;
 
-    TypeHandle int_type = type_registry_get_builtin(registry, TYPE_INT);
+    const Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
 
-    TypeHandle ptr = type_registry_ptr_to(registry, int_type);
+    const Type *ptr = type_registry_ptr_to(registry, int_type);
 
     assert(ptr->kind == TYPE_PTR);
     assert(type_pointee(ptr) == int_type);
@@ -275,8 +288,8 @@ static void test_raw_pointer_owns_nothing() {
     assert(ptr != type_registry_box_to(registry, int_type));
     assert(ptr != type_registry_ref_to(registry, int_type));
 
-    assert(ptr->size == sizeof(void *));
-    assert(ptr->alignment == _Alignof(void *));
+    assert(type_registry_size_of(registry, ptr) == sizeof(void *));
+    assert(type_registry_align_of(registry, ptr) == _Alignof(void *));
 
     test_context_free(&ctx);
 }
@@ -292,10 +305,10 @@ static void test_a_borrow_and_a_box_are_distinct_constructors() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
     TypeRegistry *registry = global_scope.type_registry;
 
-    TypeHandle int_type = type_registry_get_builtin(registry, TYPE_INT);
+    const Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
 
-    TypeHandle box = type_registry_box_to(registry, int_type);
-    TypeHandle ref = type_registry_ref_to(registry, int_type);
+    const Type *box = type_registry_box_to(registry, int_type);
+    const Type *ref = type_registry_ref_to(registry, int_type);
 
     assert(box->kind == TYPE_BOX);
     assert(ref->kind == TYPE_REF);
@@ -326,10 +339,11 @@ static void test_mutually_recursive_structs() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    TypeHandle a = resolve_struct(&ctx,
-                                  "struct A { b: box B }\n"
-                                  "struct B { a: box A }\n",
-                                  "A");
+    TypeRegistry *registry = NULL;
+    const Type *a = resolve_struct(&ctx,
+                                   "struct A { b: box B }\n"
+                                   "struct B { a: box A }\n",
+                                   "A", &registry);
 
     const TypeField *field = type_find_field(a, string_from_cstr(&ctx.strings, "b"));
 
@@ -371,12 +385,13 @@ static void test_array_of_a_struct_declared_below() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    TypeHandle holder = resolve_struct(&ctx,
-                                       "struct Holder { cells: Array Cell,2 }\n"
-                                       "struct Cell { value: int }\n",
-                                       "Holder");
+    TypeRegistry *registry = NULL;
+    const Type *holder = resolve_struct(&ctx,
+                                        "struct Holder { cells: Array Cell,2 }\n"
+                                        "struct Cell { value: int }\n",
+                                        "Holder", &registry);
 
-    assert(holder->size == 2 * sizeof(int32_t));
+    assert(type_registry_size_of(registry, holder) == 2 * sizeof(int32_t));
 
     test_context_free(&ctx);
 }
@@ -387,14 +402,15 @@ static void test_a_ring_through_a_box_is_laid_out() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    TypeHandle a = resolve_struct(&ctx,
-                                  "struct A { b: box B, tag: int }\n"
-                                  "struct B { a: box A }\n",
-                                  "A");
+    TypeRegistry *registry = NULL;
+    const Type *a = resolve_struct(&ctx,
+                                   "struct A { b: box B, tag: int }\n"
+                                   "struct B { a: box A }\n",
+                                   "A", &registry);
 
-    assert(a->size == sizeof(BoxRingC));
-    assert(a->alignment == _Alignof(BoxRingC));
-    assert(offset_of(&ctx, a, "tag") == offsetof(BoxRingC, tag));
+    assert(type_registry_size_of(registry, a) == sizeof(BoxRingC));
+    assert(type_registry_align_of(registry, a) == _Alignof(BoxRingC));
+    assert(offset_of(&ctx, registry, a, "tag") == offsetof(BoxRingC, tag));
 
     test_context_free(&ctx);
 }

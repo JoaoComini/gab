@@ -176,7 +176,7 @@ void link_install(Program *program, Unit *unit) {
     // each declaration is a distinct function -- which is why only types are
     // looked up rather than appended outright.
     for (size_t i = 0; i < unit->types.size; i++) {
-        TypeHandle type = unit->types.data[i];
+        const Type *type = unit->types.data[i];
         size_t found = program->heap_shapes.size;
 
         // Keyed on the type even though the entry holds none: two mentions of
