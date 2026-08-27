@@ -18,7 +18,7 @@ typedef enum {
     TYPE_BOOL,
 
     // An address and nothing more: what a string's characters and an array's
-    // elements are reached through. Carries what it points at in 'inner', so a
+    // elements are reached through. Carries what it points at, so a
     // walk over a block knows its stride without asking the header naming it.
     //
     // Makes no claim beyond the address. It does not own what it names, does
@@ -48,7 +48,7 @@ typedef enum {
     // it names is the whole difference between them, and reading it off the
     // kind is what keeps every other question -- a deref, a field access, a
     // method receiver -- from having to ask about a flag it does not care
-    // about. Both carry their pointee in 'inner'.
+    // about. Both carry what they name as their pointee.
     //
     // How wide one is at run time follows from the pointee rather than being
     // stored here, so a pointee that one day needs a length beside its address
@@ -133,6 +133,9 @@ typedef struct TypeArg {
 
 // The interning key. Types compare by pointer identity, so two mentions of
 // 'Array int,3' must find one Type: that is what this is looked up by.
+//
+// A key and only a key. What a type is built of lives in the type itself, so
+// that an array's element is one fact rather than two that could disagree.
 typedef struct TypeApp {
     TypeCtor ctor;
 
@@ -207,35 +210,61 @@ struct Type {
     bool sized;
     TypeMetadata metadata;
 
-    TypeField *fields;
-    size_t field_count;
-
-    // What an indirection names -- a TYPE_BOX, a TYPE_REF or a TYPE_PTR. NULL
-    // for every other kind.
-    Type *inner;
-
-    // The methods declared with this type as their receiver. NULL until the
-    // first one is, so a struct nobody declares a method on costs nothing.
-    MethodMap *methods;
-
     // What freeing a value of this type must free, or NULL when it owns
     // nothing. Set by type_layout_compute.
     DropFn drop;
 
-    // For a borrowing type that shares another's identity -- 'str' and
-    // 'String' -- the owning one. NULL everywhere else. Method lookup follows
-    // it so that one declaration serves both.
+    // The methods declared with this type as their receiver. NULL until the
+    // first one is, so a type nobody declares a method on costs nothing.
+    //
+    // Above the union because a method may be declared on any nominal type, and
+    // the set is reached the same way whichever kind carries it.
+    MethodMap *methods;
+
+    // For a type that shares another's identity -- 'str' reaching 'String's
+    // methods, every 'Array T,N' reaching the bare 'Array's -- the one whose
+    // set is followed. NULL everywhere else.
     Type *owner;
 
-    // What this type was built by applying, for a type the registry interned.
-    // Zeroed for a builtin and for a struct, which are named rather than
-    // constructed.
-    //
-    // Kept so that the arguments stay readable off the type: an array's element
-    // and its length are what its application was given, rather than something
-    // recovered from the layout they produced.
-    TypeApp app;
+    /*
+        What the kind gives it, and nothing another kind would give.
+
+        A struct has no pointee to be wrong about and an indirection has no
+        field list, rather than every reader having to know which of thirteen
+        fields its kind licenses. The same shape TypeExpr and ASTExpr already
+        use, for the same reason: a kind with a payload is a sum, and a struct
+        of every payload at once holds combinations that mean nothing.
+    */
+    union {
+        // TYPE_BOX, TYPE_REF, TYPE_PTR: what the indirection names.
+        struct {
+            Type *pointee;
+        } indirect;
+
+        // TYPE_STRUCT, TYPE_STRING, TYPE_STR: the fields the layout came from.
+        // A string's two are its characters and their count.
+        struct {
+            TypeField *fields;
+            size_t field_count;
+        } record;
+
+        // TYPE_ARRAY: a run of one element, as many as the length says.
+        struct {
+            Type *element;
+            int32_t length;
+        } array;
+    };
 };
+
+// What an indirection names, or NULL for a kind that names nothing. The walks
+// asking how many levels deep something is read it that way, so "not an
+// indirection" is the answer that stops them rather than a mistake.
+Type *type_pointee(const Type *type);
+
+// The fields a layout was computed from. Empty for a kind laid out some other
+// way, so a walk over them is the right no-op there.
+const TypeField *type_fields(const Type *type);
+size_t type_field_count(const Type *type);
 
 Type *type_create(Arena *arena, TypeKind kind, String *name);
 Type *type_struct_create(Arena *arena, String *name, size_t max_fields);

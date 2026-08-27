@@ -147,8 +147,8 @@ static bool owning_field_of_local(const ASTExpr *expr, Symbol **out_symbol, unsi
     // ints would fall off the end.
     size_t index = 0;
 
-    for (size_t i = 0; i < struct_type->field_count; i++) {
-        const TypeField *other = &struct_type->fields[i];
+    for (size_t i = 0; i < type_field_count(struct_type); i++) {
+        const TypeField *other = &type_fields(struct_type)[i];
 
         if (other == field) {
             break;

@@ -95,11 +95,11 @@ static void test_a_raw_pointer_carries_a_stride_and_drops_nothing() {
     Type *characters = type_registry_ptr_to(registry, registry->builtins.byte_type);
 
     assert(characters->kind == TYPE_PTR);
-    assert(characters->inner == registry->builtins.byte_type);
+    assert(type_pointee(characters) == registry->builtins.byte_type);
     assert(characters->drop == NULL);
 
     // One byte, which is the unit the count of an allocation is given in.
-    assert(characters->inner->size == 1 && characters->inner->alignment == 1);
+    assert(type_pointee(characters)->size == 1 && type_pointee(characters)->alignment == 1);
 
     // Named so a diagnostic can print it, but declared into no scope.
     assert(!test_compiles("func f(b: byte): int { return 0; }\n"));
@@ -403,9 +403,51 @@ static void test_an_array_owns_exactly_when_its_element_does() {
     test_context_free(&ctx);
 }
 
+// A type carries what its kind gives it and nothing another kind would give, so
+// asking a struct what it points at or an indirection what fields it has is
+// answered by the absence rather than by whatever sat in the same bytes.
+static void test_a_type_carries_only_what_its_kind_has() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope scope;
+    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+
+    TypeRegistry *registry = scope.type_registry;
+    Type *int_type = registry->builtins.int_type;
+
+    Type *box = type_registry_box_to(registry, int_type);
+
+    assert(type_pointee(box) == int_type);
+    assert(type_field_count(box) == 0);
+    assert(type_fields(box) == NULL);
+
+    Type *player = type_struct_create(ctx.arena, string_from_cstr(&ctx.strings, "Player"), 1);
+    type_add_field(player, string_from_cstr(&ctx.strings, "health"), int_type);
+    type_layout_compute(player);
+
+    assert(type_field_count(player) == 1);
+    assert(type_pointee(player) == NULL);
+
+    Type *ints = type_registry_array_of(registry, int_type, 3);
+
+    assert(type_array_element(ints) == int_type);
+    assert(type_array_length(ints) == 3);
+    assert(type_pointee(ints) == NULL);
+    assert(type_field_count(ints) == 0);
+
+    // A scalar has no payload of any kind, and each question says so rather
+    // than reading a field another kind would have filled.
+    assert(type_pointee(int_type) == NULL);
+    assert(type_field_count(int_type) == 0);
+
+    test_context_free(&ctx);
+}
+
 int main(void) {
     test_a_raw_pointer_carries_a_stride_and_drops_nothing();
     test_a_string_owns_and_a_reference_to_one_does_not();
+    test_a_type_carries_only_what_its_kind_has();
     test_an_array_is_its_elements_laid_end_to_end();
     test_an_array_owns_exactly_when_its_element_does();
     test_a_type_that_owns_nothing_has_no_drop();

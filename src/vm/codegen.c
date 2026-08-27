@@ -576,12 +576,12 @@ static void codegen_walk_owning_slots(CodegenState *state, const Type *type, uns
 
     // A struct owns through its fields: the walk reaches what each names by that
     // field's offset rather than by knowing where its kind keeps things.
-    if (!type || type->field_count == 0) {
+    if (!type || type_field_count(type) == 0) {
         return;
     }
 
-    for (size_t i = 0; i < type->field_count; i++) {
-        const TypeField *field = &type->fields[i];
+    for (size_t i = 0; i < type_field_count(type); i++) {
+        const TypeField *field = &type_fields(type)[i];
 
         codegen_walk_owning_slots(state, field->type, base + (unsigned int)(field->offset / VM_SLOT_SIZE),
                                   action);
@@ -1719,13 +1719,13 @@ static unsigned int codegen_index_base(CodegenState *state, ASTExpr *target) {
     // 'ref box Array int,3' is two hops from the elements.
     const Type *type = target->type;
 
-    while (type_is_indirect(type->inner)) {
+    while (type_is_indirect(type_pointee(type))) {
         unsigned int next = codegen_alloc_slots(state, VM_INDIRECT_SLOTS, VM_INDIRECT_SLOTS, target->span);
 
         chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_LOAD_PTR_N, next, pointer, VM_INDIRECT_SLOTS));
 
         pointer = next;
-        type = type->inner;
+        type = type_pointee(type);
     }
 
     return pointer;
@@ -2141,7 +2141,7 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
                                                     .indirect = true,
                                                 },
                                                 type_slot_count(reached));
-            reached = reached->inner;
+            reached = type_pointee(reached);
         }
 
         return (FieldTarget){
@@ -2170,15 +2170,15 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
     if (indirect) {
         const Type *reached = node->type;
 
-        while (type_is_indirect(reached->inner)) {
-            base = codegen_load_indirect_struct(state, node, reached->inner,
+        while (type_is_indirect(type_pointee(reached))) {
+            base = codegen_load_indirect_struct(state, node, type_pointee(reached),
                                                 (FieldTarget){
                                                     .base = base,
                                                     .offset = 0,
                                                     .indirect = true,
                                                 },
-                                                type_slot_count(reached->inner));
-            reached = reached->inner;
+                                                type_slot_count(type_pointee(reached)));
+            reached = type_pointee(reached);
         }
     }
 
@@ -2922,7 +2922,7 @@ static bool type_owns_through_members(const Type *type) {
 // and has no 8-wide opcode. Before heap objects existed no struct could hold a
 // pointer, so the two cases only meet now.
 static bool type_moves_as_slots(const Type *type) {
-    return type_is_indirect(type) || (type && type->field_count > 0);
+    return type_is_indirect(type) || (type && type_field_count(type) > 0);
 }
 
 // The field's width is known at compile time, so it picks the opcode instead

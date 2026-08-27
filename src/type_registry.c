@@ -108,7 +108,6 @@ static void application_insert(TypeRegistry *registry, TypeApp app, Type *type) 
     memcpy(args, app.args, app.arg_count * sizeof(TypeArg));
 
     app.args = args;
-    type->app = app;
 
     type_app_map_insert(registry->applications, app, type);
 }
@@ -136,6 +135,9 @@ Type *type_registry_array_of(TypeRegistry *registry, Type *element, int32_t leng
     // is laid out exactly as a C 'T[N]' is, which is what lets a host lay one
     // out with sizeof.
     Type *type = type_create(registry->arena, TYPE_ARRAY, registry->builtins.array_type->name);
+
+    type->array.element = element;
+    type->array.length = length;
 
     type->size = element->size * (size_t)length;
     type->alignment = element->alignment;
@@ -180,6 +182,8 @@ static Type *indirect_to(TypeRegistry *registry, TypeCtor ctor, TypeKind kind, T
     // characters is bounded by a count rather than by its type, so a reference
     // to one is an address and that count. The pointee decides, which is what
     // keeps a reference's width from disagreeing with what it names.
+    type->indirect.pointee = inner;
+
     type->size = sizeof(void *);
     type->alignment = _Alignof(void *);
 
@@ -187,8 +191,6 @@ static Type *indirect_to(TypeRegistry *registry, TypeCtor ctor, TypeKind kind, T
         type->size += sizeof(int32_t);
         type->size = (type->size + type->alignment - 1) & ~(type->alignment - 1);
     }
-
-    type->inner = inner;
 
     // Interned before the drop is selected, so a pointee reaching back here --
     // a struct holding a pointer to its own type -- finds this entry rather

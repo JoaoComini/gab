@@ -43,7 +43,7 @@ static void test_method_lands_on_its_receiver_type() {
     // The receiver is parameter zero, so a one-parameter method has two.
     assert(damage->func.param_count == 2);
     assert(type_is_indirect(damage->func.params[0]));
-    assert(damage->func.params[0]->inner == lookup_type(&ctx, scope, "Player"));
+    assert(type_pointee(damage->func.params[0]) == lookup_type(&ctx, scope, "Player"));
 
     ast_unit_destroy(unit);
     test_context_free(&ctx);

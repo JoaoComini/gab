@@ -75,7 +75,7 @@ static void test_homogeneous_struct() {
 
     assert(type != NULL);
     assert(type->kind == TYPE_STRUCT);
-    assert(type->field_count == 3);
+    assert(type_field_count(type) == 3);
 
     assert(type->size == sizeof(Vec3C));
     assert(type->alignment == _Alignof(Vec3C));
@@ -161,7 +161,7 @@ static void test_empty_struct() {
     Type *type = resolve_struct(&ctx, "struct Empty { }", "Empty");
 
     assert(type != NULL);
-    assert(type->field_count == 0);
+    assert(type_field_count(type) == 0);
     assert(type->size == 0);
     assert(type->alignment == 1);
 
@@ -174,7 +174,7 @@ static void test_trailing_comma_allowed() {
 
     Type *type = resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float, }", "Vec3");
 
-    assert(type->field_count == 3);
+    assert(type_field_count(type) == 3);
     assert(type->size == sizeof(Vec3C));
 
     test_context_free(&ctx);
@@ -257,7 +257,7 @@ static void test_raw_pointer_owns_nothing() {
     Type *ptr = type_registry_ptr_to(registry, int_type);
 
     assert(ptr->kind == TYPE_PTR);
-    assert(ptr->inner == int_type);
+    assert(type_pointee(ptr) == int_type);
 
     assert(type_registry_ptr_to(registry, int_type) == ptr);
 
@@ -294,8 +294,8 @@ static void test_a_borrow_and_a_box_are_distinct_constructors() {
     assert(box->kind == TYPE_BOX);
     assert(ref->kind == TYPE_REF);
 
-    assert(box->inner == int_type);
-    assert(ref->inner == int_type);
+    assert(type_pointee(box) == int_type);
+    assert(type_pointee(ref) == int_type);
 
     // Interned on the pointee, so a second mention is the same Type.
     assert(type_registry_box_to(registry, int_type) == box);

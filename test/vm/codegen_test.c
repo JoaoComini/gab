@@ -549,7 +549,7 @@ static void test_a_release_names_what_it_frees() {
     const Type *type = program.vm->program.heap_types.data[released];
 
     assert(type->kind == TYPE_BOX);
-    assert(type->inner->name && strcmp(type->inner->name->data, "Node") == 0);
+    assert(type_pointee(type)->name && strcmp(type_pointee(type)->name->data, "Node") == 0);
 
     test_program_free(&program);
 }

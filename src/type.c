@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 _Static_assert(sizeof(int32_t) == 4, "gab int must be 4 bytes");
 _Static_assert(sizeof(float) == 4, "gab float must be 4 bytes");
@@ -15,18 +16,18 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->name = name;
     type->size = 0;
     type->alignment = 1;
-    type->fields = NULL;
-    type->field_count = 0;
-    type->inner = NULL;
     type->methods = NULL;
     type->owner = NULL;
     type->drop = NULL;
-    type->app = (TypeApp){0};
 
     // Held by a slot and named by a bare address, which is what all but the
     // handful that say otherwise are.
     type->metadata = TYPE_META_NONE;
     type->sized = true;
+
+    // One arm zeroed is every arm zeroed: whichever the kind reads, it reads
+    // nothing rather than whatever the arena held.
+    memset(&type->record, 0, sizeof(type->record));
 
     return type;
 }
@@ -35,16 +36,16 @@ Type *type_struct_create(Arena *arena, String *name, size_t max_fields) {
     Type *type = type_create(arena, TYPE_STRUCT, name);
 
     if (max_fields > 0) {
-        type->fields = arena_alloc(arena, max_fields * sizeof(TypeField));
+        type->record.fields = arena_alloc(arena, max_fields * sizeof(TypeField));
     }
 
     return type;
 }
 
 void type_add_field(Type *type, String *name, Type *field_type) {
-    assert(type->fields && "struct was created without room for fields");
+    assert(type->record.fields && "struct was created without room for fields");
 
-    type->fields[type->field_count++] = (TypeField){
+    type->record.fields[type->record.field_count++] = (TypeField){
         .name = name,
         .type = field_type,
         .offset = 0,
@@ -55,8 +56,8 @@ void type_layout_compute(Type *type) {
     size_t offset = 0;
     size_t alignment = 1;
 
-    for (size_t i = 0; i < type->field_count; i++) {
-        TypeField *field = &type->fields[i];
+    for (size_t i = 0; i < type->record.field_count; i++) {
+        TypeField *field = &type->record.fields[i];
 
         offset = align_up(offset, field->type->alignment);
         field->offset = offset;
@@ -72,8 +73,8 @@ void type_layout_compute(Type *type) {
 }
 
 const TypeField *type_find_field(const Type *type, const String *name) {
-    for (size_t i = 0; i < type->field_count; i++) {
-        const TypeField *field = &type->fields[i];
+    for (size_t i = 0; i < type->record.field_count; i++) {
+        const TypeField *field = &type->record.fields[i];
 
         if (field->name == name) {
             return field;
@@ -101,23 +102,72 @@ bool type_field_offset(const Type *type, const String *name, size_t *out_offset)
 TypeMetadata type_metadata_of(const Type *type) { return type ? type->metadata : TYPE_META_NONE; }
 
 bool type_is_str_ref(const Type *type) {
-    return type && type->kind == TYPE_REF && type->inner && type->inner->kind == TYPE_STR;
+    return type && type->kind == TYPE_REF && type->indirect.pointee &&
+           type->indirect.pointee->kind == TYPE_STR;
 }
 
 bool type_is_sized(const Type *type) { return !type || type->sized; }
+
+Type *type_pointee(const Type *type) {
+    if (!type) {
+        return NULL;
+    }
+
+    switch (type->kind) {
+    case TYPE_BOX:
+    case TYPE_REF:
+    case TYPE_PTR:
+        return type->indirect.pointee;
+
+    default:
+        return NULL;
+    }
+}
+
+const TypeField *type_fields(const Type *type) {
+    if (!type) {
+        return NULL;
+    }
+
+    switch (type->kind) {
+    case TYPE_STRUCT:
+    case TYPE_STRING:
+    case TYPE_STR:
+        return type->record.fields;
+
+    default:
+        return NULL;
+    }
+}
+
+size_t type_field_count(const Type *type) {
+    if (!type) {
+        return 0;
+    }
+
+    switch (type->kind) {
+    case TYPE_STRUCT:
+    case TYPE_STRING:
+    case TYPE_STR:
+        return type->record.field_count;
+
+    default:
+        return 0;
+    }
+}
 
 bool type_is_indirect(const Type *type) { return type && (type->kind == TYPE_BOX || type->kind == TYPE_REF); }
 
 Type *type_array_element(const Type *type) {
     assert(type && type->kind == TYPE_ARRAY && "only an array has an element");
 
-    return type->app.args[0].type;
+    return type->array.element;
 }
 
 int32_t type_array_length(const Type *type) {
     assert(type && type->kind == TYPE_ARRAY && "only an array has a length");
 
-    return type->app.args[1].value;
+    return type->array.length;
 }
 
 bool type_is_owned(const Type *type) {
@@ -160,8 +210,8 @@ bool type_is_owned(const Type *type) {
 
     // A struct is not itself an owner: it owns through whichever fields do, and
     // is freed field by field rather than as one value.
-    for (size_t i = 0; i < type->field_count; i++) {
-        if (type_is_owned(type->fields[i].type)) {
+    for (size_t i = 0; i < type->record.field_count; i++) {
+        if (type_is_owned(type->record.fields[i].type)) {
             return true;
         }
     }
@@ -211,8 +261,8 @@ bool type_is_copyable(const Type *type) {
         break;
     }
 
-    for (size_t i = 0; i < type->field_count; i++) {
-        if (!type_is_copyable(type->fields[i].type)) {
+    for (size_t i = 0; i < type->record.field_count; i++) {
+        if (!type_is_copyable(type->record.fields[i].type)) {
             return false;
         }
     }

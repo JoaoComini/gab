@@ -390,8 +390,8 @@ bool gab_field_offset(const GabType *handle, const char *field, size_t *out_offs
 
     // Field names are interned, but this compares text so that a host can ask
     // about a name the pool has never seen without inserting it.
-    for (size_t i = 0; i < type->field_count; i++) {
-        const TypeField *candidate = &type->fields[i];
+    for (size_t i = 0; i < type_field_count(type); i++) {
+        const TypeField *candidate = &type_fields(type)[i];
 
         if (candidate->name && strcmp(candidate->name->data, field) == 0) {
             if (out_offset) {
@@ -718,7 +718,7 @@ bool gab_arg_pointer(GabCall *call, int index, void *pointer, const GabType *inn
     if (call && index >= 0 && (size_t)index < call->fn->sig_param_count) {
         const Type *param = call->fn->sig_params[index];
 
-        if (param && type_is_indirect(param) && param->inner != (const Type *)inner) {
+        if (param && type_is_indirect(param) && type_pointee(param) != (const Type *)inner) {
             return false;
         }
     }

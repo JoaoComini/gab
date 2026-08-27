@@ -49,7 +49,7 @@ static void test_pointer_types_are_interned() {
     assert(type_is_indirect(p));
 
     Type *player = scope_type_lookup(scope, string_from_cstr(&ctx.strings, "Player"));
-    assert(p->inner == player);
+    assert(type_pointee(p) == player);
 
     ast_unit_destroy(unit);
     test_context_free(&ctx);
@@ -69,8 +69,8 @@ static void test_pointer_depth_nests() {
     Type *p = field_type(&ctx, scope, "Holder", "p");
     Type *q = field_type(&ctx, scope, "Holder", "q");
 
-    assert(q->inner == p);
-    assert(p->inner == scope_type_lookup(scope, string_from_cstr(&ctx.strings, "int")));
+    assert(type_pointee(q) == p);
+    assert(type_pointee(p) == scope_type_lookup(scope, string_from_cstr(&ctx.strings, "int")));
 
     ast_unit_destroy(unit);
     test_context_free(&ctx);
@@ -126,7 +126,7 @@ static void test_ref_is_a_distinct_type() {
 
     // Same inner, and both are still ordinary addresses: a borrow is the same
     // address, differing only in who frees the inner.
-    assert(owning->inner == borrow->inner);
+    assert(type_pointee(owning) == type_pointee(borrow));
     assert(borrow->size == sizeof(void *));
 
     ast_unit_destroy(unit);

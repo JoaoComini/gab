@@ -52,8 +52,8 @@ static void drop_box(Allocator allocator, const Type *type, void *value) {
 // than being flattened into this walk, which is what keeps the offsets it
 // needs its own business.
 static void drop_fields(Allocator allocator, const Type *type, void *value) {
-    for (size_t i = 0; i < type->field_count; i++) {
-        const TypeField *field = &type->fields[i];
+    for (size_t i = 0; i < type_field_count(type); i++) {
+        const TypeField *field = &type_fields(type)[i];
 
         if (field->type->drop) {
             field->type->drop(allocator, field->type, (char *)value + field->offset);

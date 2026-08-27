@@ -147,7 +147,7 @@ static const char *type_name(ResolverState *state, Type *type) {
         return type->name->data;
     }
 
-    const char *inner = type->name ? type->name->data : type_name(state, type->inner);
+    const char *inner = type->name ? type->name->data : type_name(state, type_pointee(type));
     const char *prefix = type->kind == TYPE_REF ? "ref " : "box ";
     size_t length = strlen(prefix) + strlen(inner) + 1;
     char *out = arena_alloc(state->compile_arena, length);
@@ -331,7 +331,7 @@ static bool is_addressable(const ASTExpr *expr) {
 // requires the type to be one a unit declared.
 static Type *receiver_base_type(Type *type) {
     while (type_is_indirect(type)) {
-        type = type->inner;
+        type = type_pointee(type);
     }
 
     return type;
@@ -445,8 +445,8 @@ static void lower_method_call(ASTExpr *expr, Symbol *method, ReceiverAdjustment 
         // one chains, so it is already true at the level furthest out and would
         // emit no hop at all.
         while (type_is_indirect(receiver->type) && receiver->type != declared &&
-               declared->inner != receiver->type->inner) {
-            Type *inner = receiver->type->inner;
+               type_pointee(declared) != type_pointee(receiver->type)) {
+            Type *inner = type_pointee(receiver->type);
 
             receiver = ast_deref_expr_create(span, receiver);
             receiver->type = inner;
@@ -494,7 +494,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
             return true;
         }
 
-        if (type_is_indirect(actual) && receiver_base_type(actual) == declared->inner->owner) {
+        if (type_is_indirect(actual) && receiver_base_type(actual) == type_pointee(declared)->owner) {
             *out = RECEIVER_DEREF;
             return true;
         }
@@ -506,7 +506,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
         // lookup can reach one whose receiver names the other -- and taking the
         // address of a 'str' would hand a 'ref str' where a 'ref String' was
         // declared.
-        if (declared->inner != actual) {
+        if (type_pointee(declared) != actual) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot call '%s' on %s", name->data,
                        type_name(state, actual));
             return false;
@@ -538,8 +538,8 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
     // a 'ref box T' calling a 'ref T' method reaches the 'box T' inside it,
     // which then lends. Checked before the widening below, since that one only
     // recognises a receiver already at the right level.
-    if (type_is_indirect(actual) && type_is_indirect(actual->inner) &&
-        type_accepts(declared, actual->inner)) {
+    if (type_is_indirect(actual) && type_is_indirect(type_pointee(actual)) &&
+        type_accepts(declared, type_pointee(actual))) {
         *out = RECEIVER_DEREF;
         return true;
     }
@@ -700,7 +700,7 @@ static bool type_accepts(Type *to, Type *from) {
     // Borrowing: the destination names what 'from' itself sits in. A 'box T'
     // reaching a 'ref box T' takes this arm -- the address of the slot, not the
     // pointer it holds.
-    if (to->inner == from) {
+    if (type_pointee(to) == from) {
         return true;
     }
 
@@ -715,13 +715,13 @@ static bool type_accepts(Type *to, Type *from) {
     // lifetime question and belongs to the flow pass rather than here.
     //
     // Disjoint from the arm above at every step, since a pointer equal to
-    // 'to->inner' cannot also have 'to->inner' as its own inner.
+    // what 'to' points at cannot also point at what 'to' points at.
     while (type_is_indirect(from)) {
-        if (to->inner == from->inner) {
+        if (type_pointee(to) == type_pointee(from)) {
             return true;
         }
 
-        from = from->inner;
+        from = type_pointee(from);
     }
 
     return false;
@@ -730,7 +730,7 @@ static bool type_accepts(Type *to, Type *from) {
 // Whether 'to' accepts 'from' only by taking its address, which is the case
 // needing a node in the tree rather than a widening at the check.
 static bool accepts_by_borrowing(Type *to, Type *from) {
-    return to != from && to->kind == TYPE_REF && to->inner == from;
+    return to != from && to->kind == TYPE_REF && type_pointee(to) == from;
 }
 
 // Materialises the borrow a 'ref T' destination asks for. Borrowing is implicit,
@@ -756,9 +756,9 @@ static bool borrow_into(ResolverState *state, ASTExpr **slot, Type *destination,
     // here. type_accepts allows the pair; this is what makes the tree agree with
     // it, and without the hops the callee would receive the outer pointer and
     // read a pointer where the object should be.
-    while (type_is_indirect((*slot)->type) && destination->inner != (*slot)->type->inner &&
-           destination->inner != (*slot)->type) {
-        Type *inner = (*slot)->type->inner;
+    while (type_is_indirect((*slot)->type) && type_pointee(destination) != type_pointee((*slot)->type) &&
+           type_pointee(destination) != (*slot)->type) {
+        Type *inner = type_pointee((*slot)->type);
 
         ASTExpr *hop = ast_deref_expr_create(span, *slot);
         hop->type = inner;
@@ -1132,7 +1132,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
         // Reaches through every pointer level, as a field access does: an
         // 'Array int' and a 'ref Array int' are indexed the same way.
         while (type_is_indirect(target_type)) {
-            target_type = target_type->inner;
+            target_type = type_pointee(target_type);
         }
 
         if (target_type->kind != TYPE_ARRAY) {
@@ -1168,7 +1168,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
         // 'ref box Player' is two hops from the struct, and stopping short would
         // only report a pointer as having no fields.
         while (type_is_indirect(target_type)) {
-            target_type = target_type->inner;
+            target_type = type_pointee(target_type);
         }
 
         if (target_type->kind != TYPE_STRUCT) {
@@ -1293,7 +1293,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
             break;
         }
 
-        expr->type = target_type->inner;
+        expr->type = type_pointee(target_type);
 
         // The address itself lives in the target's slots, so a deref stays
         // assignable through whatever the target was.
@@ -1363,7 +1363,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
         // from fields has a layout to fill, which is a struct or a string --
         // zeroed, the latter is the empty string. A scalar has none: 'new int'
         // would be a boxed scalar, a different feature.
-        if (type->field_count == 0 && !type_is_indirect(type)) {
+        if (type_field_count(type) == 0 && !type_is_indirect(type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "cannot allocate %s; 'new' takes a struct or a pointer", type_name(state, type));
             expr->type = resolver_error_type(state);

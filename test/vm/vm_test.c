@@ -138,7 +138,7 @@ static void test_types_survive_a_later_compile() {
     assert(player);
 
     size_t size = player->size;
-    size_t field_count = player->field_count;
+    size_t field_count = type_field_count(player);
 
     // Enough of a second unit to reuse the memory the first one released.
     compile_and_run(vm,
@@ -148,7 +148,7 @@ static void test_types_survive_a_later_compile() {
 
     assert(strcmp(player->name->data, "Player") == 0);
     assert(player->size == size);
-    assert(player->field_count == field_count);
+    assert(type_field_count(player) == field_count);
 
     vm_free(vm);
 }
