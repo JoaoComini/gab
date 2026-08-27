@@ -14,6 +14,9 @@
 // Symbol's own header reaches back here.
 typedef struct Symbol Symbol;
 
+// Declared for the same reason: a scope owns a registry and names what it holds.
+typedef struct Scope Scope;
+
 // The named types of one scope. Scope owns these and chains them, the same way
 // it chains symbol tables.
 typedef struct {
@@ -97,6 +100,21 @@ typedef struct MethodKey {
 
 GAB_HASH_MAP(MethodTable, method_key, MethodKey, Symbol *)
 
+// A nominal type's identity: the scope it was declared in and the name it was
+// given. Not its shape -- two modules each declaring a 'Config' declare two
+// types, however alike their fields.
+typedef struct NominalKey {
+    const Scope *scope;
+    const String *name;
+} NominalKey;
+
+#define nominal_key_hash(key) (((size_t)(key).scope * 31) ^ (size_t)(key).name)
+#define nominal_key_key_equals(key, other) ((key).scope == (other).scope && (key).name == (other).name)
+#define nominal_key_key_dup(key) key
+#define nominal_key_entry_free(key, value)
+
+GAB_HASH_MAP(NominalMap, nominal_key, NominalKey, Type *)
+
 typedef struct TypeRegistry {
     Arena *arena;
 
@@ -112,6 +130,9 @@ typedef struct TypeRegistry {
     // were.
     MethodTable *methods;
 
+    // Every nominal type a unit declared, by the declaration that names it.
+    NominalMap *nominals;
+
     TypeBuiltins builtins;
 } TypeRegistry;
 
@@ -120,6 +141,22 @@ typedef struct TypeRegistry {
 // sharing another's identity reaches its set.
 bool type_registry_add_method(TypeRegistry *registry, TypeHandle type, String *name, Symbol *method);
 Symbol *type_registry_find_method(TypeRegistry *registry, TypeHandle type, const String *name);
+
+// Declares a nominal type, and finishes one.
+//
+// Two calls rather than one because a struct is reachable by name before its
+// fields resolve -- that is what lets a field name the struct it is declared in
+// -- so there is a window where the type exists without a layout. The window is
+// here rather than in the resolver, which is the whole of why a type cannot be
+// built anywhere else.
+//
+// Identity is the declaration: the scope it was declared in and the name it was
+// given, so two modules each declaring a 'Config' declare two types however
+// alike their fields.
+Type *type_registry_declare_struct(TypeRegistry *registry, const Scope *scope, String *name,
+                                   size_t max_fields);
+void type_registry_finish_struct(TypeRegistry *registry, Type *type);
+TypeHandle type_registry_find_struct(TypeRegistry *registry, const Scope *scope, String *name);
 
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings);
 

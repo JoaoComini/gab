@@ -86,6 +86,7 @@ void type_registry_register_builtins(TypeRegistry *registry) {
 
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
+    registry->nominals = nominal_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->methods = method_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->applications =
         type_app_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
@@ -99,6 +100,31 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
 void type_registry_destroy(TypeRegistry *registry) {
     type_app_map_destroy(registry->applications);
     method_key_destroy(registry->methods);
+    nominal_key_destroy(registry->nominals);
+}
+
+Type *type_registry_declare_struct(TypeRegistry *registry, const Scope *scope, String *name,
+                                   size_t max_fields) {
+    Type *type = type_struct_create(registry->arena, name, max_fields);
+
+    // Registered before its fields are known, so a field naming the struct
+    // being declared finds this entry rather than building a second.
+    nominal_key_insert(registry->nominals, (NominalKey){.scope = scope, .name = name}, type);
+
+    return type;
+}
+
+void type_registry_finish_struct(TypeRegistry *registry, Type *type) {
+    (void)registry;
+
+    type_layout_compute(type);
+    object_select_drop(type);
+}
+
+TypeHandle type_registry_find_struct(TypeRegistry *registry, const Scope *scope, String *name) {
+    Type **found = nominal_key_lookup(registry->nominals, (NominalKey){.scope = scope, .name = name});
+
+    return found ? *found : NULL;
 }
 
 bool type_registry_add_method(TypeRegistry *registry, TypeHandle type, String *name, Symbol *method) {

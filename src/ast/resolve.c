@@ -1656,10 +1656,11 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
         return;
     }
 
-    // Built here rather than handed over: this is one of the few places holding
-    // a type that is not yet finished, with its fields and its layout still to
-    // come. It becomes a handle like any other once the registry has it.
-    Type *type = type_struct_create(resolver_owner_arena(state), struct_name, stmt->struct_decl.fields.size);
+    // Declared through the registry, which owns every type a program can name.
+    // Not finished yet: its fields and its layout are still to come, which is
+    // why the declaring call and the finishing one are separate.
+    Type *type = type_registry_declare_struct(state->current_scope->type_registry, state->current_scope,
+                                              struct_name, stmt->struct_decl.fields.size);
 
     // Registered under its name *before* its fields resolve, so that a field
     // pointing at the struct being declared finds it. A scene graph is exactly
@@ -1714,8 +1715,7 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
         return;
     }
 
-    type_layout_compute(type);
-    object_select_drop(type);
+    type_registry_finish_struct(state->current_scope->type_registry, type);
 
     stmt->struct_decl.type = type;
 }

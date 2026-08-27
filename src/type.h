@@ -261,6 +261,14 @@ TypeHandle type_pointee(TypeHandle type);
 const TypeField *type_fields(TypeHandle type);
 size_t type_field_count(TypeHandle type);
 
+/*
+    Building a type, which only the registry does.
+
+    Every type a program can name is owned by the registry that interned it --
+    that is what makes pointer identity a sound comparison, and what a
+    TypeHandle asserts. These are declared here because type.c defines them, and
+    reaching for one outside the registry is building a type nothing interned.
+*/
 Type *type_create(Arena *arena, TypeKind kind, String *name);
 Type *type_struct_create(Arena *arena, String *name, size_t max_fields);
 
