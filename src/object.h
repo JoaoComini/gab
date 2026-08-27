@@ -5,6 +5,8 @@
 #include "arena.h"
 #include "type.h"
 
+typedef struct TypeRegistry TypeRegistry;
+
 /*
     A heap object is a header immediately followed by its payload, and a 'box T'
     is the address of the *payload* — never of the header. That is what makes a
@@ -63,14 +65,13 @@ _Static_assert(sizeof(ObjectHeader) % 8 == 0, "the header must not misalign the 
 // allocating an array never has to check for it.
 _Static_assert(sizeof(size_t) >= 8, "an array's size computation assumes a 64-bit size_t");
 
-// Builds the drop plan for a laid-out type, or leaves it NULL when the type
-// owns nothing. Called wherever a Type is finished -- once per type, never on a
-// free path, which is what lets the plan bake in offsets the free path would
-// otherwise have to read back off the type.
+// Builds the drop plan for a laid-out type, or NULL when it owns nothing.
+// Derived once per type and never on a free path, which is what lets the plan
+// bake in offsets the free path would otherwise read back off the type.
 //
-// Takes the arena the type itself came from, since a plan lives exactly as long
-// as the type holding it.
-void object_select_drop(Arena *arena, Type *type);
+// Not called directly: type_registry_drop_of memoizes this, and the recursion
+// below goes through it so that a ring through a 'box' terminates.
+const DropPlan *object_build_drop(Arena *arena, TypeRegistry *registry, const Type *type);
 
 // The header of a payload address. Not for a stack pointer: there is no header
 // there, and nothing in the representation can tell the caller so.

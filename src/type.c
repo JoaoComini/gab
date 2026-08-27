@@ -17,7 +17,6 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->size = 0;
     type->alignment = 1;
     type->owner = NULL;
-    type->drop = NULL;
 
     // Held by a slot and named by a bare address, which is what all but the
     // handful that say otherwise are.
@@ -155,17 +154,6 @@ size_t type_field_count(TypeHandle type) {
     }
 }
 
-size_t type_release_width(TypeHandle type) {
-    if (!type) {
-        return 0;
-    }
-
-    // A header's length is as load-bearing as its pointer: a sized free reads
-    // both, so both are cleared. Everything else that owns is reached through a
-    // pointer, and clearing that is what makes it NULL.
-    return type->kind == TYPE_ARRAY || type->kind == TYPE_STRING ? type->size : sizeof(void *);
-}
-
 bool type_is_indirect(TypeHandle type) { return type && (type->kind == TYPE_BOX || type->kind == TYPE_REF); }
 
 TypeHandle type_array_element(TypeHandle type) {
@@ -279,10 +267,6 @@ bool type_is_copyable(TypeHandle type) {
 
     return true;
 }
-
-// Sized for a handful: most struct types declare no methods at all, and the map
-// grows if one proves popular.
-#define METHOD_MAP_INITIAL_CAPACITY 4
 
 static TypeExpr *type_expr_create(TypeExprKind kind) {
     TypeExpr *expr = calloc(1, sizeof(TypeExpr));

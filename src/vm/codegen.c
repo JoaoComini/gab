@@ -93,6 +93,10 @@ typedef struct {
     Unit *unit;
     Arena *arena;
 
+    // Where a drop plan is read from. Every type codegen meets is laid out by
+    // now, so this only ever finds one already derived.
+    TypeRegistry *registry;
+
     // Where a string literal's characters are interned. They outlive every
     // frame, so a literal's header borrows them.
     StringPool *strings;
@@ -273,6 +277,7 @@ static void codegen_release_registers(CodegenState *state, unsigned int saved);
 static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned int src, unsigned int count);
 
 // Type layout in frame slots.
+static size_t slot_release_width(TypeHandle type);
 static unsigned int type_slot_count(TypeHandle type);
 static unsigned int type_align_slots(TypeHandle type);
 static bool type_is_struct(TypeHandle type);
@@ -286,7 +291,8 @@ static OpCode field_opcode_for(size_t size, bool load, bool indirect, bool *ok);
 
 // ---- Generating a unit ----
 
-Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, Diagnostics *diagnostics) {
+Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, TypeRegistry *registry,
+                       Diagnostics *diagnostics) {
     Unit *unit = calloc(1, sizeof(Unit));
 
     if (!unit) {
@@ -296,6 +302,7 @@ Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, Diagnost
     unit->prototypes = func_proto_list_create();
     unit->extern_protos = extern_proto_list_create();
     unit->types = type_list_create();
+    unit->type_shapes = heap_shape_list_create();
     unit->strings = string_list_create();
     unit->proto_relocations = relocation_list_create();
     unit->extern_relocations = relocation_list_create();
@@ -311,6 +318,7 @@ Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, Diagnost
         .max_reg = 0,
         .unit = unit,
         .arena = arena,
+        .registry = registry,
         .strings = strings,
         .local_protos = proto_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
@@ -1306,6 +1314,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         .chunk = func_chunk,
         .unit = state->unit,
         .arena = state->arena,
+        .registry = state->registry,
         .strings = state->strings,
         .local_protos = state->local_protos,
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
@@ -2029,7 +2038,15 @@ static unsigned int codegen_type_index(CodegenState *state, TypeHandle type) {
         }
     }
 
-    type_list_add(&state->unit->types, (TypeHandle)type);
+    type_list_add(&state->unit->types, type);
+
+    // Recorded beside the type, since this is where a registry is in hand: what
+    // the VM runs on is these numbers, and linking only copies them.
+    heap_shape_list_add(&state->unit->type_shapes, (HeapShape){
+                                                       .size = type->size,
+                                                       .drop = type_registry_drop_of(state->registry, type),
+                                                       .release_width = slot_release_width(type),
+                                                   });
 
     return (unsigned int)(state->unit->types.size - 1);
 }
@@ -2701,8 +2718,8 @@ static void codegen_record_frame_ref(CodegenState *state, unsigned int slot, Typ
 
     frame_ref_list_add(&state->frame_refs, (FrameRef){
                                                .slot = slot,
-                                               .drop = type->drop,
-                                               .release_width = type_release_width(type),
+                                               .drop = type_registry_drop_of(state->registry, type),
+                                               .release_width = slot_release_width(type),
                                            });
 }
 
@@ -2884,6 +2901,24 @@ static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned 
 }
 
 // ---- Type layout in frame slots ----
+
+/*
+    The bytes a release has to clear so the slot is safe to visit again: the
+    pointer for an owning indirection, and the whole header for an array, whose
+    length must go with its pointer or a second visit would walk a freed block.
+
+    A decision about the slot rather than a fact about the type, which is why it
+    is settled here beside the other slot arithmetic and not asked of the type.
+    Nothing at run time computes it: what the VM carries is the number, and a
+    slot whose concrete type is not known until run time would carry its own.
+*/
+static size_t slot_release_width(TypeHandle type) {
+    if (!type) {
+        return 0;
+    }
+
+    return type->kind == TYPE_ARRAY || type->kind == TYPE_STRING ? type->size : sizeof(void *);
+}
 
 // A value occupies ceil(size / 4) consecutive slots, which is 1 for every
 // scalar.

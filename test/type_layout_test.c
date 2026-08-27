@@ -269,7 +269,7 @@ static void test_raw_pointer_owns_nothing() {
 
     assert(!type_is_owned(ptr));
     assert(type_is_copyable(ptr));
-    assert(ptr->drop == NULL);
+    assert(type_registry_drop_of(registry, ptr) == NULL);
 
     // A 'box int' owns and a 'ref int' borrows; neither is this type.
     assert(ptr != type_registry_box_to(registry, int_type));

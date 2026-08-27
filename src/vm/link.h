@@ -115,10 +115,9 @@ typedef struct HeapShape {
     // What freeing a value of the type does, or NULL when it owns nothing.
     const DropPlan *drop;
 
-    // The bytes a release clears so the slot is safe to visit again: the
-    // pointer for an owning indirection, and the whole header for an array,
-    // whose length must go with its pointer or a second visit would walk a
-    // freed block.
+    // The bytes a release clears so the slot is safe to visit again. A decision
+    // codegen made about the slot rather than a fact about the type, carried
+    // here because the release instruction has no operand bits left to hold it.
     size_t release_width;
 } HeapShape;
 
@@ -194,7 +193,10 @@ typedef struct {
 
     FuncProtoList prototypes;
     ExternProtoList extern_protos;
+    // The types this unit named, and the shape of each. Parallel: the type is
+    // what interning is keyed on, the shape is what the VM runs on.
     TypeList types;
+    HeapShapeList type_shapes;
     StringList strings;
 
     RelocationList proto_relocations;

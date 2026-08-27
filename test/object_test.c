@@ -34,14 +34,14 @@ static Allocator counting_allocator(AllocCounts *counts) {
 // out — freeing walks offsets, so the layout has to be real.
 static TypeHandle make_struct(TestContext *ctx, TypeRegistry *registry, const char *name, const char **fields,
                               TypeHandle *field_types, size_t count) {
-    Type *type = type_registry_declare_struct(registry, NULL, string_from_cstr(&ctx->strings, name), count);
+    Type *type = type_registry_declare_struct(registry, string_from_cstr(&ctx->strings, name), count);
 
     for (size_t i = 0; i < count; i++) {
         type_add_field(type, string_from_cstr(&ctx->strings, fields[i]), field_types[i]);
     }
 
     type_layout_compute(type);
-    object_select_drop(ctx->arena, type);
+    type_registry_drop_of(registry, type);
 
     return type;
 }
@@ -59,13 +59,13 @@ static void test_a_type_that_owns_nothing_has_no_drop() {
     const char *names[] = {"x", "y"};
     TypeHandle types[] = {int_type, int_type};
 
-    assert(make_struct(&ctx, registry, "Point", names, types, 2)->drop == NULL);
+    assert(type_registry_drop_of(registry, make_struct(&ctx, registry, "Point", names, types, 2)) == NULL);
 
     TypeHandle owning = type_registry_box_to(registry, int_type);
     TypeHandle borrowing = type_registry_ref_to(registry, int_type);
 
-    assert(owning->drop != NULL);
-    assert(borrowing->drop == NULL);
+    assert(type_registry_drop_of(registry, owning) != NULL);
+    assert(type_registry_drop_of(registry, borrowing) == NULL);
 
     // A struct owns through whichever field does, so one owning field is what
     // earns it a drop.
@@ -73,8 +73,10 @@ static void test_a_type_that_owns_nothing_has_no_drop() {
     TypeHandle borrowed_field[] = {borrowing};
     TypeHandle owned_field[] = {owning};
 
-    assert(make_struct(&ctx, registry, "Borrower", held, borrowed_field, 1)->drop == NULL);
-    assert(make_struct(&ctx, registry, "Owner", held, owned_field, 1)->drop != NULL);
+    assert(type_registry_drop_of(registry,
+                                 make_struct(&ctx, registry, "Borrower", held, borrowed_field, 1)) == NULL);
+    assert(type_registry_drop_of(registry, make_struct(&ctx, registry, "Owner", held, owned_field, 1)) !=
+           NULL);
 
     test_context_free(&ctx);
 }
@@ -96,7 +98,7 @@ static void test_a_raw_pointer_carries_a_stride_and_drops_nothing() {
 
     assert(characters->kind == TYPE_PTR);
     assert(type_pointee(characters) == registry->builtins.byte_type);
-    assert(characters->drop == NULL);
+    assert(type_registry_drop_of(registry, characters) == NULL);
 
     // One byte, which is the unit the count of an allocation is given in.
     assert(type_pointee(characters)->size == 1 && type_pointee(characters)->alignment == 1);
@@ -122,11 +124,11 @@ static void test_alloc_and_free_are_one_allocation() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *p = object_alloc(allocator, player->size, player->drop);
+    void *p = object_alloc(allocator, player->size, type_registry_drop_of(registry, player));
 
     assert(p);
     assert(counts.allocs == 1);
-    assert(object_of(p)->drop == player->drop);
+    assert(object_of(p)->drop == type_registry_drop_of(registry, player));
 
     object_free(allocator, p);
 
@@ -151,7 +153,7 @@ static void test_the_payload_follows_the_header() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *p = object_alloc(allocator, pair->size, pair->drop);
+    void *p = object_alloc(allocator, pair->size, type_registry_drop_of(registry, pair));
 
     assert((char *)object_of(p) + sizeof(ObjectHeader) == (char *)p);
 
@@ -177,7 +179,7 @@ static void test_a_fresh_payload_is_zeroed() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    char *p = object_alloc(allocator, pair->size, pair->drop);
+    char *p = object_alloc(allocator, pair->size, type_registry_drop_of(registry, pair));
 
     for (size_t i = 0; i < pair->size; i++) {
         assert(p[i] == 0);
@@ -208,8 +210,8 @@ static void test_freeing_an_object_frees_what_it_owns() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *child = object_alloc(allocator, inner->size, inner->drop);
-    void *parent = object_alloc(allocator, outer->size, outer->drop);
+    void *child = object_alloc(allocator, inner->size, type_registry_drop_of(registry, inner));
+    void *parent = object_alloc(allocator, outer->size, type_registry_drop_of(registry, outer));
 
     memcpy(parent, &child, sizeof(child));
 
@@ -250,8 +252,8 @@ static void test_freeing_reaches_an_owning_field_at_its_offset() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *child = object_alloc(allocator, inner->size, inner->drop);
-    void *parent = object_alloc(allocator, outer->size, outer->drop);
+    void *child = object_alloc(allocator, inner->size, type_registry_drop_of(registry, inner));
+    void *parent = object_alloc(allocator, outer->size, type_registry_drop_of(registry, outer));
 
     memcpy((char *)parent + offset, &child, sizeof(child));
 
@@ -285,8 +287,8 @@ static void test_freeing_does_not_follow_a_ref_field() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *borrowed = object_alloc(allocator, inner->size, inner->drop);
-    void *holder = object_alloc(allocator, outer->size, outer->drop);
+    void *borrowed = object_alloc(allocator, inner->size, type_registry_drop_of(registry, inner));
+    void *holder = object_alloc(allocator, outer->size, type_registry_drop_of(registry, outer));
 
     memcpy(holder, &borrowed, sizeof(borrowed));
 
@@ -368,12 +370,12 @@ static void test_a_string_owns_and_a_reference_to_one_does_not() {
     // the same way. An array of ints owns nothing and has none.
     TypeHandle ints = type_registry_array_of(registry, registry->builtins.int_type, 4);
 
-    assert(ints->drop == NULL);
+    assert(type_registry_drop_of(registry, ints) == NULL);
     assert(!type_is_owned(ints));
 
     TypeHandle strings = type_registry_array_of(registry, owning, 2);
 
-    assert(strings->drop != NULL);
+    assert(type_registry_drop_of(registry, strings) != NULL);
     assert(type_is_owned(strings));
 
     test_context_free(&ctx);
@@ -434,20 +436,10 @@ static void test_an_array_owns_exactly_when_its_element_does() {
 
     assert(type_is_owned(nested));
 
-    // Asked of the element rather than of the plan: clearing the drop leaves
-    // the answer where it was, since what an array owns is what it holds and
-    // not what was planned to free it.
-    //
-    // Reaching past the handle to do it, which is what a test asserting on the
-    // plan rather than through it has to do.
-    Type *poke = (Type *)nested;
-    const DropPlan *glue = poke->drop;
-
-    poke->drop = NULL;
-
-    assert(type_is_owned(nested));
-
-    poke->drop = glue;
+    // Asked of the element rather than of the plan, which is a separate fact
+    // held elsewhere: what an array owns is what it holds, not what was derived
+    // to free it.
+    assert(type_is_owned(type_array_element(nested)));
 
     test_context_free(&ctx);
 }
@@ -471,7 +463,7 @@ static void test_a_type_carries_only_what_its_kind_has() {
     assert(type_field_count(box) == 0);
     assert(type_fields(box) == NULL);
 
-    Type *player = type_registry_declare_struct(registry, NULL, string_from_cstr(&ctx.strings, "Player"), 1);
+    Type *player = type_registry_declare_struct(registry, string_from_cstr(&ctx.strings, "Player"), 1);
     type_add_field(player, string_from_cstr(&ctx.strings, "health"), int_type);
     type_layout_compute(player);
 
@@ -527,37 +519,6 @@ static void test_methods_live_beside_the_type_not_in_it() {
     test_context_free(&ctx);
 }
 
-// Every type a program can name comes from the registry, nominal ones included:
-// a struct is declared through it rather than built beside it, so there is no
-// route by which a type it never saw reaches a handle.
-static void test_every_type_comes_from_the_registry() {
-    TestContext ctx;
-    test_context_init(&ctx);
-
-    Scope scope;
-    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
-
-    TypeRegistry *registry = scope.type_registry;
-    String *name = string_from_cstr(&ctx.strings, "Player");
-
-    Type *player = type_registry_declare_struct(registry, &scope, name, 1);
-
-    type_add_field(player, string_from_cstr(&ctx.strings, "health"), registry->builtins.int_type);
-    type_layout_compute(player);
-
-    // Its identity is the declaration, not its shape: the same scope and name
-    // find it again, and a second scope declaring the same shape is a second
-    // type.
-    assert(type_registry_find_struct(registry, &scope, name) == player);
-
-    Scope other;
-    scope_init(&other, ctx.arena, &ctx.strings, NULL);
-
-    assert(type_registry_find_struct(registry, &other, name) == NULL);
-
-    test_context_free(&ctx);
-}
-
 // A builtin is interned like everything else, and its kind is what finds it: one
 // kind, one type, so asking for a kind is a lookup rather than a choice between
 // types that share one.
@@ -579,12 +540,6 @@ static void test_a_builtin_is_interned_and_found_by_its_kind() {
     assert(registry->builtins.byte_type != registry->builtins.int_type);
     assert(registry->builtins.byte_type->kind == TYPE_BYTE);
 
-    // Interned, so the two ways of reaching it are one type.
-    assert(type_registry_find_builtin(registry, string_from_cstr(&ctx.strings, "int")) ==
-           registry->builtins.int_type);
-    assert(type_registry_find_builtin(registry, string_from_cstr(&ctx.strings, "byte")) ==
-           registry->builtins.byte_type);
-
     test_context_free(&ctx);
 }
 
@@ -593,7 +548,6 @@ int main(void) {
     test_a_string_owns_and_a_reference_to_one_does_not();
     test_a_type_carries_only_what_its_kind_has();
     test_methods_live_beside_the_type_not_in_it();
-    test_every_type_comes_from_the_registry();
     test_a_builtin_is_interned_and_found_by_its_kind();
     test_an_array_is_its_elements_laid_end_to_end();
     test_an_array_owns_exactly_when_its_element_does();

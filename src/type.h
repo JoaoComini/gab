@@ -266,11 +266,6 @@ struct Type {
     bool sized;
     TypeMetadata metadata;
 
-    // What freeing a value of this type must do, or NULL when it owns nothing.
-    // Built where the layout is, since that is where the offsets it bakes in
-    // are known.
-    const DropPlan *drop;
-
     // For a type that shares another's identity -- 'str' reaching 'String's
     // methods, every 'Array T,N' reaching the bare 'Array's -- the one whose
     // set is followed. NULL everywhere else.
@@ -348,14 +343,6 @@ bool type_is_sized(TypeHandle type);
 // deref, an auto-deref, and a field access all ask. Says nothing about
 // ownership: a 'ref T' is as indirect as a 'box T'.
 bool type_is_indirect(TypeHandle type);
-
-// The bytes a release has to clear so the slot is safe to visit again: the
-// pointer for an owning indirection, and the whole header for an array, whose
-// length must go with its pointer or a second visit would walk a freed block.
-//
-// Asked where the code that frees is emitted, never where it runs: what the
-// runtime carries is the number this answers, not the type it read it from.
-size_t type_release_width(TypeHandle type);
 
 // What one element of an array is, and how many it holds. Both are what the
 // application was given, so the element a walk strides by and the count it

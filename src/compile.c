@@ -110,7 +110,8 @@ bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *d
         }
 
         if (resolve_unit(vm->env.compile_arena, ast, staging, vm->env.module_scopes, diagnostics)) {
-            unit = codegen_generate(ast, vm->env.arena, &vm->env.strings, diagnostics);
+            unit =
+                codegen_generate(ast, vm->env.arena, &vm->env.strings, staging->type_registry, diagnostics);
         }
     }
 
