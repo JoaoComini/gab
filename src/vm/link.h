@@ -131,7 +131,7 @@ GAB_LIST(HeapShapeList, heap_shape_list, HeapShape)
 // owned by the scope arena and outlive every compile, so the list holds
 // borrowed pointers and frees none.
 #define type_list_item_free(item) ((void)(item))
-GAB_LIST(TypeList, type_list, TypeHandle)
+GAB_LIST(TypeList, type_list, const Type *)
 
 // The literals OP_LOAD_STR can load. Interned in the VM's pool, so equal text
 // is one String * and the list holds borrowed pointers.

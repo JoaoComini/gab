@@ -21,8 +21,8 @@ static Symbol *lookup(TestContext *ctx, Scope *scope, const char *name) {
 // The type a struct's field was declared with. A field carries a type without
 // owning anything at run time, which is what lets these ask what the registry
 // interned without declaring a top-level variable that owns.
-static TypeHandle field_type(TestContext *ctx, Scope *scope, const char *struct_name, const char *field) {
-    TypeHandle type = scope_type_lookup(scope, string_from_cstr(&ctx->strings, struct_name));
+static const Type *field_type(TestContext *ctx, Scope *scope, const char *struct_name, const char *field) {
+    const Type *type = scope_type_lookup(scope, string_from_cstr(&ctx->strings, struct_name));
 
     return type_find_field(type, string_from_cstr(&ctx->strings, field))->type;
 }
@@ -41,14 +41,14 @@ static void test_pointer_types_are_interned() {
                            "struct Holder { p: box Player, q: box Player }\n");
     assert(ok);
 
-    TypeHandle p = field_type(&ctx, scope, "Holder", "p");
-    TypeHandle q = field_type(&ctx, scope, "Holder", "q");
+    const Type *p = field_type(&ctx, scope, "Holder", "p");
+    const Type *q = field_type(&ctx, scope, "Holder", "q");
 
     assert(p && q);
     assert(p == q);
     assert(type_is_indirect(p));
 
-    TypeHandle player = scope_type_lookup(scope, string_from_cstr(&ctx.strings, "Player"));
+    const Type *player = scope_type_lookup(scope, string_from_cstr(&ctx.strings, "Player"));
     assert(type_pointee(p) == player);
 
     ast_unit_destroy(unit);
@@ -66,8 +66,8 @@ static void test_pointer_depth_nests() {
     bool ok = test_resolve(&ctx, scope, unit, "struct Holder { p: box int, q: box box int }\n");
     assert(ok);
 
-    TypeHandle p = field_type(&ctx, scope, "Holder", "p");
-    TypeHandle q = field_type(&ctx, scope, "Holder", "q");
+    const Type *p = field_type(&ctx, scope, "Holder", "p");
+    const Type *q = field_type(&ctx, scope, "Holder", "q");
 
     assert(type_pointee(q) == p);
     assert(type_pointee(p) == scope_type_lookup(scope, string_from_cstr(&ctx.strings, "int")));
@@ -90,13 +90,15 @@ static void test_pointer_is_a_word() {
                            "struct Holder { p: box Big, q: box bool }\n");
     assert(ok);
 
-    TypeHandle p = field_type(&ctx, scope, "Holder", "p");
-    TypeHandle q = field_type(&ctx, scope, "Holder", "q");
+    const Type *p = field_type(&ctx, scope, "Holder", "p");
+    const Type *q = field_type(&ctx, scope, "Holder", "q");
 
-    assert(p->size == sizeof(void *));
-    assert(p->alignment == _Alignof(void *));
-    assert(q->size == p->size);
-    assert(q->alignment == p->alignment);
+    TypeRegistry *registry = scope->type_registry;
+
+    assert(type_registry_size_of(registry, p) == sizeof(void *));
+    assert(type_registry_align_of(registry, p) == _Alignof(void *));
+    assert(type_registry_size_of(registry, q) == type_registry_size_of(registry, p));
+    assert(type_registry_align_of(registry, q) == type_registry_align_of(registry, p));
 
     ast_unit_destroy(unit);
     test_context_free(&ctx);
@@ -116,8 +118,8 @@ static void test_ref_is_a_distinct_type() {
                            "struct Holder { o: box Node, b: ref Node }\n");
     assert(ok);
 
-    TypeHandle owning = field_type(&ctx, scope, "Holder", "o");
-    TypeHandle borrow = field_type(&ctx, scope, "Holder", "b");
+    const Type *owning = field_type(&ctx, scope, "Holder", "o");
+    const Type *borrow = field_type(&ctx, scope, "Holder", "b");
 
     assert(owning && borrow);
     assert(owning != borrow);
@@ -127,7 +129,7 @@ static void test_ref_is_a_distinct_type() {
     // Same inner, and both are still ordinary addresses: a borrow is the same
     // address, differing only in who frees the inner.
     assert(type_pointee(owning) == type_pointee(borrow));
-    assert(borrow->size == sizeof(void *));
+    assert(type_registry_size_of(scope->type_registry, borrow) == sizeof(void *));
 
     ast_unit_destroy(unit);
     test_context_free(&ctx);

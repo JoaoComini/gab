@@ -139,7 +139,7 @@ const DropPlan *object_build_drop(Arena *arena, TypeRegistry *registry, const Ty
     case TYPE_ARRAY:
         plan->kind = DROP_ARRAY;
         plan->inner = type_registry_drop_of(registry, type_array_element(type));
-        plan->stride = type_array_element(type)->size;
+        plan->stride = type_registry_size_of(registry, type_array_element(type));
         plan->length = type_array_length(type);
         break;
 
@@ -152,8 +152,8 @@ const DropPlan *object_build_drop(Arena *arena, TypeRegistry *registry, const Ty
         // of what owns rather than the shape of the type.
         size_t owning = 0;
 
-        for (size_t i = 0; i < type->record.field_count; i++) {
-            if (type_registry_drop_of(registry, type->record.fields[i].type)) {
+        for (size_t i = 0; i < type_field_count(type); i++) {
+            if (type_registry_drop_of(registry, type_fields(type)[i].type)) {
                 owning++;
             }
         }
@@ -161,15 +161,16 @@ const DropPlan *object_build_drop(Arena *arena, TypeRegistry *registry, const Ty
         DropStep *steps = arena_alloc(arena, owning * sizeof(DropStep));
         size_t count = 0;
 
-        for (size_t i = 0; i < type->record.field_count; i++) {
-            const TypeField *field = &type->record.fields[i];
-            const DropPlan *inner = type_registry_drop_of(registry, field->type);
+        const TypeLayout *layout = type_registry_layout_of(registry, type);
+
+        for (size_t i = 0; i < type_field_count(type); i++) {
+            const DropPlan *inner = type_registry_drop_of(registry, type_fields(type)[i].type);
 
             if (!inner) {
                 continue;
             }
 
-            steps[count++] = (DropStep){.offset = field->offset, .plan = inner};
+            steps[count++] = (DropStep){.offset = layout->offsets[i], .plan = inner};
         }
 
         plan->steps = steps;

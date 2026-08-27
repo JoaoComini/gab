@@ -57,8 +57,8 @@ static void test_two_vms_are_independent() {
 
     assert(&first->env.strings != &second->env.strings);
 
-    TypeHandle first_int = type_registry_get_builtin(first->env.global_scope.type_registry, TYPE_INT);
-    TypeHandle second_int = type_registry_get_builtin(second->env.global_scope.type_registry, TYPE_INT);
+    const Type *first_int = type_registry_get_builtin(first->env.global_scope.type_registry, TYPE_INT);
+    const Type *second_int = type_registry_get_builtin(second->env.global_scope.type_registry, TYPE_INT);
 
     // Same name, different pools: distinct objects that must not be shared.
     assert(first_int->name != second_int->name);
@@ -132,12 +132,12 @@ static void test_types_survive_a_later_compile() {
     compile_and_run(vm, "module test;\n"
                         "struct Player { health: int, mana: int }\n");
 
-    TypeHandle player =
+    const Type *player =
         scope_type_lookup(environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "test")),
                           string_from_cstr(&vm->env.strings, "Player"));
     assert(player);
 
-    size_t size = player->size;
+    size_t size = type_registry_size_of(vm->env.global_scope.type_registry, player);
     size_t field_count = type_field_count(player);
 
     // Enough of a second unit to reuse the memory the first one released.
@@ -147,7 +147,7 @@ static void test_types_survive_a_later_compile() {
                     "func b(x: int, y: int): int { let q: int = x - y; let w: int = q * q; return w; }\n");
 
     assert(strcmp(player->name->data, "Player") == 0);
-    assert(player->size == size);
+    assert(type_registry_size_of(vm->env.global_scope.type_registry, player) == size);
     assert(type_field_count(player) == field_count);
 
     vm_free(vm);

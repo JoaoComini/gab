@@ -65,10 +65,10 @@ static void test_type_survives_a_later_compile(void) {
     // The type's storage must outlive the arena the compile reset.
     const GabType *player = gab_find_type(vm, "test", "Player");
     assert(player);
-    assert(gab_type_size(player) > 0);
+    assert(gab_type_size(vm, player) > 0);
 
     size_t health_offset = SIZE_MAX;
-    assert(gab_field_offset(player, "health", &health_offset));
+    assert(gab_field_offset(vm, player, "health", &health_offset));
     assert(health_offset == 0);
 
     gab_vm_free(vm);
@@ -94,20 +94,20 @@ static void test_layout_matches_c(void) {
     const GabType *type = gab_find_type(vm, "test", "Player");
     assert(type);
 
-    assert(gab_type_size(type) == sizeof(Player));
-    assert(gab_type_align(type) == _Alignof(Player));
+    assert(gab_type_size(vm, type) == sizeof(Player));
+    assert(gab_type_align(vm, type) == _Alignof(Player));
 
     size_t offset = SIZE_MAX;
 
-    assert(gab_field_offset(type, "health", &offset));
+    assert(gab_field_offset(vm, type, "health", &offset));
     assert(offset == offsetof(Player, health));
 
-    assert(gab_field_offset(type, "mana", &offset));
+    assert(gab_field_offset(vm, type, "mana", &offset));
     assert(offset == offsetof(Player, mana));
 
     // A missing field is false, not offset 0 — which is why this reports
     // through an out-parameter at all.
-    assert(!gab_field_offset(type, "stamina", &offset));
+    assert(!gab_field_offset(vm, type, "stamina", &offset));
 
     gab_vm_free(vm);
 }
@@ -597,16 +597,16 @@ static void test_two_modules_can_share_a_type_name(void) {
 
     // Distinct layouts, so these really are different types rather than one
     // found twice.
-    assert(gab_type_size(player_config) == 2 * sizeof(int));
-    assert(gab_type_size(enemy_config) == sizeof(int));
+    assert(gab_type_size(vm, player_config) == 2 * sizeof(int));
+    assert(gab_type_size(vm, enemy_config) == sizeof(int));
 
     size_t offset = SIZE_MAX;
-    assert(gab_field_offset(player_config, "mana", &offset));
+    assert(gab_field_offset(vm, player_config, "mana", &offset));
     assert(offset == sizeof(int));
 
     // Each module's fields belong to its own type.
-    assert(!gab_field_offset(enemy_config, "mana", &offset));
-    assert(gab_field_offset(enemy_config, "hp", &offset));
+    assert(!gab_field_offset(vm, enemy_config, "mana", &offset));
+    assert(gab_field_offset(vm, enemy_config, "hp", &offset));
 
     // And by name, without a handle.
     assert(gab_find_type(vm, "Player", "Config") == player_config);
@@ -675,8 +675,8 @@ static void test_module_type_shadows_the_root(void) {
 
     assert(root_config && player_config);
     assert(root_config != player_config);
-    assert(gab_type_size(root_config) == 2 * sizeof(int));
-    assert(gab_type_size(player_config) == sizeof(int));
+    assert(gab_type_size(vm, root_config) == 2 * sizeof(int));
+    assert(gab_type_size(vm, player_config) == sizeof(int));
 
     // A module with no Config of its own has none: the default module's is not
     // inherited, because the root holds only the builtins.
@@ -798,7 +798,7 @@ static void test_qualified_type_reference_crosses_modules(void) {
     assert(enemy);
 
     // Its own Config is untouched by the qualified mention of Player's.
-    assert(gab_type_size(gab_find_type(vm, "Enemy", "Config")) == sizeof(int));
+    assert(gab_type_size(vm, gab_find_type(vm, "Enemy", "Config")) == sizeof(int));
 
     // A module that does not exist, and a type that module does not have, are
     // both errors rather than a silent fallback to a same-named local type.
@@ -1122,11 +1122,11 @@ static void test_a_host_pointer_reaches_a_script() {
     const GabType *player = gab_find_type(vm, "test", "Player");
     assert(player);
 
-    void *object = calloc(1, gab_type_size(player));
+    void *object = calloc(1, gab_type_size(vm, player));
     assert(object);
 
     size_t health_at = 0;
-    assert(gab_field_offset(player, "health", &health_at));
+    assert(gab_field_offset(vm, player, "health", &health_at));
 
     int32_t health = 100;
     memcpy((char *)object + health_at, &health, sizeof(health));
@@ -1167,7 +1167,7 @@ static void test_a_pointer_argument_checks_its_pointee() {
     const GabType *player = gab_find_type(vm, "test", "Player");
     const GabType *enemy = gab_find_type(vm, "test", "Enemy");
 
-    void *object = calloc(1, gab_type_size(player));
+    void *object = calloc(1, gab_type_size(vm, player));
 
     GabFunc *fn = gab_lookup(vm, "test", "hurt", &err);
     GabCall *call = gab_call_init(fn, &err);
@@ -1202,11 +1202,11 @@ static void test_a_type_reports_the_layout_a_host_allocates_by() {
         int32_t health, mana;
     } PlayerC;
 
-    assert(gab_type_size(player) == sizeof(PlayerC));
-    assert(gab_type_align(player) == _Alignof(PlayerC));
+    assert(gab_type_size(vm, player) == sizeof(PlayerC));
+    assert(gab_type_align(vm, player) == _Alignof(PlayerC));
 
     size_t mana_at = 0;
-    assert(gab_field_offset(player, "mana", &mana_at));
+    assert(gab_field_offset(vm, player, "mana", &mana_at));
     assert(mana_at == offsetof(PlayerC, mana));
 
     gab_vm_free(vm);

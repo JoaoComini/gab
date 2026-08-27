@@ -27,8 +27,8 @@ void builtin_register_all(VM *vm);
 // owning type's, since a borrow reads it through 'owner' and an owning string
 // has no route the other way, while the receiver stays the borrow so that
 // reading a string never asks for ownership of it.
-void builtin_register_method(VM *vm, TypeHandle declared_on, TypeHandle receiver, const char *name,
-                             GabExternFn body, TypeHandle return_type, TypeHandle const *params,
+void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiver, const char *name,
+                             GabExternFn body, const Type *return_type, const Type *const *params,
                              size_t param_count);
 
 // Each builtin type's methods, called by builtin_register_all.

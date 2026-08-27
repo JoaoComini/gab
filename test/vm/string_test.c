@@ -32,13 +32,15 @@ static void test_a_string_is_an_address_and_a_length() {
     Scope scope;
     scope_init(&scope, ctx.arena, &ctx.strings, NULL);
 
-    TypeHandle string_type = type_registry_get_builtin(scope.type_registry, TYPE_STRING);
+    const Type *string_type = type_registry_get_builtin(scope.type_registry, TYPE_STRING);
 
-    assert(string_type->size == sizeof(GabStringValue));
-    assert(string_type->alignment == _Alignof(GabStringValue));
+    const TypeLayout *layout = type_registry_layout_of(scope.type_registry, string_type);
+
+    assert(layout->size == sizeof(GabStringValue));
+    assert(layout->alignment == _Alignof(GabStringValue));
 
     // Padded to the address's alignment, so it tiles whole slots.
-    assert(string_type->size == VM_STRING_SLOTS * VM_SLOT_SIZE);
+    assert(layout->size == VM_STRING_SLOTS * VM_SLOT_SIZE);
 
     test_context_free(&ctx);
 }
@@ -53,17 +55,19 @@ static void test_a_string_is_two_fields() {
     Scope scope;
     scope_init(&scope, ctx.arena, &ctx.strings, NULL);
 
-    TypeHandle string_type = type_registry_get_builtin(scope.type_registry, TYPE_STRING);
+    const Type *string_type = type_registry_get_builtin(scope.type_registry, TYPE_STRING);
 
     const TypeField *data = type_find_field(string_type, string_from_cstr(&ctx.strings, "data"));
     const TypeField *length = type_find_field(string_type, string_from_cstr(&ctx.strings, "length"));
 
     assert(data && length);
 
+    const TypeLayout *layout = type_registry_layout_of(scope.type_registry, string_type);
+
     // The C mirror the VM and the host both read is these fields' layout, so
     // the two statements of it must agree.
-    assert(data->offset == offsetof(GabStringValue, data));
-    assert(length->offset == offsetof(GabStringValue, length));
+    assert(layout->offsets[data - type_fields(string_type)] == offsetof(GabStringValue, data));
+    assert(layout->offsets[length - type_fields(string_type)] == offsetof(GabStringValue, length));
 
     // The header owns its characters, not the field naming them: a raw address
     // carries no ownership, so the question is answered by the string itself.

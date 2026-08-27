@@ -116,16 +116,24 @@ typedef struct ASTExpr {
 
             // The array the target reaches, once any indirection is stripped.
             // Its element is what the expression yields.
-            TypeHandle array_type;
+            const Type *array_type;
         } index;
 
         struct {
             ASTExpr *target;
             StringRef name;
 
-            // Resolved during type resolution so codegen need not look it up
-            // again.
-            const TypeField *field;
+            // The struct the field was found on, and which of its fields it
+            // is. Resolved during type resolution so codegen need not look the
+            // name up again.
+            //
+            // A position rather than a pointer to the field: where a field
+            // begins is a layout question, so it is the pair that codegen asks
+            // the registry with. What the field is called and what type it has
+            // are read back through ast_field_of, which is the same walk a
+            // 'getelementptr' or a MIR field projection describes.
+            const Type *owner;
+            size_t index;
         } field;
 
         // 'ref target', '*target', '-target' and '!target'. All are prefix forms
@@ -149,14 +157,14 @@ typedef struct ASTExpr {
 
             // The struct being allocated, resolved from the spec. The
             // expression's own type is the pointer to it.
-            TypeHandle type;
+            const Type *type;
         } new_expr;
     };
 
     Span span; // Source position, for diagnostics
 
-    TypeHandle type; // Filled during type resolution
-    Symbol *symbol;  // Filled during symbol resolution
+    const Type *type; // Filled during type resolution
+    Symbol *symbol;   // Filled during symbol resolution
 } ASTExpr;
 
 ASTExpr *ast_literal_expr_create(Span span, Literal value);
@@ -173,6 +181,11 @@ ASTExpr *ast_cast_expr_create(Span span, ASTExpr *operand);
 ASTExpr *ast_new_expr_create(Span span, TypeExpr *type_expr);
 ASTExpr *ast_array_lit_expr_create(Span span, ASTExprList elements);
 ASTExpr *ast_index_expr_create(Span span, ASTExpr *target, ASTExpr *index);
+
+// The field a resolved field access names, or NULL before resolution has found
+// one. What it is called and what type it has, read back from the position the
+// resolver settled -- where it begins is the layout's answer, not this one's.
+const TypeField *ast_field_of(const ASTExpr *expr);
 void ast_expr_free(ASTExpr *node);
 
 #endif
