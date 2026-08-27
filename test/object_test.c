@@ -444,10 +444,45 @@ static void test_a_type_carries_only_what_its_kind_has() {
     test_context_free(&ctx);
 }
 
+// A type's methods are not part of the type. What may be called on one is
+// declared as a program is read -- by a later statement, a later unit, or the
+// host before any of them -- while what a type is was settled when it was
+// interned, so the two are kept apart and the set is looked up beside it.
+static void test_methods_live_beside_the_type_not_in_it() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope scope;
+    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+
+    TypeRegistry *registry = scope.type_registry;
+    const Type *int_type = registry->builtins.int_type;
+
+    String *name = string_from_cstr(&ctx.strings, "twice");
+
+    assert(type_registry_find_method(registry, int_type, name) == NULL);
+
+    Symbol method = {0};
+
+    assert(type_registry_add_method(registry, int_type, name, &method));
+    assert(type_registry_find_method(registry, int_type, name) == &method);
+
+    // Declared once: a second of the same name on the same type is refused
+    // rather than replacing what is there.
+    assert(!type_registry_add_method(registry, int_type, name, &method));
+
+    // Another type is unaffected, since the set is keyed by which type it is
+    // declared on.
+    assert(type_registry_find_method(registry, registry->builtins.bool_type, name) == NULL);
+
+    test_context_free(&ctx);
+}
+
 int main(void) {
     test_a_raw_pointer_carries_a_stride_and_drops_nothing();
     test_a_string_owns_and_a_reference_to_one_does_not();
     test_a_type_carries_only_what_its_kind_has();
+    test_methods_live_beside_the_type_not_in_it();
     test_an_array_is_its_elements_laid_end_to_end();
     test_an_array_owns_exactly_when_its_element_does();
     test_a_type_that_owns_nothing_has_no_drop();

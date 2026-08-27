@@ -167,18 +167,6 @@ typedef void (*DropFn)(Allocator allocator, const Type *type, void *value);
 // header reaches back here, and a method is only ever a function.
 typedef struct Symbol Symbol;
 
-// The methods of one struct type, keyed by the interned method name. Held on
-// the Type rather than in a Scope because a method has no free-standing name:
-// 'Player.update' and 'Enemy.update' must coexist, and neither should be
-// reachable by writing 'update'. Go, Rust, and C++ all key methods by their
-// receiver type for the same reason.
-#define method_map_hash(key) (size_t)key
-#define method_map_key_equals(key, other) key == other
-#define method_map_key_dup(key) key
-#define method_map_entry_free(key, value)
-
-GAB_HASH_MAP(MethodMap, method_map, String *, Symbol *)
-
 typedef struct TypeField {
     String *name;
     Type *type;
@@ -213,13 +201,6 @@ struct Type {
     // What freeing a value of this type must free, or NULL when it owns
     // nothing. Set by type_layout_compute.
     DropFn drop;
-
-    // The methods declared with this type as their receiver. NULL until the
-    // first one is, so a type nobody declares a method on costs nothing.
-    //
-    // Above the union because a method may be declared on any nominal type, and
-    // the set is reached the same way whichever kind carries it.
-    MethodMap *methods;
 
     // For a type that shares another's identity -- 'str' reaching 'String's
     // methods, every 'Array T,N' reaching the bare 'Array's -- the one whose
@@ -312,15 +293,6 @@ bool type_is_copyable(const Type *type);
 
 bool type_field_offset(const Type *type, const String *name, size_t *out_offset);
 const TypeField *type_find_field(const Type *type, const String *name);
-
-// Declares a method on this type, creating the map on first use. Returns false
-// if the name is already taken, which is a duplicate declaration.
-bool type_add_method(Arena *arena, Type *type, String *name, Symbol *method);
-
-// The method this type declares under that name, or NULL. Does not look
-// through an indirection: the caller strips that first, since 'box Player' and
-// 'Player' share one method set.
-Symbol *type_find_method(const Type *type, const String *name);
 
 // A type as the source wrote it, before any name is looked up. The syntactic
 // counterpart of Type: this is what a type position parses into, and the

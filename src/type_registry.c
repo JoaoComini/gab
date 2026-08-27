@@ -85,6 +85,7 @@ void type_registry_register_builtins(TypeRegistry *registry) {
 
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
+    registry->methods = method_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->applications =
         type_app_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
@@ -94,7 +95,42 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     return registry;
 }
 
-void type_registry_destroy(TypeRegistry *registry) { type_app_map_destroy(registry->applications); }
+void type_registry_destroy(TypeRegistry *registry) {
+    type_app_map_destroy(registry->applications);
+    method_key_destroy(registry->methods);
+}
+
+bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method) {
+    if (type_registry_find_method(registry, type, name)) {
+        return false;
+    }
+
+    method_key_insert(registry->methods, (MethodKey){.type = type, .name = name}, method);
+    return true;
+}
+
+Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name) {
+    if (!type) {
+        return NULL;
+    }
+
+    Symbol **found = method_key_lookup(registry->methods, (MethodKey){.type = type, .name = name});
+
+    if (found) {
+        return *found;
+    }
+
+    // A type sharing another's identity reads its set: a borrowed string reaches
+    // an owning one's, and every 'Array T,N' reaches the bare 'Array's. Its own
+    // is consulted first, since what the two do not share is what tells them
+    // apart.
+    //
+    // Finding a method this way is not yet a call that resolves: the owner's
+    // methods declare an owning receiver, which a borrow does not satisfy. So
+    // 'clone' is found from a borrow and then refused where the receiver is
+    // reconciled.
+    return type_registry_find_method(registry, type->owner, name);
+}
 
 // Looks an application up, and interns the argument list if it is new. The
 // caller builds its key on the stack, so the arguments are copied into the

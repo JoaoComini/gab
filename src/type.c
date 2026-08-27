@@ -16,7 +16,6 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->name = name;
     type->size = 0;
     type->alignment = 1;
-    type->methods = NULL;
     type->owner = NULL;
     type->drop = NULL;
 
@@ -273,47 +272,6 @@ bool type_is_copyable(const Type *type) {
 // Sized for a handful: most struct types declare no methods at all, and the map
 // grows if one proves popular.
 #define METHOD_MAP_INITIAL_CAPACITY 4
-
-bool type_add_method(Arena *arena, Type *type, String *name, Symbol *method) {
-    if (!type->methods) {
-        type->methods = method_map_create_alloc(arena_allocator(arena), METHOD_MAP_INITIAL_CAPACITY);
-    }
-
-    if (method_map_lookup(type->methods, name)) {
-        return false;
-    }
-
-    method_map_insert(type->methods, name, method);
-    return true;
-}
-
-Symbol *type_find_method(const Type *type, const String *name) {
-    if (!type) {
-        return NULL;
-    }
-
-    // A borrow reads the method set of what it borrows, since a method that
-    // only reads its receiver is meaningful on both. Its own set is consulted
-    // first: what the two do not share is what tells them apart, and a method
-    // declared on the borrow answers for the borrow alone.
-    if (type->methods) {
-        Symbol **found = method_map_lookup(type->methods, (String *)name);
-
-        if (found) {
-            return *found;
-        }
-    }
-
-    // Only a borrow follows this, and finding a method here is not yet a call
-    // that resolves: the owner's methods declare an owning receiver, which a
-    // borrow does not satisfy. So 'clone', declared on the owning string, is
-    // found from a borrow and then refused where the receiver is reconciled.
-    if (type->owner) {
-        return type_find_method(type->owner, name);
-    }
-
-    return NULL;
-}
 
 static TypeExpr *type_expr_create(TypeExprKind kind) {
     TypeExpr *expr = calloc(1, sizeof(TypeExpr));

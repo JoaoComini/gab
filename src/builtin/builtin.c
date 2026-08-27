@@ -35,7 +35,8 @@ void builtin_register_method(VM *vm, Type *declared_on, Type *receiver, const ch
 
     extern_proto_list_add(&vm->program.extern_protos, (ExternProto){.body = body, .symbol = symbol});
 
-    type_add_method(arena, declared_on, string_from_cstr(&vm->env.strings, name), symbol);
+    type_registry_add_method(vm->env.global_scope.type_registry, declared_on,
+                             string_from_cstr(&vm->env.strings, name), symbol);
 }
 
 // These land at the bottom of the extern table, before any unit loads. That

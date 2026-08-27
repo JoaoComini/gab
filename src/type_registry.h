@@ -10,6 +10,10 @@
 
 #define TYPE_REGISTRY_INITIAL_CAPACITY 8
 
+// Declared rather than included: a method is an ordinary function Symbol, and
+// Symbol's own header reaches back here.
+typedef struct Symbol Symbol;
+
 // The named types of one scope. Scope owns these and chains them, the same way
 // it chains symbol tables.
 typedef struct {
@@ -74,6 +78,25 @@ typedef struct {
 //
 // Which type names are visible where is a scoping question, so the name map
 // belongs to Scope, which already owns the parent chain that answers it.
+// What may be called on a type, keyed by the type it was declared on and the
+// name it answers to.
+//
+// Beside the types rather than on them: a method set grows as a program is read
+// -- a later statement, a later unit, or the host before any of them -- while
+// what a type is was settled when it was interned. Keeping them apart is what
+// lets a type be finished when the registry hands it over.
+typedef struct MethodKey {
+    const Type *type;
+    const String *name;
+} MethodKey;
+
+#define method_key_hash(key) (((size_t)(key).type * 31) ^ (size_t)(key).name)
+#define method_key_key_equals(key, other) ((key).type == (other).type && (key).name == (other).name)
+#define method_key_key_dup(key) key
+#define method_key_entry_free(key, value)
+
+GAB_HASH_MAP(MethodTable, method_key, MethodKey, Symbol *)
+
 typedef struct TypeRegistry {
     Arena *arena;
 
@@ -85,8 +108,18 @@ typedef struct TypeRegistry {
     // constructors given the same argument never collide.
     TypeAppMap *applications;
 
+    // Every method declared on every type, however far apart the declarations
+    // were.
+    MethodTable *methods;
+
     TypeBuiltins builtins;
 } TypeRegistry;
+
+// Declares a method, or fails if the type already answers that name. Finds one
+// by following 'owner' when the type itself does not answer, so that a type
+// sharing another's identity reaches its set.
+bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method);
+Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name);
 
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings);
 

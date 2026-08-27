@@ -19,7 +19,8 @@ static Type *lookup_type(TestContext *ctx, Scope *scope, const char *name) {
 }
 
 static Symbol *lookup_method(TestContext *ctx, Scope *scope, const char *type, const char *method) {
-    return type_find_method(lookup_type(ctx, scope, type), string_from_cstr(&ctx->strings, method));
+    return type_registry_find_method(scope->type_registry, lookup_type(ctx, scope, type),
+                                     string_from_cstr(&ctx->strings, method));
 }
 
 // The receiver clause declares the function on the type rather than in a scope.

@@ -610,7 +610,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     Type *base = receiver_base_type(receiver_type);
 
     String *method_name = resolver_intern(state, name);
-    Symbol *method = type_find_method(base, method_name);
+    Symbol *method = type_registry_find_method(state->current_scope->type_registry, base, method_name);
 
     if (!method) {
         // type_name rather than the name field: a pointer type has none, and a
@@ -1491,7 +1491,8 @@ static void check_implicit_copy(ResolverState *state, ASTExpr *value, Type *dest
     // does not exist costs them the round trip to find that out.
     const Type *base = receiver_base_type(value->type);
 
-    if (base && type_find_method(base, resolver_intern(state, string_ref_create("clone")))) {
+    if (base && type_registry_find_method(state->current_scope->type_registry, base,
+                                          resolver_intern(state, string_ref_create("clone")))) {
         diag_error(state->diagnostics, GAB_ERR_LIFETIME, span,
                    "%s owns what it holds, so binding it needs 'move' to transfer ownership, or "
                    "'clone()' to duplicate it",
@@ -1855,7 +1856,7 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
         }
     }
 
-    if (!type_add_method(resolver_owner_arena(state), base, method_name, method)) {
+    if (!type_registry_add_method(state->current_scope->type_registry, base, method_name, method)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' already has a method '%s'",
                    base->name->data, method_name->data);
         return;
