@@ -417,6 +417,7 @@ static void vm_run_loop(VM *vm) {
     OpCode op;
     const Instruction *code = NULL;
     size_t code_size = 0;
+    uint8_t *regs = NULL;
 
     VM_RELOAD();
 
@@ -429,7 +430,7 @@ static void vm_run_loop(VM *vm) {
                 size_t const_index = VM_DECODE_I_KX(instruction);
                 Constant constant = constpool_get(chunk->const_pool, const_index);
 
-                memcpy(vm_reg_at(vm, reg), &constant, VM_SLOT_SIZE);
+                memcpy(VM_REG(reg), &constant, VM_SLOT_SIZE);
                 VM_NEXT();
             }
             VM_CASE(OP_LOAD_STR) {
@@ -444,7 +445,7 @@ static void vm_run_loop(VM *vm) {
                 // nothing and its type is a 'ref str'.
                 GabStrRef value = {.data = text->data, .length = (int32_t)text->length};
 
-                memcpy(vm->registers + rd * VM_SLOT_SIZE, &value, sizeof(value));
+                memcpy(regs + rd * VM_SLOT_SIZE, &value, sizeof(value));
                 VM_NEXT();
             }
             VM_CASE(OP_LOAD_TRUE) {
@@ -461,7 +462,7 @@ static void vm_run_loop(VM *vm) {
                 int rd = VM_DECODE_R_RD(instruction);
                 int r1 = VM_DECODE_R_R1(instruction);
 
-                memcpy(vm_reg_at(vm, rd), vm_reg_at(vm, r1), VM_SLOT_SIZE);
+                memcpy(VM_REG(rd), VM_REG(r1), VM_SLOT_SIZE);
                 VM_NEXT();
             }
             VM_CASE(OP_MOVE_N) {
@@ -473,7 +474,7 @@ static void vm_run_loop(VM *vm) {
                 // fields, or an argument marshalled into the slots just above its
                 // source, gives overlapping ranges. OP_LOAD_PTR_N can use memcpy
                 // because its source is a heap payload and cannot overlap a frame.
-                memmove(vm_reg_at(vm, rd), vm_reg_at(vm, r1), slots * VM_SLOT_SIZE);
+                memmove(VM_REG(rd), VM_REG(r1), slots * VM_SLOT_SIZE);
                 VM_NEXT();
             }
             VM_CASE(OP_ADDFK) {
@@ -526,8 +527,8 @@ static void vm_run_loop(VM *vm) {
                 GabStrRef left;
                 GabStrRef right;
 
-                memcpy(&left, vm->registers + r1 * VM_SLOT_SIZE, sizeof(left));
-                memcpy(&right, vm->registers + r2 * VM_SLOT_SIZE, sizeof(right));
+                memcpy(&left, regs + r1 * VM_SLOT_SIZE, sizeof(left));
+                memcpy(&right, regs + r2 * VM_SLOT_SIZE, sizeof(right));
 
                 size_t total = (size_t)left.length + (size_t)right.length;
 
@@ -546,7 +547,7 @@ static void vm_run_loop(VM *vm) {
 
                 GabStringValue result = {.data = characters, .length = (int32_t)total};
 
-                memcpy(vm->registers + rd * VM_SLOT_SIZE, &result, sizeof(result));
+                memcpy(regs + rd * VM_SLOT_SIZE, &result, sizeof(result));
                 VM_NEXT();
             }
             VM_CASE(OP_CMP_EQS) {
@@ -700,7 +701,7 @@ static void vm_run_loop(VM *vm) {
 
                 // A pointer spans two slots at an even index, which codegen has
                 // already arranged for rd.
-                memcpy(vm->registers + rd * VM_SLOT_SIZE, &object, sizeof(object));
+                memcpy(regs + rd * VM_SLOT_SIZE, &object, sizeof(object));
                 VM_NEXT();
             }
             VM_CASE(OP_NULL) {
@@ -711,7 +712,7 @@ static void vm_run_loop(VM *vm) {
                 unsigned int rd = VM_DECODE_I_RD(instruction);
                 const HeapShape *shape = &vm->program.heap_shapes.data[VM_DECODE_I_KX(instruction)];
 
-                void *slot = vm->registers + rd * VM_SLOT_SIZE;
+                void *slot = regs + rd * VM_SLOT_SIZE;
 
                 object_release(DEFAULT_ALLOCATOR, shape->drop, slot);
 
@@ -773,7 +774,7 @@ static void vm_run_loop(VM *vm) {
                 // Source and destination never overlap: the callee builds its
                 // result in temporaries above its parameters.
                 uint8_t result[VM_MAX_RETURN_SLOTS * VM_SLOT_SIZE];
-                memcpy(result, vm_reg_at(vm, r1), slots * VM_SLOT_SIZE);
+                memcpy(result, VM_REG(r1), slots * VM_SLOT_SIZE);
 
                 unsigned int dest = frame->dest;
                 size_t frame_base = frame->base;
@@ -789,7 +790,11 @@ static void vm_run_loop(VM *vm) {
                     VM_RETRY();
                 }
 
-                memcpy(vm_reg_at(vm, dest), result, slots * VM_SLOT_SIZE);
+                // The frame is gone, so the destination is the caller's
+                // register: the local still names the frame that returned.
+                VM_LOAD_REGS();
+
+                memcpy(VM_REG(dest), result, slots * VM_SLOT_SIZE);
                 VM_RETRY();
             }
             VM_CASE(OP_LOAD_FIELD_1) {
@@ -825,7 +830,7 @@ static void vm_run_loop(VM *vm) {
                 // outlive the frame the address was taken in, and a caller reading
                 // through the pointer has a different base. The byte offset reaches
                 // a field within the slots, so 'ref v.y' names the field, not v.
-                vm_write_ptr(vm, rd, vm->registers + base * VM_SLOT_SIZE + offset);
+                vm_write_ptr(vm, rd, regs + base * VM_SLOT_SIZE + offset);
                 VM_NEXT();
             }
             VM_CASE(OP_LOAD_FIELD_PTR_1) {
@@ -862,7 +867,7 @@ static void vm_run_loop(VM *vm) {
                 (void)alignment;
 
                 int32_t count;
-                memcpy(&count, vm_reg_at(vm, r1), sizeof(count));
+                memcpy(&count, VM_REG(r1), sizeof(count));
 
                 if (count < 0) {
                     vm_fail(vm, VM_RUN_ERR_BOUNDS, "an array's length cannot be negative");
@@ -898,7 +903,7 @@ static void vm_run_loop(VM *vm) {
                 size_t r1 = VM_DECODE_R_R1(instruction);
 
                 int32_t size;
-                memcpy(&size, vm_reg_at(vm, r1), sizeof(size));
+                memcpy(&size, VM_REG(r1), sizeof(size));
 
                 DEFAULT_ALLOCATOR.free_sized(DEFAULT_ALLOCATOR.ctx, vm_read_ptr(vm, rd), (size_t)size);
                 VM_NEXT();
@@ -909,7 +914,7 @@ static void vm_run_loop(VM *vm) {
                 size_t r2 = VM_DECODE_R_R2(instruction);
 
                 int32_t offset;
-                memcpy(&offset, vm_reg_at(vm, r2), sizeof(offset));
+                memcpy(&offset, VM_REG(r2), sizeof(offset));
 
                 vm_write_ptr(vm, rd, vm_read_ptr(vm, base) + offset);
                 VM_NEXT();
@@ -923,7 +928,7 @@ static void vm_run_loop(VM *vm) {
                 int32_t length = (int32_t)VM_DECODE_R_R2(instruction);
 
                 int32_t index;
-                memcpy(&index, vm_reg_at(vm, r1), sizeof(index));
+                memcpy(&index, VM_REG(r1), sizeof(index));
 
                 if (index < 0 || index >= length) {
                     vm_fail(vm, VM_RUN_ERR_BOUNDS, "array index is out of range");
@@ -947,7 +952,7 @@ static void vm_run_loop(VM *vm) {
                 size_t base = VM_DECODE_R_R1(instruction);
                 size_t slots = VM_DECODE_R_R2(instruction);
 
-                memcpy(vm_reg_at(vm, rd), vm_read_ptr(vm, base), slots * VM_SLOT_SIZE);
+                memcpy(VM_REG(rd), vm_read_ptr(vm, base), slots * VM_SLOT_SIZE);
                 VM_NEXT();
             }
             VM_CASE(OP_STORE_PTR_N) {
@@ -955,7 +960,7 @@ static void vm_run_loop(VM *vm) {
                 size_t r1 = VM_DECODE_R_R1(instruction);
                 size_t slots = VM_DECODE_R_R2(instruction);
 
-                memcpy(vm_read_ptr(vm, base), vm_reg_at(vm, r1), slots * VM_SLOT_SIZE);
+                memcpy(vm_read_ptr(vm, base), VM_REG(r1), slots * VM_SLOT_SIZE);
                 VM_NEXT();
             }
             VM_CASE(OP_FOR_LOOP) {

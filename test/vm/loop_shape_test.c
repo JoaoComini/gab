@@ -93,6 +93,26 @@ static void test_assigning_a_variable_is_a_single_move() {
 // four. The four are what a general 'for' needs; this shape -- an int counter
 // stepped by a literal and compared against something the body cannot change
 // -- is the common one, and it executes once per iteration.
+// An accumulating body adds one instruction to the iteration and no more: the
+// fused loop still carries the step, the compare and the jump between them.
+static void test_an_accumulating_body_costs_one_instruction() {
+    TestProgram program = test_compile("func run(n: int): int {\n"
+                                       "    let total: int = 0;\n"
+                                       "    for let i: int = 0; i < n; i = i + 1 {\n"
+                                       "        total = total + i;\n"
+                                       "    }\n"
+                                       "    return total;\n"
+                                       "}\n");
+
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    assert(test_count_opcode(chunk, OP_FOR_LOOP) == 1);
+    assert(test_count_opcode(chunk, OP_ADDI) == 1);
+    assert(test_count_opcode(chunk, OP_JMP) == 0);
+
+    test_program_free(&program);
+}
+
 static void test_a_counting_loop_is_one_instruction_per_iteration() {
     TestProgram program = test_compile("func run(n: int): int {\n"
                                        "    let acc: int = 0;\n"
@@ -311,6 +331,7 @@ int main() {
     test_a_counter_written_through_a_pointer_is_not_fused();
     test_a_counter_written_through_a_pointer_still_works();
     test_a_body_that_writes_the_counter_is_not_fused();
+    test_an_accumulating_body_costs_one_instruction();
     test_a_counting_loop_is_one_instruction_per_iteration();
     test_a_counting_loop_is_recognised_however_the_step_is_spelled();
     test_a_counting_loop_takes_the_step_from_either_side();

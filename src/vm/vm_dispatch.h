@@ -68,10 +68,19 @@
 #define VM_SAVE_IP() (vm->instruction_pointer = ip)
 #define VM_LOAD_IP() (ip = vm->instruction_pointer)
 
+// Where the running frame's registers begin, for the same reason the pointer
+// lives in a local: a handler writing through 'vm' could be writing this field,
+// so every register access would reload it. It changes only where a frame does,
+// which is where VM_RELOAD already runs.
+#define VM_LOAD_REGS() (regs = vm->registers)
+
+// Where register r of the running frame begins, read from the local above.
+#define VM_REG(r) (regs + (r) * VM_SLOT_SIZE)
+
 // Reloads what the running frame's bytecode is, for the handlers that change
 // which frame that is: a call, a return, or an unwind. The pointer comes back
-// with it: the frame that is running now is not the one whose pointer the local
-// held.
+// with it, and so does the register base: the frame that is running now is not
+// the one whose pointer the local held.
 #define VM_RELOAD()                                                                                          \
     do {                                                                                                     \
         if (vm->frame_count > 0) {                                                                           \
@@ -81,6 +90,7 @@
             code_size = chunk->instructions.size;                                                            \
         }                                                                                                    \
                                                                                                              \
+        VM_LOAD_REGS();                                                                                      \
         VM_LOAD_IP();                                                                                        \
     } while (0)
 
