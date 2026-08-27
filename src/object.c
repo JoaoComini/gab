@@ -12,18 +12,14 @@ ObjectHeader *object_of(void *payload) {
     return (ObjectHeader *)payload - 1;
 }
 
-void *object_alloc(Allocator allocator, TypeHandle type) {
-    assert(type && "an object needs a type; freeing it walks its fields");
-
-    size_t size = type->size;
-
+void *object_alloc(Allocator allocator, size_t size, const DropPlan *drop) {
     ObjectHeader *header = allocator.alloc(allocator.ctx, sizeof(ObjectHeader) + size);
 
     if (!header) {
         return NULL;
     }
 
-    header->type = type;
+    header->drop = drop;
 
     // Zeroed so that a pointer field nobody assigned is NULL rather than
     // whatever the allocator left behind — freeing walks these fields, and it
@@ -183,23 +179,10 @@ void object_select_drop(Arena *arena, Type *type) {
     type->drop = plan;
 }
 
-size_t type_release_width(TypeHandle type) {
-    if (!type) {
-        return 0;
-    }
-
-    // A header's length is as load-bearing as its pointer: a sized free reads
-    // both, so both are cleared. Everything else that owns is reached through a
-    // pointer, and clearing that is what makes it NULL.
-    return type->kind == TYPE_ARRAY || type->kind == TYPE_STRING ? type->size : sizeof(void *);
-}
-
-void object_release(Allocator allocator, TypeHandle type, void *value) {
+void object_release(Allocator allocator, const DropPlan *drop, void *value) {
     // A type that owns nothing has no plan at all, which is what makes a
     // release of one free: the question was settled where its layout was.
-    if (type) {
-        drop_run(allocator, type->drop, value);
-    }
+    drop_run(allocator, drop, value);
 }
 
 void object_free(Allocator allocator, void *payload) {
@@ -209,7 +192,7 @@ void object_free(Allocator allocator, void *payload) {
 
     ObjectHeader *header = object_of(payload);
 
-    drop_run(allocator, header->type->drop, payload);
+    drop_run(allocator, header->drop, payload);
 
     allocator.free(allocator.ctx, header);
 }

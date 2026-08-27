@@ -254,7 +254,7 @@ static void test_a_unit_that_fails_to_link_installs_nothing() {
                         "func first(): int { return 1; }\n");
 
     size_t protos = loaded_protos(vm);
-    size_t types = vm->program.heap_types.size;
+    size_t types = vm->program.heap_shapes.size;
 
     Diagnostics diagnostics;
     diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
@@ -273,7 +273,7 @@ static void test_a_unit_that_fails_to_link_installs_nothing() {
     diagnostics_free(&diagnostics);
 
     assert(loaded_protos(vm) == protos);
-    assert(vm->program.heap_types.size == types);
+    assert(vm->program.heap_shapes.size == types);
 
     vm_free(vm);
 }
@@ -288,7 +288,7 @@ static void test_checking_a_unit_installs_nothing() {
                         "func first(): int { return 1; }\n");
 
     size_t protos = loaded_protos(vm);
-    size_t types = vm->program.heap_types.size;
+    size_t types = vm->program.heap_shapes.size;
 
     Diagnostics diagnostics;
     diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
@@ -315,7 +315,7 @@ static void test_checking_a_unit_installs_nothing() {
     assert(link_check(&vm->program, unit, &diagnostics));
 
     assert(loaded_protos(vm) == protos);
-    assert(vm->program.heap_types.size == types);
+    assert(vm->program.heap_shapes.size == types);
     assert(!scope_symbol_lookup(environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "dry")),
                                 string_from_cstr(&vm->env.strings, "second")));
 

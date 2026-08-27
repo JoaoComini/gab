@@ -349,6 +349,14 @@ bool type_is_sized(TypeHandle type);
 // ownership: a 'ref T' is as indirect as a 'box T'.
 bool type_is_indirect(TypeHandle type);
 
+// The bytes a release has to clear so the slot is safe to visit again: the
+// pointer for an owning indirection, and the whole header for an array, whose
+// length must go with its pointer or a second visit would walk a freed block.
+//
+// Asked where the code that frees is emitted, never where it runs: what the
+// runtime carries is the number this answers, not the type it read it from.
+size_t type_release_width(TypeHandle type);
+
 // What one element of an array is, and how many it holds. Both are what the
 // application was given, so the element a walk strides by and the count it
 // stops at are read from the same place the type was interned on.

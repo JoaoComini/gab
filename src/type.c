@@ -155,6 +155,17 @@ size_t type_field_count(TypeHandle type) {
     }
 }
 
+size_t type_release_width(TypeHandle type) {
+    if (!type) {
+        return 0;
+    }
+
+    // A header's length is as load-bearing as its pointer: a sized free reads
+    // both, so both are cleared. Everything else that owns is reached through a
+    // pointer, and clearing that is what makes it NULL.
+    return type->kind == TYPE_ARRAY || type->kind == TYPE_STRING ? type->size : sizeof(void *);
+}
+
 bool type_is_indirect(TypeHandle type) { return type && (type->kind == TYPE_BOX || type->kind == TYPE_REF); }
 
 TypeHandle type_array_element(TypeHandle type) {

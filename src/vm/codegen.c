@@ -2699,7 +2699,11 @@ static void codegen_record_frame_ref(CodegenState *state, unsigned int slot, Typ
         }
     }
 
-    frame_ref_list_add(&state->frame_refs, (FrameRef){.slot = slot, .type = type});
+    frame_ref_list_add(&state->frame_refs, (FrameRef){
+                                               .slot = slot,
+                                               .drop = type->drop,
+                                               .release_width = type_release_width(type),
+                                           });
 }
 
 static void codegen_own_slot_at(CodegenState *state, unsigned int slot, TypeHandle type, unsigned int depth) {

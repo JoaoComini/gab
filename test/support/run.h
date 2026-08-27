@@ -266,8 +266,8 @@ static inline void test_compile_next(TestProgram *program, const char *source) {
 // Where a type sits in the VM's list, which is what OP_NEW encodes. -1 if the
 // VM has never been asked to allocate it.
 static inline long test_heap_type_index(TestProgram *program, const char *name) {
-    for (size_t i = 0; i < program->vm->program.heap_types.size; i++) {
-        const String *type_name = program->vm->program.heap_types.data[i]->name;
+    for (size_t i = 0; i < program->vm->program.shape_types.size; i++) {
+        const String *type_name = program->vm->program.shape_types.data[i]->name;
 
         // A release interns the type of whatever a slot held, and a pointer
         // type is structural: it has no name to compare.

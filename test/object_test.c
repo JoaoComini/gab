@@ -122,11 +122,11 @@ static void test_alloc_and_free_are_one_allocation() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *p = object_alloc(allocator, player);
+    void *p = object_alloc(allocator, player->size, player->drop);
 
     assert(p);
     assert(counts.allocs == 1);
-    assert(object_of(p)->type == player);
+    assert(object_of(p)->drop == player->drop);
 
     object_free(allocator, p);
 
@@ -151,7 +151,7 @@ static void test_the_payload_follows_the_header() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *p = object_alloc(allocator, pair);
+    void *p = object_alloc(allocator, pair->size, pair->drop);
 
     assert((char *)object_of(p) + sizeof(ObjectHeader) == (char *)p);
 
@@ -177,7 +177,7 @@ static void test_a_fresh_payload_is_zeroed() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    char *p = object_alloc(allocator, pair);
+    char *p = object_alloc(allocator, pair->size, pair->drop);
 
     for (size_t i = 0; i < pair->size; i++) {
         assert(p[i] == 0);
@@ -208,8 +208,8 @@ static void test_freeing_an_object_frees_what_it_owns() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *child = object_alloc(allocator, inner);
-    void *parent = object_alloc(allocator, outer);
+    void *child = object_alloc(allocator, inner->size, inner->drop);
+    void *parent = object_alloc(allocator, outer->size, outer->drop);
 
     memcpy(parent, &child, sizeof(child));
 
@@ -250,8 +250,8 @@ static void test_freeing_reaches_an_owning_field_at_its_offset() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *child = object_alloc(allocator, inner);
-    void *parent = object_alloc(allocator, outer);
+    void *child = object_alloc(allocator, inner->size, inner->drop);
+    void *parent = object_alloc(allocator, outer->size, outer->drop);
 
     memcpy((char *)parent + offset, &child, sizeof(child));
 
@@ -285,8 +285,8 @@ static void test_freeing_does_not_follow_a_ref_field() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *borrowed = object_alloc(allocator, inner);
-    void *holder = object_alloc(allocator, outer);
+    void *borrowed = object_alloc(allocator, inner->size, inner->drop);
+    void *holder = object_alloc(allocator, outer->size, outer->drop);
 
     memcpy(holder, &borrowed, sizeof(borrowed));
 
