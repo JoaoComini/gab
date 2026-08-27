@@ -308,7 +308,7 @@ static void test_checking_a_unit_installs_nothing() {
 
     assert(resolve_unit(vm->env.compile_arena, ast, &staging, vm->env.module_scopes, &diagnostics));
 
-    Unit *unit = codegen_generate(ast, vm->env.arena, &vm->env.strings, &diagnostics);
+    Unit *unit = codegen_generate(ast, vm->env.arena, &vm->env.strings, staging.type_registry, &diagnostics);
     assert(unit);
 
     // Accepts, and having accepted has still changed nothing.

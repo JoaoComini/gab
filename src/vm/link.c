@@ -39,6 +39,7 @@ void unit_free(Unit *unit) {
     func_proto_list_free(&unit->prototypes);
     extern_proto_list_free(&unit->extern_protos);
     type_list_free(&unit->types);
+    heap_shape_list_free(&unit->type_shapes);
     string_list_free(&unit->strings);
     relocation_list_free(&unit->proto_relocations);
     relocation_list_free(&unit->extern_relocations);
@@ -189,11 +190,7 @@ void link_install(Program *program, Unit *unit) {
         }
 
         if (found == program->heap_shapes.size) {
-            heap_shape_list_add(&program->heap_shapes, (HeapShape){
-                                                           .size = type->size,
-                                                           .drop = type->drop,
-                                                           .release_width = type_release_width(type),
-                                                       });
+            heap_shape_list_add(&program->heap_shapes, unit->type_shapes.data[i]);
 
             type_list_add(&program->shape_types, type);
         }

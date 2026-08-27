@@ -1,6 +1,7 @@
 #include "object.h"
 
 #include "arena.h"
+#include "type_registry.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -112,10 +113,9 @@ static void drop_run(Allocator allocator, const DropPlan *plan, void *value) {
 // to do follows from the kind, and whether anything is freed at all follows
 // from type_is_owned. A constructor builds a type and says nothing about
 // freeing it.
-void object_select_drop(Arena *arena, Type *type) {
+const DropPlan *object_build_drop(Arena *arena, TypeRegistry *registry, const Type *type) {
     if (!type_is_owned(type)) {
-        type->drop = NULL;
-        return;
+        return NULL;
     }
 
     DropPlan *plan = arena_alloc(arena, sizeof(DropPlan));
@@ -126,10 +126,11 @@ void object_select_drop(Arena *arena, Type *type) {
     case TYPE_BOX:
         plan->kind = DROP_BOX;
 
-        // The pointee's own plan, so freeing the block also frees what the
-        // value in it owns. NULL where it owns nothing, which is what makes
-        // freeing a 'box int' the block and nothing more.
-        plan->inner = type->indirect.pointee ? type->indirect.pointee->drop : NULL;
+        // Nothing more. What the block owns is read off its own header when it
+        // is freed, so the slot naming it carries no inner plan -- which is
+        // also what lets a ring through a 'box' be planned at all, neither end
+        // waiting on the other.
+        plan->inner = NULL;
         break;
 
     // A run of elements and a block of characters each know bounds the field
@@ -137,7 +138,7 @@ void object_select_drop(Arena *arena, Type *type) {
     // what an address names.
     case TYPE_ARRAY:
         plan->kind = DROP_ARRAY;
-        plan->inner = type_array_element(type)->drop;
+        plan->inner = type_registry_drop_of(registry, type_array_element(type));
         plan->stride = type_array_element(type)->size;
         plan->length = type_array_length(type);
         break;
@@ -152,7 +153,7 @@ void object_select_drop(Arena *arena, Type *type) {
         size_t owning = 0;
 
         for (size_t i = 0; i < type->record.field_count; i++) {
-            if (type->record.fields[i].type->drop) {
+            if (type_registry_drop_of(registry, type->record.fields[i].type)) {
                 owning++;
             }
         }
@@ -162,12 +163,13 @@ void object_select_drop(Arena *arena, Type *type) {
 
         for (size_t i = 0; i < type->record.field_count; i++) {
             const TypeField *field = &type->record.fields[i];
+            const DropPlan *inner = type_registry_drop_of(registry, field->type);
 
-            if (!field->type->drop) {
+            if (!inner) {
                 continue;
             }
 
-            steps[count++] = (DropStep){.offset = field->offset, .plan = field->type->drop};
+            steps[count++] = (DropStep){.offset = field->offset, .plan = inner};
         }
 
         plan->steps = steps;
@@ -176,7 +178,7 @@ void object_select_drop(Arena *arena, Type *type) {
     }
     }
 
-    type->drop = plan;
+    return plan;
 }
 
 void object_release(Allocator allocator, const DropPlan *drop, void *value) {

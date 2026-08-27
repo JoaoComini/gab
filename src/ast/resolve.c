@@ -1754,8 +1754,8 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
         return NULL;
     }
 
-    Type *type = type_registry_declare_struct(state->current_scope->type_registry, state->current_scope,
-                                              struct_name, stmt->struct_decl.fields.size);
+    Type *type = type_registry_declare_struct(state->current_scope->type_registry, struct_name,
+                                              stmt->struct_decl.fields.size);
 
     scope_decl_type(state->current_scope, struct_name, type);
 
@@ -1893,7 +1893,7 @@ static void layout_struct(ResolverState *state, StructDecl *decl) {
     }
 
     type_layout_compute(type);
-    object_select_drop(resolver_owner_arena(state), type);
+    type_registry_drop_of(state->current_scope->type_registry, type);
 
     decl->state = STRUCT_LAID_OUT;
     stmt->struct_decl.type = type;

@@ -11,15 +11,9 @@
 
 static Type *register_builtin(TypeRegistry *registry, TypeKind kind, const char *name, size_t size,
                               size_t alignment) {
-    String *interned = string_from_cstr(registry->strings, name);
-
-    Type *type = type_create(registry->arena, kind, interned);
+    Type *type = type_create(registry->arena, kind, string_from_cstr(registry->strings, name));
     type->size = size;
     type->alignment = alignment;
-
-    // Interned like every other type, under no scope: a builtin belongs to no
-    // module, and its name is the whole of its identity.
-    nominal_key_insert(registry->nominals, (NominalKey){.scope = NULL, .name = interned}, type);
 
     return type;
 }
@@ -42,9 +36,8 @@ static Type *string_builtin_create(TypeRegistry *registry) {
 
     // A string owns its characters, always: what borrows them is a 'ref str',
     // which owns nothing because no reference does. So this is not a question
-    // the type has to be asked -- it is what being a String means, and
-    // object_select_drop reads it off the kind.
-    object_select_drop(registry->arena, type);
+    // the type has to be asked -- it is what being a String means.
+    type_registry_drop_of(registry, type);
 
     return type;
 }
@@ -89,9 +82,31 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     registry->builtins.error_type = register_builtin(registry, TYPE_ERROR, "<error>", 0, 1);
 }
 
+const DropPlan *type_registry_drop_of(TypeRegistry *registry, const Type *type) {
+    if (!type) {
+        return NULL;
+    }
+
+    const DropPlan **found = drop_key_lookup(registry->drops, type);
+
+    if (found) {
+        return *found;
+    }
+
+    // No guard against reaching this type again on the way down: an
+    // indirection's plan carries no inner, so the recursion only ever descends
+    // through fields and array elements -- and a type held by value inside
+    // itself was refused as a containment cycle long before here.
+    const DropPlan *plan = object_build_drop(registry->arena, registry, type);
+
+    drop_key_insert(registry->drops, type, plan);
+
+    return plan;
+}
+
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
-    registry->nominals = nominal_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->drops = drop_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->methods = method_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->applications =
         type_app_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
@@ -105,29 +120,11 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
 void type_registry_destroy(TypeRegistry *registry) {
     type_app_map_destroy(registry->applications);
     method_key_destroy(registry->methods);
-    nominal_key_destroy(registry->nominals);
+    drop_key_destroy(registry->drops);
 }
 
-Type *type_registry_declare_struct(TypeRegistry *registry, const Scope *scope, String *name,
-                                   size_t max_fields) {
-    Type *type = type_struct_create(registry->arena, name, max_fields);
-
-    // Interned as soon as its name is bound, so that every field naming it --
-    // in this declaration or in one further down the file -- finds this entry
-    // rather than building a second.
-    nominal_key_insert(registry->nominals, (NominalKey){.scope = scope, .name = name}, type);
-
-    return type;
-}
-
-TypeHandle type_registry_find_builtin(TypeRegistry *registry, String *name) {
-    return type_registry_find_struct(registry, NULL, name);
-}
-
-TypeHandle type_registry_find_struct(TypeRegistry *registry, const Scope *scope, String *name) {
-    Type **found = nominal_key_lookup(registry->nominals, (NominalKey){.scope = scope, .name = name});
-
-    return found ? *found : NULL;
+Type *type_registry_declare_struct(TypeRegistry *registry, String *name, size_t max_fields) {
+    return type_struct_create(registry->arena, name, max_fields);
 }
 
 bool type_registry_add_method(TypeRegistry *registry, TypeHandle type, String *name, Symbol *method) {
@@ -218,7 +215,7 @@ TypeHandle type_registry_array_of(TypeRegistry *registry, TypeHandle element, in
     // second.
     application_insert(registry, app, type);
 
-    object_select_drop(registry->arena, type);
+    type_registry_drop_of(registry, type);
 
     return type;
 }
@@ -263,7 +260,7 @@ static TypeHandle indirect_to(TypeRegistry *registry, TypeCtor ctor, TypeKind ki
     // than building a second.
     application_insert(registry, app, type);
 
-    object_select_drop(registry->arena, type);
+    type_registry_drop_of(registry, type);
 
     return type;
 }

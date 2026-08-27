@@ -14,9 +14,6 @@
 // Symbol's own header reaches back here.
 typedef struct Symbol Symbol;
 
-// Declared for the same reason: a scope owns a registry and names what it holds.
-typedef struct Scope Scope;
-
 // The named types of one scope. Scope owns these and chains them, the same way
 // it chains symbol tables.
 typedef struct {
@@ -100,20 +97,24 @@ typedef struct MethodKey {
 
 GAB_HASH_MAP(MethodTable, method_key, MethodKey, Symbol *)
 
-// A nominal type's identity: the scope it was declared in and the name it was
-// given. Not its shape -- two modules each declaring a 'Config' declare two
-// types, however alike their fields.
-typedef struct NominalKey {
-    const Scope *scope;
-    const String *name;
-} NominalKey;
+/*
+    What freeing a value of each type does, by the type it was derived from.
 
-#define nominal_key_hash(key) (((size_t)(key).scope * 31) ^ (size_t)(key).name)
-#define nominal_key_key_equals(key, other) ((key).scope == (other).scope && (key).name == (other).name)
-#define nominal_key_key_dup(key) key
-#define nominal_key_entry_free(key, value)
+    Beside the types rather than on them, for the reason a method set is: what a
+    type is was settled when it was interned, while what freeing one does is
+    derived from its layout and from what every field of it owns. Keeping them
+    apart is what lets a type be finished when the registry hands it over.
 
-GAB_HASH_MAP(NominalMap, nominal_key, NominalKey, Type *)
+    Interned because the derivation recurses: a struct of two fields of one type
+    asks that type once, and a ring through a 'box' terminates because the
+    second demand finds the first.
+*/
+#define drop_key_hash(key) (size_t)key
+#define drop_key_key_equals(key, other) key == other
+#define drop_key_key_dup(key) key
+#define drop_key_entry_free(key, value)
+
+GAB_HASH_MAP(DropTable, drop_key, const Type *, const DropPlan *)
 
 typedef struct TypeRegistry {
     Arena *arena;
@@ -130,8 +131,8 @@ typedef struct TypeRegistry {
     // were.
     MethodTable *methods;
 
-    // Every nominal type a unit declared, by the declaration that names it.
-    NominalMap *nominals;
+    // What freeing a value of each type does.
+    DropTable *drops;
 
     TypeBuiltins builtins;
 } TypeRegistry;
@@ -142,28 +143,23 @@ typedef struct TypeRegistry {
 bool type_registry_add_method(TypeRegistry *registry, TypeHandle type, String *name, Symbol *method);
 Symbol *type_registry_find_method(TypeRegistry *registry, TypeHandle type, const String *name);
 
-// Declares a nominal type: interns its identity under the declaration that
-// names it, and hands back the Type nothing else may build.
-//
-// Identity is the declaration: the scope it was declared in and the name it was
-// given, so two modules each declaring a 'Config' declare two types however
-// alike their fields.
+// Declares a nominal type, and hands back the Type nothing else may build.
 //
 // The type comes back with no layout, because a declaration does not have one:
 // its name is bound here so that a field may name it, and its width follows
 // later from fields that may name types not yet declared. What may be done with
 // such a type is what needs no width -- name it, point at it -- which is what
 // makes 'struct A { b: box B }' resolve before B exists.
-Type *type_registry_declare_struct(TypeRegistry *registry, const Scope *scope, String *name,
-                                   size_t max_fields);
+Type *type_registry_declare_struct(TypeRegistry *registry, String *name, size_t max_fields);
 
-// A type, by the declaration that names it. May be one whose layout is not yet
-// computed, for the reason above.
-TypeHandle type_registry_find_struct(TypeRegistry *registry, const Scope *scope, String *name);
+/*
+    What freeing a value of this type does, or NULL when it owns nothing.
 
-// A builtin, by the name it goes by. Declared under no scope, since it belongs
-// to no module.
-TypeHandle type_registry_find_builtin(TypeRegistry *registry, String *name);
+    Derived on first demand and memoized. Every offset it needs is read off the
+    type, which is laid out by the time anything can ask: a type is interned
+    with its layout, and a struct is laid out where it is declared.
+*/
+const DropPlan *type_registry_drop_of(TypeRegistry *registry, const Type *type);
 
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings);
 
