@@ -42,8 +42,9 @@ static Type *string_builtin_create(TypeRegistry *registry) {
 
     // A string owns its characters, always: what borrows them is a 'ref str',
     // which owns nothing because no reference does. So this is not a question
-    // the type has to be asked -- it is what being a String means.
-    type->drop = object_drop_string;
+    // the type has to be asked -- it is what being a String means, and
+    // object_select_drop reads it off the kind.
+    object_select_drop(registry->arena, type);
 
     return type;
 }
@@ -217,7 +218,7 @@ TypeHandle type_registry_array_of(TypeRegistry *registry, TypeHandle element, in
     // second.
     application_insert(registry, app, type);
 
-    object_select_drop(type);
+    object_select_drop(registry->arena, type);
 
     return type;
 }
@@ -262,7 +263,7 @@ static TypeHandle indirect_to(TypeRegistry *registry, TypeCtor ctor, TypeKind ki
     // than building a second.
     application_insert(registry, app, type);
 
-    object_select_drop(type);
+    object_select_drop(registry->arena, type);
 
     return type;
 }

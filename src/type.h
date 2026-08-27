@@ -170,17 +170,65 @@ typedef struct TypeApp {
 size_t type_app_hash_of(TypeApp app);
 bool type_app_equals(TypeApp app, TypeApp other);
 
-// Frees what one value of a type owns, leaving the value itself to its holder.
-// Selected once, when the layout is computed, so that freeing never asks what
-// kind a type is: a type that owns nothing has none of these at all, and the
-// free path tests for that rather than calling one to learn there is nothing
-// to do.
-//
-// Takes its type because a walk over fields needs the offsets, and recurses
-// through the field's own function rather than flattening -- an owning shape
-// whose bounds are not in the type, such as an array counted at run time, can
-// then be its own function rather than a case in a shared walk.
-typedef void (*DropFn)(Allocator allocator, TypeHandle type, void *value);
+/*
+    What freeing one value of a type has to do, with every offset it needs
+    already in it.
+
+    Built once, where the layout is computed, and read by the free path alone.
+    Baking the offsets in is what keeps a laid-out Type out of the free path: a
+    walk that read them back off the type would make layout something the VM
+    consults on every free, rather than a fact the compiler settles and spends.
+
+    The shape a plan takes is the shape of what owns, not the shape of the type:
+    a struct of forty fields of which one owns is a plan of one step. A type
+    that owns nothing has no plan at all, and the free path tests for that
+    rather than walking a plan to learn there is nothing to do.
+*/
+typedef struct DropPlan DropPlan;
+
+typedef enum {
+    // Free what the address at this offset names, then the plan of the pointee.
+    // What 'new box T' allocates and what every owning pointer field holds.
+    DROP_BOX,
+
+    // Free the characters a string header names. The count sits beside the
+    // address, since a block has no header to ask how far it runs.
+    DROP_STRING,
+
+    // Walk a run of elements, freeing what each owns. Strides by a width the
+    // plan carries rather than by one read back off a type.
+    DROP_ARRAY,
+
+    // Run each step at its own offset. What a struct is, and the only kind
+    // whose offsets a plan has to carry.
+    DROP_FIELDS,
+} DropKind;
+
+// One thing a plan does, at a fixed offset into the value. The offset is
+// absolute within the value the plan describes, so a walk adds it and recurses
+// rather than accumulating a base.
+typedef struct DropStep {
+    size_t offset;
+    const DropPlan *plan;
+} DropStep;
+
+struct DropPlan {
+    DropKind kind;
+
+    // DROP_BOX: what the pointee owns, or NULL when it owns nothing and freeing
+    // the block is the whole of it.
+    // DROP_ARRAY: what one element owns, which is why the run is walked at all.
+    // DROP_FIELDS: unused; the steps carry the plans.
+    const DropPlan *inner;
+
+    // DROP_ARRAY: how far apart the elements are, and how many there are.
+    size_t stride;
+    int32_t length;
+
+    // DROP_FIELDS: what owns, and where. Only the fields that own appear.
+    const DropStep *steps;
+    size_t step_count;
+};
 
 // A method is an ordinary function Symbol — same prototype index, same call
 // path — so the map holds one. Declared rather than included: Symbol's own
@@ -218,9 +266,10 @@ struct Type {
     bool sized;
     TypeMetadata metadata;
 
-    // What freeing a value of this type must free, or NULL when it owns
-    // nothing. Set by type_layout_compute.
-    DropFn drop;
+    // What freeing a value of this type must do, or NULL when it owns nothing.
+    // Built where the layout is, since that is where the offsets it bakes in
+    // are known.
+    const DropPlan *drop;
 
     // For a type that shares another's identity -- 'str' reaching 'String's
     // methods, every 'Array T,N' reaching the bare 'Array's -- the one whose

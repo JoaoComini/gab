@@ -1893,7 +1893,7 @@ static void layout_struct(ResolverState *state, StructDecl *decl) {
     }
 
     type_layout_compute(type);
-    object_select_drop(type);
+    object_select_drop(resolver_owner_arena(state), type);
 
     decl->state = STRUCT_LAID_OUT;
     stmt->struct_decl.type = type;

@@ -41,7 +41,7 @@ static TypeHandle make_struct(TestContext *ctx, TypeRegistry *registry, const ch
     }
 
     type_layout_compute(type);
-    object_select_drop(type);
+    object_select_drop(ctx->arena, type);
 
     return type;
 }
@@ -223,6 +223,47 @@ static void test_freeing_an_object_frees_what_it_owns() {
     test_context_free(&ctx);
 }
 
+// A free reaches an owning field where the layout put it, not where the walk
+// happens to start: a struct whose owning field sits behind others is freed
+// through that field's offset.
+static void test_freeing_reaches_an_owning_field_at_its_offset() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    TypeRegistry *registry = type_registry_create(ctx.arena, &ctx.strings);
+    TypeHandle int_type = type_registry_get_builtin(registry, TYPE_INT);
+
+    const char *inner_names[] = {"n"};
+    TypeHandle inner_types[] = {int_type};
+    TypeHandle inner = make_struct(&ctx, registry, "Inner", inner_names, inner_types, 1);
+
+    // The owning field is last, so a walk that ignored offsets would read the
+    // leading ints as an address.
+    const char *outer_names[] = {"a", "b", "child"};
+    TypeHandle outer_types[] = {int_type, int_type, type_registry_box_to(registry, inner)};
+    TypeHandle outer = make_struct(&ctx, registry, "Outer", outer_names, outer_types, 3);
+
+    size_t offset = 0;
+    assert(type_field_offset(outer, string_from_cstr(&ctx.strings, "child"), &offset));
+    assert(offset > 0);
+
+    AllocCounts counts = {0};
+    Allocator allocator = counting_allocator(&counts);
+
+    void *child = object_alloc(allocator, inner);
+    void *parent = object_alloc(allocator, outer);
+
+    memcpy((char *)parent + offset, &child, sizeof(child));
+
+    assert(counts.allocs == 2);
+
+    object_free(allocator, parent);
+
+    assert(counts.frees == 2);
+
+    test_context_free(&ctx);
+}
+
 // A 'ref T' field names something it does not own, so freeing the holder must
 // leave the inner alone. Freeing it here would be a double free the moment
 // its real owner went.
@@ -393,14 +434,14 @@ static void test_an_array_owns_exactly_when_its_element_does() {
 
     assert(type_is_owned(nested));
 
-    // Asked of the element rather than of the glue: clearing the drop leaves the
-    // answer where it was, since what an array owns is what it holds and not
-    // which function was chosen to free it.
+    // Asked of the element rather than of the plan: clearing the drop leaves
+    // the answer where it was, since what an array owns is what it holds and
+    // not what was planned to free it.
     //
     // Reaching past the handle to do it, which is what a test asserting on the
-    // glue rather than through it has to do.
+    // plan rather than through it has to do.
     Type *poke = (Type *)nested;
-    DropFn glue = poke->drop;
+    const DropPlan *glue = poke->drop;
 
     poke->drop = NULL;
 
@@ -561,6 +602,7 @@ int main(void) {
     test_the_payload_follows_the_header();
     test_a_fresh_payload_is_zeroed();
     test_freeing_an_object_frees_what_it_owns();
+    test_freeing_reaches_an_owning_field_at_its_offset();
     test_freeing_does_not_follow_a_ref_field();
     test_freeing_null_is_a_no_op();
 

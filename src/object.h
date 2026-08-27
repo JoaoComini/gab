@@ -2,6 +2,7 @@
 #define GAB_OBJECT_H
 
 #include "allocator.h"
+#include "arena.h"
 #include "type.h"
 
 /*
@@ -61,19 +62,14 @@ _Static_assert(sizeof(ObjectHeader) % 8 == 0, "the header must not misalign the 
 // allocating an array never has to check for it.
 _Static_assert(sizeof(size_t) >= 8, "an array's size computation assumes a 64-bit size_t");
 
-// Selects the drop function for a laid-out type, or NULL when it owns nothing.
-// Called wherever a Type is finished -- once per type, never on a free path.
+// Builds the drop plan for a laid-out type, or leaves it NULL when the type
+// owns nothing. Called wherever a Type is finished -- once per type, never on a
+// free path, which is what lets the plan bake in offsets the free path would
+// otherwise have to read back off the type.
 //
-// Every constructed type comes through here, headers included: which glue frees
-// what follows from the kind, and whether anything is freed at all follows from
-// type_is_owned. A constructor builds a type and says nothing about freeing it.
-void object_select_drop(Type *type);
-
-// Frees the characters a string header names, and whatever an array's elements
-// own. Each knows bounds the field walk cannot read: one frees what an address
-// names, the other counts by a length its type says.
-void object_drop_string(Allocator allocator, TypeHandle type, void *value);
-void object_drop_array(Allocator allocator, TypeHandle type, void *value);
+// Takes the arena the type itself came from, since a plan lives exactly as long
+// as the type holding it.
+void object_select_drop(Arena *arena, Type *type);
 
 // The header of a payload address. Not for a stack pointer: there is no header
 // there, and nothing in the representation can tell the caller so.
