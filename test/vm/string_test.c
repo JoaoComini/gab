@@ -18,7 +18,7 @@ static void test_string_names_a_type() {
 
 // A literal is a string, so it may initialise one and nothing else.
 static void test_a_literal_is_a_string() {
-    assert(test_compiles("func f(): int { let s: str = \"hi\"; return 0; }\n"));
+    assert(test_compiles("func f(): int { let s: ref str = \"hi\"; return 0; }\n"));
 
     assert(!test_compiles("func f(): int { let n: int = \"hi\"; return 0; }\n"));
 }
@@ -80,7 +80,7 @@ static void test_a_literal_loads_its_characters_and_length() {
     char text[8];
     int32_t length = 0;
 
-    test_run_string("let s: str = \"a\\nb\";", text, sizeof(text), &length);
+    test_run_string("let s: ref str = \"a\\nb\";", text, sizeof(text), &length);
 
     assert(length == 3);
     assert(memcmp(text, "a\nb", 3) == 0);
@@ -90,62 +90,66 @@ static void test_a_literal_loads_its_characters_and_length() {
 // them. Interning makes equal literals one String *, so a comparison that only
 // ever compared addresses would pass this and still be wrong.
 static void test_equal_strings_compare_equal() {
-    assert(test_run_bool("func f(): bool { let a: str = \"hi\"; let b: str = \"hi\"; return a == b; }\n"
-                         "let r: bool = f();") == true);
+    assert(
+        test_run_bool("func f(): bool { let a: ref str = \"hi\"; let b: ref str = \"hi\"; return a == b; }\n"
+                      "let r: bool = f();") == true);
 
-    assert(test_run_bool("func f(): bool { let a: str = \"hi\"; let b: str = \"ho\"; return a == b; }\n"
-                         "let r: bool = f();") == false);
+    assert(
+        test_run_bool("func f(): bool { let a: ref str = \"hi\"; let b: ref str = \"ho\"; return a == b; }\n"
+                      "let r: bool = f();") == false);
 }
 
 // Length is part of the comparison, so a prefix is not the string it prefixes.
 static void test_a_prefix_is_not_equal() {
-    assert(test_run_bool("func f(): bool { let a: str = \"hi\"; let b: str = \"hit\"; return a == b; }\n"
-                         "let r: bool = f();") == false);
+    assert(
+        test_run_bool("func f(): bool { let a: ref str = \"hi\"; let b: ref str = \"hit\"; return a == b; }\n"
+                      "let r: bool = f();") == false);
 }
 
 // '!=' answers what '==' does not.
 static void test_strings_compare_unequal() {
-    assert(test_run_bool("func f(): bool { let a: str = \"hi\"; let b: str = \"ho\"; return a != b; }\n"
-                         "let r: bool = f();") == true);
+    assert(
+        test_run_bool("func f(): bool { let a: ref str = \"hi\"; let b: ref str = \"ho\"; return a != b; }\n"
+                      "let r: bool = f();") == true);
 }
 
 // A '\0' is a character, so the comparison reads the whole length rather than
 // stopping where C would.
 static void test_a_null_is_compared_like_any_character() {
-    assert(test_run_bool("func f(): bool { let a: str = \"a\\0b\"; let b: str = \"a\\0c\"; "
+    assert(test_run_bool("func f(): bool { let a: ref str = \"a\\0b\"; let b: ref str = \"a\\0c\"; "
                          "return a == b; }\n"
                          "let r: bool = f();") == false);
 }
 
 // Ordering asks something equality does not, and no answer is defined for it.
 static void test_strings_are_not_ordered() {
-    assert(!test_compiles("func f(): bool { let a: str = \"a\"; return a < a; }\n"));
+    assert(!test_compiles("func f(): bool { let a: ref str = \"a\"; return a < a; }\n"));
 }
 
 // '+' spells the characters of one string after the other, in a string that
 // owns them: neither operand's characters can be extended in place.
 static void test_concatenation_joins_the_characters() {
-    assert(test_run_int("func f(a: str): int { let s: String = a .. \"cd\"; return s.len(); }\n"
+    assert(test_run_int("func f(a: ref str): int { let s: String = a .. \"cd\"; return s.len(); }\n"
                         "let r: int = f(\"ab\");") == 4);
 
-    assert(test_run_bool("func f(a: str): bool { let s: String = a .. \"cd\"; return s == \"abcd\"; }\n"
+    assert(test_run_bool("func f(a: ref str): bool { let s: String = a .. \"cd\"; return s == \"abcd\"; }\n"
                          "let r: bool = f(\"ab\");") == true);
 }
 
 // The result owns, so it may initialise an owning string and a borrow of one
 // may not take it back without saying so.
 static void test_concatenation_yields_an_owning_string() {
-    assert(test_compiles("func f(a: str): int { let s: String = a .. \"b\"; return 0; }\n"));
+    assert(test_compiles("func f(a: ref str): int { let s: String = a .. \"b\"; return 0; }\n"));
 
     // A borrow may not take it: the slot that allocated the characters is the
     // one that frees them, and a second name for them would outlive the free.
-    assert(!test_compiles("func f(a: str): int { let s: str = a .. \"b\"; return 0; }\n"));
+    assert(!test_compiles("func f(a: ref str): int { let s: ref str = a .. \"b\"; return 0; }\n"));
 }
 
 // The slot a concatenation lands in owns its characters, so the block that
 // declared it releases them where it closes.
 static void test_a_concatenation_is_released_where_its_slot_dies() {
-    TestProgram program = test_compile("func f(a: str): int { let s: String = a .. \"b\"; return 0; }\n");
+    TestProgram program = test_compile("func f(a: ref str): int { let s: String = a .. \"b\"; return 0; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
@@ -156,7 +160,7 @@ static void test_a_concatenation_is_released_where_its_slot_dies() {
 
 // A borrow of a literal allocates nothing, so nothing is released for it.
 static void test_a_literal_is_not_released() {
-    TestProgram program = test_compile("func f(): int { let s: str = \"a\"; return 0; }\n");
+    TestProgram program = test_compile("func f(): int { let s: ref str = \"a\"; return 0; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
@@ -168,9 +172,9 @@ static void test_a_literal_is_not_released() {
 // A host lays a string field out as the two words it declares in C, and the
 // script borrows those characters rather than freeing them.
 static void test_a_struct_field_borrows_its_characters() {
-    assert(test_compiles("struct Person { name: str }\n"));
+    assert(test_compiles("struct Person { name: ref str }\n"));
 
-    TestProgram program = test_compile("struct Person { name: str }\n"
+    TestProgram program = test_compile("struct Person { name: ref str }\n"
                                        "func f(): int { let p: Person; return 0; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
@@ -185,7 +189,7 @@ static void test_a_struct_field_borrows_its_characters() {
 static void test_an_owning_string_field_is_released() {
     TestProgram program =
         test_compile("struct Doc { body: String }\n"
-                     "func f(a: str): int { let d: Doc; d.body = a .. \"b\"; return 0; }\n");
+                     "func f(a: ref str): int { let d: Doc; d.body = a .. \"b\"; return 0; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
@@ -195,26 +199,26 @@ static void test_an_owning_string_field_is_released() {
 
     // And the release reaches the characters: a run that leaked them fails the
     // sanitized build rather than this assertion.
-    assert(
-        test_run_bool("struct Doc { body: String }\n"
-                      "func f(a: str): bool { let d: Doc; d.body = a .. \"b\"; return d.body == \"ab\"; }\n"
-                      "let r: bool = f(\"a\");") == true);
+    assert(test_run_bool(
+               "struct Doc { body: String }\n"
+               "func f(a: ref str): bool { let d: Doc; d.body = a .. \"b\"; return d.body == \"ab\"; }\n"
+               "let r: bool = f(\"a\");") == true);
 }
 
 // An owning string is a unique owner like any other, so binding it to a second
 // name must say which one frees the characters.
 static void test_an_owning_string_needs_a_move_or_a_clone() {
-    assert(
-        !test_compiles("func f(v: str): int { let a: String = v .. \"y\"; let b: String = a; return 0; }\n"));
+    assert(!test_compiles(
+        "func f(v: ref str): int { let a: String = v .. \"y\"; let b: String = a; return 0; }\n"));
 
     assert(test_compiles(
-        "func f(v: str): int { let a: String = v .. \"y\"; let b: String = move a; return 0; }\n"));
+        "func f(v: ref str): int { let a: String = v .. \"y\"; let b: String = move a; return 0; }\n"));
 }
 
 // A concatenation may be returned: ownership passes to the caller, which is
 // what a returned owning value means everywhere else.
 static void test_a_concatenation_may_be_returned() {
-    assert(test_run_bool("func greet(name: str): String { return \"hi, \" .. name; }\n"
+    assert(test_run_bool("func greet(name: ref str): String { return \"hi, \" .. name; }\n"
                          "func f(): bool { let g: String = greet(\"gab\"); return g == \"hi, gab\"; }\n"
                          "let r: bool = f();") == true);
 }
@@ -222,9 +226,9 @@ static void test_a_concatenation_may_be_returned() {
 // Arithmetic is for numbers. A string joins with '..' and answers nothing to
 // '+', which would otherwise hide an allocation behind an arithmetic spelling.
 static void test_strings_do_not_add() {
-    assert(!test_compiles("func f(): int { let a: str = \"a\"; let b: String = a + a; return 0; }\n"));
+    assert(!test_compiles("func f(): int { let a: ref str = \"a\"; let b: String = a + a; return 0; }\n"));
 
-    assert(!test_compiles("func f(): int { let a: str = \"a\"; let b: String = a - a; return 0; }\n"));
+    assert(!test_compiles("func f(): int { let a: ref str = \"a\"; let b: String = a - a; return 0; }\n"));
 }
 
 // Joining binds looser than arithmetic and tighter than comparison, so a sum
@@ -232,7 +236,7 @@ static void test_strings_do_not_add() {
 static void test_join_binds_between_arithmetic_and_comparison() {
     // Tighter than '==': the join happens, then the result is compared. Were it
     // looser, this would compare "b" to "ab" and join the bool.
-    assert(test_run_bool("func f(a: str): bool { return a .. \"b\" == \"ab\"; }\n"
+    assert(test_run_bool("func f(a: ref str): bool { return a .. \"b\" == \"ab\"; }\n"
                          "let r: bool = f(\"a\");") == true);
 }
 
@@ -244,30 +248,30 @@ static void test_numbers_do_not_join() {
 // A join in an operand position is bound to nothing, so the statement that
 // produced it is what frees it.
 static void test_an_unbound_join_is_freed_by_its_statement() {
-    assert(test_run_bool("func f(a: str): bool { return a .. \"b\" == \"ab\"; }\n"
+    assert(test_run_bool("func f(a: ref str): bool { return a .. \"b\" == \"ab\"; }\n"
                          "let r: bool = f(\"a\");") == true);
 }
 
 // Storing a join into an owning field hands the field the characters: the
 // statement must not also free the register they were built in.
 static void test_a_join_stored_into_a_field_is_freed_once() {
-    assert(
-        test_run_bool("struct Doc { body: String }\n"
-                      "func f(a: str): bool { let d: Doc; d.body = a .. \"b\"; return d.body == \"ab\"; }\n"
-                      "let r: bool = f(\"a\");") == true);
+    assert(test_run_bool(
+               "struct Doc { body: String }\n"
+               "func f(a: ref str): bool { let d: Doc; d.body = a .. \"b\"; return d.body == \"ab\"; }\n"
+               "let r: bool = f(\"a\");") == true);
 }
 
 // Returning a join hands its characters to the caller, so the frame that built
 // them frees nothing.
 static void test_a_returned_join_survives_its_frame() {
-    assert(test_run_bool("func greet(name: str): String { return \"hi, \" .. name; }\n"
+    assert(test_run_bool("func greet(name: ref str): String { return \"hi, \" .. name; }\n"
                          "func f(): bool { let g: String = greet(\"gab\"); return g == \"hi, gab\"; }\n"
                          "let r: bool = f();") == true);
 }
 
 // Reassigning a string frees what the slot held and keeps what it was given.
 static void test_reassigning_a_string_frees_the_old_characters() {
-    assert(test_run_bool("func f(a: str): bool { let s: String = a .. \"b\"; s = a .. \"d\"; return s "
+    assert(test_run_bool("func f(a: ref str): bool { let s: String = a .. \"b\"; s = a .. \"d\"; return s "
                          "== \"ad\"; }\n"
                          "let r: bool = f(\"a\");") == true);
 }
@@ -298,12 +302,12 @@ static void test_a_new_string_is_empty() {
 // A heap slot holding a string takes what is stored through it, and frees what
 // it held before.
 static void test_a_boxed_string_holds_what_is_stored_through_it() {
-    assert(test_run_bool("func f(a: str): bool { let s: box String = new String; *s = a .. \"b\"; "
+    assert(test_run_bool("func f(a: ref str): bool { let s: box String = new String; *s = a .. \"b\"; "
                          "return *s == \"ab\"; }\n"
                          "let r: bool = f(\"a\");") == true);
 
     assert(test_run_bool(
-               "func f(a: str): bool { let s: box String = new String; *s = a .. \"b\"; *s = a .. \"d\"; "
+               "func f(a: ref str): bool { let s: box String = new String; *s = a .. \"b\"; *s = a .. \"d\"; "
                "return *s == \"ad\"; }\n"
                "let r: bool = f(\"a\");") == true);
 }
@@ -313,7 +317,7 @@ static void test_a_boxed_string_holds_what_is_stored_through_it() {
 static void test_a_heap_struct_frees_its_string_field() {
     assert(test_run_bool(
                "struct D { b: String }\n"
-               "func f(a: str): bool { let d: box D = new D; d.b = a .. \"b\"; return d.b == \"ab\"; }\n"
+               "func f(a: ref str): bool { let d: box D = new D; d.b = a .. \"b\"; return d.b == \"ab\"; }\n"
                "let r: bool = f(\"a\");") == true);
 }
 
@@ -322,7 +326,7 @@ static void test_a_heap_struct_frees_its_string_field() {
 static void test_an_owning_string_slot_refuses_a_borrow() {
     assert(!test_compiles("func f(): int { let s: box String = new String; *s = \"ab\"; return 0; }\n"));
 
-    assert(!test_compiles("func f(a: str): int { let s: box String = new String; *s = a; return 0; }\n"));
+    assert(!test_compiles("func f(a: ref str): int { let s: box String = new String; *s = a; return 0; }\n"));
 }
 
 // '..' yields a string that owns its characters however its operands were
@@ -332,7 +336,7 @@ static void test_an_owning_string_slot_refuses_a_borrow() {
 static void test_a_join_owns_even_between_literals() {
     assert(test_compiles("func f(): int { let s: String = \"a\" .. \"b\"; return 0; }\n"));
 
-    assert(!test_compiles("func f(): int { let s: str = \"a\" .. \"b\"; return 0; }\n"));
+    assert(!test_compiles("func f(): int { let s: ref str = \"a\" .. \"b\"; return 0; }\n"));
 
     assert(test_run_bool("func f(): bool { let s: String = \"ab\" .. \"cd\"; return s == \"abcd\"; }\n"
                          "let r: bool = f();") == true);
@@ -360,18 +364,18 @@ static void test_a_join_owns_even_between_literals() {
 static void test_refusing_a_borrow_names_the_remedy() {
     assert(!test_compiles("func f(): int { let a: String = \"hi\"; return 0; }\n"));
 
-    assert(test_compiles("func f(): int { let a: str = \"hi\"; return 0; }\n"));
+    assert(test_compiles("func f(): int { let a: ref str = \"hi\"; return 0; }\n"));
 }
 
 // A borrow may be returned when its characters outlive the frame. A parameter's
 // were allocated by the caller and a literal's belong to the unit's arena, so
 // neither dies at the closing brace.
 static void test_a_returnable_borrow_outlives_its_frame() {
-    assert(test_compiles("func f(a: str): str { return a; }\n"));
+    assert(test_compiles("func f(a: ref str): ref str { return a; }\n"));
 
-    assert(test_compiles("func f(): str { return \"hi\"; }\n"));
+    assert(test_compiles("func f(): ref str { return \"hi\"; }\n"));
 
-    assert(test_run_bool("func f(a: str): str { return a; }\n"
+    assert(test_run_bool("func f(a: ref str): ref str { return a; }\n"
                          "func g(): bool { return f(\"hi\") == \"hi\"; }\n"
                          "let r: bool = g();") == true);
 }
@@ -379,7 +383,7 @@ static void test_a_returnable_borrow_outlives_its_frame() {
 // A literal borrows the characters its unit's arena holds, so it types as
 // 'str' and nothing frees it.
 static void test_a_literal_borrows() {
-    assert(test_compiles("func f(): int { let s: str = \"hi\"; return 0; }\n"));
+    assert(test_compiles("func f(): int { let s: ref str = \"hi\"; return 0; }\n"));
 }
 
 // An owning string may not take what a borrow names: the arena's characters

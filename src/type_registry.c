@@ -22,13 +22,8 @@ static Type *register_builtin(TypeRegistry *registry, TypeKind kind, const char 
 // characters it names is the whole difference between a string and a view of
 // one, and it is the header's own business: the raw address naming them cannot
 // say.
-static Type *string_builtin_create(TypeRegistry *registry, bool is_ref) {
-    // Each half carries its own name: 'String' owns its characters, 'str'
-    // borrows someone else's. Two names rather than one, because the two differ
-    // in what a slot holding them must free, and a diagnostic naming both
-    // 'String' would read as a mismatch between a type and itself.
-    const char *name = is_ref ? "str" : "String";
-    Type *type = type_struct_create(registry->arena, string_from_cstr(registry->strings, name), 2);
+static Type *string_builtin_create(TypeRegistry *registry) {
+    Type *type = type_struct_create(registry->arena, string_from_cstr(registry->strings, "String"), 2);
     type->kind = TYPE_STRING;
 
     // A raw address either way: who frees the characters is the header's own
@@ -39,16 +34,10 @@ static Type *string_builtin_create(TypeRegistry *registry, bool is_ref) {
     type_add_field(type, string_from_cstr(registry->strings, "length"), registry->builtins.int_type);
     type_layout_compute(type);
 
-    // The whole difference between the two, and all of it: one frees the
-    // characters it names and one was never given anything to free.
-    //
-    // Set here rather than by object_select_drop, which every other constructed
-    // type goes through: that reads type_is_owned to choose, and a string's
-    // ownership is this assignment. Nothing else distinguishes the two -- they
-    // share a kind and a layout -- so the question would have no other answer.
-    // Spelling the borrowed one as its own constructor is what would let it
-    // join the rest.
-    type->drop = is_ref ? NULL : object_drop_string;
+    // A string owns its characters, always: what borrows them is a 'ref str',
+    // which owns nothing because no reference does. So this is not a question
+    // the type has to be asked -- it is what being a String means.
+    type->drop = object_drop_string;
 
     return type;
 }
@@ -65,12 +54,17 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     // A struct in its layout and a builtin in its semantics: the fields are
     // where its size, its alignment and what it owns all come from, while
     // comparison, literals and the borrow spelling stay the kind's own.
-    registry->builtins.string_type = string_builtin_create(registry, false);
+    registry->builtins.string_type = string_builtin_create(registry);
 
-    // Same layout, differing only in the field naming the characters, which
-    // borrows here and owns there. 'ref String' is a different type again: the
-    // address of a slot holding a header, which is what 'ref' means everywhere.
-    registry->builtins.str_type = string_builtin_create(registry, true);
+    // The characters, which no slot holds: a 'ref str' is what names them, and
+    // that reference is what carries how many there are. Zero-width because
+    // nothing is ever laid out for it.
+    registry->builtins.str_type = register_builtin(registry, TYPE_STR, "str", 0, 1);
+
+    // How far the characters run is not in their type, so no slot reserves room
+    // for one and a reference to them carries that count.
+    registry->builtins.str_type->sized = false;
+    registry->builtins.str_type->metadata = TYPE_META_LENGTH;
 
     registry->builtins.str_type->owner = registry->builtins.string_type;
 
@@ -178,14 +172,22 @@ static Type *indirect_to(TypeRegistry *registry, TypeCtor ctor, TypeKind kind, T
     // from the inner when a diagnostic asks. See Type::name.
     Type *type = type_create(registry->arena, kind, NULL);
 
-    // Always a raw address to the payload, so a stack pointer and a heap one
-    // are byte-identical; only the type says which is which. A 'ref T' is the
-    // same address too -- what differs is who frees the inner.
+    // An address to the payload, so a stack pointer and a heap one are
+    // byte-identical; only the type says which is which. A 'ref T' is the same
+    // address -- what differs is who frees the inner.
     //
-    // Computed here rather than stored, so a pointee that one day needs a
-    // length beside its address changes this line and nothing else.
+    // Plus whatever a reference to this pointee has to carry: a run of
+    // characters is bounded by a count rather than by its type, so a reference
+    // to one is an address and that count. The pointee decides, which is what
+    // keeps a reference's width from disagreeing with what it names.
     type->size = sizeof(void *);
     type->alignment = _Alignof(void *);
+
+    if (type_metadata_of(inner) == TYPE_META_LENGTH) {
+        type->size += sizeof(int32_t);
+        type->size = (type->size + type->alignment - 1) & ~(type->alignment - 1);
+    }
+
     type->inner = inner;
 
     // Interned before the drop is selected, so a pointee reaching back here --

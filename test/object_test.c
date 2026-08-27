@@ -272,10 +272,9 @@ static void test_freeing_null_is_a_no_op() {
     assert(counts.frees == 0);
 }
 
-// A header says what it frees where it is built rather than by what kind it
-// is: a string that owns its characters and one that borrows them are the same
-// kind and the same layout, and only the drop tells them apart.
-static void test_a_header_carries_its_own_drop() {
+// A string owns its characters and a reference to them owns nothing, which the
+// kinds say on their own: neither answer is read off the glue that frees.
+static void test_a_string_owns_and_a_reference_to_one_does_not() {
     TestContext ctx;
     test_context_init(&ctx);
 
@@ -285,20 +284,41 @@ static void test_a_header_carries_its_own_drop() {
     TypeRegistry *registry = scope.type_registry;
 
     Type *owning = registry->builtins.string_type;
-    Type *borrowing = registry->builtins.str_type;
+    Type *borrowing = type_registry_ref_to(registry, registry->builtins.str_type);
 
-    // The same kind and the same two fields; nothing about the layout differs.
-    assert(owning->kind == borrowing->kind);
+    // A reference carrying a count is as wide as the header it borrows from:
+    // the same address and the same length, differing only in who frees them.
     assert(owning->size == borrowing->size);
-
-    assert(owning->drop != NULL);
-    assert(borrowing->drop == NULL);
 
     assert(type_is_owned(owning));
     assert(!type_is_owned(borrowing));
 
     assert(!type_is_copyable(owning));
     assert(type_is_copyable(borrowing));
+
+    // The characters themselves are held by nothing, so a slot never reserves
+    // room for them and every use goes through the reference above.
+    assert(!type_is_sized(registry->builtins.str_type));
+    assert(type_is_sized(borrowing));
+
+    // Two facts a type carries, not one read off the other. Each answers
+    // independently of the other, so a type that is unsized without wanting a
+    // count carried -- or sized while wanting one -- is expressible rather than
+    // being decided by whichever switch was reached.
+    assert(type_metadata_of(registry->builtins.str_type) == TYPE_META_LENGTH);
+    assert(type_metadata_of(borrowing) == TYPE_META_NONE);
+    assert(type_metadata_of(owning) == TYPE_META_NONE);
+    assert(type_is_sized(owning));
+
+    Type *probe = type_create(ctx.arena, TYPE_STRUCT, NULL);
+
+    assert(type_is_sized(probe));
+    assert(type_metadata_of(probe) == TYPE_META_NONE);
+
+    probe->sized = false;
+
+    assert(!type_is_sized(probe));
+    assert(type_metadata_of(probe) == TYPE_META_NONE);
 
     // An array of an owning element frees each of them, so it carries a drop
     // the same way. An array of ints owns nothing and has none.
@@ -385,7 +405,7 @@ static void test_an_array_owns_exactly_when_its_element_does() {
 
 int main(void) {
     test_a_raw_pointer_carries_a_stride_and_drops_nothing();
-    test_a_header_carries_its_own_drop();
+    test_a_string_owns_and_a_reference_to_one_does_not();
     test_an_array_is_its_elements_laid_end_to_end();
     test_an_array_owns_exactly_when_its_element_does();
     test_a_type_that_owns_nothing_has_no_drop();

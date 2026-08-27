@@ -492,7 +492,7 @@ static void test_a_value_receiver_needs_a_copyable_type() {
 // pointer to another, however the lookup arrived at the method.
 static void test_a_pointer_receiver_is_not_reached_from_another_type() {
     assert(!test_compiles_on_vm("func f(): int {\n"
-                                "    let s: str = \"hi\";\n"
+                                "    let s: ref str = \"hi\";\n"
                                 "    let c: String = s.clone();\n"
                                 "    return 0;\n"
                                 "}\n"));
