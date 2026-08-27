@@ -25,14 +25,14 @@
 // holds the return value, exactly as it does for a script callee. A multi-slot
 // parameter occupies consecutive slots, so each index is found by walking the
 // widths ahead of it rather than by indexing a table.
-uint8_t *args_address(Args *args, int index, const Type **out_type);
+uint8_t *args_address(Args *args, int index, TypeHandle *out_type);
 
 // The frame's slot 0, which is where a callee leaves its result.
 uint8_t *args_return_address(Args *args);
 
 // Slots a value of this type occupies, matching codegen's tiling exactly: the
 // two must agree or an argument lands in the wrong register.
-unsigned int args_type_slots(const Type *type);
+unsigned int args_type_slots(TypeHandle type);
 
 // --- Reading arguments -----------------------------------------------------
 

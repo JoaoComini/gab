@@ -38,13 +38,13 @@ typedef struct Symbol {
 
     union {
         struct {
-            Type *type;
+            TypeHandle type;
         } var;
 
         struct {
-            Type *return_type;
+            TypeHandle return_type;
 
-            Type **params;
+            TypeHandle *params;
             size_t param_count;
 
             // Which function this names, in the VM's list of them. Unlike a

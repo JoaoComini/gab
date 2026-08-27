@@ -111,7 +111,7 @@ Symbol *scope_symbol_lookup(Scope *scope, String *name) {
     return NULL;
 }
 
-Type *scope_type_lookup(Scope *scope, String *name) {
+TypeHandle scope_type_lookup(Scope *scope, String *name) {
     while (scope) {
         TypeBinding *entry = type_map_lookup(scope->types, name);
         if (entry) {
@@ -124,7 +124,7 @@ Type *scope_type_lookup(Scope *scope, String *name) {
     return NULL;
 }
 
-Type *scope_type_lookup_local(Scope *scope, String *name) {
+TypeHandle scope_type_lookup_local(Scope *scope, String *name) {
     TypeBinding *entry = type_map_lookup(scope->types, name);
 
     return entry ? entry->type : NULL;
@@ -135,7 +135,7 @@ Type *scope_type_lookup_local(Scope *scope, String *name) {
 // 'int'. A builtin is reachable from every module and there is no qualified
 // syntax to reach past a shadow, so shadowing one would put it out of reach for
 // the rest of the module, including in a signature a host resolves through.
-Type *scope_type_lookup_declaring(Scope *scope, String *name) { return scope_type_lookup(scope, name); }
+TypeHandle scope_type_lookup_declaring(Scope *scope, String *name) { return scope_type_lookup(scope, name); }
 
 Symbol *scope_symbol_lookup_declaring(Scope *scope, String *name) {
     for (Scope *s = scope;; s = s->parent) {
@@ -153,7 +153,7 @@ Symbol *scope_symbol_lookup_declaring(Scope *scope, String *name) {
 
 void scope_withdraw_type(Scope *scope, String *name) { type_map_delete(scope->types, name); }
 
-bool scope_decl_type(Scope *scope, String *name, Type *type) {
+bool scope_decl_type(Scope *scope, String *name, TypeHandle type) {
     if (type_map_lookup(scope->types, name)) {
         return false;
     }
@@ -163,7 +163,7 @@ bool scope_decl_type(Scope *scope, String *name, Type *type) {
     return true;
 }
 
-Symbol *scope_decl_var(Scope *scope, String *name, Type *type) {
+Symbol *scope_decl_var(Scope *scope, String *name, TypeHandle type) {
     if (scope_symbol_lookup_declaring(scope, name)) {
         return NULL;
     }
@@ -182,7 +182,7 @@ Symbol *scope_decl_var(Scope *scope, String *name, Type *type) {
     return *decl;
 }
 
-Symbol *scope_decl_func(Scope *scope, String *name, Type *return_type) {
+Symbol *scope_decl_func(Scope *scope, String *name, TypeHandle return_type) {
     if (scope_symbol_lookup_declaring(scope, name)) {
         return NULL;
     }

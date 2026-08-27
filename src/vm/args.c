@@ -8,7 +8,7 @@
 #include <assert.h>
 #include <string.h>
 
-unsigned int args_type_slots(const Type *type) {
+unsigned int args_type_slots(TypeHandle type) {
     if (!type) {
         return 1;
     }
@@ -16,7 +16,7 @@ unsigned int args_type_slots(const Type *type) {
     return (unsigned int)((type->size + VM_SLOT_SIZE - 1) / VM_SLOT_SIZE);
 }
 
-uint8_t *args_address(Args *args, int index, const Type **out_type) {
+uint8_t *args_address(Args *args, int index, TypeHandle *out_type) {
     assert(args && "a C body was called without a frame");
 
     const Symbol *symbol = args->symbol;
@@ -48,7 +48,7 @@ uint8_t *args_return_address(Args *args) {
 // rather than converting them -- which is why the declaration is what says
 // whether a read is the right one.
 static uint8_t *args_address_of_kind(Args *args, int index, TypeKind kind) {
-    const Type *type = NULL;
+    TypeHandle type = NULL;
     uint8_t *at = args_address(args, index, &type);
 
     assert(type && type->kind == kind && "a C body read a parameter as a type it was not declared");
@@ -82,7 +82,7 @@ bool args_bool(Args *args, int index) {
 // 'ref str' is the address and the count side by side, which is the same two
 // words an owning header holds and the same two the host reads.
 GabStringValue args_string(Args *args, int index) {
-    const Type *type = NULL;
+    TypeHandle type = NULL;
     uint8_t *at = args_address(args, index, &type);
 
     assert(type_is_str_ref(type) &&
@@ -116,7 +116,7 @@ GabArrayValue args_array(Args *args, int index) {
 }
 
 void *args_pointer(Args *args, int index) {
-    const Type *type = NULL;
+    TypeHandle type = NULL;
     uint8_t *at = args_address(args, index, &type);
 
     // Either constructor: a C body is handed an address, and whether the script
@@ -130,7 +130,7 @@ void *args_pointer(Args *args, int index) {
 }
 
 void args_struct(Args *args, int index, void *out, size_t size) {
-    const Type *type = NULL;
+    TypeHandle type = NULL;
     const uint8_t *at = args_address(args, index, &type);
 
     assert(out && "a C body read a struct argument into nothing");
@@ -178,7 +178,7 @@ bool args_return_string_copy(Args *args, const char *data, int32_t length) {
 void args_return_struct(Args *args, const void *data, size_t size) {
     assert(data && "a C body returned a struct from nothing");
 
-    const Type *return_type = args->symbol->func.return_type;
+    TypeHandle return_type = args->symbol->func.return_type;
 
     assert(return_type && return_type->size == size &&
            "a struct was returned at a size the declared return type does not have");

@@ -28,7 +28,7 @@ static Type *string_builtin_create(TypeRegistry *registry) {
 
     // A raw address either way: who frees the characters is the header's own
     // business rather than this field's.
-    Type *characters = type_registry_ptr_to(registry, registry->builtins.byte_type);
+    TypeHandle characters = type_registry_ptr_to(registry, registry->builtins.byte_type);
 
     type_add_field(type, string_from_cstr(registry->strings, "data"), characters);
     type_add_field(type, string_from_cstr(registry->strings, "length"), registry->builtins.int_type);
@@ -37,7 +37,7 @@ static Type *string_builtin_create(TypeRegistry *registry) {
     // A string owns its characters, always: what borrows them is a 'ref str',
     // which owns nothing because no reference does. So this is not a question
     // the type has to be asked -- it is what being a String means.
-    type->drop = object_drop_string;
+    type_registry_drop_of(registry, type);
 
     return type;
 }
@@ -47,9 +47,7 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     registry->builtins.float_type = register_builtin(registry, TYPE_FLOAT, "float", 4, 4);
     registry->builtins.bool_type = register_builtin(registry, TYPE_BOOL, "bool", 1, 1);
 
-    // Sized as one byte, which is the stride a walk over characters advances by
-    // and the unit a block of them is counted in.
-    registry->builtins.byte_type = register_builtin(registry, TYPE_INT, "byte", 1, 1);
+    registry->builtins.byte_type = register_builtin(registry, TYPE_BYTE, "byte", 1, 1);
 
     // A struct in its layout and a builtin in its semantics: the fields are
     // where its size, its alignment and what it owns all come from, while
@@ -59,14 +57,15 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     // The characters, which no slot holds: a 'ref str' is what names them, and
     // that reference is what carries how many there are. Zero-width because
     // nothing is ever laid out for it.
-    registry->builtins.str_type = register_builtin(registry, TYPE_STR, "str", 0, 1);
+    Type *str = register_builtin(registry, TYPE_STR, "str", 0, 1);
 
     // How far the characters run is not in their type, so no slot reserves room
     // for one and a reference to them carries that count.
-    registry->builtins.str_type->sized = false;
-    registry->builtins.str_type->metadata = TYPE_META_LENGTH;
+    str->sized = false;
+    str->metadata = TYPE_META_LENGTH;
+    str->owner = registry->builtins.string_type;
 
-    registry->builtins.str_type->owner = registry->builtins.string_type;
+    registry->builtins.str_type = str;
 
     // The VM and the host both read these two fields as GabStringValue, so the
     // computed layout and the C struct are two statements of one thing.
@@ -83,8 +82,32 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     registry->builtins.error_type = register_builtin(registry, TYPE_ERROR, "<error>", 0, 1);
 }
 
+const DropPlan *type_registry_drop_of(TypeRegistry *registry, const Type *type) {
+    if (!type) {
+        return NULL;
+    }
+
+    const DropPlan **found = drop_key_lookup(registry->drops, type);
+
+    if (found) {
+        return *found;
+    }
+
+    // No guard against reaching this type again on the way down: an
+    // indirection's plan carries no inner, so the recursion only ever descends
+    // through fields and array elements -- and a type held by value inside
+    // itself was refused as a containment cycle long before here.
+    const DropPlan *plan = object_build_drop(registry->arena, registry, type);
+
+    drop_key_insert(registry->drops, type, plan);
+
+    return plan;
+}
+
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
+    registry->drops = drop_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->methods = method_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->applications =
         type_app_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
@@ -94,7 +117,47 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     return registry;
 }
 
-void type_registry_destroy(TypeRegistry *registry) { type_app_map_destroy(registry->applications); }
+void type_registry_destroy(TypeRegistry *registry) {
+    type_app_map_destroy(registry->applications);
+    method_key_destroy(registry->methods);
+    drop_key_destroy(registry->drops);
+}
+
+Type *type_registry_declare_struct(TypeRegistry *registry, String *name, size_t max_fields) {
+    return type_struct_create(registry->arena, name, max_fields);
+}
+
+bool type_registry_add_method(TypeRegistry *registry, TypeHandle type, String *name, Symbol *method) {
+    if (type_registry_find_method(registry, type, name)) {
+        return false;
+    }
+
+    method_key_insert(registry->methods, (MethodKey){.type = type, .name = name}, method);
+    return true;
+}
+
+Symbol *type_registry_find_method(TypeRegistry *registry, TypeHandle type, const String *name) {
+    if (!type) {
+        return NULL;
+    }
+
+    Symbol **found = method_key_lookup(registry->methods, (MethodKey){.type = type, .name = name});
+
+    if (found) {
+        return *found;
+    }
+
+    // A type sharing another's identity reads its set: a borrowed string reaches
+    // an owning one's, and every 'Array T,N' reaches the bare 'Array's. Its own
+    // is consulted first, since what the two do not share is what tells them
+    // apart.
+    //
+    // Finding a method this way is not yet a call that resolves: the owner's
+    // methods declare an owning receiver, which a borrow does not satisfy. So
+    // 'clone' is found from a borrow and then refused where the receiver is
+    // reconciled.
+    return type_registry_find_method(registry, type->owner, name);
+}
 
 // Looks an application up, and interns the argument list if it is new. The
 // caller builds its key on the stack, so the arguments are copied into the
@@ -108,12 +171,11 @@ static void application_insert(TypeRegistry *registry, TypeApp app, Type *type) 
     memcpy(args, app.args, app.arg_count * sizeof(TypeArg));
 
     app.args = args;
-    type->app = app;
 
     type_app_map_insert(registry->applications, app, type);
 }
 
-Type *type_registry_array_of(TypeRegistry *registry, Type *element, int32_t length) {
+TypeHandle type_registry_array_of(TypeRegistry *registry, TypeHandle element, int32_t length) {
     TypeArg args[] = {
         {.kind = TYPE_ARG_TYPE, .type = element},
         {.kind = TYPE_ARG_CONST, .value = length},
@@ -137,6 +199,9 @@ Type *type_registry_array_of(TypeRegistry *registry, Type *element, int32_t leng
     // out with sizeof.
     Type *type = type_create(registry->arena, TYPE_ARRAY, registry->builtins.array_type->name);
 
+    type->array.element = element;
+    type->array.length = length;
+
     type->size = element->size * (size_t)length;
     type->alignment = element->alignment;
 
@@ -150,7 +215,7 @@ Type *type_registry_array_of(TypeRegistry *registry, Type *element, int32_t leng
     // second.
     application_insert(registry, app, type);
 
-    object_select_drop(type);
+    type_registry_drop_of(registry, type);
 
     return type;
 }
@@ -158,7 +223,7 @@ Type *type_registry_array_of(TypeRegistry *registry, Type *element, int32_t leng
 // The three built-in one-argument constructors, which differ only in the kind
 // the result carries. Written once because everything else about building one
 // -- the width, the alignment, the pointee -- is the same for all of them.
-static Type *indirect_to(TypeRegistry *registry, TypeCtor ctor, TypeKind kind, Type *inner) {
+static TypeHandle indirect_to(TypeRegistry *registry, TypeCtor ctor, TypeKind kind, TypeHandle inner) {
     TypeArg args[] = {{.kind = TYPE_ARG_TYPE, .type = inner}};
 
     TypeApp app = {.ctor = ctor, .decl = NULL, .args = args, .arg_count = 1};
@@ -180,6 +245,8 @@ static Type *indirect_to(TypeRegistry *registry, TypeCtor ctor, TypeKind kind, T
     // characters is bounded by a count rather than by its type, so a reference
     // to one is an address and that count. The pointee decides, which is what
     // keeps a reference's width from disagreeing with what it names.
+    type->indirect.pointee = inner;
+
     type->size = sizeof(void *);
     type->alignment = _Alignof(void *);
 
@@ -188,33 +255,31 @@ static Type *indirect_to(TypeRegistry *registry, TypeCtor ctor, TypeKind kind, T
         type->size = (type->size + type->alignment - 1) & ~(type->alignment - 1);
     }
 
-    type->inner = inner;
-
     // Interned before the drop is selected, so a pointee reaching back here --
     // a struct holding a pointer to its own type -- finds this entry rather
     // than building a second.
     application_insert(registry, app, type);
 
-    object_select_drop(type);
+    type_registry_drop_of(registry, type);
 
     return type;
 }
 
-Type *type_registry_box_to(TypeRegistry *registry, Type *inner) {
+TypeHandle type_registry_box_to(TypeRegistry *registry, TypeHandle inner) {
     return indirect_to(registry, TYPE_CTOR_BOX, TYPE_BOX, inner);
 }
 
-Type *type_registry_ref_to(TypeRegistry *registry, Type *inner) {
+TypeHandle type_registry_ref_to(TypeRegistry *registry, TypeHandle inner) {
     return indirect_to(registry, TYPE_CTOR_REF, TYPE_REF, inner);
 }
 
-Type *type_registry_ptr_to(TypeRegistry *registry, Type *pointee) {
+TypeHandle type_registry_ptr_to(TypeRegistry *registry, TypeHandle pointee) {
     return indirect_to(registry, TYPE_CTOR_PTR, TYPE_PTR, pointee);
 }
 
-Type *type_registry_error_type(TypeRegistry *registry) { return registry->builtins.error_type; }
+TypeHandle type_registry_error_type(TypeRegistry *registry) { return registry->builtins.error_type; }
 
-Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind kind) {
+TypeHandle type_registry_get_builtin(TypeRegistry *registry, TypeKind kind) {
     switch (kind) {
     case TYPE_INT:
         return registry->builtins.int_type;
@@ -222,6 +287,8 @@ Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind kind) {
         return registry->builtins.float_type;
     case TYPE_BOOL:
         return registry->builtins.bool_type;
+    case TYPE_BYTE:
+        return registry->builtins.byte_type;
     case TYPE_STRING:
         return registry->builtins.string_type;
     default:

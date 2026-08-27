@@ -71,7 +71,7 @@ typedef struct {
     // Filled by the resolver's declaration pass. The return type is held here
     // and not only on the Symbol because a duplicate name leaves no Symbol,
     // and the body still has to be checked against what it declared.
-    Type *resolved_return_type;
+    TypeHandle resolved_return_type;
 
     // Whether the declaration pass has already run over this. A nested
     // function, which nothing above it could have seen, is declared by the
@@ -83,7 +83,7 @@ typedef struct {
     StringRef name;
     ASTFieldList fields;
 
-    Type *type;
+    TypeHandle type;
 
     // As ASTFuncDecl::declared.
     bool declared;

@@ -40,7 +40,7 @@ struct GabFunc {
     // cached field below is derived from it, which is what lets the call path
     // build a frame without walking the symbol again.
     size_t sig_param_count;
-    const Type **sig_params;
+    TypeHandle *sig_params;
 
     // Slot layout of the call block, mirroring what codegen emits for a call:
     // slot 0 is the return slot and the arguments tile from slot 1.
@@ -108,7 +108,7 @@ static unsigned int gab_signature_slots(const Symbol *symbol);
 // pre-empt.
 static bool gab_func_alloc_params(GabFunc *fn, size_t param_count) {
     size_t sig_params_at = 0;
-    size_t bytes = param_count * sizeof(const Type *);
+    size_t bytes = param_count * sizeof(TypeHandle);
 
     size_t param_slot_at = bytes;
     bytes += param_count * sizeof(unsigned int);
@@ -133,7 +133,7 @@ static bool gab_func_alloc_params(GabFunc *fn, size_t param_count) {
     free(fn->params_block);
 
     fn->params_block = block;
-    fn->sig_params = (const Type **)((char *)block + sig_params_at);
+    fn->sig_params = (TypeHandle *)((char *)block + sig_params_at);
     fn->param_slot = (unsigned int *)((char *)block + param_slot_at);
 
     return true;
@@ -377,21 +377,21 @@ const GabType *gab_find_type(GabVM *handle, const char *module, const char *name
     return (const GabType *)scope_type_lookup(scope, interned);
 }
 
-size_t gab_type_size(const GabType *type) { return type ? ((const Type *)type)->size : 0; }
+size_t gab_type_size(const GabType *type) { return type ? ((TypeHandle)type)->size : 0; }
 
-size_t gab_type_align(const GabType *type) { return type ? ((const Type *)type)->alignment : 0; }
+size_t gab_type_align(const GabType *type) { return type ? ((TypeHandle)type)->alignment : 0; }
 
 bool gab_field_offset(const GabType *handle, const char *field, size_t *out_offset) {
     if (!handle || !field) {
         return false;
     }
 
-    const Type *type = (const Type *)handle;
+    TypeHandle type = (TypeHandle)handle;
 
     // Field names are interned, but this compares text so that a host can ask
     // about a name the pool has never seen without inserting it.
-    for (size_t i = 0; i < type->field_count; i++) {
-        const TypeField *candidate = &type->fields[i];
+    for (size_t i = 0; i < type_field_count(type); i++) {
+        const TypeField *candidate = &type_fields(type)[i];
 
         if (candidate->name && strcmp(candidate->name->data, field) == 0) {
             if (out_offset) {
@@ -403,27 +403,6 @@ bool gab_field_offset(const GabType *handle, const char *field, size_t *out_offs
     }
 
     return false;
-}
-
-// --- Heap objects ----------------------------------------------------------
-
-// The VM is taken but unused: an allocator is global today, and a host that
-// installs its own later would reach it through the VM rather than through a
-// changed signature.
-void *gab_new(GabVM *handle, const GabType *type) {
-    (void)handle;
-
-    if (!type) {
-        return NULL;
-    }
-
-    return object_alloc(DEFAULT_ALLOCATOR, (const Type *)type);
-}
-
-void gab_free(GabVM *handle, void *object) {
-    (void)handle;
-
-    object_free(DEFAULT_ALLOCATOR, object);
 }
 
 // --- Calling ---------------------------------------------------------------
@@ -613,7 +592,7 @@ void gab_call_free(GabCall *call) {
 // setter may write. 'accepts' answers that: a kind comparison for most setters,
 // and for a pointer the pair of constructors, since a host stages an address
 // without saying whether the script owns what it names.
-static uint8_t *gab_arg_slot_where(GabCall *call, int index, bool (*accepts)(const Type *, TypeKind),
+static uint8_t *gab_arg_slot_where(GabCall *call, int index, bool (*accepts)(TypeHandle, TypeKind),
                                    TypeKind expected) {
     if (!call) {
         return NULL;
@@ -625,7 +604,7 @@ static uint8_t *gab_arg_slot_where(GabCall *call, int index, bool (*accepts)(con
         return NULL;
     }
 
-    const Type *param = fn->sig_params[index];
+    TypeHandle param = fn->sig_params[index];
 
     if (!param || !accepts(param, expected)) {
         return NULL;
@@ -641,13 +620,13 @@ static uint8_t *gab_arg_slot_where(GabCall *call, int index, bool (*accepts)(con
     return call->args + (size_t)fn->param_slot[index] * VM_SLOT_SIZE;
 }
 
-static bool accepts_indirect(const Type *type, TypeKind expected) {
+static bool accepts_indirect(TypeHandle type, TypeKind expected) {
     (void)expected;
 
     return type_is_indirect(type);
 }
 
-static bool accepts_kind(const Type *type, TypeKind expected) { return type->kind == expected; }
+static bool accepts_kind(TypeHandle type, TypeKind expected) { return type->kind == expected; }
 
 static uint8_t *gab_arg_slot(GabCall *call, int index, TypeKind expected) {
     return gab_arg_slot_where(call, index, accepts_kind, expected);
@@ -694,7 +673,7 @@ bool gab_arg_struct(GabCall *call, int index, const void *data, size_t size) {
     // is claimed, so a rejected struct leaves the parameter unset rather than
     // counting as supplied.
     if (call && index >= 0 && (size_t)index < call->fn->sig_param_count) {
-        const Type *param = call->fn->sig_params[index];
+        TypeHandle param = call->fn->sig_params[index];
 
         if (param && param->kind == TYPE_STRUCT && (!data || size != param->size)) {
             return false;
@@ -716,9 +695,9 @@ bool gab_arg_pointer(GabCall *call, int index, void *pointer, const GabType *inn
     // leaves the parameter unset rather than counting as supplied. Pointer types
     // are interned, so this is a pointer compare rather than a structural one.
     if (call && index >= 0 && (size_t)index < call->fn->sig_param_count) {
-        const Type *param = call->fn->sig_params[index];
+        TypeHandle param = call->fn->sig_params[index];
 
-        if (param && type_is_indirect(param) && param->inner != (const Type *)inner) {
+        if (param && type_is_indirect(param) && type_pointee(param) != (TypeHandle)inner) {
             return false;
         }
     }

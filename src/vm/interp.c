@@ -71,12 +71,12 @@ static void vm_release_frame_refs(VM *vm, const CallFrame *frame) {
         FrameRef ref = refs->data[i];
         void *slot = vm->stack + frame->base + ref.slot * VM_SLOT_SIZE;
 
-        object_release(DEFAULT_ALLOCATOR, ref.type, slot);
+        object_release(DEFAULT_ALLOCATOR, ref.drop, slot);
 
         // Cleared so a slot freed here is safe to visit again: the pointer a
         // release read is gone, and an array's length goes with it so a second
         // visit walks nothing.
-        memset(slot, 0, type_release_width(ref.type));
+        memset(slot, 0, ref.release_width);
     }
 }
 
@@ -677,11 +677,11 @@ static void vm_run_loop(VM *vm) {
                 unsigned int rd = VM_DECODE_I_RD(instruction);
                 size_t type_index = VM_DECODE_I_KX(instruction);
 
-                const Type *type = vm->program.heap_types.data[type_index];
+                const HeapShape *shape = &vm->program.heap_shapes.data[type_index];
 
                 // The one place a heap object is created, so a host-supplied
                 // allocator would replace this single call.
-                void *object = object_alloc(DEFAULT_ALLOCATOR, type);
+                void *object = object_alloc(DEFAULT_ALLOCATOR, shape->size, shape->drop);
 
                 if (!object) {
                     vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory");
@@ -702,17 +702,17 @@ static void vm_run_loop(VM *vm) {
             }
             VM_CASE(OP_RELEASE) {
                 unsigned int rd = VM_DECODE_I_RD(instruction);
-                const Type *type = vm->program.heap_types.data[VM_DECODE_I_KX(instruction)];
+                const HeapShape *shape = &vm->program.heap_shapes.data[VM_DECODE_I_KX(instruction)];
 
                 void *slot = vm->registers + rd * VM_SLOT_SIZE;
 
-                object_release(DEFAULT_ALLOCATOR, type, slot);
+                object_release(DEFAULT_ALLOCATOR, shape->drop, slot);
 
                 // Cleared as well as released, so the slot holds nothing that
                 // reads as live. An abnormal unwind walks every slot the frame
                 // may own a reference in, and this is what makes a slot that
                 // was already released safe to visit again.
-                memset(slot, 0, type_release_width(type));
+                memset(slot, 0, shape->release_width);
                 VM_NEXT();
             }
             VM_CASE(OP_CALL) {

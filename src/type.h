@@ -17,8 +17,14 @@ typedef enum {
     TYPE_FLOAT,
     TYPE_BOOL,
 
+    // One byte: the stride a walk over characters advances by, and the unit a
+    // block of them is counted in. Its own kind rather than an int of another
+    // width, so that a kind names exactly one type -- and unspellable, since no
+    // scope is given the name.
+    TYPE_BYTE,
+
     // An address and nothing more: what a string's characters and an array's
-    // elements are reached through. Carries what it points at in 'inner', so a
+    // elements are reached through. Carries what it points at, so a
     // walk over a block knows its stride without asking the header naming it.
     //
     // Makes no claim beyond the address. It does not own what it names, does
@@ -48,7 +54,7 @@ typedef enum {
     // it names is the whole difference between them, and reading it off the
     // kind is what keeps every other question -- a deref, a field access, a
     // method receiver -- from having to ask about a flag it does not care
-    // about. Both carry their pointee in 'inner'.
+    // about. Both carry what they name as their pointee.
     //
     // How wide one is at run time follows from the pointee rather than being
     // stored here, so a pointee that one day needs a length beside its address
@@ -69,6 +75,20 @@ typedef enum {
 #define GAB_MAX_TYPE_BYTES 255
 
 typedef struct Type Type;
+
+/*
+    A type, as everything but the registry sees one.
+
+    Types compare by pointer identity, so every one a program can name came from
+    the registry that interned it. This is what says so: a handle names an
+    interned type, cannot be used to build one, and cannot be written through --
+    a type is finished when the registry hands it over.
+
+    The registry builds with 'Type *' and hands back these. Const rather than an
+    opaque struct because the fields are read constantly and wrapping them would
+    buy nothing the const does not.
+*/
+typedef const Type *TypeHandle;
 
 /*
     What a reference to a type must carry besides the address.
@@ -126,19 +146,22 @@ typedef struct TypeArg {
     } kind;
 
     union {
-        Type *type;
+        TypeHandle type;
         int32_t value;
     };
 } TypeArg;
 
 // The interning key. Types compare by pointer identity, so two mentions of
 // 'Array int,3' must find one Type: that is what this is looked up by.
+//
+// A key and only a key. What a type is built of lives in the type itself, so
+// that an array's element is one fact rather than two that could disagree.
 typedef struct TypeApp {
     TypeCtor ctor;
 
     // The declaration a nominal constructor came from -- the bare 'Array'.
     // NULL for the built-in constructors, which their tag already tells apart.
-    Type *decl;
+    TypeHandle decl;
 
     const TypeArg *args;
     size_t arg_count;
@@ -147,38 +170,74 @@ typedef struct TypeApp {
 size_t type_app_hash_of(TypeApp app);
 bool type_app_equals(TypeApp app, TypeApp other);
 
-// Frees what one value of a type owns, leaving the value itself to its holder.
-// Selected once, when the layout is computed, so that freeing never asks what
-// kind a type is: a type that owns nothing has none of these at all, and the
-// free path tests for that rather than calling one to learn there is nothing
-// to do.
-//
-// Takes its type because a walk over fields needs the offsets, and recurses
-// through the field's own function rather than flattening -- an owning shape
-// whose bounds are not in the type, such as an array counted at run time, can
-// then be its own function rather than a case in a shared walk.
-typedef void (*DropFn)(Allocator allocator, const Type *type, void *value);
+/*
+    What freeing one value of a type has to do, with every offset it needs
+    already in it.
+
+    Built once, where the layout is computed, and read by the free path alone.
+    Baking the offsets in is what keeps a laid-out Type out of the free path: a
+    walk that read them back off the type would make layout something the VM
+    consults on every free, rather than a fact the compiler settles and spends.
+
+    The shape a plan takes is the shape of what owns, not the shape of the type:
+    a struct of forty fields of which one owns is a plan of one step. A type
+    that owns nothing has no plan at all, and the free path tests for that
+    rather than walking a plan to learn there is nothing to do.
+*/
+typedef struct DropPlan DropPlan;
+
+typedef enum {
+    // Free what the address at this offset names, then the plan of the pointee.
+    // What 'new box T' allocates and what every owning pointer field holds.
+    DROP_BOX,
+
+    // Free the characters a string header names. The count sits beside the
+    // address, since a block has no header to ask how far it runs.
+    DROP_STRING,
+
+    // Walk a run of elements, freeing what each owns. Strides by a width the
+    // plan carries rather than by one read back off a type.
+    DROP_ARRAY,
+
+    // Run each step at its own offset. What a struct is, and the only kind
+    // whose offsets a plan has to carry.
+    DROP_FIELDS,
+} DropKind;
+
+// One thing a plan does, at a fixed offset into the value. The offset is
+// absolute within the value the plan describes, so a walk adds it and recurses
+// rather than accumulating a base.
+typedef struct DropStep {
+    size_t offset;
+    const DropPlan *plan;
+} DropStep;
+
+struct DropPlan {
+    DropKind kind;
+
+    // DROP_BOX: what the pointee owns, or NULL when it owns nothing and freeing
+    // the block is the whole of it.
+    // DROP_ARRAY: what one element owns, which is why the run is walked at all.
+    // DROP_FIELDS: unused; the steps carry the plans.
+    const DropPlan *inner;
+
+    // DROP_ARRAY: how far apart the elements are, and how many there are.
+    size_t stride;
+    int32_t length;
+
+    // DROP_FIELDS: what owns, and where. Only the fields that own appear.
+    const DropStep *steps;
+    size_t step_count;
+};
 
 // A method is an ordinary function Symbol — same prototype index, same call
 // path — so the map holds one. Declared rather than included: Symbol's own
 // header reaches back here, and a method is only ever a function.
 typedef struct Symbol Symbol;
 
-// The methods of one struct type, keyed by the interned method name. Held on
-// the Type rather than in a Scope because a method has no free-standing name:
-// 'Player.update' and 'Enemy.update' must coexist, and neither should be
-// reachable by writing 'update'. Go, Rust, and C++ all key methods by their
-// receiver type for the same reason.
-#define method_map_hash(key) (size_t)key
-#define method_map_key_equals(key, other) key == other
-#define method_map_key_dup(key) key
-#define method_map_entry_free(key, value)
-
-GAB_HASH_MAP(MethodMap, method_map, String *, Symbol *)
-
 typedef struct TypeField {
     String *name;
-    Type *type;
+    TypeHandle type;
 
     size_t offset;
 } TypeField;
@@ -207,66 +266,89 @@ struct Type {
     bool sized;
     TypeMetadata metadata;
 
-    TypeField *fields;
-    size_t field_count;
+    // For a type that shares another's identity -- 'str' reaching 'String's
+    // methods, every 'Array T,N' reaching the bare 'Array's -- the one whose
+    // set is followed. NULL everywhere else.
+    TypeHandle owner;
 
-    // What an indirection names -- a TYPE_BOX, a TYPE_REF or a TYPE_PTR. NULL
-    // for every other kind.
-    Type *inner;
+    /*
+        What the kind gives it, and nothing another kind would give.
 
-    // The methods declared with this type as their receiver. NULL until the
-    // first one is, so a struct nobody declares a method on costs nothing.
-    MethodMap *methods;
+        A struct has no pointee to be wrong about and an indirection has no
+        field list, rather than every reader having to know which of thirteen
+        fields its kind licenses. The same shape TypeExpr and ASTExpr already
+        use, for the same reason: a kind with a payload is a sum, and a struct
+        of every payload at once holds combinations that mean nothing.
+    */
+    union {
+        // TYPE_BOX, TYPE_REF, TYPE_PTR: what the indirection names.
+        struct {
+            TypeHandle pointee;
+        } indirect;
 
-    // What freeing a value of this type must free, or NULL when it owns
-    // nothing. Set by type_layout_compute.
-    DropFn drop;
+        // TYPE_STRUCT, TYPE_STRING, TYPE_STR: the fields the layout came from.
+        // A string's two are its characters and their count.
+        struct {
+            TypeField *fields;
+            size_t field_count;
+        } record;
 
-    // For a borrowing type that shares another's identity -- 'str' and
-    // 'String' -- the owning one. NULL everywhere else. Method lookup follows
-    // it so that one declaration serves both.
-    Type *owner;
-
-    // What this type was built by applying, for a type the registry interned.
-    // Zeroed for a builtin and for a struct, which are named rather than
-    // constructed.
-    //
-    // Kept so that the arguments stay readable off the type: an array's element
-    // and its length are what its application was given, rather than something
-    // recovered from the layout they produced.
-    TypeApp app;
+        // TYPE_ARRAY: a run of one element, as many as the length says.
+        struct {
+            TypeHandle element;
+            int32_t length;
+        } array;
+    };
 };
 
+// What an indirection names, or NULL for a kind that names nothing. The walks
+// asking how many levels deep something is read it that way, so "not an
+// indirection" is the answer that stops them rather than a mistake.
+TypeHandle type_pointee(TypeHandle type);
+
+// The fields a layout was computed from. Empty for a kind laid out some other
+// way, so a walk over them is the right no-op there.
+const TypeField *type_fields(TypeHandle type);
+size_t type_field_count(TypeHandle type);
+
+/*
+    Building a type, which only the registry does.
+
+    Every type a program can name is owned by the registry that interned it --
+    that is what makes pointer identity a sound comparison, and what a
+    TypeHandle asserts. These are declared here because type.c defines them, and
+    reaching for one outside the registry is building a type nothing interned.
+*/
 Type *type_create(Arena *arena, TypeKind kind, String *name);
 Type *type_struct_create(Arena *arena, String *name, size_t max_fields);
 
-void type_add_field(Type *type, String *name, Type *field_type);
+void type_add_field(Type *type, String *name, TypeHandle field_type);
 void type_layout_compute(Type *type);
 
 // What a reference to this type carries besides the address.
-TypeMetadata type_metadata_of(const Type *type);
+TypeMetadata type_metadata_of(TypeHandle type);
 
 // Whether this is a reference to characters -- the borrowed way of naming them,
 // as an owning 'String' is the other. Its own predicate because the shape is
 // two levels deep and asked in several places: what accepts a lend, what a
 // receiver reconciles to, what a C body reads, and what '==' and '..' take.
-bool type_is_str_ref(const Type *type);
+bool type_is_str_ref(TypeHandle type);
 
 // Whether a value of this type can be held at all: an unsized type names
 // something no slot, field or parameter may contain, and is reached only
 // through a reference.
-bool type_is_sized(const Type *type);
+bool type_is_sized(TypeHandle type);
 
 // Whether reaching the value means going through an indirection -- what a
 // deref, an auto-deref, and a field access all ask. Says nothing about
 // ownership: a 'ref T' is as indirect as a 'box T'.
-bool type_is_indirect(const Type *type);
+bool type_is_indirect(TypeHandle type);
 
 // What one element of an array is, and how many it holds. Both are what the
 // application was given, so the element a walk strides by and the count it
 // stops at are read from the same place the type was interned on.
-Type *type_array_element(const Type *type);
-int32_t type_array_length(const Type *type);
+TypeHandle type_array_element(TypeHandle type);
+int32_t type_array_length(TypeHandle type);
 
 // Whether a value of this type owns memory that must be freed when it dies.
 // True of a 'box T' and of an owning string, false of every 'ref', and true of
@@ -275,23 +357,14 @@ int32_t type_array_length(const Type *type);
 // Distinct from type_is_indirect because the two questions came apart once a
 // string could own: a string owns without being an indirection, and a 'ref T'
 // is an indirection that owns nothing.
-bool type_is_owned(const Type *type);
+bool type_is_owned(TypeHandle type);
 
 // Whether a value of this type duplicates by copying its bytes, which is true
 // exactly when nothing it holds transitively owns. See the definition.
-bool type_is_copyable(const Type *type);
+bool type_is_copyable(TypeHandle type);
 
-bool type_field_offset(const Type *type, const String *name, size_t *out_offset);
-const TypeField *type_find_field(const Type *type, const String *name);
-
-// Declares a method on this type, creating the map on first use. Returns false
-// if the name is already taken, which is a duplicate declaration.
-bool type_add_method(Arena *arena, Type *type, String *name, Symbol *method);
-
-// The method this type declares under that name, or NULL. Does not look
-// through an indirection: the caller strips that first, since 'box Player' and
-// 'Player' share one method set.
-Symbol *type_find_method(const Type *type, const String *name);
+bool type_field_offset(TypeHandle type, const String *name, size_t *out_offset);
+const TypeField *type_find_field(TypeHandle type, const String *name);
 
 // A type as the source wrote it, before any name is looked up. The syntactic
 // counterpart of Type: this is what a type position parses into, and the

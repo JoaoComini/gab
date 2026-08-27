@@ -2,7 +2,10 @@
 #define GAB_OBJECT_H
 
 #include "allocator.h"
+#include "arena.h"
 #include "type.h"
+
+typedef struct TypeRegistry TypeRegistry;
 
 /*
     A heap object is a header immediately followed by its payload, and a 'box T'
@@ -39,15 +42,16 @@ typedef struct {
 } GabArrayValue;
 
 typedef struct ObjectHeader {
-    // What the payload is, and the only thing the header carries. Freeing a
-    // Player means running the drop function its Type holds, which is where the
-    // offsets of everything it owns live. A Type is pointer-stable and outlives
-    // every compile, so holding one costs nothing.
+    // What freeing the payload has to do, and the only thing the header
+    // carries. A plan rather than the type it came from: freeing needs the
+    // offsets of what the payload owns and nothing else about it, and the plan
+    // is those offsets. A plan is pointer-stable and outlives every compile, so
+    // holding one costs nothing.
     //
     // There is no reference count. Ownership is unique and statically known:
     // exactly one slot owns an object, and codegen frees it where that slot
     // goes out of scope. A count would only ever have read 1.
-    const Type *type;
+    const DropPlan *drop;
 } ObjectHeader;
 
 // The payload must land at its own alignment, so the header's size has to be a
@@ -61,27 +65,21 @@ _Static_assert(sizeof(ObjectHeader) % 8 == 0, "the header must not misalign the 
 // allocating an array never has to check for it.
 _Static_assert(sizeof(size_t) >= 8, "an array's size computation assumes a 64-bit size_t");
 
-// Selects the drop function for a laid-out type, or NULL when it owns nothing.
-// Called wherever a Type is finished -- once per type, never on a free path.
+// Builds the drop plan for a laid-out type, or NULL when it owns nothing.
+// Derived once per type and never on a free path, which is what lets the plan
+// bake in offsets the free path would otherwise read back off the type.
 //
-// Every constructed type comes through here, headers included: which glue frees
-// what follows from the kind, and whether anything is freed at all follows from
-// type_is_owned. A constructor builds a type and says nothing about freeing it.
-void object_select_drop(Type *type);
-
-// Frees the characters a string header names, and whatever an array's elements
-// own. Each knows bounds the field walk cannot read: one frees what an address
-// names, the other counts by a length its type says.
-void object_drop_string(Allocator allocator, const Type *type, void *value);
-void object_drop_array(Allocator allocator, const Type *type, void *value);
+// Not called directly: type_registry_drop_of memoizes this, and the recursion
+// below goes through it so that a ring through a 'box' terminates.
+const DropPlan *object_build_drop(Arena *arena, TypeRegistry *registry, const Type *type);
 
 // The header of a payload address. Not for a stack pointer: there is no header
 // there, and nothing in the representation can tell the caller so.
 ObjectHeader *object_of(void *payload);
 
-// Allocates a zeroed payload of 'type' and returns it. NULL if the allocation
-// fails.
-void *object_alloc(Allocator allocator, const Type *type);
+// Allocates a zeroed payload of 'size' bytes, carrying the plan that frees what
+// it owns. NULL if the allocation fails.
+void *object_alloc(Allocator allocator, size_t size, const DropPlan *drop);
 
 // Frees what a value of 'type' sitting at 'value' owns, and the value itself
 // where it is an owning pointer. This is what a release does: the type is known
@@ -90,12 +88,7 @@ void *object_alloc(Allocator allocator, const Type *type);
 // Takes the slot's address rather than the object's, because not every owning
 // value is a pointer -- an array is a header, and freeing it needs the length
 // beside the pointer. NULL-tolerant through each type's own drop.
-void object_release(Allocator allocator, const Type *type, void *value);
-
-// The bytes a release has to clear so the slot is safe to visit again: the
-// pointer for an owning indirection, and the whole header for an array, whose
-// length must go with its pointer or a second visit would walk a freed block.
-size_t type_release_width(const Type *type);
+void object_release(Allocator allocator, const DropPlan *drop, void *value);
 
 // Frees a payload and everything it owns. NULL-tolerant, because a 'box T' that
 // was never assigned is NULL and every free path would otherwise need the same

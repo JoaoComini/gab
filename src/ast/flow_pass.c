@@ -18,7 +18,7 @@ typedef struct {
     // What a 'return' is checked against. Held here because a returned borrow
     // is not always visible in the returned expression's type: a 'str'
     // is a header copy, so no address-of node marks it.
-    Type *return_type;
+    TypeHandle return_type;
 
     // Set on the last round only. The lattice is iterated to a fixpoint, so an
     // intermediate round can see a state a later one refutes; reporting from
@@ -128,7 +128,7 @@ static bool owning_field_of_local(const ASTExpr *expr, Symbol **out_symbol, unsi
     }
 
     Symbol *symbol = expr->field.target->symbol;
-    const Type *struct_type = expr->field.target->type;
+    TypeHandle struct_type = expr->field.target->type;
 
     if (!symbol || symbol->kind != SYMBOL_VAR || !struct_type || struct_type->kind != TYPE_STRUCT) {
         return false;
@@ -147,8 +147,8 @@ static bool owning_field_of_local(const ASTExpr *expr, Symbol **out_symbol, unsi
     // ints would fall off the end.
     size_t index = 0;
 
-    for (size_t i = 0; i < struct_type->field_count; i++) {
-        const TypeField *other = &struct_type->fields[i];
+    for (size_t i = 0; i < type_field_count(struct_type); i++) {
+        const TypeField *other = &type_fields(struct_type)[i];
 
         if (other == field) {
             break;
@@ -190,7 +190,7 @@ static uint64_t initialized_fields(FlowPass *pass, ASTExpr *initializer) {
 // lives is this pass's business. True of a 'ref T' and of a 'str': the
 // two are different representations -- one an address, one a header carrying
 // one -- and the lifetime question is the same for both.
-static bool borrows_memory(const Type *type) {
+static bool borrows_memory(TypeHandle type) {
     if (!type) {
         return false;
     }
@@ -221,7 +221,7 @@ static void check_borrow_lifetime(FlowPass *pass, ASTExpr *value, int target_dep
 // is formed. Reading the destination rather than the value is what catches a
 // string: a 'str' takes an owning 'String' by copying its header, so the
 // value still reads as owning and only the destination shows a borrow was made.
-static void check_stored_lifetime(FlowPass *pass, ASTExpr *value, const Type *destination, int target_depth,
+static void check_stored_lifetime(FlowPass *pass, ASTExpr *value, TypeHandle destination, int target_depth,
                                   Span span, const char *what) {
     if (!borrows_memory(destination)) {
         return;
@@ -440,7 +440,7 @@ static void flow_pass_block(FlowPass *pass, CFGBlock *block) {
     }
 }
 
-void flow_pass_run(Arena *arena, ASTStmt *body, Symbol **params, size_t param_count, Type *return_type,
+void flow_pass_run(Arena *arena, ASTStmt *body, Symbol **params, size_t param_count, TypeHandle return_type,
                    Diagnostics *diagnostics) {
     CFG *cfg = cfg_build(arena, body);
 

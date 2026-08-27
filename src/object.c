@@ -1,5 +1,8 @@
 #include "object.h"
 
+#include "arena.h"
+#include "type_registry.h"
+
 #include <assert.h>
 #include <stdint.h>
 #include <string.h>
@@ -10,18 +13,14 @@ ObjectHeader *object_of(void *payload) {
     return (ObjectHeader *)payload - 1;
 }
 
-void *object_alloc(Allocator allocator, const Type *type) {
-    assert(type && "an object needs a type; freeing it walks its fields");
-
-    size_t size = type->size;
-
+void *object_alloc(Allocator allocator, size_t size, const DropPlan *drop) {
     ObjectHeader *header = allocator.alloc(allocator.ctx, sizeof(ObjectHeader) + size);
 
     if (!header) {
         return NULL;
     }
 
-    header->type = type;
+    header->drop = drop;
 
     // Zeroed so that a pointer field nobody assigned is NULL rather than
     // whatever the allocator left behind — freeing walks these fields, and it
@@ -32,10 +31,12 @@ void *object_alloc(Allocator allocator, const Type *type) {
     return payload;
 }
 
+static void drop_run(Allocator allocator, const DropPlan *plan, void *value);
+
 // Frees what an owning indirection names -- what 'new box T' allocates, and
 // what every owning pointer field holds.
-static void drop_box(Allocator allocator, const Type *type, void *value) {
-    (void)type;
+static void drop_box_at(Allocator allocator, const DropPlan *plan, void *value) {
+    (void)plan;
 
     void *owned;
     memcpy(&owned, value, sizeof(owned));
@@ -43,48 +44,10 @@ static void drop_box(Allocator allocator, const Type *type, void *value) {
     object_free(allocator, owned);
 }
 
-// Frees what a value's fields own, so that freeing an object frees the tree
-// beneath it. A field that owns nothing has no drop function and is skipped,
-// so a struct of four ints walks four fields and calls nothing -- and a 'ref'
-// field is skipped by the same test, having never owned what it names.
-//
-// An inline struct or string field is reached through its own function rather
-// than being flattened into this walk, which is what keeps the offsets it
-// needs its own business.
-static void drop_fields(Allocator allocator, const Type *type, void *value) {
-    for (size_t i = 0; i < type->field_count; i++) {
-        const TypeField *field = &type->fields[i];
-
-        if (field->type->drop) {
-            field->type->drop(allocator, field->type, (char *)value + field->offset);
-        }
-    }
-}
-
-// Frees what an array's elements own. The elements live in the array itself, so
-// there is no block to free -- only the run of them to walk, as many as the
-// type says.
-//
-// Its own function rather than a case in the field walk, because an array has
-// no fields: one element type repeated is what it holds, which is the shape
-// DropFn was given a type parameter for.
-void object_drop_array(Allocator allocator, const Type *type, void *value) {
-    const Type *element = type_array_element(type);
-    int32_t length = type_array_length(type);
-
-    // Selected only when the element owns something, so reaching here at all
-    // means there is something in each to free.
-    for (int32_t i = 0; i < length; i++) {
-        element->drop(allocator, element, (char *)value + (size_t)i * element->size);
-    }
-}
-
-// Frees the characters a string header owns. Its own function for the reason
-// drop_array has one: what must be freed is the block the header names, which
-// the field naming it cannot say now that the field is a raw address.
-void object_drop_string(Allocator allocator, const Type *type, void *value) {
-    (void)type;
-
+// Frees the characters a string header owns. What must be freed is the block
+// the header names, which the address alone cannot describe: the count sits in
+// the slot beside it, since a block has no header to ask.
+static void drop_string_at(Allocator allocator, void *value) {
     GabStringValue string;
     memcpy(&string, value, sizeof(string));
 
@@ -93,62 +56,135 @@ void object_drop_string(Allocator allocator, const Type *type, void *value) {
     }
 
     // Cast away the const the host reads its characters through: what is being
-    // freed is the block, and only an owning header ever reaches here. Sized
-    // for the reason drop_array gives -- a block has no header to ask.
+    // freed is the block, and only an owning header ever reaches here.
     allocator.free_sized(allocator.ctx, (void *)(uintptr_t)string.data, (size_t)string.length);
 }
 
-void object_select_drop(Type *type) {
-    // Asked of the type rather than of its kind, so that a struct earns a drop
-    // exactly when some field of it owns, and every 'ref' is excluded here
-    // rather than being tested again on each free.
-    //
-    // Every constructed type comes through here, so which glue frees what is
-    // decided in one place: a constructor builds a type and says nothing about
-    // freeing it.
-    if (!type_is_owned(type)) {
-        type->drop = NULL;
+// Frees what an array's elements own. The elements live in the array itself, so
+// there is no block to free -- only the run of them to walk, striding by a
+// width the plan carries.
+static void drop_array_at(Allocator allocator, const DropPlan *plan, void *value) {
+    // Planned only when the element owns something, so reaching here at all
+    // means there is something in each to free.
+    for (int32_t i = 0; i < plan->length; i++) {
+        drop_run(allocator, plan->inner, (char *)value + (size_t)i * plan->stride);
+    }
+}
+
+// Frees what a value's fields own, so that freeing an object frees the tree
+// beneath it. Only the fields that own are steps at all, so a struct of four
+// ints has no plan and a struct of one owning field among forty has one step.
+static void drop_fields_at(Allocator allocator, const DropPlan *plan, void *value) {
+    for (size_t i = 0; i < plan->step_count; i++) {
+        const DropStep *step = &plan->steps[i];
+
+        drop_run(allocator, step->plan, (char *)value + step->offset);
+    }
+}
+
+// Runs one plan against one value. The only walk on the free path, and it reads
+// nothing but the plan: every offset and every width it needs was baked in
+// where the layout was computed.
+static void drop_run(Allocator allocator, const DropPlan *plan, void *value) {
+    if (!plan) {
         return;
     }
 
+    switch (plan->kind) {
+    case DROP_BOX:
+        drop_box_at(allocator, plan, value);
+        break;
+    case DROP_STRING:
+        drop_string_at(allocator, value);
+        break;
+    case DROP_ARRAY:
+        drop_array_at(allocator, plan, value);
+        break;
+    case DROP_FIELDS:
+        drop_fields_at(allocator, plan, value);
+        break;
+    }
+}
+
+// Builds the plan for a type whose layout is known, or leaves it NULL when the
+// type owns nothing.
+//
+// Every constructed type comes through here, headers included: what a free has
+// to do follows from the kind, and whether anything is freed at all follows
+// from type_is_owned. A constructor builds a type and says nothing about
+// freeing it.
+const DropPlan *object_build_drop(Arena *arena, TypeRegistry *registry, const Type *type) {
+    if (!type_is_owned(type)) {
+        return NULL;
+    }
+
+    DropPlan *plan = arena_alloc(arena, sizeof(DropPlan));
+
+    *plan = (DropPlan){.kind = DROP_FIELDS};
+
     switch (type->kind) {
     case TYPE_BOX:
-        type->drop = drop_box;
+        plan->kind = DROP_BOX;
+
+        // Nothing more. What the block owns is read off its own header when it
+        // is freed, so the slot naming it carries no inner plan -- which is
+        // also what lets a ring through a 'box' be planned at all, neither end
+        // waiting on the other.
+        plan->inner = NULL;
         break;
 
-    // A run of elements and a block of characters each know their own bounds,
-    // which the field walk cannot read: one counts by a length its type says,
-    // the other frees what an address names.
+    // A run of elements and a block of characters each know bounds the field
+    // walk cannot read: one counts by a length its type says, the other frees
+    // what an address names.
     case TYPE_ARRAY:
-        type->drop = object_drop_array;
+        plan->kind = DROP_ARRAY;
+        plan->inner = type_registry_drop_of(registry, type_array_element(type));
+        plan->stride = type_array_element(type)->size;
+        plan->length = type_array_length(type);
         break;
+
     case TYPE_STRING:
-        type->drop = object_drop_string;
+        plan->kind = DROP_STRING;
         break;
 
-    default:
-        type->drop = drop_fields;
+    default: {
+        // Only the fields that own become steps: what a free walks is the shape
+        // of what owns rather than the shape of the type.
+        size_t owning = 0;
+
+        for (size_t i = 0; i < type->record.field_count; i++) {
+            if (type_registry_drop_of(registry, type->record.fields[i].type)) {
+                owning++;
+            }
+        }
+
+        DropStep *steps = arena_alloc(arena, owning * sizeof(DropStep));
+        size_t count = 0;
+
+        for (size_t i = 0; i < type->record.field_count; i++) {
+            const TypeField *field = &type->record.fields[i];
+            const DropPlan *inner = type_registry_drop_of(registry, field->type);
+
+            if (!inner) {
+                continue;
+            }
+
+            steps[count++] = (DropStep){.offset = field->offset, .plan = inner};
+        }
+
+        plan->steps = steps;
+        plan->step_count = count;
         break;
     }
-}
-
-size_t type_release_width(const Type *type) {
-    if (!type) {
-        return 0;
     }
 
-    // A header's length is as load-bearing as its pointer: a sized free reads
-    // both, so both are cleared. Everything else that owns is reached through a
-    // pointer, and clearing that is what makes it NULL.
-    return type->kind == TYPE_ARRAY || type->kind == TYPE_STRING ? type->size : sizeof(void *);
+    return plan;
 }
 
-void object_release(Allocator allocator, const Type *type, void *value) {
-    // A type that owns nothing has no drop at all, which is what makes a
-    // release of one free: the question was settled when its layout was.
-    if (type && type->drop) {
-        type->drop(allocator, type, value);
-    }
+void object_release(Allocator allocator, const DropPlan *drop, void *value) {
+    // A type that owns nothing has no plan at all, which is what makes a
+    // release of one free: the question was settled where its layout was.
+    drop_run(allocator, drop, value);
 }
 
 void object_free(Allocator allocator, void *payload) {
@@ -158,9 +194,7 @@ void object_free(Allocator allocator, void *payload) {
 
     ObjectHeader *header = object_of(payload);
 
-    if (header->type->drop) {
-        header->type->drop(allocator, header->type, payload);
-    }
+    drop_run(allocator, header->drop, payload);
 
     allocator.free(allocator.ctx, header);
 }

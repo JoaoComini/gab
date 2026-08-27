@@ -10,15 +10,16 @@
 
 #include <stddef.h>
 
-void builtin_register_method(VM *vm, Type *declared_on, Type *receiver, const char *name, GabExternFn body,
-                             Type *return_type, Type *const *params, size_t param_count) {
+void builtin_register_method(VM *vm, TypeHandle declared_on, TypeHandle receiver, const char *name,
+                             GabExternFn body, TypeHandle return_type, TypeHandle const *params,
+                             size_t param_count) {
     Arena *arena = vm->env.arena;
 
     Symbol *symbol = arena_alloc(arena, sizeof(Symbol));
     symbol->kind = SYMBOL_FUNC;
     symbol->func.return_type = return_type;
     symbol->func.param_count = param_count + 1;
-    symbol->func.params = arena_alloc(arena, sizeof(Type *) * (param_count + 1));
+    symbol->func.params = arena_alloc(arena, sizeof(TypeHandle) * (param_count + 1));
     symbol->func.is_extern = true;
     symbol->func.name = string_from_cstr(&vm->env.strings, name);
     symbol->func.module = NULL;
@@ -35,7 +36,8 @@ void builtin_register_method(VM *vm, Type *declared_on, Type *receiver, const ch
 
     extern_proto_list_add(&vm->program.extern_protos, (ExternProto){.body = body, .symbol = symbol});
 
-    type_add_method(arena, declared_on, string_from_cstr(&vm->env.strings, name), symbol);
+    type_registry_add_method(vm->env.global_scope.type_registry, declared_on,
+                             string_from_cstr(&vm->env.strings, name), symbol);
 }
 
 // These land at the bottom of the extern table, before any unit loads. That

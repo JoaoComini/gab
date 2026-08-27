@@ -86,10 +86,9 @@ Four properties are worth knowing before you build against it:
   resolved while the unit loads, so an extern nothing supplies is a load
   failure naming the function rather than a trap the first time that branch
   runs. Registrations outlive every load.
-- **Objects have one owner.** `gab_new` hands the host the only reference to an
-  object, and `gab_free` gives it back. A pointer staged with
-  `gab_arg_pointer` is borrowed for the call, so the host goes on owning it; a
-  function returning `box T` hands ownership over, and the host frees it.
+- **Objects have one owner.** A host allocates a struct itself, at the size and
+  alignment `gab_type_size` and `gab_type_align` report. A pointer staged with
+  `gab_arg_pointer` is borrowed for the call, so the host goes on owning it.
 
 ## The language
 

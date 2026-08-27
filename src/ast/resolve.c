@@ -13,8 +13,50 @@
 #include <stdlib.h>
 #include <string.h>
 
+/*
+    A struct as declared, before it has a layout.
+
+    Complete as soon as its name is bound: the name, the scope it was bound in,
+    the type interned for it, and the fields as the source wrote them. None of
+    that depends on another declaration, which is what lets every struct in a
+    unit be declared before any of their fields resolve -- and so what lets two
+    structs name each other.
+
+    The layout is derived from this and memoized, rather than being part of it.
+    Deriving one reads other declarations, so it may not run until they are all
+    bound; and it may not run twice, since a Type is laid out once.
+*/
+typedef struct StructDecl {
+    ASTStmt *stmt;
+    Scope *scope;
+    String *name;
+
+    // The interned identity, which the declaration has from the start. Const
+    // once laid out, but built through here, so it is the mutable pointer.
+    Type *type;
+
+    enum {
+        // Bound, with no layout asked for yet.
+        STRUCT_DECLARED,
+
+        // Being laid out. A field reaching a declaration in this state by value
+        // is a containment cycle: its width is waiting on itself.
+        STRUCT_LAYING_OUT,
+
+        STRUCT_LAID_OUT,
+
+        // Laid out as far as it goes: a field failed, so the type is poisoned
+        // rather than half-built. Distinct from LAID_OUT so a second demand
+        // reports nothing a second time.
+        STRUCT_POISONED,
+    } state;
+} StructDecl;
+
+#define struct_decl_list_item_free(item) ((void)(item))
+GAB_LIST(StructDeclList, struct_decl_list, StructDecl *)
+
 typedef struct {
-    Type *return_type;
+    TypeHandle return_type;
 
     // Enclosing loops, so 'break' and 'continue' can tell that they have one.
     unsigned int loop_depth;
@@ -42,6 +84,12 @@ typedef struct {
 
     FuncContext func_context;
 
+    // Every struct this unit declared, in declaration order. Held so that the
+    // layouts can be forced once the whole unit's names are bound -- a struct
+    // must leave this unit laid out, since the AST its fields were written in
+    // does not outlive the unit.
+    StructDeclList struct_decls;
+
     Diagnostics *diagnostics;
 } ResolverState;
 
@@ -52,7 +100,7 @@ typedef struct {
 // thing that will own the result, never from whichever arena was passed in.
 static Arena *resolver_owner_arena(ResolverState *state) { return state->global_scope->arena; }
 
-static Type *resolver_error_type(ResolverState *state) {
+static TypeHandle resolver_error_type(ResolverState *state) {
     return type_registry_error_type(state->current_scope->type_registry);
 }
 
@@ -132,13 +180,13 @@ static String *resolver_expr_member(ResolverState *state, StringRef name) {
 
 // A type that is already poisoned had its error reported at the origin, so any
 // further check involving it silently succeeds rather than cascading.
-static bool is_error_type(Type *type) { return !type || type->kind == TYPE_ERROR; }
+static bool is_error_type(TypeHandle type) { return !type || type->kind == TYPE_ERROR; }
 
 // The printable form of a type. A pointer's name is derived from its inner
 // rather than stored, so 'box box Player' formats without interning two
 // intermediate names. Built in the compile arena: only diagnostics ask, and
 // they are already on the failing path.
-static const char *type_name(ResolverState *state, Type *type) {
+static const char *type_name(ResolverState *state, TypeHandle type) {
     if (!type) {
         return "none";
     }
@@ -147,7 +195,7 @@ static const char *type_name(ResolverState *state, Type *type) {
         return type->name->data;
     }
 
-    const char *inner = type->name ? type->name->data : type_name(state, type->inner);
+    const char *inner = type->name ? type->name->data : type_name(state, type_pointee(type));
     const char *prefix = type->kind == TYPE_REF ? "ref " : "box ";
     size_t length = strlen(prefix) + strlen(inner) + 1;
     char *out = arena_alloc(state->compile_arena, length);
@@ -329,9 +377,9 @@ static bool is_addressable(const ASTExpr *expr) {
 //
 // A builtin qualifies: methods hang on the Type, and nothing about the map
 // requires the type to be one a unit declared.
-static Type *receiver_base_type(Type *type) {
+static TypeHandle receiver_base_type(TypeHandle type) {
     while (type_is_indirect(type)) {
-        type = type->inner;
+        type = type_pointee(type);
     }
 
     return type;
@@ -340,14 +388,14 @@ static Type *receiver_base_type(Type *type) {
 // Checks each argument against the parameter type in the same position. Shared
 // by both call forms, which differ only in where their parameter list starts:
 // a method's skips the receiver.
-static bool type_accepts(Type *to, Type *from);
-static bool borrow_into(ResolverState *state, ASTExpr **slot, Type *destination, Span span);
-static void check_implicit_copy(ResolverState *state, ASTExpr *value, Type *destination, Span span);
+static bool type_accepts(TypeHandle to, TypeHandle from);
+static bool borrow_into(ResolverState *state, ASTExpr **slot, TypeHandle destination, Span span);
+static void check_implicit_copy(ResolverState *state, ASTExpr *value, TypeHandle destination, Span span);
 
-static void check_call_args(ResolverState *state, ASTExprList *args, Type **params) {
+static void check_call_args(ResolverState *state, ASTExprList *args, TypeHandle *params) {
     for (size_t i = 0; i < args->size; i++) {
         ASTExpr *arg = args->data[i];
-        Type *param_type = params[i];
+        TypeHandle param_type = params[i];
 
         if (is_error_type(arg->type) || is_error_type(param_type)) {
             continue;
@@ -439,14 +487,14 @@ static void lower_method_call(ASTExpr *expr, Symbol *method, ReceiverAdjustment 
         // accepts. Usually one -- a 'T' method reached through a 'box T' -- but
         // a 'ref box T' receiver is two away from the struct, and the last hop
         // is the one whose type the parameter settles.
-        Type *declared = method->func.params[0];
+        TypeHandle declared = method->func.params[0];
 
         // The stop condition is this level matching, never type_accepts: that
         // one chains, so it is already true at the level furthest out and would
         // emit no hop at all.
         while (type_is_indirect(receiver->type) && receiver->type != declared &&
-               declared->inner != receiver->type->inner) {
-            Type *inner = receiver->type->inner;
+               type_pointee(declared) != type_pointee(receiver->type)) {
+            TypeHandle inner = type_pointee(receiver->type);
 
             receiver = ast_deref_expr_create(span, receiver);
             receiver->type = inner;
@@ -477,8 +525,8 @@ static void lower_method_call(ASTExpr *expr, Symbol *method, ReceiverAdjustment 
 
 // How the receiver has to be adjusted to reach parameter zero, reported through
 // 'out'. Returns false when no adjustment bridges the two, having said why.
-static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *receiver, Type *declared,
-                               Type *actual, const String *name, ReceiverAdjustment *out) {
+static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *receiver, TypeHandle declared,
+                               TypeHandle actual, const String *name, ReceiverAdjustment *out) {
     if (declared == actual) {
         *out = RECEIVER_AS_IS;
         return true;
@@ -494,7 +542,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
             return true;
         }
 
-        if (type_is_indirect(actual) && receiver_base_type(actual) == declared->inner->owner) {
+        if (type_is_indirect(actual) && receiver_base_type(actual) == type_pointee(declared)->owner) {
             *out = RECEIVER_DEREF;
             return true;
         }
@@ -506,7 +554,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
         // lookup can reach one whose receiver names the other -- and taking the
         // address of a 'str' would hand a 'ref str' where a 'ref String' was
         // declared.
-        if (declared->inner != actual) {
+        if (type_pointee(declared) != actual) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot call '%s' on %s", name->data,
                        type_name(state, actual));
             return false;
@@ -538,8 +586,8 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
     // a 'ref box T' calling a 'ref T' method reaches the 'box T' inside it,
     // which then lends. Checked before the widening below, since that one only
     // recognises a receiver already at the right level.
-    if (type_is_indirect(actual) && type_is_indirect(actual->inner) &&
-        type_accepts(declared, actual->inner)) {
+    if (type_is_indirect(actual) && type_is_indirect(type_pointee(actual)) &&
+        type_accepts(declared, type_pointee(actual))) {
         *out = RECEIVER_DEREF;
         return true;
     }
@@ -576,7 +624,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
 // destination is not known before the value is. Only an array literal reads it:
 // '[1, 2, 3]' has no type of its own, so what it must be is whatever it is
 // being stored into.
-static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected);
+static void resolve_expr(ResolverState *state, ASTExpr *expr, TypeHandle expected);
 
 // A call whose target is a field expression: 'recv.m(args)'. Resolves the
 // method against the receiver's type, checks the call, and lowers the whole
@@ -598,7 +646,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         resolve_expr(state, expr->call.args.data[i], NULL);
     }
 
-    Type *receiver_type = receiver->type;
+    TypeHandle receiver_type = receiver->type;
 
     if (is_error_type(receiver_type)) {
         expr->type = resolver_error_type(state);
@@ -607,10 +655,10 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 
     // 'box Player' and 'Player' share one method set, so the lookup and every
     // message below name the type itself rather than what was written.
-    Type *base = receiver_base_type(receiver_type);
+    TypeHandle base = receiver_base_type(receiver_type);
 
     String *method_name = resolver_intern(state, name);
-    Symbol *method = type_find_method(base, method_name);
+    Symbol *method = type_registry_find_method(state->current_scope->type_registry, base, method_name);
 
     if (!method) {
         // type_name rather than the name field: a pointer type has none, and a
@@ -623,7 +671,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 
     // Parameter zero is the receiver, so the declared parameters — the ones the
     // caller actually writes — are everything after it.
-    Type *declared_receiver = method->func.params[0];
+    TypeHandle declared_receiver = method->func.params[0];
     size_t declared_params = method->func.param_count - 1;
 
     ReceiverAdjustment adjustment;
@@ -671,7 +719,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 // The reverse is deliberately absent: promoting 'ref T' to 'box T' would hand out
 // ownership nobody granted, and the object already has an owner that will free
 // it.
-static bool type_accepts(Type *to, Type *from) {
+static bool type_accepts(TypeHandle to, TypeHandle from) {
     if (to == from) {
         return true;
     }
@@ -700,7 +748,7 @@ static bool type_accepts(Type *to, Type *from) {
     // Borrowing: the destination names what 'from' itself sits in. A 'box T'
     // reaching a 'ref box T' takes this arm -- the address of the slot, not the
     // pointer it holds.
-    if (to->inner == from) {
+    if (type_pointee(to) == from) {
         return true;
     }
 
@@ -715,13 +763,13 @@ static bool type_accepts(Type *to, Type *from) {
     // lifetime question and belongs to the flow pass rather than here.
     //
     // Disjoint from the arm above at every step, since a pointer equal to
-    // 'to->inner' cannot also have 'to->inner' as its own inner.
+    // what 'to' points at cannot also point at what 'to' points at.
     while (type_is_indirect(from)) {
-        if (to->inner == from->inner) {
+        if (type_pointee(to) == type_pointee(from)) {
             return true;
         }
 
-        from = from->inner;
+        from = type_pointee(from);
     }
 
     return false;
@@ -729,8 +777,8 @@ static bool type_accepts(Type *to, Type *from) {
 
 // Whether 'to' accepts 'from' only by taking its address, which is the case
 // needing a node in the tree rather than a widening at the check.
-static bool accepts_by_borrowing(Type *to, Type *from) {
-    return to != from && to->kind == TYPE_REF && to->inner == from;
+static bool accepts_by_borrowing(TypeHandle to, TypeHandle from) {
+    return to != from && to->kind == TYPE_REF && type_pointee(to) == from;
 }
 
 // Materialises the borrow a 'ref T' destination asks for. Borrowing is implicit,
@@ -739,7 +787,7 @@ static bool accepts_by_borrowing(Type *to, Type *from) {
 // adjustment, and the same shape: a real node, typed as the destination.
 //
 // Returns false for a temporary, which has no address to take.
-static bool borrow_into(ResolverState *state, ASTExpr **slot, Type *destination, Span span) {
+static bool borrow_into(ResolverState *state, ASTExpr **slot, TypeHandle destination, Span span) {
     // Only something with a home in memory can be lent. A string that owns and
     // has no home is a temporary -- a concatenation -- and its characters are
     // freed where the expression ends, so the borrow would name freed memory.
@@ -756,9 +804,9 @@ static bool borrow_into(ResolverState *state, ASTExpr **slot, Type *destination,
     // here. type_accepts allows the pair; this is what makes the tree agree with
     // it, and without the hops the callee would receive the outer pointer and
     // read a pointer where the object should be.
-    while (type_is_indirect((*slot)->type) && destination->inner != (*slot)->type->inner &&
-           destination->inner != (*slot)->type) {
-        Type *inner = (*slot)->type->inner;
+    while (type_is_indirect((*slot)->type) && type_pointee(destination) != type_pointee((*slot)->type) &&
+           type_pointee(destination) != (*slot)->type) {
+        TypeHandle inner = type_pointee((*slot)->type);
 
         ASTExpr *hop = ast_deref_expr_create(span, *slot);
         hop->type = inner;
@@ -789,24 +837,37 @@ static bool borrow_into(ResolverState *state, ASTExpr **slot, Type *destination,
     return true;
 }
 
-bool is_numeric_type(Type *t) { return t->kind == TYPE_INT || t->kind == TYPE_FLOAT; }
+bool is_numeric_type(TypeHandle t) { return t->kind == TYPE_INT || t->kind == TYPE_FLOAT; }
 
-bool is_integer_type(Type *t) { return t->kind == TYPE_INT; }
+bool is_integer_type(TypeHandle t) { return t->kind == TYPE_INT; }
 
-bool is_boolean_type(Type *t) { return t->kind == TYPE_BOOL; }
+bool is_boolean_type(TypeHandle t) { return t->kind == TYPE_BOOL; }
 
-bool is_ordered_type(Type *t) { return is_numeric_type(t) || is_boolean_type(t); }
+bool is_ordered_type(TypeHandle t) { return is_numeric_type(t) || is_boolean_type(t); }
 
 // Characters, however they are named: the owning header or a reference to
 // someone else's. Comparison and joining read the same two words from either,
 // so what may be compared or joined is the pair rather than one of them.
-bool is_string_type(Type *t) { return t->kind == TYPE_STRING || type_is_str_ref(t); }
+bool is_string_type(TypeHandle t) { return t->kind == TYPE_STRING || type_is_str_ref(t); }
 
 // Ordering is left out: '<' on text asks which comes first, and no order is
 // defined for it. Equality asks only whether two strings spell the same thing.
-bool is_comparable_type(Type *t) { return is_numeric_type(t) || is_boolean_type(t) || is_string_type(t); }
+bool is_comparable_type(TypeHandle t) {
+    return is_numeric_type(t) || is_boolean_type(t) || is_string_type(t);
+}
 
-static Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span);
+static TypeHandle resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span);
+
+// Computes the layout this type owes if it is held by value, and reports back
+// the declaration a cycle closes on when that layout is waiting on itself.
+//
+// A declaration is bound before its fields resolve, so a type may name a struct
+// whose width is not yet known -- and every by-value use of one needs that
+// width now rather than whenever its own declaration is reached. The
+// layout-level questions are exactly the by-value ones: how wide a field is,
+// how far an array strides. An indirection asks none of them, which is why it
+// is not one of these and why a ring through a 'box' stays finite.
+static StructDecl *element_completes_a_cycle(ResolverState *state, TypeHandle type);
 
 // Rejects a type nothing can hold. How far an unsized value runs is not in its
 // type, so a slot, a field or a parameter has no width to reserve for one: a
@@ -814,7 +875,7 @@ static Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span);
 //
 // Asked where a value is held rather than where the name resolves, since 'ref
 // str' resolves the same name and is exactly what is wanted.
-static bool reject_unsized(ResolverState *state, Type *type, Span span, const char *held_as) {
+static bool reject_unsized(ResolverState *state, TypeHandle type, Span span, const char *held_as) {
     if (!type || type_is_sized(type)) {
         return false;
     }
@@ -831,7 +892,7 @@ static bool reject_unsized(ResolverState *state, Type *type, Span span, const ch
 // Shared with compound assignment, which applies the same operator to its
 // target and its value: 'a %= b' is accepted exactly where 'a % b' is, and
 // keeping one copy of the rules is what makes that true rather than intended.
-static bool bin_op_accepts(ResolverState *state, BinOp op, Type *type, Span span) {
+static bool bin_op_accepts(ResolverState *state, BinOp op, TypeHandle type, Span span) {
     const char *op_name = bin_op_name(op);
 
     switch (op) {
@@ -931,7 +992,7 @@ static bool bin_op_yields_bool(BinOp op) {
 // same union, so the operand is lifted out and the argument list freed before
 // anything is written back over them.
 static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
-    Type *target =
+    TypeHandle target =
         scope_type_lookup(state->current_scope, resolver_intern(state, expr->call.target->var.name));
 
     if (!target) {
@@ -966,7 +1027,7 @@ static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
 
     resolve_expr(state, operand, NULL);
 
-    Type *from = operand->type;
+    TypeHandle from = operand->type;
 
     if (is_error_type(from)) {
         expr->type = resolver_error_type(state);
@@ -989,7 +1050,7 @@ static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
     return true;
 }
 
-static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
+static void resolve_expr(ResolverState *state, ASTExpr *expr, TypeHandle expected) {
     if (!expr) {
         return;
     }
@@ -999,8 +1060,8 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
         resolve_expr(state, expr->bin_op.left, NULL);
         resolve_expr(state, expr->bin_op.right, NULL);
 
-        Type *left_type = expr->bin_op.left->type;
-        Type *right_type = expr->bin_op.right->type;
+        TypeHandle left_type = expr->bin_op.left->type;
+        TypeHandle right_type = expr->bin_op.right->type;
 
         if (is_error_type(left_type) || is_error_type(right_type)) {
             expr->type = resolver_error_type(state);
@@ -1122,7 +1183,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
         resolve_expr(state, expr->index.target, NULL);
         resolve_expr(state, expr->index.index, NULL);
 
-        Type *target_type = expr->index.target->type;
+        TypeHandle target_type = expr->index.target->type;
 
         if (is_error_type(target_type) || is_error_type(expr->index.index->type)) {
             expr->type = resolver_error_type(state);
@@ -1132,7 +1193,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
         // Reaches through every pointer level, as a field access does: an
         // 'Array int' and a 'ref Array int' are indexed the same way.
         while (type_is_indirect(target_type)) {
-            target_type = target_type->inner;
+            target_type = type_pointee(target_type);
         }
 
         if (target_type->kind != TYPE_ARRAY) {
@@ -1156,7 +1217,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
     case EXPR_FIELD: {
         resolve_expr(state, expr->field.target, NULL);
 
-        Type *target_type = expr->field.target->type;
+        TypeHandle target_type = expr->field.target->type;
 
         if (is_error_type(target_type)) {
             expr->type = resolver_error_type(state);
@@ -1168,7 +1229,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
         // 'ref box Player' is two hops from the struct, and stopping short would
         // only report a pointer as having no fields.
         while (type_is_indirect(target_type)) {
-            target_type = target_type->inner;
+            target_type = type_pointee(target_type);
         }
 
         if (target_type->kind != TYPE_STRUCT) {
@@ -1200,7 +1261,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
     case EXPR_MOVE: {
         resolve_expr(state, expr->unary.target, NULL);
 
-        Type *target_type = expr->unary.target->type;
+        TypeHandle target_type = expr->unary.target->type;
 
         if (is_error_type(target_type)) {
             expr->type = resolver_error_type(state);
@@ -1226,7 +1287,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
     case EXPR_ADDR_OF: {
         resolve_expr(state, expr->unary.target, NULL);
 
-        Type *target_type = expr->unary.target->type;
+        TypeHandle target_type = expr->unary.target->type;
 
         if (is_error_type(target_type)) {
             expr->type = resolver_error_type(state);
@@ -1279,7 +1340,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
     case EXPR_DEREF: {
         resolve_expr(state, expr->unary.target, NULL);
 
-        Type *target_type = expr->unary.target->type;
+        TypeHandle target_type = expr->unary.target->type;
 
         if (is_error_type(target_type)) {
             expr->type = resolver_error_type(state);
@@ -1293,7 +1354,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
             break;
         }
 
-        expr->type = target_type->inner;
+        expr->type = type_pointee(target_type);
 
         // The address itself lives in the target's slots, so a deref stays
         // assignable through whatever the target was.
@@ -1303,7 +1364,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
     case EXPR_NEG: {
         resolve_expr(state, expr->unary.target, NULL);
 
-        Type *target_type = expr->unary.target->type;
+        TypeHandle target_type = expr->unary.target->type;
 
         if (is_error_type(target_type)) {
             expr->type = resolver_error_type(state);
@@ -1327,7 +1388,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
     case EXPR_NOT: {
         resolve_expr(state, expr->unary.target, NULL);
 
-        Type *target_type = expr->unary.target->type;
+        TypeHandle target_type = expr->unary.target->type;
 
         if (is_error_type(target_type)) {
             expr->type = resolver_error_type(state);
@@ -1350,7 +1411,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
         break;
     }
     case EXPR_NEW: {
-        Type *type = resolve_type_expr(state, expr->new_expr.type_expr, expr->span);
+        TypeHandle type = resolve_type_expr(state, expr->new_expr.type_expr, expr->span);
 
         if (is_error_type(type)) {
             expr->type = resolver_error_type(state);
@@ -1363,7 +1424,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
         // from fields has a layout to fill, which is a struct or a string --
         // zeroed, the latter is the empty string. A scalar has none: 'new int'
         // would be a boxed scalar, a different feature.
-        if (type->field_count == 0 && !type_is_indirect(type)) {
+        if (type_field_count(type) == 0 && !type_is_indirect(type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "cannot allocate %s; 'new' takes a struct or a pointer", type_name(state, type));
             expr->type = resolver_error_type(state);
@@ -1397,7 +1458,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
         }
 
         int32_t length = type_array_length(expected);
-        Type *element = type_array_element(expected);
+        TypeHandle element = type_array_element(expected);
 
         if ((int32_t)expr->array_lit.elements.size != length) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %d element(s), found %zu",
@@ -1466,7 +1527,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, Type *expected) {
 // Only a value read out of a named slot can be implicitly copied. A temporary
 // -- 'new Box', a call's owned return -- is already nobody else's, so binding
 // it transfers what it made rather than duplicating what someone holds.
-static void check_implicit_copy(ResolverState *state, ASTExpr *value, Type *destination, Span span) {
+static void check_implicit_copy(ResolverState *state, ASTExpr *value, TypeHandle destination, Span span) {
     if (!value || value->kind == EXPR_MOVE || is_error_type(value->type)) {
         return;
     }
@@ -1489,9 +1550,10 @@ static void check_implicit_copy(ResolverState *state, ASTExpr *value, Type *dest
     // Only advise the clone where there is one to call. A type that declares
     // none is told so instead, since sending the programmer to a method that
     // does not exist costs them the round trip to find that out.
-    const Type *base = receiver_base_type(value->type);
+    TypeHandle base = receiver_base_type(value->type);
 
-    if (base && type_find_method(base, resolver_intern(state, string_ref_create("clone")))) {
+    if (base && type_registry_find_method(state->current_scope->type_registry, base,
+                                          resolver_intern(state, string_ref_create("clone")))) {
         diag_error(state->diagnostics, GAB_ERR_LIFETIME, span,
                    "%s owns what it holds, so binding it needs 'move' to transfer ownership, or "
                    "'clone()' to duplicate it",
@@ -1507,7 +1569,7 @@ static void check_implicit_copy(ResolverState *state, ASTExpr *value, Type *dest
 
 // Returns NULL when there is no spec to resolve (an omitted type), and the
 // poison type when the spec names something that does not exist.
-static Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) {
+static TypeHandle resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) {
     if (!expr) {
         return NULL;
     }
@@ -1517,7 +1579,7 @@ static Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) 
     switch (expr->kind) {
     case TYPE_EXPR_BOX:
     case TYPE_EXPR_REF: {
-        Type *inner = resolve_type_expr(state, expr->indirect.inner, span);
+        TypeHandle inner = resolve_type_expr(state, expr->indirect.inner, span);
 
         if (is_error_type(inner)) {
             return resolver_error_type(state);
@@ -1535,9 +1597,9 @@ static Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) 
         // before this ever saw it.
         Scope *base_scope = resolver_expr_scope(state, expr->apply.base->name);
 
-        Type *base = base_scope
-                         ? scope_type_lookup(base_scope, resolver_expr_member(state, expr->apply.base->name))
-                         : NULL;
+        TypeHandle base =
+            base_scope ? scope_type_lookup(base_scope, resolver_expr_member(state, expr->apply.base->name))
+                       : NULL;
 
         if (!base) {
             char *name = string_ref_to_cstr(expr->apply.base->name);
@@ -1561,13 +1623,26 @@ static Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) 
             return resolver_error_type(state);
         }
 
-        Type *element = resolve_type_expr(state, expr->apply.args.data[0], span);
+        TypeHandle element = resolve_type_expr(state, expr->apply.args.data[0], span);
 
         if (is_error_type(element)) {
             return resolver_error_type(state);
         }
 
         if (reject_unsized(state, element, span, "an array's element")) {
+            return resolver_error_type(state);
+        }
+
+        // The element's width is what every index strides by, so it is owed
+        // here rather than wherever the element's own declaration is reached --
+        // and a run of a struct still being laid out is that struct waiting on
+        // its own width, which is a containment cycle however many elements
+        // long the run is.
+        StructDecl *cycle = element_completes_a_cycle(state, element);
+
+        if (cycle) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "struct '%s' cannot contain itself",
+                       cycle->name->data);
             return resolver_error_type(state);
         }
 
@@ -1612,7 +1687,7 @@ static Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) 
     // root-namespace one and 'int' resolves with no import. A 'Module::Type'
     // expression resolved to that module's scope above, and its bare member
     // name is what that scope holds.
-    Type *type = scope ? scope_type_lookup(scope, resolver_expr_member(state, expr->name)) : NULL;
+    TypeHandle type = scope ? scope_type_lookup(scope, resolver_expr_member(state, expr->name)) : NULL;
 
     if (!type) {
         char *name = string_ref_to_cstr(expr->name);
@@ -1634,10 +1709,36 @@ static Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) 
 
 static void resolve_stmt(ResolverState *state, ASTStmt *stmt);
 
-// Declares the struct's Type: its name, its fields, and its layout. Split from
-// the body walk so the pre-pass can run it over a whole unit's top level
-// before any signature mentions a type.
-static void declare_struct(ResolverState *state, ASTStmt *stmt) {
+// The declaration whose width holding this type by value depends on, or NULL
+// when it depends on none of this unit's.
+//
+// An array is a run of its element, so it is held by value exactly as the
+// element is and the walk continues through it. An indirection is where the
+// walk stops: what a 'box T' or a 'ref T' costs does not depend on T's width,
+// which is what keeps a ring through one finite and is how a linked structure
+// is written.
+//
+// A linear scan because the list is one unit's structs and the question is
+// asked once per field of each.
+static StructDecl *decl_held_by_value(ResolverState *state, TypeHandle type) {
+    while (type && type->kind == TYPE_ARRAY) {
+        type = type_array_element(type);
+    }
+
+    for (size_t i = 0; i < state->struct_decls.size; i++) {
+        if (state->struct_decls.data[i]->type == type) {
+            return state->struct_decls.data[i];
+        }
+    }
+
+    return NULL;
+}
+
+// Binds the struct's name to a type with no layout. Everything a declaration is
+// -- the name, the scope, the fields as written -- is settled here, and nothing
+// it needs comes from another declaration, so a whole unit's structs can be
+// bound before any field resolves.
+static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
     stmt->struct_decl.declared = true;
 
     // Declared under its bare name into the scope it appears in, so two
@@ -1650,21 +1751,86 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
     if (scope_type_lookup_declaring(state->current_scope, struct_name)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "type '%s' is already declared",
                    struct_name->data);
+        return NULL;
+    }
+
+    Type *type = type_registry_declare_struct(state->current_scope->type_registry, struct_name,
+                                              stmt->struct_decl.fields.size);
+
+    scope_decl_type(state->current_scope, struct_name, type);
+
+    StructDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(StructDecl));
+
+    *decl = (StructDecl){
+        .stmt = stmt,
+        .scope = state->current_scope,
+        .name = struct_name,
+        .type = type,
+        .state = STRUCT_DECLARED,
+    };
+
+    struct_decl_list_add(&state->struct_decls, decl);
+
+    return decl;
+}
+
+static void layout_struct(ResolverState *state, StructDecl *decl);
+
+// The declaration a by-value use of this type closes a containment cycle on, or
+// NULL when the use is finite. Forces the layout of whatever declaration it reaches, so
+// that a field naming a struct declared further down has a width by the time
+// this returns -- and a declaration reached while it is still being laid out is
+// the cycle, since its width is waiting on itself. A field and an array's
+// element ask this identically: both are held by value.
+//
+// That declaration is what the diagnostic names rather than the one being laid
+// out: it is the one the ring closes on.
+static StructDecl *element_completes_a_cycle(ResolverState *state, TypeHandle type) {
+    StructDecl *decl = decl_held_by_value(state, type);
+
+    if (!decl) {
+        return NULL;
+    }
+
+    if (decl->state == STRUCT_LAYING_OUT) {
+        return decl;
+    }
+
+    layout_struct(state, decl);
+
+    return NULL;
+}
+
+// Whether the field's type is a declaration whose own layout failed. Asked
+// after the cycle walk, which is what forced that layout.
+static bool field_type_failed(ResolverState *state, TypeHandle type) {
+    StructDecl *decl = decl_held_by_value(state, type);
+
+    return decl && decl->state == STRUCT_POISONED;
+}
+
+// Derives the struct's layout from its declaration, once: resolves the fields,
+// rejects what no slot may hold, and computes the offsets and the width.
+//
+// Memoized rather than run where the declaration was bound, because a field may
+// name a struct declared further down the file: forcing that field's layout
+// from here is what orders the computation by dependency rather than by the
+// order the declarations were written in.
+static void layout_struct(ResolverState *state, StructDecl *decl) {
+    if (decl->state != STRUCT_DECLARED) {
         return;
     }
 
-    Type *type = type_struct_create(resolver_owner_arena(state), struct_name, stmt->struct_decl.fields.size);
+    decl->state = STRUCT_LAYING_OUT;
 
-    // Registered under its name *before* its fields resolve, so that a field
-    // pointing at the struct being declared finds it. A scene graph is exactly
-    // this shape — 'struct Node { parent: ref Node, child: box Node }' — and
-    // without this it fails with "unknown type", which the containment check
-    // below was already written expecting not to happen.
-    //
-    // Safe because only a pointer to self can appear: a struct containing
-    // itself by value is rejected below, before its size is ever needed, and
-    // the layout is computed only once every field has resolved.
-    scope_decl_type(state->current_scope, struct_name, type);
+    ASTStmt *stmt = decl->stmt;
+    Type *type = decl->type;
+
+    // The fields resolve in the scope the struct was declared in, which is not
+    // where the layout was demanded from: a struct declared in one module is
+    // laid out when another names it.
+    Scope *enclosing = state->current_scope;
+    state->current_scope = decl->scope;
 
     bool poisoned = false;
 
@@ -1674,25 +1840,39 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
 
         if (type_find_field(type, field_name)) {
             diag_error(state->diagnostics, GAB_ERR_NAME, field->span, "duplicate field '%s' in struct '%s'",
-                       field_name->data, struct_name->data);
+                       field_name->data, decl->name->data);
             poisoned = true;
             continue;
         }
 
-        // The struct is registered only after its fields resolve, so a
-        // self-reference would otherwise surface as "unknown type". A
-        // pointer to self is not containment, so only depth 0 is rejected.
-        if (field->type_expr->kind == TYPE_EXPR_NAME &&
-            string_ref_equals_ref(field->type_expr->name, stmt->struct_decl.name)) {
+        TypeHandle field_type = resolve_type_expr(state, field->type_expr, field->span);
+
+        if (is_error_type(field_type)) {
+            poisoned = true;
+            continue;
+        }
+
+        // Asked before the field is added, since a struct waiting on its own
+        // width has no width to add.
+        StructDecl *cycle = element_completes_a_cycle(state, field_type);
+
+        if (cycle) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, field->span, "struct '%s' cannot contain itself",
-                       struct_name->data);
+                       cycle->name->data);
             poisoned = true;
             continue;
         }
 
-        Type *field_type = resolve_type_expr(state, field->type_expr, field->span);
+        // A field whose own layout failed carries the failure up rather than
+        // being laid out at the width it does not have. Silent, because the
+        // field's declaration already reported why: this struct is unusable as
+        // a consequence, not as a second fault.
+        if (field_type_failed(state, field_type)) {
+            poisoned = true;
+            continue;
+        }
 
-        if (is_error_type(field_type) || reject_unsized(state, field_type, field->span, "a field")) {
+        if (reject_unsized(state, field_type, field->span, "a field")) {
             poisoned = true;
             continue;
         }
@@ -1700,17 +1880,22 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
         type_add_field(type, field_name, field_type);
     }
 
-    // Registered before its fields resolved, so a struct that failed has to be
-    // taken back out: with no layout computed, anything naming it would read a
-    // size of zero.
+    state->current_scope = enclosing;
+
+    // A struct with a bad field has no layout worth computing: its name stays
+    // bound so that the rest of the unit resolves against something, and the
+    // fields that did resolve are dropped rather than laid out into a width
+    // that would be wrong.
     if (poisoned) {
-        scope_withdraw_type(state->current_scope, struct_name);
+        decl->state = STRUCT_POISONED;
+        scope_withdraw_type(decl->scope, decl->name);
         return;
     }
 
     type_layout_compute(type);
-    object_select_drop(type);
+    type_registry_drop_of(state->current_scope->type_registry, type);
 
+    decl->state = STRUCT_LAID_OUT;
     stmt->struct_decl.type = type;
 }
 
@@ -1723,8 +1908,8 @@ static void declare_struct(ResolverState *state, ASTStmt *stmt) {
 // what it is given and frees it when the call ends, 'ref T' borrows and frees
 // nothing. Which one a signature declares is what a call site reads to know
 // whether it must move, so the two may not be written interchangeably.
-static Type *resolve_param_type(ResolverState *state, ASTField *param) {
-    Type *type = resolve_type_expr(state, param->type_expr, param->span);
+static TypeHandle resolve_param_type(ResolverState *state, ASTField *param) {
+    TypeHandle type = resolve_type_expr(state, param->type_expr, param->span);
 
     if (reject_unsized(state, type, param->span, "a parameter")) {
         return resolver_error_type(state);
@@ -1744,12 +1929,12 @@ static Type *resolve_param_type(ResolverState *state, ASTField *param) {
 static void declare_method(ResolverState *state, ASTStmt *stmt) {
     ASTField *receiver = stmt->func_decl.receiver;
 
-    Type *receiver_type = resolve_type_expr(state, receiver->type_expr, receiver->span);
+    TypeHandle receiver_type = resolve_type_expr(state, receiver->type_expr, receiver->span);
 
     if (is_error_type(receiver_type)) {
         return;
     }
-    Type *base = receiver_base_type(receiver_type);
+    TypeHandle base = receiver_base_type(receiver_type);
 
     // A unit declares methods on its own structs only. A builtin carries the
     // ones the VM registered, and a second set declared over them would have no
@@ -1797,7 +1982,7 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
         return;
     }
 
-    Type *return_type = resolve_type_expr(state, stmt->func_decl.return_type, stmt->span);
+    TypeHandle return_type = resolve_type_expr(state, stmt->func_decl.return_type, stmt->span);
 
     if (reject_unsized(state, return_type, stmt->span, "returned")) {
         return_type = resolver_error_type(state);
@@ -1826,7 +2011,7 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
     // The receiver is parameter zero, so the declared parameters shift up one.
     size_t param_count = stmt->func_decl.params.size + 1;
 
-    method->func.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(Type *));
+    method->func.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(TypeHandle));
     method->func.param_count = param_count;
     method->func.params[0] = receiver_type;
 
@@ -1855,7 +2040,7 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
         }
     }
 
-    if (!type_add_method(resolver_owner_arena(state), base, method_name, method)) {
+    if (!type_registry_add_method(state->current_scope->type_registry, base, method_name, method)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' already has a method '%s'",
                    base->name->data, method_name->data);
         return;
@@ -1873,7 +2058,7 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
     }
 
     StringRef func_name = stmt->func_decl.name;
-    Type *func_return_type = resolve_type_expr(state, stmt->func_decl.return_type, stmt->span);
+    TypeHandle func_return_type = resolve_type_expr(state, stmt->func_decl.return_type, stmt->span);
 
     stmt->func_decl.resolved_return_type = func_return_type;
 
@@ -1900,7 +2085,7 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
     size_t param_count = stmt->func_decl.params.size;
 
     if (func && param_count > 0) {
-        func->func.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(Type *));
+        func->func.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(TypeHandle));
         func->func.param_count = param_count;
 
         for (size_t i = 0; i < param_count; i++) {
@@ -1925,7 +2110,7 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
     ASTField *receiver = stmt->func_decl.receiver;
 
     if (receiver) {
-        Type *receiver_type = resolve_type_expr(state, receiver->type_expr, receiver->span);
+        TypeHandle receiver_type = resolve_type_expr(state, receiver->type_expr, receiver->span);
 
         receiver->symbol =
             scope_decl_var(state->current_scope, resolver_intern(state, receiver->name), receiver_type);
@@ -1935,7 +2120,7 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
         ASTField *param = stmt->func_decl.params.data[i];
 
         String *param_name = resolver_intern(state, param->name);
-        Type *param_type = resolve_type_expr(state, param->type_expr, param->span);
+        TypeHandle param_type = resolve_type_expr(state, param->type_expr, param->span);
 
         Symbol *symbol = scope_decl_var(state->current_scope, param_name, param_type);
 
@@ -1997,7 +2182,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
     case STMT_VAR_DECL: {
         // Resolved before the initializer, so a value with no type of its own
         // has the annotation to take one from.
-        Type *declared =
+        TypeHandle declared =
             stmt->var_decl.type_expr ? resolve_type_expr(state, stmt->var_decl.type_expr, stmt->span) : NULL;
 
         if (reject_unsized(state, declared, stmt->span, "a variable")) {
@@ -2006,12 +2191,12 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
 
         resolve_expr(state, stmt->var_decl.initializer, declared);
 
-        Type *type;
+        TypeHandle type;
         if (stmt->var_decl.type_expr) {
-            Type *decl_type = declared;
+            TypeHandle decl_type = declared;
 
             if (stmt->var_decl.initializer) {
-                Type *init_type = stmt->var_decl.initializer->type;
+                TypeHandle init_type = stmt->var_decl.initializer->type;
 
                 if (!is_error_type(decl_type) && !is_error_type(init_type) &&
                     !type_accepts(decl_type, init_type)) {
@@ -2088,8 +2273,14 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         break;
     }
     case STMT_STRUCT_DECL: {
+        // A struct nested in a body has nothing above it that could have
+        // declared it, so its name is bound and its layout forced together.
         if (!stmt->struct_decl.declared) {
-            declare_struct(state, stmt);
+            StructDecl *decl = declare_struct(state, stmt);
+
+            if (decl) {
+                layout_struct(state, decl);
+            }
         }
         break;
     }
@@ -2100,8 +2291,8 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         // to be -- which a value with no type of its own needs told.
         resolve_expr(state, stmt->assign.value, stmt->assign.target->type);
 
-        Type *target_type = stmt->assign.target->type;
-        Type *value_type = stmt->assign.value->type;
+        TypeHandle target_type = stmt->assign.target->type;
+        TypeHandle value_type = stmt->assign.value->type;
 
         if (!is_error_type(target_type) && !is_error_type(value_type) &&
             !type_accepts(target_type, value_type)) {
@@ -2140,8 +2331,8 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         resolve_expr(state, stmt->compound_assign.target, NULL);
         resolve_expr(state, stmt->compound_assign.value, NULL);
 
-        Type *target_type = stmt->compound_assign.target->type;
-        Type *value_type = stmt->compound_assign.value->type;
+        TypeHandle target_type = stmt->compound_assign.target->type;
+        TypeHandle value_type = stmt->compound_assign.value->type;
 
         if (is_error_type(target_type) || is_error_type(value_type)) {
             break;
@@ -2179,7 +2370,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         // thing the jump opcodes read. An already-poisoned condition has
         // reported its own error, so it is let through rather than complained
         // about twice.
-        Type *condition_type = stmt->ifstmt.condition->type;
+        TypeHandle condition_type = stmt->ifstmt.condition->type;
 
         if (condition_type && !is_error_type(condition_type) && !is_boolean_type(condition_type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->ifstmt.condition->span,
@@ -2203,7 +2394,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         if (stmt->forstmt.condition) {
             resolve_expr(state, stmt->forstmt.condition, NULL);
 
-            Type *condition_type = stmt->forstmt.condition->type;
+            TypeHandle condition_type = stmt->forstmt.condition->type;
 
             if (condition_type && !is_error_type(condition_type) && !is_boolean_type(condition_type)) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->forstmt.condition->span,
@@ -2246,8 +2437,8 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
     case STMT_RETURN: {
         resolve_expr(state, stmt->ret.result, state->func_context.return_type);
 
-        Type *expected = state->func_context.return_type;
-        Type *actual = stmt->ret.result ? stmt->ret.result->type : NULL;
+        TypeHandle expected = state->func_context.return_type;
+        TypeHandle actual = stmt->ret.result ? stmt->ret.result->type : NULL;
 
         // A NULL type here means "no value", which is a distinct case from a
         // poisoned one: it must still be checked against the declared type.
@@ -2290,6 +2481,7 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
             {
                 .return_type = NULL,
             },
+        .struct_decls = struct_decl_list_create(),
         .diagnostics = diagnostics,
     };
 
@@ -2311,6 +2503,18 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
         }
     }
 
+    // Layouts second, once every name in the unit is bound. A field may name a
+    // struct declared further down, and one may name the other through a 'box'
+    // in both directions -- neither resolves while the layouts are computed in
+    // the order the declarations were written.
+    //
+    // Forced here rather than left to whoever first needs a width, because the
+    // fields are read off this unit's AST, which does not outlive it: a struct
+    // leaves this unit laid out or poisoned, never merely declared.
+    for (size_t i = 0; i < state.struct_decls.size; i++) {
+        layout_struct(&state, state.struct_decls.data[i]);
+    }
+
     for (size_t i = 0; i < unit->statements.size; i++) {
         ASTStmt *stmt = unit->statements.data[i];
 
@@ -2322,6 +2526,8 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
     for (size_t i = 0; i < unit->statements.size; i++) {
         resolve_stmt(&state, unit->statements.data[i]);
     }
+
+    struct_decl_list_free(&state.struct_decls);
 
     return diagnostics_count(diagnostics) == errors_before;
 }

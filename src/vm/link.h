@@ -20,10 +20,12 @@ struct Type;
 typedef struct {
     unsigned int slot;
 
-    // What the slot holds, so the unwinder frees it by the same drop the
-    // ordinary release uses. A Type * rather than an index: this rides on the
-    // prototype rather than in an instruction, so nothing relocates it.
-    const struct Type *type;
+    // What freeing the slot does, so the unwinder frees it by the same plan the
+    // ordinary release uses, and how much of the slot to clear afterwards. Held
+    // directly rather than by index: this rides on the prototype rather than in
+    // an instruction, so nothing relocates it and nothing has to look it up.
+    const DropPlan *drop;
+    size_t release_width;
 } FrameRef;
 
 #define frame_ref_list_item_free(item) ((void)(item))
@@ -93,10 +95,43 @@ void func_proto_free(FuncPrototype *proto);
 #define func_proto_list_item_free(item) func_proto_free(item)
 GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype *)
 
-// The types OP_NEW can allocate. Types are owned by the scope arena and
-// outlive every compile, so the list holds borrowed pointers and frees none.
+/*
+    What allocating or releasing one value costs, for the types OP_NEW and
+    OP_RELEASE name.
+
+    Not a type. Everything either instruction needs is a number settled where
+    the layout was -- how many bytes to allocate, what freeing has to do, how
+    much of the slot to clear -- so the table carries those rather than a handle
+    the VM would have to ask. That is what keeps a Type out of the run: layout
+    is a fact the compiler spends, not one the interpreter consults.
+
+    Interned on the type all the same, since two mentions of one type must share
+    an entry; the type is the key and never the payload.
+*/
+typedef struct HeapShape {
+    // What OP_NEW allocates, and what a plan-less release still clears.
+    size_t size;
+
+    // What freeing a value of the type does, or NULL when it owns nothing.
+    const DropPlan *drop;
+
+    // The bytes a release clears so the slot is safe to visit again. A decision
+    // codegen made about the slot rather than a fact about the type, carried
+    // here because the release instruction has no operand bits left to hold it.
+    size_t release_width;
+} HeapShape;
+
+// The shapes OP_NEW allocates and OP_RELEASE frees. Plans are owned by the
+// scope arena and outlive every compile, so the list holds borrowed pointers
+// and frees none.
+#define heap_shape_list_item_free(item) ((void)(item))
+GAB_LIST(HeapShapeList, heap_shape_list, HeapShape)
+
+// The types a unit named, before linking turns each into a shape. Types are
+// owned by the scope arena and outlive every compile, so the list holds
+// borrowed pointers and frees none.
 #define type_list_item_free(item) ((void)(item))
-GAB_LIST(TypeList, type_list, const Type *)
+GAB_LIST(TypeList, type_list, TypeHandle)
 
 // The literals OP_LOAD_STR can load. Interned in the VM's pool, so equal text
 // is one String * and the list holds borrowed pointers.
@@ -158,7 +193,10 @@ typedef struct {
 
     FuncProtoList prototypes;
     ExternProtoList extern_protos;
+    // The types this unit named, and the shape of each. Parallel: the type is
+    // what interning is keyed on, the shape is what the VM runs on.
     TypeList types;
+    HeapShapeList type_shapes;
     StringList strings;
 
     RelocationList proto_relocations;
@@ -220,11 +258,16 @@ typedef struct {
     // displacing a single script function's index.
     ExternProtoList extern_protos;
 
-    // The types OP_NEW allocates, indexed from the instruction. A Type * is 8
+    // The types OP_NEW allocates, indexed from the instruction. A handle is 8
     // bytes and the constant pool holds 4-byte Values, so an allocation names
     // its type by index the same way a call names its prototype. Interning is
     // by pointer identity, which the type system already guarantees.
-    TypeList heap_types;
+    HeapShapeList heap_shapes;
+
+    // The type each shape came from, parallel to heap_shapes. Only linking
+    // reads it, to intern a shape on the type that produced it; nothing at run
+    // time does.
+    TypeList shape_types;
 
     // The literals OP_LOAD_STR loads, indexed from the instruction. A String *
     // is 8 bytes, so a literal names itself by index the way an allocation

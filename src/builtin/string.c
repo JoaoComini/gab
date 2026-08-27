@@ -139,22 +139,22 @@ void builtin_register_string(VM *vm) {
     // read: a borrow reaches it through 'owner', while the owning string has no
     // route to the borrow's own set. What each takes stays the borrow, so a
     // 'String' receiver lends where the parameter says 'str'.
-    Type *string_type = registry->builtins.string_type;
+    TypeHandle string_type = registry->builtins.string_type;
 
     // What every method takes and what a literal is: characters named by a
     // reference that carries how many. The owning string lends one.
-    Type *str_type = type_registry_ref_to(registry, registry->builtins.str_type);
+    TypeHandle str_type = type_registry_ref_to(registry, registry->builtins.str_type);
 
     // What 'clone' takes. A receiver by value would have to copy it, which an
     // owning string cannot do -- the rule a script's own method obeys -- so it
     // borrows the slot the header sits in.
-    Type *ref_string = type_registry_ref_to(registry, string_type);
+    TypeHandle ref_string = type_registry_ref_to(registry, string_type);
 
-    Type *int_type = registry->builtins.int_type;
-    Type *bool_type = registry->builtins.bool_type;
+    TypeHandle int_type = registry->builtins.int_type;
+    TypeHandle bool_type = registry->builtins.bool_type;
 
-    Type *const int_param[] = {int_type};
-    Type *const string_param[] = {str_type};
+    TypeHandle const int_param[] = {int_type};
+    TypeHandle const string_param[] = {str_type};
 
     builtin_register_method(vm, string_type, str_type, "len", string_len, int_type, NULL, 0);
     builtin_register_method(vm, string_type, str_type, "is_empty", string_is_empty, bool_type, NULL, 0);

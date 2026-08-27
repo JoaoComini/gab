@@ -39,6 +39,7 @@ void unit_free(Unit *unit) {
     func_proto_list_free(&unit->prototypes);
     extern_proto_list_free(&unit->extern_protos);
     type_list_free(&unit->types);
+    heap_shape_list_free(&unit->type_shapes);
     string_list_free(&unit->strings);
     relocation_list_free(&unit->proto_relocations);
     relocation_list_free(&unit->extern_relocations);
@@ -110,7 +111,7 @@ bool link_check(Program *program, Unit *unit, Diagnostics *diagnostics) {
 
     // An upper bound: interning may add fewer than the unit declared, never
     // more.
-    if (program->heap_types.size + unit->types.size > VM_MAX_HEAP_TYPES) {
+    if (program->heap_shapes.size + unit->types.size > VM_MAX_HEAP_TYPES) {
         diag_error(diagnostics, GAB_ERR_CODEGEN, (Span){0}, "too many allocated types in one program");
         return false;
     }
@@ -175,17 +176,23 @@ void link_install(Program *program, Unit *unit) {
     // each declaration is a distinct function -- which is why only types are
     // looked up rather than appended outright.
     for (size_t i = 0; i < unit->types.size; i++) {
-        size_t found = program->heap_types.size;
+        TypeHandle type = unit->types.data[i];
+        size_t found = program->heap_shapes.size;
 
-        for (size_t j = 0; j < program->heap_types.size; j++) {
-            if (program->heap_types.data[j] == unit->types.data[i]) {
+        // Keyed on the type even though the entry holds none: two mentions of
+        // one type must share an entry, and pointer identity is what says they
+        // are one type.
+        for (size_t j = 0; j < program->heap_shapes.size; j++) {
+            if (program->shape_types.data[j] == type) {
                 found = j;
                 break;
             }
         }
 
-        if (found == program->heap_types.size) {
-            type_list_add(&program->heap_types, unit->types.data[i]);
+        if (found == program->heap_shapes.size) {
+            heap_shape_list_add(&program->heap_shapes, unit->type_shapes.data[i]);
+
+            type_list_add(&program->shape_types, type);
         }
 
         unit->type_map[i] = found;

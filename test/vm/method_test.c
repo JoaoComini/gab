@@ -14,12 +14,13 @@
 
 // Compiles as far as resolution and hands back the scope, so a test can inspect
 // the types and method tables the front end settled on.
-static Type *lookup_type(TestContext *ctx, Scope *scope, const char *name) {
+static TypeHandle lookup_type(TestContext *ctx, Scope *scope, const char *name) {
     return scope_type_lookup(scope, string_from_cstr(&ctx->strings, name));
 }
 
 static Symbol *lookup_method(TestContext *ctx, Scope *scope, const char *type, const char *method) {
-    return type_find_method(lookup_type(ctx, scope, type), string_from_cstr(&ctx->strings, method));
+    return type_registry_find_method(scope->type_registry, lookup_type(ctx, scope, type),
+                                     string_from_cstr(&ctx->strings, method));
 }
 
 // The receiver clause declares the function on the type rather than in a scope.
@@ -43,7 +44,7 @@ static void test_method_lands_on_its_receiver_type() {
     // The receiver is parameter zero, so a one-parameter method has two.
     assert(damage->func.param_count == 2);
     assert(type_is_indirect(damage->func.params[0]));
-    assert(damage->func.params[0]->inner == lookup_type(&ctx, scope, "Player"));
+    assert(type_pointee(damage->func.params[0]) == lookup_type(&ctx, scope, "Player"));
 
     ast_unit_destroy(unit);
     test_context_free(&ctx);

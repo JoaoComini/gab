@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 // Equivalents the C compiler lays out, so every expectation below is checked
 // against sizeof/offsetof rather than hand-computed numbers.
@@ -35,7 +36,12 @@ typedef struct {
     int32_t only;
 } SingleC;
 
-static Type *resolve_struct(TestContext *ctx, const char *source, const char *name) {
+typedef struct {
+    void *b;
+    int32_t tag;
+} BoxRingC;
+
+static TypeHandle resolve_struct(TestContext *ctx, const char *source, const char *name) {
     Lexer lexer = lexer_create(test_in_a_module(source), ctx->arena, &ctx->strings, &ctx->diagnostics);
     Parser parser = parser_create(&lexer, &ctx->diagnostics);
     ASTUnit *unit = ast_unit_create();
@@ -58,7 +64,7 @@ static Type *resolve_struct(TestContext *ctx, const char *source, const char *na
     return scope_type_lookup(&global_scope, string_from_cstr(&ctx->strings, name));
 }
 
-static size_t offset_of(TestContext *ctx, Type *type, const char *field) {
+static size_t offset_of(TestContext *ctx, TypeHandle type, const char *field) {
     size_t offset = 0;
     bool found = type_field_offset(type, string_from_cstr(&ctx->strings, field), &offset);
 
@@ -71,11 +77,11 @@ static void test_homogeneous_struct() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Type *type = resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float }", "Vec3");
+    TypeHandle type = resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float }", "Vec3");
 
     assert(type != NULL);
     assert(type->kind == TYPE_STRUCT);
-    assert(type->field_count == 3);
+    assert(type_field_count(type) == 3);
 
     assert(type->size == sizeof(Vec3C));
     assert(type->alignment == _Alignof(Vec3C));
@@ -93,7 +99,7 @@ static void test_interior_padding() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Type *type = resolve_struct(&ctx, "struct Pad { flag: bool, value: int }", "Pad");
+    TypeHandle type = resolve_struct(&ctx, "struct Pad { flag: bool, value: int }", "Pad");
 
     assert(type->size == sizeof(LeadingPadC));
     assert(type->alignment == _Alignof(LeadingPadC));
@@ -109,7 +115,7 @@ static void test_trailing_padding() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Type *type = resolve_struct(&ctx, "struct Pad { value: int, flag: bool }", "Pad");
+    TypeHandle type = resolve_struct(&ctx, "struct Pad { value: int, flag: bool }", "Pad");
 
     assert(type->size == sizeof(TrailingPadC));
     assert(offset_of(&ctx, type, "value") == offsetof(TrailingPadC, value));
@@ -123,10 +129,10 @@ static void test_nested_struct() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Type *type = resolve_struct(&ctx,
-                                "struct Vec3 { x: float, y: float, z: float }"
-                                "struct Nested { flag: bool, position: Vec3 }",
-                                "Nested");
+    TypeHandle type = resolve_struct(&ctx,
+                                     "struct Vec3 { x: float, y: float, z: float }"
+                                     "struct Nested { flag: bool, position: Vec3 }",
+                                     "Nested");
 
     assert(type->size == sizeof(NestedC));
     assert(type->alignment == _Alignof(NestedC));
@@ -145,7 +151,7 @@ static void test_single_field_struct() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Type *type = resolve_struct(&ctx, "struct Single { only: int }", "Single");
+    TypeHandle type = resolve_struct(&ctx, "struct Single { only: int }", "Single");
 
     assert(type->size == sizeof(SingleC));
     assert(type->alignment == _Alignof(SingleC));
@@ -158,10 +164,10 @@ static void test_empty_struct() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Type *type = resolve_struct(&ctx, "struct Empty { }", "Empty");
+    TypeHandle type = resolve_struct(&ctx, "struct Empty { }", "Empty");
 
     assert(type != NULL);
-    assert(type->field_count == 0);
+    assert(type_field_count(type) == 0);
     assert(type->size == 0);
     assert(type->alignment == 1);
 
@@ -172,9 +178,9 @@ static void test_trailing_comma_allowed() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Type *type = resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float, }", "Vec3");
+    TypeHandle type = resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float, }", "Vec3");
 
-    assert(type->field_count == 3);
+    assert(type_field_count(type) == 3);
     assert(type->size == sizeof(Vec3C));
 
     test_context_free(&ctx);
@@ -208,7 +214,7 @@ static void test_field_lookup_misses() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Type *type = resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float }", "Vec3");
+    TypeHandle type = resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float }", "Vec3");
 
     size_t offset = 0;
     assert(!type_field_offset(type, string_from_cstr(&ctx.strings, "w"), &offset));
@@ -225,9 +231,9 @@ static void test_builtin_widths() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
     TypeRegistry *registry = global_scope.type_registry;
 
-    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
-    Type *float_type = type_registry_get_builtin(registry, TYPE_FLOAT);
-    Type *bool_type = type_registry_get_builtin(registry, TYPE_BOOL);
+    TypeHandle int_type = type_registry_get_builtin(registry, TYPE_INT);
+    TypeHandle float_type = type_registry_get_builtin(registry, TYPE_FLOAT);
+    TypeHandle bool_type = type_registry_get_builtin(registry, TYPE_BOOL);
 
     assert(int_type->size == sizeof(int32_t));
     assert(int_type->alignment == _Alignof(int32_t));
@@ -252,18 +258,18 @@ static void test_raw_pointer_owns_nothing() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
     TypeRegistry *registry = global_scope.type_registry;
 
-    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+    TypeHandle int_type = type_registry_get_builtin(registry, TYPE_INT);
 
-    Type *ptr = type_registry_ptr_to(registry, int_type);
+    TypeHandle ptr = type_registry_ptr_to(registry, int_type);
 
     assert(ptr->kind == TYPE_PTR);
-    assert(ptr->inner == int_type);
+    assert(type_pointee(ptr) == int_type);
 
     assert(type_registry_ptr_to(registry, int_type) == ptr);
 
     assert(!type_is_owned(ptr));
     assert(type_is_copyable(ptr));
-    assert(ptr->drop == NULL);
+    assert(type_registry_drop_of(registry, ptr) == NULL);
 
     // A 'box int' owns and a 'ref int' borrows; neither is this type.
     assert(ptr != type_registry_box_to(registry, int_type));
@@ -286,16 +292,16 @@ static void test_a_borrow_and_a_box_are_distinct_constructors() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
     TypeRegistry *registry = global_scope.type_registry;
 
-    Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+    TypeHandle int_type = type_registry_get_builtin(registry, TYPE_INT);
 
-    Type *box = type_registry_box_to(registry, int_type);
-    Type *ref = type_registry_ref_to(registry, int_type);
+    TypeHandle box = type_registry_box_to(registry, int_type);
+    TypeHandle ref = type_registry_ref_to(registry, int_type);
 
     assert(box->kind == TYPE_BOX);
     assert(ref->kind == TYPE_REF);
 
-    assert(box->inner == int_type);
-    assert(ref->inner == int_type);
+    assert(type_pointee(box) == int_type);
+    assert(type_pointee(ref) == int_type);
 
     // Interned on the pointee, so a second mention is the same Type.
     assert(type_registry_box_to(registry, int_type) == box);
@@ -314,6 +320,110 @@ static void test_a_borrow_and_a_box_are_distinct_constructors() {
     test_context_free(&ctx);
 }
 
+// A 'box T' needs T's declaration, not its layout, so two structs may each
+// point at the other however they are ordered in the file.
+static void test_mutually_recursive_structs() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    TypeHandle a = resolve_struct(&ctx,
+                                  "struct A { b: box B }\n"
+                                  "struct B { a: box A }\n",
+                                  "A");
+
+    const TypeField *field = type_find_field(a, string_from_cstr(&ctx.strings, "b"));
+
+    assert(field);
+    assert(type_pointee(field->type)->name == string_from_cstr(&ctx.strings, "B"));
+
+    test_context_free(&ctx);
+}
+
+// A struct whose field failed has no layout, and neither has anything holding
+// it: a width derived from a type that has none would be wrong rather than
+// missing.
+static void test_a_failed_field_poisons_what_holds_it() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Lexer lexer = lexer_create(test_in_a_module("struct A { b: B }\n"
+                                                "struct B { a: A }\n"),
+                               ctx.arena, &ctx.strings, &ctx.diagnostics);
+    Parser parser = parser_create(&lexer, &ctx.diagnostics);
+    ASTUnit *unit = ast_unit_create();
+
+    Scope global_scope;
+    scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
+
+    parser_parse(&parser, unit);
+    resolve_unit(ctx.arena, unit, &global_scope, NULL, &ctx.diagnostics);
+
+    assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "A")) == NULL);
+    assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "B")) == NULL);
+
+    ast_unit_destroy(unit);
+    test_context_free(&ctx);
+}
+
+// An array's element is held by value, so naming one demands its layout -- and
+// gets it, however far down the file the element was declared.
+static void test_array_of_a_struct_declared_below() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    TypeHandle holder = resolve_struct(&ctx,
+                                       "struct Holder { cells: Array Cell,2 }\n"
+                                       "struct Cell { value: int }\n",
+                                       "Holder");
+
+    assert(holder->size == 2 * sizeof(int32_t));
+
+    test_context_free(&ctx);
+}
+
+// A ring through a 'box' is finite: the indirection is a machine word whatever
+// it names, so neither struct's width waits on the other's.
+static void test_a_ring_through_a_box_is_laid_out() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    TypeHandle a = resolve_struct(&ctx,
+                                  "struct A { b: box B, tag: int }\n"
+                                  "struct B { a: box A }\n",
+                                  "A");
+
+    assert(a->size == sizeof(BoxRingC));
+    assert(a->alignment == _Alignof(BoxRingC));
+    assert(offset_of(&ctx, a, "tag") == offsetof(BoxRingC, tag));
+
+    test_context_free(&ctx);
+}
+
+// An array is a run of its element, so a struct holding an array of itself is
+// as infinite as one holding itself directly.
+static void test_rejects_an_array_of_the_struct_declaring_it() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Lexer lexer = lexer_create(test_in_a_module("struct A { cells: Array A,2 }"), ctx.arena, &ctx.strings,
+                               &ctx.diagnostics);
+    Parser parser = parser_create(&lexer, &ctx.diagnostics);
+    ASTUnit *unit = ast_unit_create();
+
+    Scope global_scope;
+    scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
+
+    parser_parse(&parser, unit);
+    resolve_unit(ctx.arena, unit, &global_scope, NULL, &ctx.diagnostics);
+
+    assert(diagnostics_count(&ctx.diagnostics) == 1);
+    assert(strcmp(diagnostics_get(&ctx.diagnostics, 0)->message, "struct 'A' cannot contain itself") == 0);
+    assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "A")) == NULL);
+
+    ast_unit_destroy(unit);
+    test_context_free(&ctx);
+}
+
 int main(void) {
     test_builtin_widths();
     test_raw_pointer_owns_nothing();
@@ -326,6 +436,11 @@ int main(void) {
     test_single_field_struct();
     test_empty_struct();
     test_trailing_comma_allowed();
+    test_mutually_recursive_structs();
+    test_a_failed_field_poisons_what_holds_it();
+    test_array_of_a_struct_declared_below();
+    test_a_ring_through_a_box_is_laid_out();
+    test_rejects_an_array_of_the_struct_declaring_it();
 
     test_unknown_field_type_is_not_registered();
     test_field_lookup_misses();

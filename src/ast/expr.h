@@ -116,7 +116,7 @@ typedef struct ASTExpr {
 
             // The array the target reaches, once any indirection is stripped.
             // Its element is what the expression yields.
-            const Type *array_type;
+            TypeHandle array_type;
         } index;
 
         struct {
@@ -149,14 +149,14 @@ typedef struct ASTExpr {
 
             // The struct being allocated, resolved from the spec. The
             // expression's own type is the pointer to it.
-            Type *type;
+            TypeHandle type;
         } new_expr;
     };
 
     Span span; // Source position, for diagnostics
 
-    Type *type;     // Filled during type resolution
-    Symbol *symbol; // Filled during symbol resolution
+    TypeHandle type; // Filled during type resolution
+    Symbol *symbol;  // Filled during symbol resolution
 } ASTExpr;
 
 ASTExpr *ast_literal_expr_create(Span span, Literal value);

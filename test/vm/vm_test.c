@@ -57,8 +57,8 @@ static void test_two_vms_are_independent() {
 
     assert(&first->env.strings != &second->env.strings);
 
-    Type *first_int = type_registry_get_builtin(first->env.global_scope.type_registry, TYPE_INT);
-    Type *second_int = type_registry_get_builtin(second->env.global_scope.type_registry, TYPE_INT);
+    TypeHandle first_int = type_registry_get_builtin(first->env.global_scope.type_registry, TYPE_INT);
+    TypeHandle second_int = type_registry_get_builtin(second->env.global_scope.type_registry, TYPE_INT);
 
     // Same name, different pools: distinct objects that must not be shared.
     assert(first_int->name != second_int->name);
@@ -132,13 +132,13 @@ static void test_types_survive_a_later_compile() {
     compile_and_run(vm, "module test;\n"
                         "struct Player { health: int, mana: int }\n");
 
-    Type *player =
+    TypeHandle player =
         scope_type_lookup(environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "test")),
                           string_from_cstr(&vm->env.strings, "Player"));
     assert(player);
 
     size_t size = player->size;
-    size_t field_count = player->field_count;
+    size_t field_count = type_field_count(player);
 
     // Enough of a second unit to reuse the memory the first one released.
     compile_and_run(vm,
@@ -148,7 +148,7 @@ static void test_types_survive_a_later_compile() {
 
     assert(strcmp(player->name->data, "Player") == 0);
     assert(player->size == size);
-    assert(player->field_count == field_count);
+    assert(type_field_count(player) == field_count);
 
     vm_free(vm);
 }
@@ -254,7 +254,7 @@ static void test_a_unit_that_fails_to_link_installs_nothing() {
                         "func first(): int { return 1; }\n");
 
     size_t protos = loaded_protos(vm);
-    size_t types = vm->program.heap_types.size;
+    size_t types = vm->program.heap_shapes.size;
 
     Diagnostics diagnostics;
     diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
@@ -273,7 +273,7 @@ static void test_a_unit_that_fails_to_link_installs_nothing() {
     diagnostics_free(&diagnostics);
 
     assert(loaded_protos(vm) == protos);
-    assert(vm->program.heap_types.size == types);
+    assert(vm->program.heap_shapes.size == types);
 
     vm_free(vm);
 }
@@ -288,7 +288,7 @@ static void test_checking_a_unit_installs_nothing() {
                         "func first(): int { return 1; }\n");
 
     size_t protos = loaded_protos(vm);
-    size_t types = vm->program.heap_types.size;
+    size_t types = vm->program.heap_shapes.size;
 
     Diagnostics diagnostics;
     diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
@@ -308,14 +308,14 @@ static void test_checking_a_unit_installs_nothing() {
 
     assert(resolve_unit(vm->env.compile_arena, ast, &staging, vm->env.module_scopes, &diagnostics));
 
-    Unit *unit = codegen_generate(ast, vm->env.arena, &vm->env.strings, &diagnostics);
+    Unit *unit = codegen_generate(ast, vm->env.arena, &vm->env.strings, staging.type_registry, &diagnostics);
     assert(unit);
 
     // Accepts, and having accepted has still changed nothing.
     assert(link_check(&vm->program, unit, &diagnostics));
 
     assert(loaded_protos(vm) == protos);
-    assert(vm->program.heap_types.size == types);
+    assert(vm->program.heap_shapes.size == types);
     assert(!scope_symbol_lookup(environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "dry")),
                                 string_from_cstr(&vm->env.strings, "second")));
 

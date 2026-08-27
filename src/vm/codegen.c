@@ -54,7 +54,7 @@ typedef struct {
     // What the slot holds. Kept for the assert in codegen_own_slot and for
     // reading a chunk back; freeing is one opcode whatever the type, and which
     // dropper runs is read off the allocation's own header at the free.
-    const Type *type;
+    TypeHandle type;
 } OwnedSlot;
 
 #define owned_list_item_free(item) ((void)(item))
@@ -92,6 +92,10 @@ typedef struct {
     // unit accumulates belongs to the compile, not to one function's frame.
     Unit *unit;
     Arena *arena;
+
+    // Where a drop plan is read from. Every type codegen meets is laid out by
+    // now, so this only ever finds one already derived.
+    TypeRegistry *registry;
 
     // Where a string literal's characters are interned. They outlive every
     // frame, so a literal's header borrows them.
@@ -194,7 +198,7 @@ static unsigned int codegen_array_lit_expr(CodegenState *state, ASTExpr *node);
 static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *node, bool auto_deref);
 static bool codegen_field_access_fits(CodegenState *state, ASTExpr *node, bool ok, size_t offset);
 static unsigned int field_target_slot_count(FieldTarget target);
-static unsigned int codegen_load_indirect_struct(CodegenState *state, ASTExpr *node, const Type *type,
+static unsigned int codegen_load_indirect_struct(CodegenState *state, ASTExpr *node, TypeHandle type,
                                                  FieldTarget target, unsigned int slots);
 static void codegen_store_indirect(CodegenState *state, ASTExpr *node, FieldTarget target, unsigned int src,
                                    unsigned int slots);
@@ -206,9 +210,9 @@ static void codegen_addr_of_into(CodegenState *state, ASTExpr *inner, unsigned i
 // Binary operators: which instruction an operator calls for, and how its right
 // operand is encoded.
 static bool expr_is_immediate_operand(const ASTExpr *node, unsigned int *out);
-static unsigned int codegen_rhs(CodegenState *state, BinOp op, ASTExpr *rhs, const Type *left_type,
+static unsigned int codegen_rhs(CodegenState *state, BinOp op, ASTExpr *rhs, TypeHandle left_type,
                                 RhsKind *kind);
-static OpCode bin_op_opcode_for(BinOp op, const Type *left_type, RhsKind kind);
+static OpCode bin_op_opcode_for(BinOp op, TypeHandle left_type, RhsKind kind);
 static OpCode bin_op_to_float_op(BinOp bin_op);
 static OpCode bin_op_to_int_op(BinOp bin_op);
 static void codegen_emit_bin_op(CodegenState *state, ASTExpr *node, unsigned int dest, unsigned int lhs,
@@ -233,9 +237,9 @@ static void codegen_emit_loop(CodegenState *state, size_t target);
 static bool expr_yields_owned(const ASTExpr *expr);
 
 // Records that 'slot' owns an object for as long as the current block runs.
-static void codegen_own_slot(CodegenState *state, unsigned int slot, const Type *type);
-static void codegen_own_slot_at(CodegenState *state, unsigned int slot, const Type *type, unsigned int depth);
-static void codegen_record_frame_ref(CodegenState *state, unsigned int slot, const Type *type);
+static void codegen_own_slot(CodegenState *state, unsigned int slot, TypeHandle type);
+static void codegen_own_slot_at(CodegenState *state, unsigned int slot, TypeHandle type, unsigned int depth);
+static void codegen_record_frame_ref(CodegenState *state, unsigned int slot, TypeHandle type);
 
 // Whether this slot already owns a reference, and so has one to drop when it is
 // overwritten.
@@ -260,7 +264,7 @@ static void codegen_drop_temporary(CodegenState *state, unsigned int slot);
 static void codegen_emit_releases_below(CodegenState *state, unsigned int keep_depth);
 
 // Emits one release, by the type of what the slot holds.
-static void codegen_emit_release(CodegenState *state, unsigned int slot, const Type *type);
+static void codegen_emit_release(CodegenState *state, unsigned int slot, TypeHandle type);
 
 // Frame slots and registers.
 static unsigned int codegen_slot_of(CodegenState *state, Symbol *symbol);
@@ -273,20 +277,22 @@ static void codegen_release_registers(CodegenState *state, unsigned int saved);
 static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned int src, unsigned int count);
 
 // Type layout in frame slots.
-static unsigned int type_slot_count(const Type *type);
-static unsigned int type_align_slots(const Type *type);
-static bool type_is_struct(const Type *type);
+static size_t slot_release_width(TypeHandle type);
+static unsigned int type_slot_count(TypeHandle type);
+static unsigned int type_align_slots(TypeHandle type);
+static bool type_is_struct(TypeHandle type);
 
 // Whether declaring a value of this type is what records its ownership, rather
 // than the assignment that fills it.
-static bool type_owns_through_members(const Type *type);
+static bool type_owns_through_members(TypeHandle type);
 
-static bool type_moves_as_slots(const Type *type);
+static bool type_moves_as_slots(TypeHandle type);
 static OpCode field_opcode_for(size_t size, bool load, bool indirect, bool *ok);
 
 // ---- Generating a unit ----
 
-Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, Diagnostics *diagnostics) {
+Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, TypeRegistry *registry,
+                       Diagnostics *diagnostics) {
     Unit *unit = calloc(1, sizeof(Unit));
 
     if (!unit) {
@@ -296,6 +302,7 @@ Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, Diagnost
     unit->prototypes = func_proto_list_create();
     unit->extern_protos = extern_proto_list_create();
     unit->types = type_list_create();
+    unit->type_shapes = heap_shape_list_create();
     unit->strings = string_list_create();
     unit->proto_relocations = relocation_list_create();
     unit->extern_relocations = relocation_list_create();
@@ -311,6 +318,7 @@ Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, Diagnost
         .max_reg = 0,
         .unit = unit,
         .arena = arena,
+        .registry = registry,
         .strings = strings,
         .local_protos = proto_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
@@ -523,7 +531,7 @@ typedef enum {
 // A 'ref' field is skipped throughout: nothing frees it, so nothing reads it as
 // an owner. A string answers here as a struct does, through the field naming
 // its characters.
-static void codegen_walk_owning_slots(CodegenState *state, const Type *type, unsigned int base,
+static void codegen_walk_owning_slots(CodegenState *state, TypeHandle type, unsigned int base,
                                       OwningSlotAction action) {
     if (type_is_indirect(type)) {
         if (!type_is_owned(type)) {
@@ -576,12 +584,12 @@ static void codegen_walk_owning_slots(CodegenState *state, const Type *type, uns
 
     // A struct owns through its fields: the walk reaches what each names by that
     // field's offset rather than by knowing where its kind keeps things.
-    if (!type || type->field_count == 0) {
+    if (!type || type_field_count(type) == 0) {
         return;
     }
 
-    for (size_t i = 0; i < type->field_count; i++) {
-        const TypeField *field = &type->fields[i];
+    for (size_t i = 0; i < type_field_count(type); i++) {
+        const TypeField *field = &type_fields(type)[i];
 
         codegen_walk_owning_slots(state, field->type, base + (unsigned int)(field->offset / VM_SLOT_SIZE),
                                   action);
@@ -1306,6 +1314,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         .chunk = func_chunk,
         .unit = state->unit,
         .arena = state->arena,
+        .registry = state->registry,
         .strings = state->strings,
         .local_protos = state->local_protos,
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
@@ -1575,7 +1584,7 @@ static bool param_owns(const Symbol *callee, size_t index) {
         return false;
     }
 
-    const Type *param = callee->func.params[index];
+    TypeHandle param = callee->func.params[index];
 
     return type_is_owned(param);
 }
@@ -1627,7 +1636,7 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
     // is by type, and the argument's own is what the copy above put there.
     struct {
         unsigned int slot;
-        const Type *type;
+        TypeHandle type;
     } owned_args[VM_MAX_FRAME_SLOTS];
     size_t owned_arg_count = 0;
 
@@ -1717,15 +1726,15 @@ static unsigned int codegen_index_base(CodegenState *state, ASTExpr *target) {
 
     // Every level, as a field access reaches through every level: a
     // 'ref box Array int,3' is two hops from the elements.
-    const Type *type = target->type;
+    TypeHandle type = target->type;
 
-    while (type_is_indirect(type->inner)) {
+    while (type_is_indirect(type_pointee(type))) {
         unsigned int next = codegen_alloc_slots(state, VM_INDIRECT_SLOTS, VM_INDIRECT_SLOTS, target->span);
 
         chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_LOAD_PTR_N, next, pointer, VM_INDIRECT_SLOTS));
 
         pointer = next;
-        type = type->inner;
+        type = type_pointee(type);
     }
 
     return pointer;
@@ -1737,8 +1746,8 @@ static unsigned int codegen_index_base(CodegenState *state, ASTExpr *target) {
 // an indirect FieldTarget and every read and write of it goes through the same
 // paths a field reached through a pointer does.
 static unsigned int codegen_index_address(CodegenState *state, ASTExpr *node) {
-    const Type *array_type = node->index.array_type;
-    const Type *element = type_array_element(array_type);
+    TypeHandle array_type = node->index.array_type;
+    TypeHandle element = type_array_element(array_type);
 
     unsigned int base = codegen_index_base(state, node->index.target);
     unsigned int index = codegen_expr(state, node->index.index);
@@ -1763,8 +1772,8 @@ static unsigned int codegen_index_address(CodegenState *state, ASTExpr *node) {
 // array, so each is generated straight into where it lands rather than into a
 // temporary the whole run is then copied from.
 static unsigned int codegen_array_lit_expr(CodegenState *state, ASTExpr *node) {
-    const Type *type = node->type;
-    const Type *element = type_array_element(type);
+    TypeHandle type = node->type;
+    TypeHandle element = type_array_element(type);
 
     unsigned int rd = codegen_alloc_slots(state, type_slot_count(type), type_align_slots(type), node->span);
 
@@ -2022,14 +2031,22 @@ static unsigned int codegen_cast_expr(CodegenState *state, ASTExpr *node) {
 // Interns a type within the unit and returns its index. An index means nothing
 // until linking gives the unit its base, so a type an earlier unit registered is
 // registered again here and the two are reconciled at link.
-static unsigned int codegen_type_index(CodegenState *state, const Type *type) {
+static unsigned int codegen_type_index(CodegenState *state, TypeHandle type) {
     for (size_t i = 0; i < state->unit->types.size; i++) {
         if (state->unit->types.data[i] == type) {
             return (unsigned int)i;
         }
     }
 
-    type_list_add(&state->unit->types, (Type *)type);
+    type_list_add(&state->unit->types, type);
+
+    // Recorded beside the type, since this is where a registry is in hand: what
+    // the VM runs on is these numbers, and linking only copies them.
+    heap_shape_list_add(&state->unit->type_shapes, (HeapShape){
+                                                       .size = type->size,
+                                                       .drop = type_registry_drop_of(state->registry, type),
+                                                       .release_width = slot_release_width(type),
+                                                   });
 
     return (unsigned int)(state->unit->types.size - 1);
 }
@@ -2038,7 +2055,7 @@ static unsigned int codegen_type_index(CodegenState *state, const Type *type) {
 // its type index needs. Every free of a named slot goes through here, so what a
 // release frees is always the type codegen knew rather than whatever the object
 // turns out to say.
-static void codegen_emit_release(CodegenState *state, unsigned int slot, const Type *type) {
+static void codegen_emit_release(CodegenState *state, unsigned int slot, TypeHandle type) {
     size_t offset =
         chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_RELEASE, slot, codegen_type_index(state, type)));
 
@@ -2047,7 +2064,7 @@ static void codegen_emit_release(CodegenState *state, unsigned int slot, const T
 }
 
 // 'new T' allocates and leaves an owned 'box T' in a pointer-sized destination.
-// The type travels by index because a Type * is 8 bytes and cannot ride in an
+// The type travels by index because a type is 8 bytes and cannot ride in an
 // instruction; the list is interned by pointer identity, which the type system
 // already guarantees.
 
@@ -2131,7 +2148,7 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
         // means loading it and following that. Summing an offset onto the outer
         // pointer would address the inner one's own slot as if the struct were
         // inline in it.
-        const Type *reached = node->type;
+        TypeHandle reached = node->type;
 
         while (auto_deref && type_is_indirect(reached)) {
             base = codegen_load_indirect_struct(state, node, reached,
@@ -2141,7 +2158,7 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
                                                     .indirect = true,
                                                 },
                                                 type_slot_count(reached));
-            reached = reached->inner;
+            reached = type_pointee(reached);
         }
 
         return (FieldTarget){
@@ -2168,17 +2185,17 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
     // that pointer lives. 'ref box Player' is the two-level case -- the borrow
     // names the slot, the slot names the object.
     if (indirect) {
-        const Type *reached = node->type;
+        TypeHandle reached = node->type;
 
-        while (type_is_indirect(reached->inner)) {
-            base = codegen_load_indirect_struct(state, node, reached->inner,
+        while (type_is_indirect(type_pointee(reached))) {
+            base = codegen_load_indirect_struct(state, node, type_pointee(reached),
                                                 (FieldTarget){
                                                     .base = base,
                                                     .offset = 0,
                                                     .indirect = true,
                                                 },
-                                                type_slot_count(reached->inner));
-            reached = reached->inner;
+                                                type_slot_count(type_pointee(reached)));
+            reached = type_pointee(reached);
         }
     }
 
@@ -2217,7 +2234,7 @@ static unsigned int field_target_slot_count(FieldTarget target) {
 // result reads like any other struct-valued expression.
 // 'type' is what lands in the destination, which is not always node->type: a
 // method call derefs its receiver, and the node's own type is the return type.
-static unsigned int codegen_load_indirect_struct(CodegenState *state, ASTExpr *node, const Type *type,
+static unsigned int codegen_load_indirect_struct(CodegenState *state, ASTExpr *node, TypeHandle type,
                                                  FieldTarget target, unsigned int slots) {
     if (target.offset > VM_MAX_FIELD_OFFSET || slots > VM_MAX_STRUCT_SLOTS) {
         if (!state->failed) {
@@ -2395,7 +2412,7 @@ static bool bin_op_has_constant_form(BinOp op) {
 // Generating it is what may allocate a register, so this runs before the result
 // register is allocated -- the order the original codegen used, and the one the
 // register numbering in the tests reflects.
-static unsigned int codegen_rhs(CodegenState *state, BinOp op, ASTExpr *rhs, const Type *left_type,
+static unsigned int codegen_rhs(CodegenState *state, BinOp op, ASTExpr *rhs, TypeHandle left_type,
                                 RhsKind *kind) {
     unsigned int value = 0;
 
@@ -2430,7 +2447,7 @@ static unsigned int codegen_rhs(CodegenState *state, BinOp op, ASTExpr *rhs, con
 // The instruction an operator and its right operand call for. A float literal
 // takes the constant-pool form, and anything else the register or immediate
 // form the k bit already distinguished.
-static OpCode bin_op_opcode_for(BinOp op, const Type *left_type, RhsKind kind) {
+static OpCode bin_op_opcode_for(BinOp op, TypeHandle left_type, RhsKind kind) {
     // A string is compared by its characters rather than its slots, so the
     // opcode is chosen by the operand type before the numeric families.
     if (left_type->kind == TYPE_STRING) {
@@ -2692,18 +2709,21 @@ static bool expr_yields_owned(const ASTExpr *expr) {
 // Recorded once per slot: a slot reused by a later block is the same slot, and
 // the runtime clears one when it frees it, so a second entry would only make the
 // unwinder visit an empty slot twice.
-static void codegen_record_frame_ref(CodegenState *state, unsigned int slot, const Type *type) {
+static void codegen_record_frame_ref(CodegenState *state, unsigned int slot, TypeHandle type) {
     for (size_t i = 0; i < state->frame_refs.size; i++) {
         if (state->frame_refs.data[i].slot == slot) {
             return;
         }
     }
 
-    frame_ref_list_add(&state->frame_refs, (FrameRef){.slot = slot, .type = type});
+    frame_ref_list_add(&state->frame_refs, (FrameRef){
+                                               .slot = slot,
+                                               .drop = type_registry_drop_of(state->registry, type),
+                                               .release_width = slot_release_width(type),
+                                           });
 }
 
-static void codegen_own_slot_at(CodegenState *state, unsigned int slot, const Type *type,
-                                unsigned int depth) {
+static void codegen_own_slot_at(CodegenState *state, unsigned int slot, TypeHandle type, unsigned int depth) {
     // A 'ref T' slot borrows, so it never owns and is never freed. Callers
     // check this too, but a stray own here would be a use-after-free rather
     // than a leak, so it is refused at the one place ownership is recorded.
@@ -2717,7 +2737,7 @@ static void codegen_own_slot_at(CodegenState *state, unsigned int slot, const Ty
 
 // As codegen_own_slot_at, at the depth of the block being generated. For a slot
 // the current block itself owns: a temporary, or a parameter placed at entry.
-static void codegen_own_slot(CodegenState *state, unsigned int slot, const Type *type) {
+static void codegen_own_slot(CodegenState *state, unsigned int slot, TypeHandle type) {
     codegen_own_slot_at(state, slot, type, state->depth);
 }
 
@@ -2882,9 +2902,27 @@ static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned 
 
 // ---- Type layout in frame slots ----
 
+/*
+    The bytes a release has to clear so the slot is safe to visit again: the
+    pointer for an owning indirection, and the whole header for an array, whose
+    length must go with its pointer or a second visit would walk a freed block.
+
+    A decision about the slot rather than a fact about the type, which is why it
+    is settled here beside the other slot arithmetic and not asked of the type.
+    Nothing at run time computes it: what the VM carries is the number, and a
+    slot whose concrete type is not known until run time would carry its own.
+*/
+static size_t slot_release_width(TypeHandle type) {
+    if (!type) {
+        return 0;
+    }
+
+    return type->kind == TYPE_ARRAY || type->kind == TYPE_STRING ? type->size : sizeof(void *);
+}
+
 // A value occupies ceil(size / 4) consecutive slots, which is 1 for every
 // scalar.
-static unsigned int type_slot_count(const Type *type) {
+static unsigned int type_slot_count(TypeHandle type) {
     if (!type) {
         return 1;
     }
@@ -2894,7 +2932,7 @@ static unsigned int type_slot_count(const Type *type) {
 
 // Slot alignment a value of this type needs. A scalar wants one; an 8-byte
 // pointer wants two, so that it lands on its natural alignment.
-static unsigned int type_align_slots(const Type *type) {
+static unsigned int type_align_slots(TypeHandle type) {
     if (!type || type->alignment <= VM_SLOT_SIZE) {
         return 1;
     }
@@ -2902,7 +2940,7 @@ static unsigned int type_align_slots(const Type *type) {
     return (unsigned int)(type->alignment / VM_SLOT_SIZE);
 }
 
-static bool type_is_struct(const Type *type) { return type && type->kind == TYPE_STRUCT; }
+static bool type_is_struct(TypeHandle type) { return type && type->kind == TYPE_STRUCT; }
 
 // A struct is written through its fields and an array through its elements: the
 // slot goes on holding the same value while what it owns changes underneath, so
@@ -2912,7 +2950,7 @@ static bool type_is_struct(const Type *type) { return type && type->kind == TYPE
 // Derived from the same two questions the owning walk asks rather than from a
 // list of kinds, so a shape that starts owning through members cannot be added
 // to one and forgotten in the other.
-static bool type_owns_through_members(const Type *type) {
+static bool type_owns_through_members(TypeHandle type) {
     return type_is_owned(type) && !type_is_indirect(type);
 }
 
@@ -2921,8 +2959,8 @@ static bool type_owns_through_members(const Type *type) {
 // inline — a struct and a string alike — and so is a pointer, which is 8 bytes
 // and has no 8-wide opcode. Before heap objects existed no struct could hold a
 // pointer, so the two cases only meet now.
-static bool type_moves_as_slots(const Type *type) {
-    return type_is_indirect(type) || (type && type->field_count > 0);
+static bool type_moves_as_slots(TypeHandle type) {
+    return type_is_indirect(type) || (type && type_field_count(type) > 0);
 }
 
 // The field's width is known at compile time, so it picks the opcode instead
