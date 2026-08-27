@@ -64,9 +64,13 @@
 // pointer itself. Read once where a frame starts running and written back where
 // one stops, which is the only place anything else can observe it.
 //
-// 'ip' is the local; VM_SAVE_IP and VM_LOAD_IP move it across that boundary.
-#define VM_SAVE_IP() (vm->instruction_pointer = ip)
-#define VM_LOAD_IP() (ip = vm->instruction_pointer)
+// 'pc' is the local, and it is a pointer rather than an index: the fetch is
+// then one load with the increment folded into it, where an index puts an
+// address computation between the step and the load -- on the dependency chain
+// every dispatch waits for. The frame keeps an index, which is what survives a
+// chunk being reached again, so the two forms are converted at the boundary.
+#define VM_SAVE_IP() (vm->instruction_pointer = (ptrdiff_t)(pc - code))
+#define VM_LOAD_IP() (pc = code + vm->instruction_pointer)
 
 // Where the running frame's registers begin, for the same reason the pointer
 // lives in a local: a handler writing through 'vm' could be writing this field,
@@ -100,11 +104,11 @@
 // a normal end of function.
 #define VM_FETCH()                                                                                           \
     do {                                                                                                     \
-        if (vm->frame_count == 0 || ip < 0 || ip >= (ptrdiff_t)code_size) {                                  \
+        if (vm->frame_count == 0 || pc < code || pc >= code + code_size) {                                   \
             goto vm_done;                                                                                    \
         }                                                                                                    \
                                                                                                              \
-        instruction = code[ip];                                                                              \
+        instruction = *pc;                                                                                   \
         op = VM_DECODE_OPCODE(instruction);                                                                  \
     } while (0)
 
@@ -122,10 +126,10 @@
 // reading whatever follows the chunk.
 #define VM_FETCH_NEXT()                                                                                      \
     do {                                                                                                     \
-        assert(vm->frame_count > 0 && ip >= 0 && ip < (ptrdiff_t)code_size &&                                \
+        assert(vm->frame_count > 0 && pc >= code && pc < code + code_size &&                                 \
                "a straight-line step left the chunk; it needed VM_JUMPED or VM_RETRY");                      \
                                                                                                              \
-        instruction = code[ip];                                                                              \
+        instruction = *pc;                                                                                   \
         op = VM_DECODE_OPCODE(instruction);                                                                  \
     } while (0)
 
@@ -151,7 +155,7 @@
 // never gone back around.
 #define VM_NEXT()                                                                                            \
     do {                                                                                                     \
-        ip += 1;                                                                                             \
+        pc += 1;                                                                                             \
         VM_FETCH_NEXT();                                                                                     \
         VM_DISPATCH(op)                                                                                      \
     } while (0)

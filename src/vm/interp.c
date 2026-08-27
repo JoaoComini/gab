@@ -411,7 +411,7 @@ static bool vm_check_divisor(VM *vm, Instruction instruction, const char *zero_m
 // function it is invoking, so there is exactly one interpreter either way.
 static void vm_run_loop(VM *vm) {
     CallFrame *frame;
-    ptrdiff_t ip = 0;
+    const Instruction *pc = NULL;
     Chunk *chunk;
     Instruction instruction;
     OpCode op;
@@ -738,7 +738,7 @@ static void vm_run_loop(VM *vm) {
                 // arguments the caller already placed above dest.
                 size_t base = frame->base + dest * VM_SLOT_SIZE;
 
-                if (!vm_push_frame(vm, proto, base, ip + 1, dest)) {
+                if (!vm_push_frame(vm, proto, base, (pc - code) + 1, dest)) {
                     // Unwinding here is what makes the failure safe; the reason is
                     // left on the VM because the loop has no caller to return to.
                     vm_fail(vm, VM_RUN_ERR_CALL_DEPTH, "call depth exceeded");
@@ -969,15 +969,15 @@ static void vm_run_loop(VM *vm) {
                 vm_write_i32(vm, VM_DECODE_R_RD(instruction), next);
 
                 if (next < vm_read_i32(vm, VM_DECODE_R_R1(instruction))) {
-                    ip += VM_DECODE_R_SIMM(instruction);
+                    pc += VM_DECODE_R_SIMM(instruction);
                 }
 
-                ip += 1;
+                pc += 1;
                 VM_JUMPED();
             }
             VM_CASE(OP_JMP) {
-                ip += VM_DECODE_I_SIMM(instruction);
-                ip += 1;
+                pc += VM_DECODE_I_SIMM(instruction);
+                pc += 1;
                 VM_JUMPED();
             }
             VM_CASE(OP_JMP_IF_FALSE) {
@@ -985,10 +985,10 @@ static void vm_run_loop(VM *vm) {
 
                 bool cond = vm_read_i32(vm, reg);
                 if (!cond) {
-                    ip += VM_DECODE_I_SIMM(instruction);
+                    pc += VM_DECODE_I_SIMM(instruction);
                 }
 
-                ip += 1;
+                pc += 1;
                 VM_JUMPED();
             }
             VM_CASE(OP_JMP_IF_TRUE) {
@@ -996,10 +996,10 @@ static void vm_run_loop(VM *vm) {
 
                 bool cond = vm_read_i32(vm, reg);
                 if (cond) {
-                    ip += VM_DECODE_I_SIMM(instruction);
+                    pc += VM_DECODE_I_SIMM(instruction);
                 }
 
-                ip += 1;
+                pc += 1;
                 VM_JUMPED();
             }
 
