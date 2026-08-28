@@ -68,6 +68,38 @@ static void test_a_static_is_refused_by_its_declaration_not_its_parameters() {
                           "func main(): int { let c: Counter; return c.of(); }\n"));
 }
 
+// A function a type owns may consume what it is given: parameter zero is an
+// ordinary parameter, so the call site has 'move' to spell the transfer with.
+// A receiver clause has no such spelling, which is why it may not own.
+static void test_a_static_function_consumes_what_it_is_given() {
+    assert(test_run_int("struct Holder { n: int }\n"
+                        "func Holder::take(h: box Holder): int { return h.n; }\n"
+                        "func main(): int {\n"
+                        "    let h: box Holder = new Holder;\n"
+                        "    h.n = 6;\n"
+                        "    return Holder::take(move h);\n"
+                        "}\n"
+                        "let r: int = main();") == 6);
+}
+
+// The sugar borrows but never moves: a consuming function is reached on the
+// type, where 'move' is written, rather than through a value that would
+// transfer ownership with nothing at the call site saying so.
+static void test_a_consuming_function_is_not_reached_through_a_value() {
+    const char *source = "struct Holder { n: int }\n"
+                         "func Holder::take(h: box Holder): int { return h.n; }\n"
+                         "func main(): int {\n"
+                         "    let h: box Holder = new Holder;\n"
+                         "    return h.take();\n"
+                         "}\n";
+
+    assert(!test_compiles(source));
+
+    // The message names the spelling that works, since the call is refused for
+    // how it was written rather than for what it names.
+    assert(test_diagnostic_mentions(source, "Holder::take(move ...)"));
+}
+
 int main(void) {
     test_a_static_function_is_called_on_its_type();
     test_a_static_function_takes_its_declared_parameters();
@@ -77,6 +109,8 @@ int main(void) {
     test_a_static_function_needs_a_type_it_declares();
     test_a_receiver_and_an_owner_do_not_combine();
     test_a_static_is_refused_by_its_declaration_not_its_parameters();
+    test_a_static_function_consumes_what_it_is_given();
+    test_a_consuming_function_is_not_reached_through_a_value();
 
     printf("All static function tests passed\n");
     return 0;

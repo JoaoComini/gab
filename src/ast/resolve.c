@@ -678,6 +678,19 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         return;
     }
 
+    // The sugar borrows, and never moves: a function consuming parameter zero
+    // is reached where the transfer can be written, so that no call site gives
+    // up ownership without saying so.
+    if (method->func.param_count > 0 && method->func.params[0]->kind == TYPE_BOX) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                   "'%s' consumes what it takes, so it is called as '%s::%s(move ...)' rather than on a "
+                   "value",
+                   method_name->data, type_name(state, base), method_name->data);
+
+        expr->type = resolver_error_type(state);
+        return;
+    }
+
     // A function the type owns has no receiver, so no value reaches it and
     // there is no parameter zero to reconcile against.
     if (!method->func.has_receiver) {
@@ -1990,59 +2003,71 @@ static const Type *resolve_param_type(ResolverState *state, ASTField *param) {
 // The Symbol is an ordinary SYMBOL_FUNC whose parameter zero is the receiver.
 // That is what makes the call free at runtime: codegen puts the receiver in the
 // first argument slot and emits the OP_CALL it already would.
-static void declare_method(ResolverState *state, ASTStmt *stmt) {
+// Declares a function into a type's own set rather than into a scope: it has no
+// free-standing name, so 'Player.update' and 'Enemy.update' coexist and neither
+// is reachable as a bare 'update'.
+//
+// One path for both spellings. 'func (p: ref Player) damage(...)' and
+// 'func Vec::new(...)' differ only in whether a receiver clause bound parameter
+// zero; what a type answers to is one set either way, and the Symbol is an
+// ordinary SYMBOL_FUNC in both cases.
+static void declare_owned(ResolverState *state, ASTStmt *stmt) {
     ASTField *receiver = stmt->func_decl.receiver;
 
-    const Type *receiver_type = resolve_type_expr(state, receiver->type_expr, receiver->span);
+    // A receiver names the owning type as its own; '::' names it directly.
+    const Type *declared_owner = receiver ? resolve_type_expr(state, receiver->type_expr, receiver->span)
+                                          : resolve_type_expr(state, stmt->func_decl.owner, stmt->span);
 
-    if (is_error_type(receiver_type)) {
+    if (is_error_type(declared_owner)) {
         return;
     }
-    const Type *base = receiver_base_type(receiver_type);
 
-    // A unit declares methods on its own structs only. A builtin carries the
+    Span owner_span = receiver ? receiver->span : stmt->span;
+    const Type *base = receiver ? receiver_base_type(declared_owner) : declared_owner;
+
+    if (!base) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, owner_span,
+                   "a receiver must be a struct or a pointer to one, found %s",
+                   type_name(state, declared_owner));
+        return;
+    }
+
+    // A unit declares functions on its own structs only. A builtin carries the
     // ones the VM registered, and a second set declared over them would have no
     // module to belong to and no way to be told apart from the first.
-    if (!base || base->kind != TYPE_STRUCT) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, receiver->span,
-                   "a method's receiver must be a struct or a pointer to one, found %s",
-                   type_name(state, receiver_type));
+    if (receiver && base->kind != TYPE_STRUCT) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, owner_span,
+                   "a receiver must be a struct or a pointer to one, found %s",
+                   type_name(state, declared_owner));
         return;
     }
 
-    // A method never owns its receiver. A parameter may, but only because a
-    // call site can say 'move' where it hands one over; a receiver has no such
-    // spelling -- 'p.consume()' gives no place to mark the transfer -- so
-    // 'box T' here would be an ownership nothing could grant.
-    //
-    // 'ref T' is the form that says what is true. A receiver by value stays
-    // available as 'T', which copies; the two axes are separate, and only this
-    // one is about ownership.
-    if (receiver_type->kind == TYPE_BOX) {
-        diag_error(
-            state->diagnostics, GAB_ERR_TYPE, receiver->span,
-            "a method borrows its receiver rather than owning it, so write 'ref %s' instead of 'box %s'",
-            base->name->data, base->name->data);
+    // A receiver never owns: the sugar that reaches it -- 'p.consume()' -- has
+    // no place to mark the transfer, so 'box T' here would be an ownership
+    // nothing could grant. A function that consumes takes it as an ordinary
+    // parameter instead, where the call site says 'move'.
+    if (receiver && declared_owner->kind == TYPE_BOX) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, owner_span,
+                   "a receiver borrows rather than owns; write 'ref %s', or take it as a parameter of "
+                   "'%s::%.*s' to consume it",
+                   base->name->data, base->name->data, (int)stmt->func_decl.name.length,
+                   stmt->func_decl.name.data);
         return;
     }
 
     // The other axis: a receiver by value is a copy, which a type holding an
-    // owner has no way to make. Nothing here could consume it instead -- a call
-    // gives no place to spell the transfer, which is what the check above says
-    // -- so the borrow is the only thing such a receiver could mean, and it is
-    // written rather than assumed.
-    if (!type_is_indirect(receiver_type) && !type_is_copyable(receiver_type)) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, receiver->span,
+    // owner has no way to make. The borrow is the only thing such a receiver
+    // could mean, and it is written rather than assumed.
+    if (receiver && !type_is_indirect(declared_owner) && !type_is_copyable(declared_owner)) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, owner_span,
                    "%s owns what it holds, so a receiver by value cannot copy it; write 'ref %s'",
                    base->name->data, base->name->data);
         return;
     }
 
-    // Go's rule: a method belongs with the module that declares its receiver,
-    // so the type has to be one this scope holds rather than one it inherits.
     if (!scope_type_lookup_local(state->current_scope, base->name)) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, receiver->span,
-                   "cannot declare a method on '%s', which this module does not declare", base->name->data);
+        diag_error(state->diagnostics, GAB_ERR_TYPE, owner_span,
+                   "cannot declare a function on '%s', which this module does not declare", base->name->data);
         return;
     }
 
@@ -2054,12 +2079,12 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
 
     stmt->func_decl.resolved_return_type = return_type;
 
-    String *method_name = resolver_intern(state, stmt->func_decl.name);
+    String *name = resolver_intern(state, stmt->func_decl.name);
 
     // Not scope_decl_func: this name lives on the type, not in a scope. The
     // Symbol is built directly for the same reason.
-    Symbol *method = arena_alloc(resolver_owner_arena(state), sizeof(Symbol));
-    *method = (Symbol){
+    Symbol *func = arena_alloc(resolver_owner_arena(state), sizeof(Symbol));
+    *func = (Symbol){
         .kind = SYMBOL_FUNC,
         .scope_depth = state->current_scope->depth,
         .pinned = false,
@@ -2069,28 +2094,33 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
                 .params = NULL,
                 .param_count = 0,
                 .func_index = SYMBOL_FUNC_NO_BODY,
-                .has_receiver = true,
+                .has_receiver = receiver != NULL,
             },
     };
 
-    // The receiver is parameter zero, so the declared parameters shift up one.
-    size_t param_count = stmt->func_decl.params.size + 1;
+    // A receiver is parameter zero, so the declared parameters shift up one.
+    size_t declared = stmt->func_decl.params.size;
+    size_t param_count = declared + (receiver ? 1 : 0);
 
-    method->func.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(const Type *));
-    method->func.param_count = param_count;
-    method->func.params[0] = receiver_type;
+    if (param_count > 0) {
+        func->func.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(const Type *));
+        func->func.param_count = param_count;
 
-    for (size_t i = 0; i < stmt->func_decl.params.size; i++) {
-        ASTField *param = stmt->func_decl.params.data[i];
+        if (receiver) {
+            func->func.params[0] = declared_owner;
+        }
 
-        method->func.params[i + 1] = resolve_param_type(state, param);
+        for (size_t i = 0; i < declared; i++) {
+            func->func.params[i + (receiver ? 1 : 0)] =
+                resolve_param_type(state, stmt->func_decl.params.data[i]);
+        }
     }
 
     // 'clone' is the remedy the implicit-copy diagnostic names, so its shape is
     // fixed: it duplicates its receiver and yields another of the same type.
     // Checked here rather than at a call so a type declaring the wrong thing
     // hears about it where it wrote it.
-    if (method_name == resolver_intern(state, string_ref_create("clone"))) {
+    if (receiver && name == resolver_intern(state, string_ref_create("clone"))) {
         if (return_type != base) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                        "'clone' duplicates its receiver, so it must return %s, not %s", base->name->data,
@@ -2098,25 +2128,22 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
             return;
         }
 
-        if (stmt->func_decl.params.size > 0) {
+        if (declared > 0) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                        "'clone' duplicates its receiver and takes nothing else");
             return;
         }
     }
 
-    if (!type_registry_add_method(state->current_scope->type_registry, base, method_name, method)) {
-        diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' already has a method '%s'",
-                   base->name->data, method_name->data);
+    if (!type_registry_add_method(state->current_scope->type_registry, base, name, func)) {
+        diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' already has a function '%s'",
+                   base->name->data, name->data);
         return;
     }
 
-    stmt->func_decl.symbol = method;
+    stmt->func_decl.symbol = func;
 }
 
-// 'func Vec::new(...)' -- a function on a type that no value reaches. It lands
-// in the same method table a method does, since what a type answers to is one
-// set; what tells the two apart is that nothing here is parameter zero.
 // 'Type::name' resolved against the type's own function set. NULL when the name
 // is not qualified, when the first half names no type, or when the type answers
 // with a method: a method needs a receiver, and this spelling gives none.
@@ -2156,77 +2183,11 @@ static Symbol *resolve_static_func(ResolverState *state, ASTExpr *expr) {
     return found;
 }
 
-static void declare_static(ResolverState *state, ASTStmt *stmt) {
-    const Type *owner = resolve_type_expr(state, stmt->func_decl.owner, stmt->span);
-
-    if (is_error_type(owner)) {
-        return;
-    }
-
-    // A method belongs with the module declaring its type, and a static
-    // belongs with it for the same reason.
-    if (!scope_type_lookup_local(state->current_scope, owner->name)) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
-                   "cannot declare a function on '%s', which this module does not declare",
-                   owner->name->data);
-        return;
-    }
-
-    const Type *return_type = resolve_type_expr(state, stmt->func_decl.return_type, stmt->span);
-
-    if (reject_unsized(state, return_type, stmt->span, "returned")) {
-        return_type = resolver_error_type(state);
-    }
-
-    stmt->func_decl.resolved_return_type = return_type;
-
-    String *name = resolver_intern(state, stmt->func_decl.name);
-
-    Symbol *func = arena_alloc(resolver_owner_arena(state), sizeof(Symbol));
-    *func = (Symbol){
-        .kind = SYMBOL_FUNC,
-        .scope_depth = state->current_scope->depth,
-        .pinned = false,
-        .func =
-            {
-                .return_type = return_type,
-                .params = NULL,
-                .param_count = 0,
-                .func_index = SYMBOL_FUNC_NO_BODY,
-                .has_receiver = false,
-            },
-    };
-
-    size_t param_count = stmt->func_decl.params.size;
-
-    if (param_count > 0) {
-        func->func.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(const Type *));
-        func->func.param_count = param_count;
-
-        for (size_t i = 0; i < param_count; i++) {
-            func->func.params[i] = resolve_param_type(state, stmt->func_decl.params.data[i]);
-        }
-    }
-
-    if (!type_registry_add_method(state->current_scope->type_registry, owner, name, func)) {
-        diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' already has a method '%s'",
-                   owner->name->data, name->data);
-        return;
-    }
-
-    stmt->func_decl.symbol = func;
-}
-
 static void declare_func(ResolverState *state, ASTStmt *stmt) {
     stmt->func_decl.declared = true;
 
-    if (stmt->func_decl.receiver) {
-        declare_method(state, stmt);
-        return;
-    }
-
-    if (stmt->func_decl.owner) {
-        declare_static(state, stmt);
+    if (stmt->func_decl.receiver || stmt->func_decl.owner) {
+        declare_owned(state, stmt);
         return;
     }
 
