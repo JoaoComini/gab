@@ -89,11 +89,6 @@ typedef enum {
     OP_CMP_EQS,
     OP_CMP_NES,
 
-    // Joins two strings into a freshly allocated one, whose characters are the
-    // payload of a heap object the destination slot then owns. Allocating is
-    // what makes the result owning: neither operand's characters can grow in
-    // place, and the arena's belong to the unit rather than to a frame.
-    OP_CONCAT,
     OP_CMP_EQF,
     OP_CMP_NEF,
     OP_CMP_LEF,
@@ -374,15 +369,10 @@ typedef enum {
 #define VM_MAX_HEAP_TYPES VM_MAX_CONSTANTS
 #define VM_MAX_STRINGS VM_MAX_CONSTANTS
 
-// A string value is an address and a count. The count is padded out to the
-// address's alignment, which is what makes the script's layout the C one -- so it
-// costs a slot more than its two fields need.
+// A string value is the block holding its characters and a count of the live
+// ones. The count is padded out to the block's alignment, which is what makes
+// the script's layout the C one.
 #define VM_STRING_SLOTS ((unsigned int)(sizeof(GabStringValue) / VM_SLOT_SIZE))
-
-// The most fields any reference carries, which is the two a run of characters
-// is named by. A bound rather than an allocation, so a lend copies into a frame
-// array instead of asking the arena for two pointers.
-#define VM_MAX_LENT_FIELDS 4
 
 // The slots one frame addresses, which is what a register operand indexes.
 #define VM_MAX_FRAME_SLOTS ((1 << 8) - 1)

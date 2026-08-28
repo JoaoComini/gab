@@ -18,17 +18,38 @@ typedef struct TypeRegistry TypeRegistry;
 */
 
 /*
-    A 'String' value: where the characters are and how many there are. Passed
-    and copied by value like a small struct, and owning nothing -- the
-    characters belong to whatever allocated them, which for a literal is the
-    unit's arena.
+    A 'block T' value: where the elements are, how many the memory has room for,
+    and how many of them are live.
 
-    Laid out to tile the stack exactly, so a string in a frame slot and a string
-    in a struct field are the same bytes.
+    Everything freeing it needs, which is what makes a block the one owning
+    shape that answers for itself. The capacity is what the memory is freed at;
+    the length is how far into it anything was written, and the two are
+    different questions -- memory has no mark telling a written element from a
+    zeroed one.
+
+    The length rides in what the capacity's alignment already padded out, so
+    carrying it costs nothing: a block is two words either way.
+
+    Self-sufficiency is the point. A count kept in a sibling field would make
+    this field owning without being freeable alone, and every walk that descends
+    into a value would have to be told to stop here.
 */
 typedef struct {
-    const char *data;
+    void *data;
+    int32_t capacity;
     int32_t length;
+} GabBlockValue;
+
+/*
+    A 'String' value: the block holding its characters, which carries how many
+    there are.
+
+    One field, because a block answers for itself -- what a string adds to it is
+    that the characters are text, not a number the block was missing. A
+    'Vec<T>' is the same shape with a different element.
+*/
+typedef struct {
+    GabBlockValue block;
 } GabStringValue;
 
 /*
@@ -59,20 +80,6 @@ typedef struct {
     int32_t length;
 } GabArrayValue;
 
-/*
-    A 'block T' value: where the elements are and how many the memory has room
-    for.
-
-    The capacity, not a length: how many elements have been written is the
-    business of whatever holds the block, since the memory itself carries no
-    mark distinguishing a written element from a zeroed one. So this is what the
-    block is freed at, and nothing more.
-*/
-typedef struct {
-    void *data;
-    int32_t capacity;
-} GabBlockValue;
-
 typedef struct ObjectHeader {
     // What freeing the payload has to do, and the only thing the header
     // carries. A plan rather than the type it came from: freeing needs the
@@ -96,6 +103,21 @@ _Static_assert(sizeof(ObjectHeader) % 8 == 0, "the header must not misalign the 
 // computed in size_t. That product cannot wrap while a size_t is this wide, so
 // allocating an array never has to check for it.
 _Static_assert(sizeof(size_t) >= 8, "an array's size computation assumes a 64-bit size_t");
+
+/*
+    Growing a block, which is what every collection built on one does to make
+    room. Here rather than in each of them: a string and a vector reserve the
+    same way and differ only in what one element is, so 'stride' is the whole of
+    what they do not share.
+*/
+
+// Makes room for 'extra' more elements past the live ones, growing the block if
+// they do not fit. Doubling, so that appending n elements copies O(n) times
+// rather than once per append.
+//
+// False when the allocation would overflow or fails, leaving the block as it
+// was: the caller must not then write what it was making room for.
+bool block_reserve(Allocator allocator, GabBlockValue *block, int32_t extra, size_t stride);
 
 // Builds the drop plan for a laid-out type, or NULL when it owns nothing.
 // Derived once per type and never on a free path, which is what lets the plan

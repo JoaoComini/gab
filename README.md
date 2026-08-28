@@ -162,7 +162,7 @@ outlives every value that reads them, so a literal *is* a `ref str`.
 `str` is the characters themselves, and nothing holds one: how far a run of them
 goes is not in its type, so no slot, field or parameter has a width to reserve.
 What names them is a `ref str`, which carries the address and the count side by
-side — two words, the same two an owning `String` holds. It is what most code
+side — two words. It is what most code
 passes around; `String` is what you reach for when the characters have to
 outlive the expression that made them.
 
@@ -174,26 +174,18 @@ word and a `ref str` is two. What decides is the pointee, never the reference.
 A `ref String` is therefore a different thing again: `String` is sized, so a
 reference to one is the plain address of a slot holding a header. Nothing
 converts it to a `ref str` implicitly — deref it and the `String` lends from
-there. A literal borrows the arena; `..` joins, allocating a `String` that the
+there. A literal borrows the arena; `to_owned()` allocates a `String` that the
 slot it lands in frees:
 
 ```
 func greet(name: ref str): String {
-    return "hello, " .. name;     // allocates; the caller owns what comes back
+    let line: String = "hello, ".to_owned();
+    line.append(name);            // grows in place; the caller owns the result
+    return line;
 }
 
 let banner: ref str = "gab";      // borrows the arena, frees nothing
 ```
-
-Joining has its own operator rather than overloading `+`. Arithmetic does not
-allocate and joining always does, and which happened should be readable without
-knowing the operand types. `..` binds looser than arithmetic and tighter than
-comparison, and it is the operator an array will join with too.
-
-A join always allocates, whatever its operands are: `"hello, " .. "world"` owns
-its characters exactly as a join with a runtime operand does. What a join may
-initialise is decided by how it was written rather than by what the compiler
-could evaluate early, so a literal is the only string that borrows the arena.
 
 `to_owned()` copies the characters a borrow names into a string that owns them,
 which is how anything arena-backed becomes something a `String` slot may hold.
@@ -202,15 +194,27 @@ back its own type: a `ref str` yields a `String`.
 
 ```
 let borrowed: ref str = "ab";            // borrows the arena
-let owned: String = "a" .. "b";          // allocates; the slot frees it
 let copied: String = "ab".to_owned();    // copies the arena's characters
+```
+
+A `String` owns a block of characters and counts how many of them are live, the
+same two fields a `Vec<T>` holds and freed by the same walk. The block carries a
+capacity beside the address, so a string has room past its length to grow into:
+`push` adds one character and `append` adds another string's, doubling the block
+when the live characters fill it. What it lends out is unchanged — a `ref str`
+is where the characters are and how many, never the capacity they sit in.
+
+```
+let mut: String = "ab".to_owned();
+mut.push(99);                            // 'abc'
+mut.append("de");                        // 'abcde'
 ```
 
 `new String` allocates a heap slot holding a header, which zeroed is the empty
 string — the same thing `new Player` does for a struct's layout. Only an owned
-value may be stored where a string owns, so a `box String` takes a join and
-refuses a literal: the slot frees what it holds, and a borrow names characters
-it did not allocate.
+value may be stored where a string owns, so a `box String` takes an owned copy
+and refuses a literal: the slot frees what it holds, and a borrow names
+characters it did not allocate.
 
 A host struct holds a `ref str`: the host allocated those characters and goes
 on owning them, so the script reads them and frees nothing. That is what keeps a
@@ -401,7 +405,7 @@ more or less, and a second spelling would say nothing the first does not.
 | Declarations | `let` with inferred or annotated type, `func`, `struct`, `module` |
 | Functions | Parameters and returns of any type, structs by value, functions a type owns, recursion, forward references |
 | Control flow | `if` / `else`, `for` in three forms, `break`, `continue`, `return`, nested blocks with shadowing |
-| Operators | `+` `-` `*` `/` `%`, unary `-` `!`, `==` `!=` `<` `>` `<=` `>=`, `&&` `||`, unary `*`, field access, indexing `xs[i]`, `..` joins |
+| Operators | `+` `-` `*` `/` `%`, unary `-` `!`, `==` `!=` `<` `>` `<=` `>=`, `&&` `||`, unary `*`, field access, indexing `xs[i]` |
 | Conversions | `int(x)` and `float(x)`; nothing converts implicitly |
 | Assignment | `=`, and compound `+=` `-=` `*=` `/=` `%=` on any assignable target |
 | Memory | Unique ownership, `new`, `ref` borrows, implicit copy, explicit `move`, user-declared `clone`, scope-based free. A top-level variable may not own: nothing closes over it to free what it holds |

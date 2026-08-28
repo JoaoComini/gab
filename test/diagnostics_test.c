@@ -6,10 +6,31 @@
 #include "scope.h"
 #include "string/string.h"
 #include "support/test_context.h"
+#include "vm/vm.h"
 
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+
+// Runs the full front end over a source string on a VM, so what its standard
+// library declares is in scope. For a rule stated with a 'String': that is a
+// declared type, and a scope built without a VM has never heard the name.
+static void compile_with_library(TestContext *ctx, const char *source) {
+    VM *vm = vm_create();
+
+    Diagnostics *diagnostics = &ctx->diagnostics;
+
+    Lexer lexer = lexer_create(test_in_a_module(source), ctx->arena, &vm->env.strings, diagnostics);
+    Parser parser = parser_create(&lexer, diagnostics);
+    ASTUnit *unit = ast_unit_create();
+
+    if (parser_parse(&parser, unit)) {
+        resolve_unit(ctx->arena, unit, &vm->env.global_scope, NULL, diagnostics);
+    }
+
+    ast_unit_destroy(unit);
+    vm_free(vm);
+}
 
 // Runs the full front end (parse + resolve) over a source string. Diagnostics
 // land in the context's sink, whose arena keeps the messages alive.
@@ -663,7 +684,7 @@ static void test_reports_returning_a_string_borrow_of_a_local() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test(a: ref str): ref str { let s: String = a .. \"b\"; return s; }");
+    compile_with_library(&ctx, "func test(a: ref str): ref str { let s: String; return s; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -681,7 +702,7 @@ static void test_reports_a_string_borrow_escaping_its_block() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test(a: ref str) { let p: ref str; { let s: String = a .. \"b\"; p = s; } }");
+    compile_with_library(&ctx, "func test(a: ref str) { let p: ref str; { let s: String; p = s; } }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -700,9 +721,9 @@ static void test_reports_a_string_borrow_stored_into_a_heap_object() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "struct Doc { body: ref str }\n"
-                  "func test(a: ref str) { let d: box Doc = new Doc; let s: String = a .. \"b\"; "
-                  "d.body = s; }");
+    compile_with_library(&ctx, "struct Doc { body: ref str }\n"
+                               "func test(a: ref str) { let d: box Doc = new Doc; let s: String; "
+                               "d.body = s; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 

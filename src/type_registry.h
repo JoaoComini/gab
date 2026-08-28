@@ -44,6 +44,16 @@ GAB_HASH_MAP(TypeMap, type_map, String *, TypeBinding)
 
 GAB_HASH_MAP(TypeAppMap, type_app_map, TypeApp, Type *)
 
+/*
+    The types the language itself is written in terms of: what a literal
+    produces, what an operator answers, what a spec spells without anything
+    having been registered.
+
+    Primitives rather than a standard library. A resolver holds these with no VM
+    in sight, because nothing about 'let n: int = 1 + 2' asks for a runtime. What
+    a VM provides -- 'String', 'Vec<T>', and whatever a host adds beside them --
+    is registered instead, and is absent from a compile that never had one.
+*/
 typedef struct {
     const Type *int_type;
 
@@ -53,12 +63,11 @@ typedef struct {
     const Type *byte_type;
     const Type *float_type;
     const Type *bool_type;
-    const Type *string_type;
 
-    // 'str'. The characters of a string, borrowed: the same two slots as a
-    // 'String' and copied like one, owning nothing. A distinct interned Type
-    // from the owning one because ownership is read off the type, and a literal
-    // and a concatenation must not answer it the same way.
+    // 'str'. The characters of a string, borrowed: where they are and how many
+    // there are, owning nothing. A distinct interned Type from the owning one
+    // because ownership is read off the type, and a literal and an owned copy
+    // must not answer it the same way.
     //
     // Not what 'ref String' names. That is an indirection to a slot holding a
     // header, which is what 'ref' builds for every type in the language.
@@ -69,15 +78,50 @@ typedef struct {
     // element is applied, and what a diagnostic prints when one is missing.
     const Type *array_type;
 
-    // 'Vec', the bare name: the generic declaration every 'Vec<T>' is
-    // instantiated from, and what a diagnostic prints when an element is
-    // missing. Names no value on its own.
-    const Type *vec_type;
-
     const Type *error_type;
-} TypeBuiltins;
+} TypePrimitives;
 
-// Interning, not naming. One registry per VM holds the builtins and every
+/*
+    Declaring a type a standard library provides, which a scope then finds by
+    name the way it finds a primitive.
+
+    Filled in once and handed over, rather than built up by a provider holding a
+    half-made Type: what a type is arrives in one statement, and the registry is
+    what interns it, lays it out and settles how it frees. That is also what
+    keeps the library out of the language -- a compile with no VM declares
+    nothing, so nothing in the resolver names a 'String'.
+*/
+
+// One field of a declared struct.
+typedef struct TypeFieldDecl {
+    const char *name;
+    const Type *type;
+} TypeFieldDecl;
+
+// What a standard library says a type is.
+//
+// Either a struct with fields, or a generic declaration whose instantiations
+// have them -- 'generic' decides which, and the two are never both given.
+typedef struct TypeDecl {
+    const char *name;
+
+    // A struct's fields, laid out in the order given.
+    const TypeFieldDecl *fields;
+    size_t field_count;
+
+    // Or the declaration every instantiation is built from, for a generic.
+    const GenericDecl *generic;
+
+    // What a value of this type stands for, and which of its bytes name that
+    // view. Both or neither: a deref with no parts could not be lent, and parts
+    // with nothing to deref to name nothing. NULL for a type that stands only
+    // for itself.
+    const Type *derefs_to;
+    const LentPart *lent_parts;
+    size_t lent_part_count;
+} TypeDecl;
+
+// Interning, not naming. One registry per VM holds the primitives and every
 // pointer type, because the type system compares types by pointer identity: a
 // second 'int' or a second 'box Player' would silently break every comparison.
 //
@@ -120,6 +164,43 @@ GAB_HASH_MAP(MethodTable, method_key, MethodKey, Symbol *)
 #define drop_key_entry_free(key, value)
 
 GAB_HASH_MAP(DropTable, drop_key, const Type *, const DropPlan *)
+
+/*
+    What each type derefs to: the borrowed view an owner reaches its methods
+    through. 'String' derefs to 'str', which is how a string finds the methods
+    written for characters.
+
+    The relation Rust spells Deref, and registered for the same reason its
+    impls are: nothing about a type's shape says what it stands for. A 'String'
+    and a 'Vec<byte>' are laid out identically, so only the declaration saying
+    one denotes text tells them apart.
+
+    Registered rather than derived, and one direction only: an owner reaches its
+    view, never the reverse. What belongs to the owner -- duplicating the
+    allocation -- must not be reachable from a borrow of it.
+*/
+#define deref_key_hash(key) (size_t)key
+#define deref_key_key_equals(key, other) key == other
+#define deref_key_key_dup(key) key
+#define deref_key_entry_free(key, value)
+
+/*
+    What a type derefs to, and which of its bytes a reference to that view is
+    built from.
+
+    One statement, because they are one fact: saying a 'String' stands for a run
+    of characters is saying that its block's address and length are what naming
+    that run takes. A shape cannot imply either half -- a 'Vec<byte>' is laid
+    out identically and stands for nothing.
+*/
+typedef struct Deref {
+    const Type *to;
+
+    LentPart parts[GAB_MAX_LENT_PARTS];
+    size_t part_count;
+} Deref;
+
+GAB_HASH_MAP(DerefTable, deref_key, const Type *, const Deref *)
 
 /*
     Where a value of each type sits in memory, by the type it was derived from.
@@ -178,10 +259,14 @@ typedef struct TypeRegistry {
     // What freeing a value of each type does.
     DropTable *drops;
 
+    // What each type derefs to, for the few that do.
+    DerefTable *derefs;
+
     // How wide a value of each type is, and where its fields begin.
     LayoutTable *layouts;
 
-    TypeBuiltins builtins;
+    TypePrimitives primitives;
+
 } TypeRegistry;
 
 // Declares a method, or fails if the type already answers that name. Finds one
@@ -230,6 +315,28 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings);
 void type_registry_destroy(TypeRegistry *registry);
 
 const Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind type);
+
+// Interns what 'decl' describes, lays it out and settles how it frees. Returns
+// the finished type, which is the provider's handle to it.
+//
+// Interning only. What names a type is a Scope, which is where every other name
+// lives -- so a provider declares the type here and binds it there.
+const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl);
+// Gives a type the borrowed view it derefs to, through which it answers the
+// methods written for that view. One direction: 'from' reaches 'to', never the
+// reverse.
+void type_registry_set_deref(TypeRegistry *registry, const Type *from, const Type *to, const LentPart *parts,
+                             size_t part_count);
+
+// What a type derefs to, or NULL for one that derefs to nothing. What a method
+// lookup walks, and what tells an owner apart from a value merely laid out like
+// it.
+const Type *type_registry_deref_of(TypeRegistry *registry, const Type *type);
+
+// The deref relation itself, parts included, or NULL for a type that derefs to
+// nothing. What a lend reads to know which bytes to copy.
+const Deref *type_registry_deref(TypeRegistry *registry, const Type *type);
+
 const Type *type_registry_error_type(TypeRegistry *registry);
 
 // The interned '[element; N]': a header of {data, length} owning a block of

@@ -113,7 +113,7 @@ void gab_arg_get_struct(GabArgs *args, int index, void *out, size_t size);
 
 // A string argument's characters and their count. Borrowed for the call: the
 // characters belong to whoever allocated them -- the unit's arena for a
-// literal, a script slot for a concatenation -- so an extern reads them and
+// literal, a script slot for an owning string -- so an extern reads them and
 // frees nothing. Not NUL-terminated in general, since a '\0' is an ordinary
 // character, so the length is what says where the string ends.
 //

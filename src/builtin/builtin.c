@@ -10,6 +10,16 @@
 
 #include <stddef.h>
 
+const Type *builtin_declare_type(VM *vm, const TypeDecl *decl) {
+    Scope *scope = &vm->env.global_scope;
+
+    const Type *type = type_registry_declare(scope->type_registry, decl);
+
+    scope_decl_type(scope, type->name, type);
+
+    return type;
+}
+
 void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiver, const char *name,
                              GabExternFn body, const Type *return_type, const Type *const *params,
                              size_t param_count) {

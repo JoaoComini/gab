@@ -46,10 +46,13 @@ static inline void test_run(const char *source, void *out, size_t width) {
     vm_free(vm);
 }
 
-// Runs a script whose top level ends in a 'string' and copies the characters
-// out while the VM still lives. A string header borrows: its characters belong
-// to the VM's arena, so reading them after vm_free would be a use-after-free --
+// Runs a script whose top level ends in a 'ref str' and copies the characters
+// out while the VM still lives. A reference borrows: its characters belong to
+// the VM's arena, so reading them after vm_free would be a use-after-free --
 // exactly the dangle the language says a borrow can become.
+//
+// Read as the reference it is rather than as an owning header: the two carry
+// the same count, but a header names its characters through the block it owns.
 static inline void test_run_string(const char *source, char *out, size_t capacity, int32_t *out_length) {
     VM *vm = vm_create();
 
@@ -57,7 +60,7 @@ static inline void test_run_string(const char *source, char *out, size_t capacit
 
     assert(vm->frame_count == 0);
 
-    GabStringValue value;
+    GabStrRef value;
     memcpy(&value, vm_slot_at(vm, 0), sizeof(value));
 
     assert((size_t)value.length < capacity);

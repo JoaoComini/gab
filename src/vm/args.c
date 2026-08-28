@@ -166,9 +166,15 @@ void args_return_pointer(Args *args, void *pointer) {
 }
 
 bool args_return_string_copy(Args *args, const char *data, int32_t length) {
-    // Typed as characters rather than as a string, for the reason OP_CONCAT
-    // gives: the bytes are what is allocated, and they own nothing further.
-    char *characters = DEFAULT_ALLOCATOR.alloc(DEFAULT_ALLOCATOR.ctx, length == 0 ? 1 : (size_t)length);
+    // A capacity of at least one, so that the empty string still names memory
+    // the free path can hand back: a block is freed at its capacity, and a null
+    // one would have to be told apart from a real allocation everywhere.
+    int32_t capacity = length == 0 ? 1 : length;
+
+    // Typed as characters rather than as a string: the bytes are what is
+    // allocated, and they own nothing further. The header naming them is the
+    // value below.
+    char *characters = DEFAULT_ALLOCATOR.alloc(DEFAULT_ALLOCATOR.ctx, (size_t)capacity);
 
     if (!characters) {
         vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory copying a string");
@@ -179,7 +185,7 @@ bool args_return_string_copy(Args *args, const char *data, int32_t length) {
         memcpy(characters, data, (size_t)length);
     }
 
-    GabStringValue value = {.data = characters, .length = length};
+    GabStringValue value = {.block = {.data = characters, .capacity = capacity, .length = length}};
 
     memcpy(args_return_address(args), &value, sizeof(value));
 

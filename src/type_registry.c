@@ -19,125 +19,30 @@ static Type *register_builtin(TypeRegistry *registry, TypeKind kind, const char 
     return type_create(registry->arena, kind, string_from_cstr(registry->strings, name));
 }
 
-// The 'String' type, laid out from its two fields. Whether the header owns the
-// characters it names is the whole difference between a string and a view of
-// one, and it is the header's own business: the raw address naming them cannot
-// say.
-static Type *string_builtin_create(TypeRegistry *registry) {
-    Type *type = type_struct_create(registry->arena, string_from_cstr(registry->strings, "String"), 2);
-    type->kind = TYPE_STRING;
+void type_registry_register_primitives(TypeRegistry *registry) {
+    registry->primitives.int_type = register_builtin(registry, TYPE_INT, "int");
+    registry->primitives.float_type = register_builtin(registry, TYPE_FLOAT, "float");
+    registry->primitives.bool_type = register_builtin(registry, TYPE_BOOL, "bool");
 
-    // A raw address either way: who frees the characters is the header's own
-    // business rather than this field's.
-    const Type *characters = type_registry_ptr_to(registry, registry->builtins.byte_type);
-
-    type_add_field(type, string_from_cstr(registry->strings, "data"), characters);
-    type_add_field(type, string_from_cstr(registry->strings, "length"), registry->builtins.int_type);
-
-    // A string owns its characters, always: what borrows them is a 'ref str',
-    // which owns nothing because no reference does. So this is not a question
-    // the type has to be asked -- it is what being a String means.
-    type_registry_drop_of(registry, type);
-
-    return type;
-}
-
-// The 'Vec' declaration: a block of the element it is given, and a count of how
-// many of that block have been written.
-//
-// A declaration, so no width is settled here -- what a vector is laid out as
-// follows from the element, and that is not known until one is applied.
-static Type *vec_decl_create(TypeRegistry *registry) {
-    Type *type = register_builtin(registry, TYPE_STRUCT, "Vec");
-
-    GenericField *fields = arena_alloc(registry->arena, 2 * sizeof(GenericField));
-
-    // The block owns the memory and carries the capacity it was taken at, so
-    // freeing it asks nothing else.
-    fields[0] = (GenericField){
-        .name = string_from_cstr(registry->strings, "data"),
-        .from = GENERIC_FROM_PARAM,
-        .param = 0,
-        .ctor = TYPE_CTOR_BLOCK,
-    };
-
-    // How far into that block anything has been written. Beside the block
-    // rather than in it, because a capacity and a length answer different
-    // questions and only one of them is the memory's own.
-    fields[1] = (GenericField){
-        .name = string_from_cstr(registry->strings, "length"),
-        .fixed = registry->builtins.int_type,
-    };
-
-    GenericDecl *generic = arena_alloc(registry->arena, sizeof(GenericDecl));
-
-    *generic = (GenericDecl){
-        .param_count = 1,
-        .fields = fields,
-        .field_count = 2,
-
-        // 'length' counts what has been written into 'data'. What the block
-        // frees is its own capacity; what these elements own is dropped first.
-        .counts_a_block = true,
-        .count_field = 1,
-        .block_field = 0,
-    };
-
-    type->generic = generic;
-
-    return type;
-}
-
-void type_registry_register_builtins(TypeRegistry *registry) {
-    registry->builtins.int_type = register_builtin(registry, TYPE_INT, "int");
-    registry->builtins.float_type = register_builtin(registry, TYPE_FLOAT, "float");
-    registry->builtins.bool_type = register_builtin(registry, TYPE_BOOL, "bool");
-
-    registry->builtins.byte_type = register_builtin(registry, TYPE_BYTE, "byte");
-
-    // A struct in its layout and a builtin in its semantics: the fields are
-    // where its size, its alignment and what it owns all come from, while
-    // comparison, literals and the borrow spelling stay the kind's own.
-    registry->builtins.string_type = string_builtin_create(registry);
+    registry->primitives.byte_type = register_builtin(registry, TYPE_BYTE, "byte");
 
     // The characters, which no slot holds: a 'ref str' is what names them, and
     // that reference is what carries how many there are. Zero-width because
     // nothing is ever laid out for it, and both of those follow from the kind
     // rather than being set here: see type_is_sized and type_metadata_of.
-    registry->builtins.str_type = register_builtin(registry, TYPE_STR, "str");
-
-    // The VM and the host both read these two fields as GabStringValue, so the
-    // computed layout and the C struct are two statements of one thing.
-    const TypeLayout *string_layout = type_registry_layout_of(registry, registry->builtins.string_type);
-
-    assert(string_layout->size == sizeof(GabStringValue));
-    assert(string_layout->alignment == _Alignof(GabStringValue));
-    (void)string_layout;
-
-    // And a reference to those characters is what a C body reads one as. The
-    // width is computed from what the reference carries rather than from this
-    // struct, so the two agreeing is a fact to check rather than one to assume.
-    const TypeLayout *str_ref_layout =
-        type_registry_layout_of(registry, type_registry_ref_to(registry, registry->builtins.str_type));
-
-    assert(str_ref_layout->size == sizeof(GabStrRef));
-    assert(str_ref_layout->alignment == _Alignof(GabStrRef));
-    (void)str_ref_layout;
+    //
+    // Before the string that lends it, which registers what it derefs to as
+    // part of saying what it is.
+    registry->primitives.str_type = register_builtin(registry, TYPE_STR, "str");
 
     // The bare name every '[T; N]' is interned under. Sized as the header the
     // elements make it, so that a diagnostic naming it says something true even
     // though no slot ever holds this type itself.
-    registry->builtins.array_type = register_builtin(registry, TYPE_ARRAY, "Array");
-
-    // 'Vec', the bare name every 'Vec<T>' is instantiated from. A declaration
-    // rather than a type: it says what its instantiations hold -- a block of
-    // the parameter, and how many of that block are live -- without naming an
-    // element, which is what makes it generic.
-    registry->builtins.vec_type = vec_decl_create(registry);
+    registry->primitives.array_type = register_builtin(registry, TYPE_ARRAY, "Array");
 
     // Poison type. Deliberately never given a name in any scope: no script can
     // name it, it only arises from a failed resolution.
-    registry->builtins.error_type = register_builtin(registry, TYPE_ERROR, "<error>");
+    registry->primitives.error_type = register_builtin(registry, TYPE_ERROR, "<error>");
 }
 
 // The width and alignment of a kind whose layout is a fact about the machine
@@ -203,11 +108,17 @@ static void layout_of_indirect(const Type *type, size_t *size, size_t *alignment
     *size = sizeof(void *);
     *alignment = _Alignof(void *);
 
-    // A block carries the capacity it was allocated at, whatever it points to:
-    // the count is the block's own fact rather than something read off the
-    // element, which is what lets it be freed without asking anything else.
+    // A block carries the capacity it was allocated at and how far into it
+    // anything was written, whatever it points to: both are the block's own
+    // facts rather than something read off the element, which is what lets it
+    // be freed without asking anything else.
+    //
+    // Two counts where a reference carries one, and no wider for it: the second
+    // rides in what the address's alignment already padded out. Both counts are
+    // named here rather than one, so the arithmetic says what the block holds
+    // even where the padding makes the two spellings the same width.
     if (type->kind == TYPE_BLOCK) {
-        *size = align_up(*size + sizeof(int32_t), *alignment);
+        *size = align_up(*size + 2 * sizeof(int32_t), *alignment);
         return;
     }
 
@@ -303,6 +214,39 @@ size_t type_registry_align_of(TypeRegistry *registry, const Type *type) {
     return type_registry_layout_of(registry, type)->alignment;
 }
 
+void type_registry_set_deref(TypeRegistry *registry, const Type *from, const Type *to, const LentPart *parts,
+                             size_t part_count) {
+    assert(from && to && "a deref relates two types");
+    assert(part_count <= GAB_MAX_LENT_PARTS && "a reference is built from at most GAB_MAX_LENT_PARTS parts");
+    assert(!deref_key_lookup(registry->derefs, from) && "a type derefs to one thing");
+
+    Deref *deref = arena_alloc(registry->arena, sizeof(Deref));
+
+    *deref = (Deref){.to = to, .part_count = part_count};
+
+    for (size_t i = 0; i < part_count; i++) {
+        deref->parts[i] = parts[i];
+    }
+
+    deref_key_insert(registry->derefs, from, deref);
+}
+
+const Deref *type_registry_deref(TypeRegistry *registry, const Type *type) {
+    if (!type) {
+        return NULL;
+    }
+
+    const Deref **found = deref_key_lookup(registry->derefs, type);
+
+    return found ? *found : NULL;
+}
+
+const Type *type_registry_deref_of(TypeRegistry *registry, const Type *type) {
+    const Deref *deref = type_registry_deref(registry, type);
+
+    return deref ? deref->to : NULL;
+}
+
 const DropPlan *type_registry_drop_of(TypeRegistry *registry, const Type *type) {
     if (!type) {
         return NULL;
@@ -328,6 +272,7 @@ const DropPlan *type_registry_drop_of(TypeRegistry *registry, const Type *type) 
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
     registry->drops = drop_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->derefs = deref_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->layouts = layout_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->methods = method_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->applications =
@@ -336,7 +281,7 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     registry->strings = strings;
     registry->install_method = NULL;
     registry->install_ctx = NULL;
-    type_registry_register_builtins(registry);
+    type_registry_register_primitives(registry);
 
     return registry;
 }
@@ -345,10 +290,39 @@ void type_registry_destroy(TypeRegistry *registry) {
     type_app_map_destroy(registry->applications);
     method_key_destroy(registry->methods);
     drop_key_destroy(registry->drops);
+    deref_key_destroy(registry->derefs);
 }
 
 Type *type_registry_declare_struct(TypeRegistry *registry, String *name, size_t max_fields) {
     return type_struct_create(registry->arena, name, max_fields);
+}
+
+const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl) {
+    assert(decl && decl->name && "a declared type is found by name");
+    assert(!(decl->fields && decl->generic) && "a type is a struct or a generic declaration, not both");
+    assert((decl->derefs_to != NULL) == (decl->lent_part_count > 0) &&
+           "a deref and the parts naming it are one statement");
+
+    String *name = string_from_cstr(registry->strings, decl->name);
+
+    Type *type = decl->generic ? type_create(registry->arena, TYPE_STRUCT, name)
+                               : type_struct_create(registry->arena, name, decl->field_count);
+
+    for (size_t i = 0; i < decl->field_count; i++) {
+        type_add_field(type, string_from_cstr(registry->strings, decl->fields[i].name), decl->fields[i].type);
+    }
+
+    type->generic = decl->generic;
+
+    // Settled here rather than on first demand, so the type the provider gets
+    // back is finished: what it owns follows from the fields just added.
+    type_registry_drop_of(registry, type);
+
+    if (decl->derefs_to) {
+        type_registry_set_deref(registry, type, decl->derefs_to, decl->lent_parts, decl->lent_part_count);
+    }
+
+    return type;
 }
 
 bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method) {
@@ -401,7 +375,7 @@ const Type *type_registry_array_of(TypeRegistry *registry, const Type *element, 
 
     TypeApp app = {
         .ctor = TYPE_CTOR_NOMINAL,
-        .decl = registry->builtins.array_type,
+        .decl = registry->primitives.array_type,
         .args = args,
         .arg_count = 2,
     };
@@ -415,14 +389,14 @@ const Type *type_registry_array_of(TypeRegistry *registry, const Type *element, 
     // and its alignment is one element's. No header, no block: an '[T; N]'
     // is laid out exactly as a C '[T; N]' is, which is what lets a host lay one
     // out with sizeof.
-    Type *type = type_create(registry->arena, TYPE_ARRAY, registry->builtins.array_type->name);
+    Type *type = type_create(registry->arena, TYPE_ARRAY, registry->primitives.array_type->name);
 
     type->array.element = element;
     type->array.length = length;
 
     // The declaration this instantiates, which is where its methods are
     // declared while none of them reads the element.
-    type->decl = registry->builtins.array_type;
+    type->decl = registry->primitives.array_type;
 
     // Interned before the drop is selected, so a recursive element -- an array
     // of a struct holding one -- finds this entry rather than building a
@@ -607,20 +581,18 @@ const Type *type_registry_ptr_to(TypeRegistry *registry, const Type *pointee) {
     return indirect_to(registry, TYPE_CTOR_PTR, TYPE_PTR, pointee);
 }
 
-const Type *type_registry_error_type(TypeRegistry *registry) { return registry->builtins.error_type; }
+const Type *type_registry_error_type(TypeRegistry *registry) { return registry->primitives.error_type; }
 
 const Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind kind) {
     switch (kind) {
     case TYPE_INT:
-        return registry->builtins.int_type;
+        return registry->primitives.int_type;
     case TYPE_FLOAT:
-        return registry->builtins.float_type;
+        return registry->primitives.float_type;
     case TYPE_BOOL:
-        return registry->builtins.bool_type;
+        return registry->primitives.bool_type;
     case TYPE_BYTE:
-        return registry->builtins.byte_type;
-    case TYPE_STRING:
-        return registry->builtins.string_type;
+        return registry->primitives.byte_type;
     default:
         break;
     }

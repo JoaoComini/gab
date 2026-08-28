@@ -53,32 +53,6 @@ const TypeField *type_find_field(const Type *type, const String *name) {
     return NULL;
 }
 
-size_t type_lent_fields(const Type *lender, const Type *pointee, const TypeField **out, size_t max) {
-    // What a reference to characters carries. Named here because the pointee is
-    // the characters themselves, which have no fields: a 'str' is a run of
-    // bytes, and the address and count naming it belong to the reference.
-    static const char *const of_characters[] = {"data", "length"};
-
-    if (!pointee || pointee->kind != TYPE_STR) {
-        return 0;
-    }
-
-    size_t count = 0;
-
-    for (size_t i = 0; i < sizeof(of_characters) / sizeof(*of_characters) && count < max; i++) {
-        for (size_t j = 0; j < type_field_count(lender); j++) {
-            const TypeField *field = &type_fields(lender)[j];
-
-            if (field->name && strcmp(field->name->data, of_characters[i]) == 0) {
-                out[count++] = field;
-                break;
-            }
-        }
-    }
-
-    return count;
-}
-
 // A raw pointer is deliberately not one of these. Every caller is a
 // language-level path -- an auto-deref, a lend, a field access -- and a 'ptr T'
 // is reachable from none of them: it names a block the header beside it
@@ -152,7 +126,6 @@ const TypeField *type_fields(const Type *type) {
 
     switch (type->kind) {
     case TYPE_STRUCT:
-    case TYPE_STRING:
         return type->record.fields;
 
     default:
@@ -167,7 +140,6 @@ size_t type_field_count(const Type *type) {
 
     switch (type->kind) {
     case TYPE_STRUCT:
-    case TYPE_STRING:
         return type->record.field_count;
 
     default:
@@ -176,6 +148,20 @@ size_t type_field_count(const Type *type) {
 }
 
 bool type_is_indirect(const Type *type) { return type && (type->kind == TYPE_BOX || type->kind == TYPE_REF); }
+
+bool type_owns_through_an_address(const Type *type) {
+    return type && (type->kind == TYPE_BOX || type->kind == TYPE_BLOCK);
+}
+
+bool type_holds_its_memory_inline(const Type *type) {
+    for (size_t i = 0; i < type_field_count(type); i++) {
+        if (type_fields(type)[i].type && type_fields(type)[i].type->kind == TYPE_BLOCK) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 const Type *type_array_element(const Type *type) {
     assert(type && type->kind == TYPE_ARRAY && "only an array has an element");
@@ -216,12 +202,6 @@ bool type_is_owned(const Type *type) {
     case TYPE_ARRAY:
         return type_is_owned(type_array_element(type));
 
-    // A string owns its characters, always: what borrows them is a 'ref str',
-    // and no reference owns anything. So the kind is the whole answer here, as
-    // it is for the two indirections.
-    case TYPE_STRING:
-        return true;
-
     // Characters nothing holds. A 'ref str' names them and owns nothing; the
     // type itself is never a value, so it is never a value that owns.
     case TYPE_STR:
@@ -250,9 +230,6 @@ bool type_is_owned(const Type *type) {
 // Derived from the type rather than declared on it, so a struct becomes
 // non-copyable the moment it is given a field that owns, and no declaration
 // can disagree with what the type holds.
-bool type_owns_a_block(const Type *type) {
-    return type && type->decl && type->decl->generic && type->decl->generic->counts_a_block;
-}
 
 bool type_is_copyable(const Type *type) {
     if (!type) {
@@ -278,11 +255,6 @@ bool type_is_copyable(const Type *type) {
     // of them, so a run of a non-copyable element is as uncopyable as one is.
     case TYPE_ARRAY:
         return type_is_copyable(type_array_element(type));
-
-    // A string frees its characters, so copying one would make a second header
-    // that frees them too.
-    case TYPE_STRING:
-        return false;
 
     // Never held, so never copied. What names characters is a reference, and
     // copying one of those duplicates no ownership.

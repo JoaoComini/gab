@@ -156,9 +156,9 @@ static void test_to_owned_gives_an_owning_copy() {
     assert(test_run_bool("func f(a: ref str): bool { let s: String = a.to_owned(); return s == \"hi\"; }\n"
                          "let r: bool = f(\"hi\");") == true);
 
-    // A join owns its characters already, so duplicating one is 'clone' rather
-    // than the conversion 'to_owned' names.
-    assert(test_run_bool("func f(): bool { let j: String = \"a\" .. \"b\"; let s: String = j.clone(); "
+    // An owned copy owns its characters already, so duplicating one is 'clone'
+    // rather than the conversion 'to_owned' names.
+    assert(test_run_bool("func f(): bool { let j: String = \"ab\".to_owned(); let s: String = j.clone(); "
                          "return s == \"ab\"; }\n"
                          "let r: bool = f();") == true);
 }
@@ -180,6 +180,54 @@ static void test_cloning_an_empty_string_is_empty() {
                          "let r: bool = f();") == true);
 }
 
+// 's.push(c)'. One character lands past the live ones, and the string is one
+// longer for it.
+static void test_push_adds_one_character() {
+    assert(test_run_int("func f(): int { let s: String = \"ab\".to_owned(); s.push(99); return s.len(); }\n"
+                        "let r: int = f();") == 3);
+
+    assert(test_run_bool("func f(): bool { let s: String = \"ab\".to_owned(); s.push(99); "
+                         "return s == \"abc\"; }\n"
+                         "let r: bool = f();") == true);
+}
+
+// A string grows past the block it was allocated at, so pushing more characters
+// than the first allocation holds keeps every one of them.
+static void test_pushing_past_the_capacity_keeps_the_characters() {
+    assert(test_run_int("func f(): int {\n"
+                        "    let s: String = \"\".to_owned();\n"
+                        "    for let i: int = 0; i < 64; i = i + 1 { s.push(97); }\n"
+                        "    return s.len();\n"
+                        "}\n"
+                        "let r: int = f();") == 64);
+}
+
+// 's.append(o)'. The characters of one string spelled after another's.
+static void test_append_spells_one_string_after_the_other() {
+    assert(test_run_bool("func f(): bool { let s: String = \"ab\".to_owned(); s.append(\"cd\"); "
+                         "return s == \"abcd\"; }\n"
+                         "let r: bool = f();") == true);
+}
+
+// Appending nothing leaves the receiver as it was.
+static void test_appending_an_empty_string_changes_nothing() {
+    assert(test_run_bool("func f(): bool { let s: String = \"ab\".to_owned(); s.append(\"\"); "
+                         "return s == \"ab\"; }\n"
+                         "let r: bool = f();") == true);
+}
+
+// Appending onto a string built from a literal is how a string is assembled
+// from parts, and the result owns every character it holds.
+static void test_a_string_assembled_by_appending_owns_its_characters() {
+    assert(test_run_bool("func greet(name: ref str): String {\n"
+                         "    let line: String = \"hello, \".to_owned();\n"
+                         "    line.append(name);\n"
+                         "    return line;\n"
+                         "}\n"
+                         "func f(): bool { let g: String = greet(\"gab\"); return g == \"hello, gab\"; }\n"
+                         "let r: bool = f();") == true);
+}
+
 int main(void) {
     test_to_owned_gives_an_owning_copy();
     test_string_from_gives_an_owning_copy();
@@ -195,6 +243,11 @@ int main(void) {
     test_contains_answers_whether_the_characters_occur();
     test_index_of_answers_where_the_characters_first_occur();
     test_count_answers_how_many_times_the_characters_occur();
+    test_push_adds_one_character();
+    test_pushing_past_the_capacity_keeps_the_characters();
+    test_append_spells_one_string_after_the_other();
+    test_appending_an_empty_string_changes_nothing();
+    test_a_string_assembled_by_appending_owns_its_characters();
 
     return 0;
 }

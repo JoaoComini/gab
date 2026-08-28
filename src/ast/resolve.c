@@ -224,8 +224,6 @@ static const char *bin_op_name(BinOp op) {
         return "/";
     case BIN_OP_MOD:
         return "%";
-    case BIN_OP_CONCAT:
-        return "..";
     case BIN_OP_LESS:
         return "<";
     case BIN_OP_GREATER:
@@ -411,9 +409,9 @@ static Symbol *find_method_on_chain(TypeRegistry *registry, const Type *type, co
 // Checks each argument against the parameter type in the same position. Shared
 // by both call forms, which differ only in where their parameter list starts:
 // a method's skips the receiver.
-static bool type_accepts(const Type *to, const Type *from);
+static bool type_accepts(TypeRegistry *registry, const Type *to, const Type *from);
 static bool accepts_by_borrowing(const Type *to, const Type *from);
-static bool lends_by_value(const Type *to, const Type *from);
+static bool lends_by_value(TypeRegistry *registry, const Type *to, const Type *from);
 static bool lends_by_pointer(const Type *to, const Type *from);
 static bool borrow_into(ResolverState *state, ASTExpr **slot, const Type *destination, Span span);
 static void check_implicit_copy(ResolverState *state, ASTExpr *value, const Type *destination, Span span);
@@ -430,7 +428,7 @@ static void check_call_args(ResolverState *state, ASTExprList *args, const Type 
         // type_accepts rather than identity, so an owned 'box T' fills a 'ref T'
         // parameter and so does a 'T': lending is what a borrow parameter asks
         // for, and the caller goes on owning what it lent.
-        if (!type_accepts(param_type, arg->type)) {
+        if (!type_accepts(state->current_scope->type_registry, param_type, arg->type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, arg->span, "argument %zu is %s, but %s was declared",
                        i + 1, type_name(state, arg->type), type_name(state, param_type));
             continue;
@@ -599,7 +597,8 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
         // One level at a time, never type_accepts: that one walks the chain
         // itself and would answer from the outermost level, reporting no hops
         // where the receiver still has levels to go.
-        if (lends_by_value(declared, at) || lends_by_pointer(declared, at)) {
+        if (lends_by_value(state->current_scope->type_registry, declared, at) ||
+            lends_by_pointer(declared, at)) {
             *out = (ReceiverAdjustment){.derefs = derefs, .address_of = false};
             return true;
         }
@@ -759,36 +758,36 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 // The reverse is deliberately absent: promoting 'ref T' to 'box T' would hand out
 // ownership nobody granted, and the object already has an owner that will free
 // it.
-// A value handing over a reference to what it already holds. An owning string
-// is laid out as the address of its characters and their count, which is
-// exactly what a reference to them is, so it lends one rather than being
-// pointed at.
+// A value handing over a reference to what it stands for: an owning string
+// lends a 'ref str', because what it derefs to is the run of characters such a
+// reference names.
 //
-// Written for the one owner there is. The rule it is an instance of -- a value
-// already laid out as an address and its metadata lends a reference to what it
-// names -- is what a growable buffer lending a slice would want too, and is
-// worth generalising once there is a second owner to check it against.
+// Stated in terms of the deref relation rather than of strings, so a second
+// owner -- a growable buffer lending a slice -- lends by declaring what it
+// stands for and nothing here changes.
 //
-// The reverse is refused, as every borrow-to-owner is: the characters a
-// reference names belong to someone else, and an owning slot would free what it
-// never allocated.
-static bool lends_by_value(const Type *to, const Type *from) {
-    return type_is_str_ref(to) && from && from->kind == TYPE_STRING;
+// The reverse is refused, as every borrow-to-owner is: what a reference names
+// belongs to someone else, and an owning slot would free what it never
+// allocated.
+static bool lends_by_value(TypeRegistry *registry, const Type *to, const Type *from) {
+    const Type *view = type_registry_deref_of(registry, from);
+
+    // A type that stands for nothing lends nothing. Checked rather than left to
+    // the comparison, which two absent answers would otherwise satisfy.
+    return view && to->kind == TYPE_REF && view == type_pointee(to);
 }
 
-// What a value derefs to, or NULL for a type that derefs to nothing. An owning
-// string is laid out as the address and count of its characters, so what it
-// names is a 'str' and its methods are the ones written for characters.
+// What a value derefs to, or NULL for a type that derefs to nothing. Registered
+// on the registry rather than read off the type: what a value stands for is not
+// in its shape, so a 'String' and a 'Vec<byte>' laid out alike are told apart by
+// what each was declared to deref to.
 //
 // The direction an owner reaches its borrowed view, never the reverse: methods
 // that only read characters belong to the characters, and an owner reaches them
 // by being one. What belongs to the owner -- duplicating the allocation -- is
 // not reachable from a borrow, which is the whole point of the direction.
-//
-// Written for the one such pair there is. A buffer and its slice would be the
-// second, and would add an arm here rather than a case wherever this is walked.
 static const Type *derefs_to(TypeRegistry *registry, const Type *type) {
-    return type && type->kind == TYPE_STRING ? registry->builtins.str_type : NULL;
+    return type_registry_deref_of(registry, type);
 }
 
 // A pointer handing over a reference to what it points at, reaching through
@@ -805,7 +804,7 @@ static bool accepts_by_borrowing(const Type *to, const Type *from) {
     return to != from && to->kind == TYPE_REF && type_pointee(to) == from;
 }
 
-static bool type_accepts(const Type *to, const Type *from) {
+static bool type_accepts(TypeRegistry *registry, const Type *to, const Type *from) {
     if (to == from) {
         return true;
     }
@@ -833,7 +832,7 @@ static bool type_accepts(const Type *to, const Type *from) {
     // away. What must hold is that the inner outlives the borrow, which is a
     // lifetime question and belongs to the flow pass rather than here.
     for (const Type *at = from;; at = type_pointee(at)) {
-        if (lends_by_value(to, at) || lends_by_pointer(to, at)) {
+        if (lends_by_value(registry, to, at) || lends_by_pointer(to, at)) {
             return true;
         }
 
@@ -851,9 +850,10 @@ static bool type_accepts(const Type *to, const Type *from) {
 // Returns false for a temporary, which has no address to take.
 static bool borrow_into(ResolverState *state, ASTExpr **slot, const Type *destination, Span span) {
     // Only something with a home in memory can be lent. A string that owns and
-    // has no home is a temporary -- a concatenation -- and its characters are
+    // has no home is a temporary -- an owned copy -- and its characters are
     // freed where the expression ends, so the borrow would name freed memory.
-    if (type_is_str_ref(destination) && (*slot)->type && (*slot)->type->kind == TYPE_STRING &&
+    if (type_is_str_ref(destination) &&
+        type_registry_deref_of(state->current_scope->type_registry, (*slot)->type) &&
         !is_addressable(*slot)) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, span,
                    "cannot borrow a string that nothing holds, since its characters are freed where the "
@@ -878,9 +878,18 @@ static bool borrow_into(ResolverState *state, ASTExpr **slot, const Type *destin
     // A value lending what it holds: the reference is built out of the header's
     // fields rather than being the header read at a narrower width, so the two
     // need not be the same bytes.
-    if (lends_by_value(destination, (*slot)->type)) {
+    if (lends_by_value(state->current_scope->type_registry, destination, (*slot)->type)) {
+        const Deref *deref = type_registry_deref(state->current_scope->type_registry, (*slot)->type);
+
         ASTExpr *lend = ast_lend_expr_create(span, *slot);
         lend->type = destination;
+
+        // Settled here rather than left for codegen: which bytes name the view
+        // is what the library said when it declared the type, and resolving is
+        // where a declaration is read.
+        lend->lend.parts = deref->parts;
+        lend->lend.part_count = deref->part_count;
+
         *slot = lend;
 
         return true;
@@ -918,15 +927,17 @@ bool is_boolean_type(const Type *t) { return t->kind == TYPE_BOOL; }
 
 bool is_ordered_type(const Type *t) { return is_numeric_type(t) || is_boolean_type(t); }
 
-// Characters, however they are named: the owning header or a reference to
-// someone else's. Comparison and joining read the same two words from either,
-// so what may be compared or joined is the pair rather than one of them.
-bool is_string_type(const Type *t) { return t->kind == TYPE_STRING || type_is_str_ref(t); }
+// Characters, however they are named: the owning header that derefs to them, or
+// a reference to someone else's. Comparison reads the same two words from
+// either, so what may be compared is the pair rather than one of them.
+static bool is_string_type(TypeRegistry *registry, const Type *t) {
+    return type_registry_deref_of(registry, t) == registry->primitives.str_type || type_is_str_ref(t);
+}
 
 // Ordering is left out: '<' on text asks which comes first, and no order is
 // defined for it. Equality asks only whether two strings spell the same thing.
-bool is_comparable_type(const Type *t) {
-    return is_numeric_type(t) || is_boolean_type(t) || is_string_type(t);
+static bool is_comparable_type(TypeRegistry *registry, const Type *t) {
+    return is_numeric_type(t) || is_boolean_type(t) || is_string_type(registry, t);
 }
 
 static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span);
@@ -969,18 +980,6 @@ static bool bin_op_accepts(ResolverState *state, BinOp op, const Type *type, Spa
     const char *op_name = bin_op_name(op);
 
     switch (op) {
-    // Joining is the one operator a string answers beyond equality. Which types
-    // are joinable is the whole rule: an array becomes joinable by saying so
-    // here, and nothing else about '..' has to change.
-    case BIN_OP_CONCAT:
-        if (is_string_type(type)) {
-            return true;
-        }
-
-        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' requires a joinable type, found %s", op_name,
-                   type_name(state, type));
-        return false;
-
     case BIN_OP_ADD:
     case BIN_OP_SUB:
     case BIN_OP_MUL:
@@ -1006,7 +1005,7 @@ static bool bin_op_accepts(ResolverState *state, BinOp op, const Type *type, Spa
         return true;
     case BIN_OP_EQUAL:
     case BIN_OP_NEQUAL:
-        if (!is_comparable_type(type)) {
+        if (!is_comparable_type(state->current_scope->type_registry, type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' is not supported for %s", op_name,
                        type_name(state, type));
             return false;
@@ -1143,10 +1142,12 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
 
         const char *op_name = bin_op_name(expr->bin_op.op);
 
-        // Two strings are one operand type however each of them owns: what '..'
-        // and '==' read is the characters, and ownership decides who frees the
+        // Two strings are one operand type however each of them owns: what
+        // '==' reads is the characters, and ownership decides who frees the
         // result rather than whether the operator applies.
-        bool both_strings = is_string_type(left_type) && is_string_type(right_type);
+        TypeRegistry *registry = state->current_scope->type_registry;
+
+        bool both_strings = is_string_type(registry, left_type) && is_string_type(registry, right_type);
 
         if (left_type != right_type && !both_strings) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot apply '%s' to %s and %s",
@@ -1160,13 +1161,17 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             break;
         }
 
-        if (both_strings && expr->bin_op.op == BIN_OP_CONCAT) {
-            // '..' allocates the characters it yields, so the result owns
-            // them however its operands were written. Two literals are not
-            // joined here: the result would still have to be copied into a
-            // slot that owns, which is what OP_CONCAT already does.
-            expr->type = state->current_scope->type_registry->builtins.string_type;
-            break;
+        // An owning string is compared through a reference to its characters,
+        // never as the slots it occupies: a header carries a capacity beside
+        // the count, and reading it as a reference would compare that capacity
+        // as though it were the length.
+        if (both_strings) {
+            const Type *characters =
+                type_registry_ref_to(state->current_scope->type_registry,
+                                     state->current_scope->type_registry->primitives.str_type);
+
+            borrow_into(state, &expr->bin_op.left, characters, expr->span);
+            borrow_into(state, &expr->bin_op.right, characters, expr->span);
         }
 
         expr->type = bin_op_yields_bool(expr->bin_op.op)
@@ -1283,7 +1288,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             break;
         }
 
-        if (expr->index.index->type != state->current_scope->type_registry->builtins.int_type) {
+        if (expr->index.index->type != state->current_scope->type_registry->primitives.int_type) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "an index must be an int, not %s",
                        type_name(state, expr->index.index->type));
             expr->type = resolver_error_type(state);
@@ -1562,7 +1567,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             // type_accepts rather than identity, for the reason an argument
             // uses it: an element is bound into the array exactly as a value is
             // bound into any slot that owns it.
-            if (!type_accepts(element, value->type)) {
+            if (!type_accepts(state->current_scope->type_registry, element, value->type)) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, value->span,
                            "element %zu is %s, but the array holds %s", i + 1, type_name(state, value->type),
                            type_name(state, element));
@@ -1591,8 +1596,8 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         // A literal names characters the unit's arena holds, which outlive every
         // value that reads them. What names them is a reference: no slot holds
         // the characters themselves, so the count rides with the address.
-        expr->type = expr->lit.kind == TYPE_STRING
-                         ? type_registry_ref_to(registry, registry->builtins.str_type)
+        expr->type = expr->lit.kind == TYPE_STR
+                         ? type_registry_ref_to(registry, registry->primitives.str_type)
                          : type_registry_get_builtin(registry, expr->lit.kind);
         break;
     }
@@ -1738,7 +1743,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
             return type_registry_instantiate(registry, base, args, expr->apply.args.size);
         }
 
-        if (base != registry->builtins.array_type) {
+        if (base != registry->primitives.array_type) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, span, "%s does not take an element type",
                        type_name(state, base));
             return resolver_error_type(state);
@@ -1829,7 +1834,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
     }
 
     // 'Array' alone names no type: every array is '[T; N]'.
-    if (type == registry->builtins.array_type) {
+    if (type == registry->primitives.array_type) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, span,
                    "'Array' needs an element type and a length, as '[int; 3]'");
         return resolver_error_type(state);
@@ -2323,12 +2328,13 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
                 const Type *init_type = stmt->var_decl.initializer->type;
 
                 if (!is_error_type(decl_type) && !is_error_type(init_type) &&
-                    !type_accepts(decl_type, init_type)) {
+                    !type_accepts(state->current_scope->type_registry, decl_type, init_type)) {
                     // A borrow reaching an owning string is the one mismatch
                     // with a remedy to name: the characters belong to the
                     // arena, and 'to_owned()' is what copies them into a string
                     // this slot may free.
-                    if (decl_type->kind == TYPE_STRING && init_type->kind == TYPE_STRING) {
+                    if (type_registry_deref_of(state->current_scope->type_registry, decl_type) &&
+                        type_is_str_ref(init_type)) {
                         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->var_decl.initializer->span,
                                    "a %s borrows characters it does not own, so a 'String' cannot take it; "
                                    "write 'str', or '.to_owned()' to copy them",
@@ -2419,7 +2425,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         const Type *value_type = stmt->assign.value->type;
 
         if (!is_error_type(target_type) && !is_error_type(value_type) &&
-            !type_accepts(target_type, value_type)) {
+            !type_accepts(state->current_scope->type_registry, target_type, value_type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                        "cannot assign a value of type %s to a target of type %s",
                        type_name(state, value_type), type_name(state, target_type));
@@ -2572,7 +2578,9 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         // may return an owned 'box T' — it lends what it was given rather than
         // handing ownership out. A NULL on either side is "no value", which
         // only identity settles.
-        bool accepted = actual && expected ? type_accepts(expected, actual) : actual == expected;
+        bool accepted = actual && expected
+                            ? type_accepts(state->current_scope->type_registry, expected, actual)
+                            : actual == expected;
 
         if (!poisoned && !accepted) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span, "returns %s, but %s was declared",

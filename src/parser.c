@@ -1360,7 +1360,7 @@ static ASTExpr *parse_primary(Parser *parser) {
 
         parser_next_token(parser); // eat string
 
-        return ast_literal_expr_create(span, (Literal){.kind = TYPE_STRING, .as_string = text});
+        return ast_literal_expr_create(span, (Literal){.kind = TYPE_STR, .as_string = text});
     }
     case TOKEN_TRUE: {
         parser_next_token(parser);
@@ -1439,10 +1439,6 @@ static int get_precedence(TokenType type) {
     case TOKEN_LEQUAL:
     case TOKEN_GEQUAL:
         return 3;
-    // Looser than arithmetic and tighter than comparison, so '"n: " .. a + b'
-    // joins the sum rather than adding to the label.
-    case TOKEN_DOT_DOT:
-        return 4;
     case TOKEN_PLUS:
     case TOKEN_MINUS:
         return 5;
@@ -1469,8 +1465,6 @@ static BinOp parse_bin_op(TokenType type) {
         return BIN_OP_LEQUAL;
     case TOKEN_GEQUAL:
         return BIN_OP_GEQUAL;
-    case TOKEN_DOT_DOT:
-        return BIN_OP_CONCAT;
     case TOKEN_PLUS:
         return BIN_OP_ADD;
     case TOKEN_MINUS:

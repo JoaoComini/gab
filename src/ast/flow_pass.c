@@ -65,11 +65,11 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
             return 0;
         }
 
-        // An owning string holds its characters in its own slot, so they live
-        // exactly as long as the variable does. A pointer variable is the other
-        // case: what it names was decided wherever it was assigned, which is
-        // what the lattice carries.
-        if (expr->type && expr->type->kind == TYPE_STRING && type_is_owned(expr->type)) {
+        // A value holding its memory inline -- a string, a vector -- keeps it
+        // in its own slot, so it lives exactly as long as the variable does. A
+        // pointer variable is the other case: what it names was decided
+        // wherever it was assigned, which is what the lattice carries.
+        if (type_holds_its_memory_inline(expr->type)) {
             return expr->symbol->scope_depth;
         }
 
@@ -106,7 +106,7 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
     // The characters a lend hands over are the header's, so the reference
     // reaches exactly as far as what it was lent from.
     case EXPR_LEND:
-        return inner_depth(pass, expr->unary.target);
+        return inner_depth(pass, expr->lend.target);
 
     case EXPR_DEREF:
         // Reading through a borrow reaches no further than the borrow does: what
@@ -201,7 +201,7 @@ static bool borrows_memory(const Type *type) {
         return false;
     }
 
-    return type_is_indirect(type) || (type->kind == TYPE_STRING && !type_is_owned(type));
+    return type_is_indirect(type);
 }
 
 // Rejects a borrow being stored somewhere that outlives what it names.
@@ -316,9 +316,12 @@ static void flow_pass_expr(FlowPass *pass, ASTExpr *expr) {
         flow_set(pass->flow, source, slot);
         break;
     }
+    case EXPR_LEND:
+        flow_pass_expr(pass, expr->lend.target);
+        break;
+
     case EXPR_ADDR_OF:
     case EXPR_DEREF:
-    case EXPR_LEND:
     case EXPR_NEG:
     case EXPR_NOT:
         flow_pass_expr(pass, expr->unary.target);

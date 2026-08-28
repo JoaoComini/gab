@@ -12,8 +12,8 @@
 
 // 'string' is a builtin type name, resolvable wherever a type is written.
 static void test_string_names_a_type() {
-    assert(test_compiles("func f(s: ref String): int { return 0; }\n"));
-    assert(test_compiles("struct Person { name: String }\n"));
+    assert(test_compiles_on_vm("func f(s: ref String): int { return 0; }\n"));
+    assert(test_compiles_on_vm("struct Person { name: String }\n"));
 }
 
 // A literal is a string, so it may initialise one and nothing else.
@@ -29,12 +29,13 @@ static void test_a_string_is_an_address_and_a_length() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope scope;
-    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+    VM *vm = vm_create();
 
-    const Type *string_type = type_registry_get_builtin(scope.type_registry, TYPE_STRING);
+    Scope *scope_ptr = &vm->env.global_scope;
 
-    const TypeLayout *layout = type_registry_layout_of(scope.type_registry, string_type);
+    const Type *string_type = scope_type_lookup(scope_ptr, string_from_cstr(&vm->env.strings, "String"));
+
+    const TypeLayout *layout = type_registry_layout_of(scope_ptr->type_registry, string_type);
 
     assert(layout->size == sizeof(GabStringValue));
     assert(layout->alignment == _Alignof(GabStringValue));
@@ -43,38 +44,38 @@ static void test_a_string_is_an_address_and_a_length() {
     assert(layout->size == VM_STRING_SLOTS * VM_SLOT_SIZE);
 
     test_context_free(&ctx);
+    vm_free(vm);
 }
 
-// The two fields are what the layout comes from: the characters the string
-// names and how many there are. An owning string owns its characters, so the
-// field that names them owns; a borrow's field does not.
-static void test_a_string_is_two_fields() {
+// One field is what the layout comes from: the block holding the characters,
+// which carries how many of them are live. That the block owns and answers for
+// itself is what lets a string be freed by the walk any struct gets.
+static void test_a_string_is_one_owning_field() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope scope;
-    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+    VM *vm = vm_create();
 
-    const Type *string_type = type_registry_get_builtin(scope.type_registry, TYPE_STRING);
+    Scope *scope_ptr = &vm->env.global_scope;
 
-    const TypeField *data = type_find_field(string_type, string_from_cstr(&ctx.strings, "data"));
-    const TypeField *length = type_find_field(string_type, string_from_cstr(&ctx.strings, "length"));
+    const Type *string_type = scope_type_lookup(scope_ptr, string_from_cstr(&vm->env.strings, "String"));
 
-    assert(data && length);
+    assert(type_field_count(string_type) == 1);
 
-    const TypeLayout *layout = type_registry_layout_of(scope.type_registry, string_type);
+    const TypeField *data = type_find_field(string_type, string_from_cstr(&vm->env.strings, "data"));
 
-    // The C mirror the VM and the host both read is these fields' layout, so
-    // the two statements of it must agree.
-    assert(layout->offsets[data - type_fields(string_type)] == offsetof(GabStringValue, data));
-    assert(layout->offsets[length - type_fields(string_type)] == offsetof(GabStringValue, length));
+    assert(data);
 
-    // The header owns its characters, not the field naming them: a raw address
-    // carries no ownership, so the question is answered by the string itself.
-    assert(!type_is_owned(data->type));
-    assert(!type_is_owned(length->type));
+    const TypeLayout *layout = type_registry_layout_of(scope_ptr->type_registry, string_type);
+
+    // The C mirror the VM and the host both read is this field's layout, so the
+    // two statements of it must agree.
+    assert(layout->offsets[data - type_fields(string_type)] == offsetof(GabStringValue, block));
+
+    assert(type_is_owned(data->type));
 
     test_context_free(&ctx);
+    vm_free(vm);
 }
 
 // Running a literal writes the header the type describes: the characters where
@@ -108,7 +109,7 @@ static void test_equal_strings_compare_equal() {
 // would answer this one wrongly.
 static void test_equal_characters_at_different_addresses() {
     assert(test_run_bool("func f(): bool {\n"
-                         "    let o: String = \"hi\" .. \"\";\n"
+                         "    let o: String = \"hi\".to_owned();\n"
                          "    let a: ref str = o;\n"
                          "    let b: ref str = \"hi\";\n"
                          "    return a == b;\n"
@@ -143,39 +144,6 @@ static void test_strings_are_not_ordered() {
     assert(!test_compiles("func f(): bool { let a: ref str = \"a\"; return a < a; }\n"));
 }
 
-// '+' spells the characters of one string after the other, in a string that
-// owns them: neither operand's characters can be extended in place.
-static void test_concatenation_joins_the_characters() {
-    assert(test_run_int("func f(a: ref str): int { let s: String = a .. \"cd\"; return s.len(); }\n"
-                        "let r: int = f(\"ab\");") == 4);
-
-    assert(test_run_bool("func f(a: ref str): bool { let s: String = a .. \"cd\"; return s == \"abcd\"; }\n"
-                         "let r: bool = f(\"ab\");") == true);
-}
-
-// The result owns, so it may initialise an owning string and a borrow of one
-// may not take it back without saying so.
-static void test_concatenation_yields_an_owning_string() {
-    assert(test_compiles("func f(a: ref str): int { let s: String = a .. \"b\"; return 0; }\n"));
-
-    // A borrow may not take it: the slot that allocated the characters is the
-    // one that frees them, and a second name for them would outlive the free.
-    assert(!test_compiles("func f(a: ref str): int { let s: ref str = a .. \"b\"; return 0; }\n"));
-}
-
-// The slot a concatenation lands in owns its characters, so the block that
-// declared it releases them where it closes.
-static void test_a_concatenation_is_released_where_its_slot_dies() {
-    TestProgram program = test_compile("func f(a: ref str): int { let s: String = a .. \"b\"; return 0; }\n");
-
-    Chunk *chunk = test_func_chunk(&program, 0);
-
-    assert(test_count_opcode(chunk, OP_RELEASE) == 1);
-
-    test_program_free(&program);
-}
-
-// A borrow of a literal allocates nothing, so nothing is released for it.
 static void test_a_literal_is_not_released() {
     TestProgram program = test_compile("func f(): int { let s: ref str = \"a\"; return 0; }\n");
 
@@ -206,7 +174,7 @@ static void test_a_struct_field_borrows_its_characters() {
 static void test_an_owning_string_field_is_released() {
     TestProgram program =
         test_compile("struct Doc { body: String }\n"
-                     "func f(a: ref str): int { let d: Doc; d.body = a .. \"b\"; return 0; }\n");
+                     "func f(a: ref str): int { let d: Doc; d.body = a.to_owned(); return 0; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
@@ -218,79 +186,25 @@ static void test_an_owning_string_field_is_released() {
     // sanitized build rather than this assertion.
     assert(test_run_bool(
                "struct Doc { body: String }\n"
-               "func f(a: ref str): bool { let d: Doc; d.body = a .. \"b\"; return d.body == \"ab\"; }\n"
-               "let r: bool = f(\"a\");") == true);
+               "func f(a: ref str): bool { let d: Doc; d.body = a.to_owned(); return d.body == \"ab\"; }\n"
+               "let r: bool = f(\"ab\");") == true);
 }
 
 // An owning string is a unique owner like any other, so binding it to a second
 // name must say which one frees the characters.
 static void test_an_owning_string_needs_a_move_or_a_clone() {
-    assert(!test_compiles(
-        "func f(v: ref str): int { let a: String = v .. \"y\"; let b: String = a; return 0; }\n"));
+    assert(!test_compiles_on_vm(
+        "func f(v: ref str): int { let a: String = v.to_owned(); let b: String = a; return 0; }\n"));
 
-    assert(test_compiles(
-        "func f(v: ref str): int { let a: String = v .. \"y\"; let b: String = move a; return 0; }\n"));
+    assert(test_compiles_on_vm(
+        "func f(v: ref str): int { let a: String = v.to_owned(); let b: String = move a; return 0; }\n"));
 }
 
-// A concatenation may be returned: ownership passes to the caller, which is
-// what a returned owning value means everywhere else.
-static void test_a_concatenation_may_be_returned() {
-    assert(test_run_bool("func greet(name: ref str): String { return \"hi, \" .. name; }\n"
-                         "func f(): bool { let g: String = greet(\"gab\"); return g == \"hi, gab\"; }\n"
-                         "let r: bool = f();") == true);
-}
-
-// Arithmetic is for numbers. A string joins with '..' and answers nothing to
-// '+', which would otherwise hide an allocation behind an arithmetic spelling.
-static void test_strings_do_not_add() {
-    assert(!test_compiles("func f(): int { let a: ref str = \"a\"; let b: String = a + a; return 0; }\n"));
-
-    assert(!test_compiles("func f(): int { let a: ref str = \"a\"; let b: String = a - a; return 0; }\n"));
-}
-
-// Joining binds looser than arithmetic and tighter than comparison, so a sum
-// is joined whole and the join is what gets compared.
-static void test_join_binds_between_arithmetic_and_comparison() {
-    // Tighter than '==': the join happens, then the result is compared. Were it
-    // looser, this would compare "b" to "ab" and join the bool.
-    assert(test_run_bool("func f(a: ref str): bool { return a .. \"b\" == \"ab\"; }\n"
-                         "let r: bool = f(\"a\");") == true);
-}
-
-// '..' joins what can be joined, which so far is strings alone.
-static void test_numbers_do_not_join() {
-    assert(!test_compiles("func f(): int { let n: int = 1 .. 2; return 0; }\n"));
-}
-
-// A join in an operand position is bound to nothing, so the statement that
-// produced it is what frees it.
-static void test_an_unbound_join_is_freed_by_its_statement() {
-    assert(test_run_bool("func f(a: ref str): bool { return a .. \"b\" == \"ab\"; }\n"
-                         "let r: bool = f(\"a\");") == true);
-}
-
-// Storing a join into an owning field hands the field the characters: the
-// statement must not also free the register they were built in.
-static void test_a_join_stored_into_a_field_is_freed_once() {
-    assert(test_run_bool(
-               "struct Doc { body: String }\n"
-               "func f(a: ref str): bool { let d: Doc; d.body = a .. \"b\"; return d.body == \"ab\"; }\n"
-               "let r: bool = f(\"a\");") == true);
-}
-
-// Returning a join hands its characters to the caller, so the frame that built
-// them frees nothing.
-static void test_a_returned_join_survives_its_frame() {
-    assert(test_run_bool("func greet(name: ref str): String { return \"hi, \" .. name; }\n"
-                         "func f(): bool { let g: String = greet(\"gab\"); return g == \"hi, gab\"; }\n"
-                         "let r: bool = f();") == true);
-}
-
-// Reassigning a string frees what the slot held and keeps what it was given.
 static void test_reassigning_a_string_frees_the_old_characters() {
-    assert(test_run_bool("func f(a: ref str): bool { let s: String = a .. \"b\"; s = a .. \"d\"; return s "
-                         "== \"ad\"; }\n"
-                         "let r: bool = f(\"a\");") == true);
+    assert(test_run_bool(
+               "func f(a: ref str): bool { let s: String = a.to_owned(); s = \"d\".to_owned(); return s "
+               "== \"d\"; }\n"
+               "let r: bool = f(\"ab\");") == true);
 }
 
 // A string declared without one owns its slot from the declaration, so the
@@ -300,7 +214,7 @@ static void test_reassigning_a_string_frees_the_old_characters() {
 static void test_a_string_declared_empty_is_freed_once() {
     assert(test_run_int("func f(): int {\n"
                         "    let s: String;\n"
-                        "    s = \"a\" .. \"b\";\n"
+                        "    s = \"ab\".to_owned();\n"
                         "    return s.len();\n"
                         "}\n"
                         "let r: int = f();") == 2);
@@ -319,67 +233,38 @@ static void test_a_new_string_is_empty() {
 // A heap slot holding a string takes what is stored through it, and frees what
 // it held before.
 static void test_a_boxed_string_holds_what_is_stored_through_it() {
-    assert(test_run_bool("func f(a: ref str): bool { let s: box String = new String; *s = a .. \"b\"; "
+    assert(test_run_bool("func f(a: ref str): bool { let s: box String = new String; *s = a.to_owned(); "
                          "return *s == \"ab\"; }\n"
-                         "let r: bool = f(\"a\");") == true);
+                         "let r: bool = f(\"ab\");") == true);
 
-    assert(test_run_bool(
-               "func f(a: ref str): bool { let s: box String = new String; *s = a .. \"b\"; *s = a .. \"d\"; "
-               "return *s == \"ad\"; }\n"
-               "let r: bool = f(\"a\");") == true);
+    assert(test_run_bool("func f(a: ref str): bool { let s: box String = new String; *s = a.to_owned(); *s = "
+                         "\"d\".to_owned(); "
+                         "return *s == \"d\"; }\n"
+                         "let r: bool = f(\"ab\");") == true);
 }
 
 // A string field of a heap struct owns its characters, and the struct's
 // teardown reaches them through the header the field holds.
 static void test_a_heap_struct_frees_its_string_field() {
-    assert(test_run_bool(
-               "struct D { b: String }\n"
-               "func f(a: ref str): bool { let d: box D = new D; d.b = a .. \"b\"; return d.b == \"ab\"; }\n"
-               "let r: bool = f(\"a\");") == true);
+    assert(
+        test_run_bool(
+            "struct D { b: String }\n"
+            "func f(a: ref str): bool { let d: box D = new D; d.b = a.to_owned(); return d.b == \"ab\"; }\n"
+            "let r: bool = f(\"ab\");") == true);
 }
 
 // Only an owned value may be stored where a string owns: a borrow would leave
 // the slot naming characters it did not allocate and must not free.
 static void test_an_owning_string_slot_refuses_a_borrow() {
-    assert(!test_compiles("func f(): int { let s: box String = new String; *s = \"ab\"; return 0; }\n"));
+    assert(
+        !test_compiles_on_vm("func f(): int { let s: box String = new String; *s = \"ab\"; return 0; }\n"));
 
-    assert(!test_compiles("func f(a: ref str): int { let s: box String = new String; *s = a; return 0; }\n"));
+    assert(!test_compiles_on_vm(
+        "func f(a: ref str): int { let s: box String = new String; *s = a; return 0; }\n"));
 }
 
-// '..' yields a string that owns its characters however its operands were
-// written. Two literals are joined at run time like any other pair, so what a
-// join may initialise is decided by how it was written rather than by what the
-// compiler could evaluate early.
-static void test_a_join_owns_even_between_literals() {
-    assert(test_compiles("func f(): int { let s: String = \"a\" .. \"b\"; return 0; }\n"));
-
-    assert(!test_compiles("func f(): int { let s: ref str = \"a\" .. \"b\"; return 0; }\n"));
-
-    assert(test_run_bool("func f(): bool { let s: String = \"ab\" .. \"cd\"; return s == \"abcd\"; }\n"
-                         "let r: bool = f();") == true);
-
-    assert(test_run_bool("func f(): bool { let s: String = \"a\" .. \"b\" .. \"c\"; return s == \"abc\"; }\n"
-                         "let r: bool = f();") == true);
-
-    // A '\0' is an ordinary character, so a join copies by length rather than
-    // stopping where C would.
-    assert(test_run_int("func f(): int { let s: String = \"a\\0b\" .. \"c\"; return s.len(); }\n"
-                        "let r: int = f();") == 4);
-
-    TestProgram program = test_compile("func f(): int { let s: String = \"a\" .. \"b\"; return 0; }\n");
-
-    Chunk *chunk = test_func_chunk(&program, 0);
-
-    assert(test_count_opcode(chunk, OP_CONCAT) == 1);
-    assert(test_count_opcode(chunk, OP_RELEASE) == 1);
-
-    test_program_free(&program);
-}
-
-// Refusing a borrow where a string owns names the two ways to say what was
-// meant, since neither is guessable from the mismatch alone.
 static void test_refusing_a_borrow_names_the_remedy() {
-    assert(!test_compiles("func f(): int { let a: String = \"hi\"; return 0; }\n"));
+    assert(!test_compiles_on_vm("func f(): int { let a: String = \"hi\"; return 0; }\n"));
 
     assert(test_compiles("func f(): int { let a: ref str = \"hi\"; return 0; }\n"));
 }
@@ -406,14 +291,14 @@ static void test_a_literal_borrows() {
 // An owning string may not take what a borrow names: the arena's characters
 // would be freed by a slot that never allocated them.
 static void test_an_owning_string_refuses_a_borrow() {
-    assert(!test_compiles("func f(): int { let s: String = \"hi\"; return 0; }\n"));
+    assert(!test_compiles_on_vm("func f(): int { let s: String = \"hi\"; return 0; }\n"));
 }
 
 int main(void) {
     test_string_names_a_type();
     test_a_literal_is_a_string();
     test_a_string_is_an_address_and_a_length();
-    test_a_string_is_two_fields();
+    test_a_string_is_one_owning_field();
     test_a_literal_loads_its_characters_and_length();
     test_equal_strings_compare_equal();
     test_equal_characters_at_different_addresses();
@@ -421,27 +306,16 @@ int main(void) {
     test_strings_compare_unequal();
     test_a_null_is_compared_like_any_character();
     test_strings_are_not_ordered();
-    test_concatenation_joins_the_characters();
-    test_concatenation_yields_an_owning_string();
-    test_strings_do_not_add();
-    test_numbers_do_not_join();
-    test_join_binds_between_arithmetic_and_comparison();
     test_a_struct_field_borrows_its_characters();
     test_an_owning_string_needs_a_move_or_a_clone();
     test_an_owning_string_field_is_released();
-    test_a_concatenation_may_be_returned();
-    test_a_concatenation_is_released_where_its_slot_dies();
     test_a_literal_is_not_released();
-    test_an_unbound_join_is_freed_by_its_statement();
-    test_a_join_stored_into_a_field_is_freed_once();
-    test_a_returned_join_survives_its_frame();
     test_reassigning_a_string_frees_the_old_characters();
     test_a_string_declared_empty_is_freed_once();
     test_a_new_string_is_empty();
     test_a_boxed_string_holds_what_is_stored_through_it();
     test_a_heap_struct_frees_its_string_field();
     test_an_owning_string_slot_refuses_a_borrow();
-    test_a_join_owns_even_between_literals();
     test_refusing_a_borrow_names_the_remedy();
     test_a_returnable_borrow_outlives_its_frame();
     test_a_literal_borrows();

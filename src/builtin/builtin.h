@@ -13,6 +13,17 @@
 // would do; nothing yet makes that worth a second mechanism.
 void builtin_register_all(VM *vm);
 
+// Declares a type the standard library provides: interned on the VM's registry
+// and named in its global scope, which is where every other type name lives.
+//
+// One call rather than two phases. The VM owns both the registry that interns
+// and the scope that names, so a library says what a type is once and gets it
+// back -- and may then declare methods on it with the calls below.
+//
+// Absent from a compile that never had a VM, which is what keeps 'String' out
+// of the language and in the library that provides it.
+const Type *builtin_declare_type(VM *vm, const TypeDecl *decl);
+
 // Declares one method on a builtin type: a Symbol in the type's method map, and
 // an entry in the table OP_CALL_EXTERN indexes. The body is a GabExternFn
 // because that is what a C body is here, whether the host wrote it or the VM

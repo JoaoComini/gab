@@ -534,11 +534,10 @@ typedef enum {
 // its characters.
 static void codegen_walk_owning_slots(CodegenState *state, const Type *type, unsigned int base,
                                       OwningSlotAction action) {
-    if (type_is_indirect(type)) {
-        if (!type_is_owned(type)) {
-            return;
-        }
-
+    // A value that owns as itself rather than through parts: the address is the
+    // whole of what a release needs. A 'ref' is not here at all -- it names
+    // what someone else owns, so nothing walks it looking for an owner.
+    if (type_owns_through_an_address(type)) {
         switch (action) {
         case OWNING_SLOT_NULL:
             chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_NULL, base, 0));
@@ -554,20 +553,11 @@ static void codegen_walk_owning_slots(CodegenState *state, const Type *type, uns
         return;
     }
 
-    // A string header owns as one value rather than through its 'data' field,
-    // which is a raw address claiming nothing: what must be freed is the block,
-    // and the count saying how far to walk it sits in the slot beside that
-    // pointer. Descending into the field would hand the free path the pointer
-    // alone.
-    //
-    // An array is here for the same reason and a different one: it owns through
-    // elements its type says how to walk, so one release naming it frees them
-    // all -- the way one release naming a struct frees every field that owns.
-    // A vector is here for the string's reason: what must be freed is the block
-    // its 'data' field names, and the capacity saying how big that block is
-    // sits inside that field while the count of live elements sits beside it.
-    // One release naming the whole header is what reaches both.
-    if (type && (type->kind == TYPE_ARRAY || type->kind == TYPE_STRING || type_owns_a_block(type))) {
+    // An array owns through elements its type says how to walk, so one release
+    // naming it frees them all -- the way one release naming a struct frees
+    // every field that owns. Its elements are not separately addressable slots,
+    // which is what keeps it from being walked like a struct.
+    if (type && type->kind == TYPE_ARRAY) {
         if (!type_is_owned(type)) {
             return;
         }
@@ -1495,35 +1485,30 @@ static Constant value_from_literal(Literal lit) {
 // a 'ref str' is and leaves the rest where it sits. That the two happen to be
 // the same bytes today is what this stops depending on.
 static unsigned int codegen_lend_expr(CodegenState *state, ASTExpr *node) {
-    const Type *lent = node->unary.target->type;
     const Type *reference = node->type;
 
-    unsigned int source = codegen_expr(state, node->unary.target);
+    unsigned int source = codegen_expr(state, node->lend.target);
 
     unsigned int rd = codegen_alloc_slots(state, type_slot_count(state->registry, reference),
                                           type_align_slots(state->registry, reference), node->span);
 
-    const TypeLayout *layout = type_registry_layout_of(state->registry, lent);
-
-    // Each field the reference carries, found in the header by name. By name
-    // rather than by position, so a header that declares a capacity between its
-    // address and its count still lends the two the reference asks for.
-    const TypeField *carried[VM_MAX_LENT_FIELDS];
-    size_t count = type_lent_fields(lent, type_pointee(reference), carried, VM_MAX_LENT_FIELDS);
-
-    assert(count > 0 && "a lend handed over nothing");
+    // Which of the lender's bytes name the view, settled where the lend was
+    // accepted. What a type stands for is a resolution question, so nothing
+    // here asks it again -- this copies the parts it was given.
+    assert(node->lend.part_count > 0 && "a lend handed over nothing");
 
     unsigned int at = 0;
 
-    for (size_t i = 0; i < count; i++) {
-        size_t index = (size_t)(carried[i] - type_fields(lent));
+    for (size_t i = 0; i < node->lend.part_count; i++) {
+        const LentPart *part = &node->lend.parts[i];
 
-        assert(layout->offsets[index] % VM_SLOT_SIZE == 0 && "a lent field is always slot-aligned");
+        assert(part->offset % VM_SLOT_SIZE == 0 && "a lent part is always slot-aligned");
 
-        codegen_copy_slots(state, rd + at, source + (unsigned int)(layout->offsets[index] / VM_SLOT_SIZE),
-                           type_slot_count(state->registry, carried[i]->type));
+        unsigned int width = (unsigned int)((part->size + VM_SLOT_SIZE - 1) / VM_SLOT_SIZE);
 
-        at += type_slot_count(state->registry, carried[i]->type);
+        codegen_copy_slots(state, rd + at, source + (unsigned int)(part->offset / VM_SLOT_SIZE), width);
+
+        at += width;
     }
 
     return rd;
@@ -1563,7 +1548,7 @@ static unsigned int codegen_string_literal(CodegenState *state, ASTExpr *node) {
 }
 
 static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node) {
-    if (node->lit.kind == TYPE_STRING) {
+    if (node->lit.kind == TYPE_STR) {
         return codegen_string_literal(state, node);
     }
 
@@ -1728,9 +1713,9 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
             owned_args[owned_arg_count].type = arg->type;
             owned_arg_count++;
 
-            // That slot is the only owner now: an expression that
-            // registered its result as a statement temporary -- a join does --
-            // would otherwise be freed both here and where the statement ends.
+            // That slot is the only owner now: an expression that registered
+            // its result as a statement temporary would otherwise be freed both
+            // here and where the statement ends.
             codegen_drop_temporary(state, arg_reg);
         }
 
@@ -2520,14 +2505,17 @@ static unsigned int codegen_rhs(CodegenState *state, BinOp op, ASTExpr *rhs, con
 // takes the constant-pool form, and anything else the register or immediate
 // form the k bit already distinguished.
 static OpCode bin_op_opcode_for(BinOp op, const Type *left_type, RhsKind kind) {
-    // A string is compared by its characters rather than its slots, so the
-    // opcode is chosen by the operand type before the numeric families.
+    // Characters are compared by what they spell rather than by the slots
+    // naming them, so the opcode is chosen by the operand type before the
+    // numeric families.
     //
-    // However the characters are named: a reference to them compares the same
-    // way a header does, since what is read is the characters either way. A
-    // reference falling through to the integer families would compare the
-    // address alone, which answers only for two names of one allocation.
-    if (left_type->kind == TYPE_STRING || type_is_str_ref(left_type)) {
+    // A reference is the only thing that reaches here: the resolver lends both
+    // operands before this runs, so an owning string arrives as the 'ref str'
+    // it stands for. What the opcode reads is that reference, which is why this
+    // asks for one rather than for whatever a type happens to stand for --
+    // comparing a slice as though it were text would read the same two words
+    // and mean nothing.
+    if (type_is_str_ref(left_type)) {
         return op == BIN_OP_EQUAL ? OP_CMP_EQS : OP_CMP_NES;
     }
 
@@ -2668,27 +2656,6 @@ static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node) {
         break;
     }
 
-    // A concatenation lands in a string's worth of slots rather than one, and
-    // its result owns, so it takes neither the immediate encoding nor the
-    // single-register destination the arithmetic path allocates.
-    if (node->bin_op.op == BIN_OP_CONCAT) {
-        unsigned int left = codegen_expr(state, node->bin_op.left);
-        unsigned int right = codegen_expr(state, node->bin_op.right);
-        unsigned int result = codegen_alloc_slots(state, VM_STRING_SLOTS, VM_INDIRECT_SLOTS, node->span);
-
-        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_CONCAT, result, left, right));
-
-        // Whoever consumes this may bind it -- a 'let' takes ownership of the
-        // slot -- but an operand position does not, and nothing else would free
-        // it. Recorded as a temporary, which the statement's end releases and
-        // binding disowns.
-        owned_list_add(&state->temporaries,
-                       (OwnedSlot){.slot = result, .depth = state->depth, .type = node->type});
-        codegen_record_frame_ref(state, result, node->type);
-
-        return result;
-    }
-
     unsigned int lhs = codegen_expr(state, node->bin_op.left);
 
     RhsKind rhs_kind = RHS_REGISTER;
@@ -2761,10 +2728,9 @@ static bool expr_yields_owned(const ASTExpr *expr) {
     }
 
     switch (expr->kind) {
-    // A concatenation allocates the characters it yields; every other binary op
-    // answers with a value that owns nothing.
+    // Every binary op answers with a value that owns nothing.
     case EXPR_BIN_OP:
-        return expr->bin_op.op == BIN_OP_CONCAT;
+        return false;
 
     case EXPR_NEW:
     case EXPR_CALL:
@@ -2981,23 +2947,18 @@ static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned 
 // ---- Type layout in frame slots ----
 
 /*
-    The bytes a release has to clear so the slot is safe to visit again: the
-    pointer for an owning indirection, and the whole header for an array, whose
-    length must go with its pointer or a second visit would walk a freed block.
+    The bytes a release has to clear so the slot is safe to visit again, which
+    is what the value occupies: a box is its pointer, an array and a header
+    counting a block are their whole width -- a length left behind beside a
+    freed pointer is what a second visit would walk.
 
-    A decision about the slot rather than a fact about the type, which is why it
-    is settled here beside the other slot arithmetic and not asked of the type.
-    Nothing at run time computes it: what the VM carries is the number, and a
-    slot whose concrete type is not known until run time would carry its own.
+    That is the type's own width in every case, so it is asked rather than
+    derived. Nothing at run time computes it: what the VM carries is the number,
+    and a slot whose concrete type is not known until run time would carry its
+    own.
 */
 static size_t slot_release_width(TypeRegistry *registry, const Type *type) {
-    if (!type) {
-        return 0;
-    }
-
-    return type->kind == TYPE_ARRAY || type->kind == TYPE_STRING || type_owns_a_block(type)
-               ? type_registry_size_of(registry, type)
-               : sizeof(void *);
+    return type_registry_size_of(registry, type);
 }
 
 // A value occupies ceil(size / 4) consecutive slots, which is 1 for every
@@ -3036,11 +2997,12 @@ static bool type_owns_through_members(const Type *type) {
 
 // Whether a field is moved as a run of slots rather than through a width-tagged
 // field opcode. Anything laid out from fields is, because those slots sit
-// inline — a struct and a string alike — and so is a pointer, which is 8 bytes
-// and has no 8-wide opcode. Before heap objects existed no struct could hold a
-// pointer, so the two cases only meet now.
+// inline — a struct and a string alike — and so is anything wider than the
+// widest field opcode: a pointer is 8 bytes and a block 16, and there is no
+// opcode for either width.
 static bool type_moves_as_slots(const Type *type) {
-    return type_is_indirect(type) || (type && type_field_count(type) > 0);
+    return type_is_indirect(type) || type_owns_through_an_address(type) ||
+           (type && type_field_count(type) > 0);
 }
 
 // The field's width is known at compile time, so it picks the opcode instead

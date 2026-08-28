@@ -59,12 +59,6 @@ typedef enum {
     BIN_OP_DIV,
     BIN_OP_MOD,
 
-    // '..' joins two values of one joinable type -- strings today -- into a
-    // freshly allocated one. Its own operator rather than an overload of '+':
-    // joining allocates and arithmetic does not, and a reader should not have
-    // to know the operand types to know which happened.
-    BIN_OP_CONCAT,
-
     BIN_OP_LESS,
     BIN_OP_GREATER,
     BIN_OP_EQUAL,
@@ -151,6 +145,20 @@ typedef struct ASTExpr {
         struct {
             ASTExpr *target;
         } unary;
+
+        // A value handing over a reference to what it stands for, inserted by
+        // the resolver where a lend was accepted.
+        //
+        // Carries the parts rather than leaving codegen to ask what the lender
+        // derefs to. Which bytes name a view is what a library said when it
+        // declared the type, so it is resolved once here -- the same reason a
+        // field access carries its owner rather than re-deriving it.
+        struct {
+            ASTExpr *target;
+
+            const LentPart *parts;
+            size_t part_count;
+        } lend;
 
         // 'int(x)' — a numeric conversion, parsed as a call whose target names
         // a type rather than a function. The resolver rewrites it into this,

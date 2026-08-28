@@ -11,20 +11,48 @@
 #include <stdint.h>
 #include <string.h>
 
-// What an empty vector's first allocation holds. Small enough that a vector
-// pushed into once does not reserve a page, large enough that the first few
-// pushes do not each reallocate.
-#define VEC_INITIAL_CAPACITY 4
-
-// A vector's header, as its two fields are laid out: the block it owns and how
-// far into that block has been written.
+// The 'Vec' declaration: a block of the element it is given.
 //
-// Copied in and out rather than pointed at. A frame slot is aligned to the
-// slot width, which is narrower than this struct asks for, so reading one in
-// place is undefined however well it happens to work.
+// A declaration, so no width is settled here -- what a vector is laid out as
+// follows from the element, and that is not known until one is applied.
+static const Type *vec_declare_type(VM *vm) {
+    TypeRegistry *registry = vm->env.global_scope.type_registry;
+
+    // The block owns the memory and carries both the capacity it was taken at
+    // and how far into it anything was written, so freeing it asks nothing
+    // else -- which is the whole of what a vector is.
+    GenericField *fields = arena_alloc(registry->arena, sizeof(GenericField));
+
+    fields[0] = (GenericField){
+        .name = string_from_cstr(registry->strings, "data"),
+        .from = GENERIC_FROM_PARAM,
+        .param = 0,
+        .ctor = TYPE_CTOR_BLOCK,
+    };
+
+    // Arena-allocated rather than local: every instantiation reads this, and
+    // the declaration outlives the call that made it.
+    GenericDecl *generic = arena_alloc(registry->arena, sizeof(GenericDecl));
+
+    *generic = (GenericDecl){
+        .param_count = 1,
+        .fields = fields,
+        .field_count = 1,
+    };
+
+    const TypeDecl decl = {.name = "Vec", .generic = generic};
+
+    return builtin_declare_type(vm, &decl);
+}
+
+// A vector's header: the block it owns, which carries how far into it anything
+// was written.
+//
+// Copied in and out rather than pointed at. A frame slot is aligned to the slot
+// width, which is narrower than this struct asks for, so reading one in place
+// is undefined however well it happens to work.
 typedef struct {
     GabBlockValue block;
-    int32_t length;
 } VecHeader;
 
 // The receiver's header, read out of the slots the pointer names.
@@ -35,8 +63,8 @@ static VecHeader vec_load(Args *args) {
     return vec;
 }
 
-// Writes a header back where it was read from. Only the two methods that change
-// one call this: 'at' and 'len' leave the vector as they found it.
+// Writes a header back where it was read from. Only the methods that change one
+// call this: 'at' and 'len' leave the vector as they found it.
 static void vec_store(Args *args, const VecHeader *vec) { memcpy(args_pointer(args, 0), vec, sizeof(*vec)); }
 
 // How wide one element of the receiver's vector is. Read off the declared
@@ -50,57 +78,6 @@ static size_t vec_stride(Args *args) {
                                  type_pointee(type_fields(type_pointee(receiver))[0].type));
 }
 
-// Makes room for one more element, growing the block if every slot it has is
-// live. Doubling, so that pushing n elements copies O(n) times rather than
-// once per push.
-//
-// False when the allocation fails, having failed the run: the caller must not
-// then write the element it was making room for.
-static bool vec_reserve_one(Args *args, VecHeader *vec, size_t stride) {
-    if (vec->length < vec->block.capacity) {
-        return true;
-    }
-
-    // Doubling overflows a signed int past 2^30 elements, which is undefined
-    // rather than merely wrong. A vector that large has no room to grow, so the
-    // run fails here rather than wrapping to a smaller block than it holds.
-    if (vec->block.capacity > INT32_MAX / 2) {
-        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "a vector cannot grow any further");
-        return false;
-    }
-
-    int32_t capacity = vec->block.capacity ? vec->block.capacity * 2 : VEC_INITIAL_CAPACITY;
-
-    void *block = DEFAULT_ALLOCATOR.alloc(DEFAULT_ALLOCATOR.ctx, (size_t)capacity * stride);
-
-    if (!block) {
-        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory growing a vector");
-        return false;
-    }
-
-    // The live elements move as bytes: what one of them owns is owned by
-    // whichever slot holds it, and that is the new block once this returns.
-    if (vec->length) {
-        memcpy(block, vec->block.data, (size_t)vec->length * stride);
-    }
-
-    // Zeroed past the live ones for the reason every allocation is: an element
-    // that owns and was never written must read as NULL, since the drop walk
-    // has no other way to tell it from a live reference.
-    memset((char *)block + (size_t)vec->length * stride, 0,
-           ((size_t)capacity - (size_t)vec->length) * stride);
-
-    if (vec->block.data) {
-        DEFAULT_ALLOCATOR.free_sized(DEFAULT_ALLOCATOR.ctx, vec->block.data,
-                                     (size_t)vec->block.capacity * stride);
-    }
-
-    vec->block.data = block;
-    vec->block.capacity = capacity;
-
-    return true;
-}
-
 // 'v.push(x)'. Writes one element past the live ones, growing first if there is
 // no room.
 //
@@ -111,16 +88,17 @@ static void vec_push(Args *args) {
     VecHeader vec = vec_load(args);
     size_t stride = vec_stride(args);
 
-    if (!vec_reserve_one(args, &vec, stride)) {
+    if (!block_reserve(DEFAULT_ALLOCATOR, &vec.block, 1, stride)) {
+        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory growing a vector");
         return;
     }
 
     const Type *element = NULL;
     const uint8_t *value = args_address(args, 1, &element);
 
-    memcpy((char *)vec.block.data + (size_t)vec.length * stride, value, stride);
+    memcpy((char *)vec.block.data + (size_t)vec.block.length * stride, value, stride);
 
-    vec.length++;
+    vec.block.length++;
 
     vec_store(args, &vec);
 }
@@ -134,7 +112,7 @@ static void vec_at(Args *args) {
     VecHeader vec = vec_load(args);
     int32_t index = args_int(args, 1);
 
-    if (index < 0 || index >= vec.length) {
+    if (index < 0 || index >= vec.block.length) {
         vm_fail(args->vm, VM_RUN_ERR_EXTERN, "vector index is out of range");
         return;
     }
@@ -144,8 +122,8 @@ static void vec_at(Args *args) {
     args_return_struct(args, (const char *)vec.block.data + (size_t)index * stride, stride);
 }
 
-// 'v.len()'. How many elements have been pushed, which the header carries.
-static void vec_len(Args *args) { args_return_int(args, vec_load(args).length); }
+// 'v.len()'. How many elements have been pushed, which the block carries.
+static void vec_len(Args *args) { args_return_int(args, vec_load(args).block.length); }
 
 // Declares one substituted method on one instantiation. The registry calls this
 // where a 'Vec<T>' is interned, having filled the parameter in.
@@ -159,6 +137,10 @@ static void vec_install_method(void *ctx, const Type *on, const char *name, void
 }
 
 void builtin_register_vec(VM *vm) {
+    // Declared here and held as a local: what a provider gets back is its
+    // handle to the declaration, and one VM's types are not another's.
+    const Type *vec_decl = vec_declare_type(vm);
+
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
     Arena *arena = vm->env.arena;
@@ -172,7 +154,7 @@ void builtin_register_vec(VM *vm) {
     // what 'at' hands back are the same type, filled in per instantiation.
     const GenericField element = {.from = GENERIC_FROM_PARAM, .param = 0, .ctor = TYPE_CTOR_NOMINAL};
 
-    const GenericField an_int = {.fixed = registry->builtins.int_type};
+    const GenericField an_int = {.fixed = registry->primitives.int_type};
 
     // Arena-allocated rather than local: the declaration holds these for as
     // long as the VM lives, since an instantiation reads them whenever one is
@@ -216,7 +198,7 @@ void builtin_register_vec(VM *vm) {
 
     // Written into the declaration rather than registered against a type: what
     // answers these is every 'Vec<T>', and none of them exists yet.
-    GenericDecl *generic = (GenericDecl *)registry->builtins.vec_type->generic;
+    GenericDecl *generic = (GenericDecl *)vec_decl->generic;
 
     generic->methods = methods;
     generic->method_count = 3;

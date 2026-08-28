@@ -48,6 +48,12 @@ typedef struct Scope {
 Scope *scope_create(Arena *arena, StringPool *strings, Scope *parent);
 void scope_init(Scope *scope, Arena *arena, StringPool *strings, Scope *parent);
 
+// As scope_init, over a registry built beforehand. What a VM uses: a standard
+// library registers its types with the registry first, and this names them
+// alongside the primitives -- a scope names what is registered when it is
+// built, so the order is the whole of why this exists.
+void scope_init_over(Scope *scope, Arena *arena, StringPool *strings, TypeRegistry *registry);
+
 // As scope_init, but with the depth given rather than derived from the parent.
 void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope *parent, int depth);
 

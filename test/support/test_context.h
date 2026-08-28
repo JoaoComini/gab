@@ -51,6 +51,13 @@ static inline void test_context_init(TestContext *ctx) {
     diagnostics_init(&ctx->diagnostics, ctx->arena, "<test>");
 }
 
+// The type named 'name' in a scope, which is how any name is resolved. For a
+// test that means the 'String' a VM provides: it is named in that VM's global
+// scope like any other type, so this is the lookup a script's own spec does.
+static inline const Type *test_named_type(TestContext *ctx, Scope *scope, const char *name) {
+    return scope_type_lookup(scope, string_from_cstr(&ctx->strings, name));
+}
+
 // Mirrors vm_free's ordering: the pool releases its buckets before the arena
 // holding the payloads goes away.
 static inline void test_context_free(TestContext *ctx) {
