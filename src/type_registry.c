@@ -35,11 +35,6 @@ static Type *string_builtin_create(TypeRegistry *registry) {
 
     type_add_field(type, string_from_cstr(registry->strings, "data"), characters);
 
-    // What separates it from a 'Vec<byte>', which is laid out identically: the
-    // characters are text, so this is what lends a 'ref str' and what '=='
-    // reads.
-    type->holds_characters = true;
-
     // A string owns its characters through the block naming them, which carries
     // everything freeing it needs -- so how it frees follows from its shape and
     // is derived like any struct's.
@@ -99,6 +94,11 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     // nothing is ever laid out for it, and both of those follow from the kind
     // rather than being set here: see type_is_sized and type_metadata_of.
     registry->builtins.str_type = register_builtin(registry, TYPE_STR, "str");
+
+    // A string is laid out as a run of characters, so it answers the methods
+    // written for them: this is what a method lookup walks, and what tells a
+    // 'String' apart from a 'Vec<byte>' laid out identically.
+    type_registry_set_deref(registry, registry->builtins.string_type, registry->builtins.str_type);
 
     // The VM and the host both read these two fields as GabStringValue, so the
     // computed layout and the C struct are two statements of one thing.
@@ -315,6 +315,23 @@ size_t type_registry_align_of(TypeRegistry *registry, const Type *type) {
     return type_registry_layout_of(registry, type)->alignment;
 }
 
+void type_registry_set_deref(TypeRegistry *registry, const Type *from, const Type *to) {
+    assert(from && to && "a deref relates two types");
+    assert(!deref_key_lookup(registry->derefs, from) && "a type derefs to one thing");
+
+    deref_key_insert(registry->derefs, from, to);
+}
+
+const Type *type_registry_deref_of(TypeRegistry *registry, const Type *type) {
+    if (!type) {
+        return NULL;
+    }
+
+    const Type **found = deref_key_lookup(registry->derefs, type);
+
+    return found ? *found : NULL;
+}
+
 const DropPlan *type_registry_drop_of(TypeRegistry *registry, const Type *type) {
     if (!type) {
         return NULL;
@@ -340,6 +357,7 @@ const DropPlan *type_registry_drop_of(TypeRegistry *registry, const Type *type) 
 TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
     registry->drops = drop_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->derefs = deref_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->layouts = layout_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->methods = method_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->applications =

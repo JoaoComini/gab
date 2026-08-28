@@ -18,11 +18,6 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->decl = NULL;
     type->generic = NULL;
 
-    // Nothing holds characters until the type that does says so: this is read
-    // of every type, so the arena's leftovers would make an arbitrary one
-    // answer as a string.
-    type->holds_characters = false;
-
     // One arm zeroed is every arm zeroed: whichever the kind reads, it reads
     // nothing rather than whatever the arena held.
     memset(&type->record, 0, sizeof(type->record));
@@ -110,8 +105,6 @@ TypeMetadata type_metadata_of(const Type *type) {
     }
 }
 
-bool type_is_string(const Type *type) { return type && type->holds_characters; }
-
 bool type_is_str_ref(const Type *type) {
     return type && type->kind == TYPE_REF && type->indirect.pointee &&
            type->indirect.pointee->kind == TYPE_STR;
@@ -188,6 +181,16 @@ bool type_is_indirect(const Type *type) { return type && (type->kind == TYPE_BOX
 
 bool type_owns_through_an_address(const Type *type) {
     return type && (type->kind == TYPE_BOX || type->kind == TYPE_BLOCK);
+}
+
+bool type_holds_its_memory_inline(const Type *type) {
+    for (size_t i = 0; i < type_field_count(type); i++) {
+        if (type_fields(type)[i].type && type_fields(type)[i].type->kind == TYPE_BLOCK) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 const Type *type_array_element(const Type *type) {

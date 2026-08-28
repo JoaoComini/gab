@@ -122,6 +122,27 @@ GAB_HASH_MAP(MethodTable, method_key, MethodKey, Symbol *)
 GAB_HASH_MAP(DropTable, drop_key, const Type *, const DropPlan *)
 
 /*
+    What each type derefs to: the borrowed view an owner reaches its methods
+    through. 'String' derefs to 'str', which is how a string finds the methods
+    written for characters.
+
+    The relation Rust spells Deref, and registered for the same reason its
+    impls are: nothing about a type's shape says what it stands for. A 'String'
+    and a 'Vec<byte>' are laid out identically, so only the declaration saying
+    one denotes text tells them apart.
+
+    Registered rather than derived, and one direction only: an owner reaches its
+    view, never the reverse. What belongs to the owner -- duplicating the
+    allocation -- must not be reachable from a borrow of it.
+*/
+#define deref_key_hash(key) (size_t)key
+#define deref_key_key_equals(key, other) key == other
+#define deref_key_key_dup(key) key
+#define deref_key_entry_free(key, value)
+
+GAB_HASH_MAP(DerefTable, deref_key, const Type *, const Type *)
+
+/*
     Where a value of each type sits in memory, by the type it was derived from.
 
     Beside the types for the reason a drop plan is, and computed the same way:
@@ -178,6 +199,9 @@ typedef struct TypeRegistry {
     // What freeing a value of each type does.
     DropTable *drops;
 
+    // What each type derefs to, for the few that do.
+    DerefTable *derefs;
+
     // How wide a value of each type is, and where its fields begin.
     LayoutTable *layouts;
 
@@ -230,6 +254,16 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings);
 void type_registry_destroy(TypeRegistry *registry);
 
 const Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind type);
+
+// Gives a type the borrowed view it derefs to, through which it answers the
+// methods written for that view. One direction: 'from' reaches 'to', never the
+// reverse.
+void type_registry_set_deref(TypeRegistry *registry, const Type *from, const Type *to);
+
+// What a type derefs to, or NULL for one that derefs to nothing. What a method
+// lookup walks, and what tells an owner apart from a value merely laid out like
+// it.
+const Type *type_registry_deref_of(TypeRegistry *registry, const Type *type);
 
 // The owning 'String'. Reached by name rather than through get_builtin, which
 // answers for kinds: a string is a struct, so there is no kind that names it.

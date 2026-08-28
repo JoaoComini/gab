@@ -425,13 +425,6 @@ struct Type {
     // not a generic declaration, which is all but the bare names.
     const GenericDecl *generic;
 
-    // Whether the block this counts holds characters, making the type the
-    // owning 'String'. What a 'Vec<byte>' would not be: the two are laid out
-    // alike, and only this says one of them denotes text -- which is what
-    // decides that it lends a 'ref str', joins with '+' and compares by
-    // characters rather than by its bytes.
-    bool holds_characters;
-
     /*
         What the kind gives it, and nothing another kind would give.
 
@@ -498,14 +491,6 @@ TypeMetadata type_metadata_of(const Type *type);
 // receiver reconciles to, what a C body reads, and what '==' and '..' take.
 bool type_is_str_ref(const Type *type);
 
-// Whether this is the owning 'String': a struct whose block holds characters,
-// which is what lends a 'ref str' and what a literal is copied into.
-//
-// A flag rather than a kind, because nothing about the shape says it: a string
-// is laid out exactly as a 'Vec<byte>' is, and what tells them apart is that
-// one denotes text. See 'holds_characters'.
-bool type_is_string(const Type *type);
-
 // Whether a value of this type can be held at all: an unsized type names
 // something no slot, field or parameter may contain, and is reached only
 // through a reference.
@@ -525,6 +510,14 @@ bool type_is_indirect(const Type *type);
 // going through it. A block is an address and is not dereferenceable: what
 // reaches its elements is the header owning it, never a deref.
 bool type_owns_through_an_address(const Type *type);
+
+// Whether a value of this type holds the memory it owns in its own slots -- a
+// header holding a block, which is what a 'String' and a 'Vec<T>' are.
+//
+// What it owns therefore lives exactly as long as the slot does, where a
+// pointer variable names memory whose lifetime was decided wherever it was
+// assigned. That is the difference the flow pass turns on.
+bool type_holds_its_memory_inline(const Type *type);
 
 // What one element of an array is, and how many it holds. Both are what the
 // application was given, so the element a walk strides by and the count it

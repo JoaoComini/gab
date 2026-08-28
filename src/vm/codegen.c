@@ -212,7 +212,7 @@ static void codegen_addr_of_into(CodegenState *state, ASTExpr *inner, unsigned i
 static bool expr_is_immediate_operand(const ASTExpr *node, unsigned int *out);
 static unsigned int codegen_rhs(CodegenState *state, BinOp op, ASTExpr *rhs, const Type *left_type,
                                 RhsKind *kind);
-static OpCode bin_op_opcode_for(BinOp op, const Type *left_type, RhsKind kind);
+static OpCode bin_op_opcode_for(TypeRegistry *registry, BinOp op, const Type *left_type, RhsKind kind);
 static OpCode bin_op_to_float_op(BinOp bin_op);
 static OpCode bin_op_to_int_op(BinOp bin_op);
 static void codegen_emit_bin_op(CodegenState *state, ASTExpr *node, unsigned int dest, unsigned int lhs,
@@ -858,7 +858,7 @@ static void codegen_compound_assign_stmt(CodegenState *state, ASTCompoundAssignS
         RhsKind rhs_kind = RHS_REGISTER;
         unsigned int rhs = codegen_rhs(state, ast->op, ast->value, ast->target->type, &rhs_kind);
 
-        OpCode op_code = bin_op_opcode_for(ast->op, ast->target->type, rhs_kind);
+        OpCode op_code = bin_op_opcode_for(state->registry, ast->op, ast->target->type, rhs_kind);
 
         chunk_add_instruction(state->chunk,
                               VM_ENCODE_RK(op_code, rd, rd, rhs, rhs_kind == RHS_IMMEDIATE ? 1 : 0));
@@ -890,7 +890,7 @@ static void codegen_compound_assign_stmt(CodegenState *state, ASTCompoundAssignS
     RhsKind rhs_kind = RHS_REGISTER;
     unsigned int rhs = codegen_rhs(state, ast->op, ast->value, ast->target->type, &rhs_kind);
 
-    OpCode op_code = bin_op_opcode_for(ast->op, ast->target->type, rhs_kind);
+    OpCode op_code = bin_op_opcode_for(state->registry, ast->op, ast->target->type, rhs_kind);
 
     chunk_add_instruction(state->chunk,
                           VM_ENCODE_RK(op_code, value, value, rhs, rhs_kind == RHS_IMMEDIATE ? 1 : 0));
@@ -2508,7 +2508,7 @@ static unsigned int codegen_rhs(CodegenState *state, BinOp op, ASTExpr *rhs, con
 // The instruction an operator and its right operand call for. A float literal
 // takes the constant-pool form, and anything else the register or immediate
 // form the k bit already distinguished.
-static OpCode bin_op_opcode_for(BinOp op, const Type *left_type, RhsKind kind) {
+static OpCode bin_op_opcode_for(TypeRegistry *registry, BinOp op, const Type *left_type, RhsKind kind) {
     // A string is compared by its characters rather than its slots, so the
     // opcode is chosen by the operand type before the numeric families.
     //
@@ -2516,7 +2516,7 @@ static OpCode bin_op_opcode_for(BinOp op, const Type *left_type, RhsKind kind) {
     // way a header does, since what is read is the characters either way. A
     // reference falling through to the integer families would compare the
     // address alone, which answers only for two names of one allocation.
-    if (type_is_string(left_type) || type_is_str_ref(left_type)) {
+    if (type_registry_deref_of(registry, left_type) || type_is_str_ref(left_type)) {
         return op == BIN_OP_EQUAL ? OP_CMP_EQS : OP_CMP_NES;
     }
 
@@ -2618,7 +2618,7 @@ static OpCode bin_op_to_int_op(BinOp bin_op) {
 // paths so the two cannot disagree about how the operand is encoded.
 static void codegen_emit_bin_op(CodegenState *state, ASTExpr *node, unsigned int dest, unsigned int lhs,
                                 unsigned int rhs, RhsKind kind) {
-    OpCode op_code = bin_op_opcode_for(node->bin_op.op, node->bin_op.left->type, kind);
+    OpCode op_code = bin_op_opcode_for(state->registry, node->bin_op.op, node->bin_op.left->type, kind);
 
     chunk_add_instruction(state->chunk, VM_ENCODE_RK(op_code, dest, lhs, rhs, kind == RHS_IMMEDIATE ? 1 : 0));
 }
