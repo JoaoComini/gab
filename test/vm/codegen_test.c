@@ -757,6 +757,61 @@ static void test_every_chunk_ends_in_a_return() {
     test_program_free(&program);
 }
 
+// Every jump lands inside the chunk that emitted it. The interpreter reads that
+// as its guarantee that following one costs no more than a straight-line step:
+// a jump changes no frame, so it re-reads neither the frame's bytecode nor how
+// many frames are left. A jump reaching outside its chunk would run whatever
+// followed the chunk in memory.
+static void test_every_jump_lands_inside_its_chunk() {
+    TestProgram program = test_compile("func f(n: int): int {\n"
+                                       "    let acc: int = 0;\n"
+                                       "    for let i: int = 0; i < n; i += 1 {\n"
+                                       "        if i > 3 { acc += i; } else { continue; }\n"
+                                       "        if acc > 99 { break; }\n"
+                                       "    }\n"
+                                       "    for let j: int = 0; j < n; j += 2 { acc += j; }\n"
+                                       "    return acc;\n"
+                                       "}\n");
+
+    Chunk *chunk = test_func_chunk(&program, 0);
+    size_t size = chunk->instructions.size;
+
+    size_t jumps = 0;
+
+    for (size_t at = 0; at < size; at++) {
+        Instruction instruction = chunk->instructions.data[at];
+
+        // Where each form reaches from: a jump's offset applies to the
+        // instruction after it, which is where the pointer sits once the
+        // instruction has been fetched.
+        long target;
+
+        switch (VM_DECODE_OPCODE(instruction)) {
+        case OP_JMP:
+        case OP_JMP_IF_FALSE:
+        case OP_JMP_IF_TRUE:
+            target = (long)at + 1 + VM_DECODE_I_SIMM(instruction);
+            break;
+
+        case OP_FOR_LOOP:
+            target = (long)at + 1 - (long)VM_DECODE_R_BACK(instruction);
+            break;
+
+        default:
+            continue;
+        }
+
+        jumps++;
+
+        assert(target >= 0 && (size_t)target < size);
+    }
+
+    // The loop would hold vacuously over a chunk with no jumps in it.
+    assert(jumps > 0);
+
+    test_program_free(&program);
+}
+
 int main() {
     test_a_constant_expression_folds_to_one_load();
     test_a_constant_float_expression_folds();
@@ -783,6 +838,7 @@ int main() {
     test_if_jumps_past_its_then_block();
     test_if_else_jumps_over_the_else_block();
     test_every_chunk_ends_in_a_return();
+    test_every_jump_lands_inside_its_chunk();
     test_a_function_compiles_into_its_own_chunk();
     test_a_method_counts_its_receiver();
     test_a_release_names_what_it_frees();
