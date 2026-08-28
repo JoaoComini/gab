@@ -226,10 +226,26 @@ typedef enum {
     OP_LOAD_PTR_N,
     OP_STORE_PTR_N,
 
-    // One iteration of a counting loop: step rd, and if it is still below r1,
-    // jump back by the signed offset in r2. Replaces the compare, the
-    // conditional jump, the increment and the jump back that a general loop
-    // needs -- four dispatches per iteration rather than one.
+    // How many iterations a counting loop has left, worked out before it runs:
+    // rd := r1 < r2 ? r2 - r1 : 0, for a counter r1 and a bound r2.
+    //
+    // Once per loop rather than once per iteration, which is the point: with
+    // the count in hand the iteration below tests it against zero instead of
+    // loading the bound and comparing against that. The subtraction cannot
+    // overflow for the same reason the loop is countable at all -- both are
+    // ints and the step is one, so the count is a difference of two values the
+    // loop already compared.
+    OP_LOOP_INIT,
+
+    // One iteration of a counting loop: step rd, spend one of the r1
+    // iterations left, and jump back by the magnitude in r2 if any remain.
+    // Replaces the compare, the conditional jump, the increment and the jump
+    // back that a general loop needs -- four dispatches per iteration rather
+    // than one.
+    //
+    // The test is against a count rather than against the bound, so the bound
+    // is read where the loop starts and not on every pass. Lua's OP_FORLOOP
+    // counts down for the same reason.
     //
     // The step is fixed at one and the comparison at '<', because that is the
     // shape codegen recognises; anything else keeps the general form.
@@ -280,10 +296,13 @@ typedef enum {
 // what a program can say.
 #define VM_MAX_IMMEDIATE 0xFF
 
-// The r2 field read as a signed jump offset, for OP_FOR_LOOP. Sign-extended by
-// the shift pair rather than by a cast, since the field is not a whole type's
-// width -- the same reason VM_DECODE_I_SIMM is written this way.
-#define VM_DECODE_R_SIMM(instr) ((int32_t)((uint32_t)(instr) << 23) >> 24)
+// How far back OP_FOR_LOOP reaches, as a magnitude. A loop's jump is backwards
+// or it is not a loop, so the direction is in the instruction rather than in
+// the operand: the handler subtracts, and nothing has to widen a signed field
+// to a pointer's width on the path a dispatch waits on.
+//
+// Lua's OP_FORLOOP encodes 'pc -= Bx' for the same reason.
+#define VM_DECODE_R_BACK(instr) (((instr) >> 1) & 0xFF)
 
 // How far the fused loop reaches back. A body longer than this keeps the
 // general compare-and-jump form, so the range bounds an optimisation rather

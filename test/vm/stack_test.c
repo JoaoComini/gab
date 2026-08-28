@@ -15,7 +15,7 @@ static void test_stack_base_is_aligned_at_creation() {
     VM *vm = vm_create();
 
     assert(is_8_byte_aligned(vm->stack));
-    assert(vm->stack == vm->registers);
+    assert(vm->stack == vm_registers(vm));
 
     vm_free(vm);
 }
@@ -73,7 +73,15 @@ static void test_deep_recursion_preserves_live_frames() {
 static void test_registers_are_slot_granular() {
     VM *vm = vm_create();
 
-    assert(vm_reg_at(vm, 1) - vm_reg_at(vm, 0) == VM_SLOT_SIZE);
+    // Written through one register and read back through the next: the two
+    // must not overlap, which is what scaling an index by VM_SLOT_SIZE buys.
+    uint8_t *regs = vm_registers(vm);
+
+    vm_write_i32_at(regs, 0, 0x11111111);
+    vm_write_i32_at(regs, 1, 0x22222222);
+
+    assert(vm_read_i32_at(regs, 0) == 0x11111111);
+    assert(vm_read_i32_at(regs, 1) == 0x22222222);
     assert(vm_slot_at(vm, 4) - vm->stack == 4 * VM_SLOT_SIZE);
 
     vm_free(vm);

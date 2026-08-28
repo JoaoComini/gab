@@ -19,7 +19,7 @@
 typedef struct {
     const FuncPrototype *proto;
 
-    ptrdiff_t return_ip;
+    const Instruction *return_ip;
 
     // Byte offset into the stack, not a slot index.
     size_t base;
@@ -142,16 +142,12 @@ typedef struct VM {
     uint8_t *stack;
     size_t stack_capacity;
 
-    // Points at stack + frame->base, in bytes.
-    uint8_t *registers;
-
     CallFrame frames[VM_MAX_CALL_DEPTH];
     size_t frame_count;
 
-    // Signed, because a jump offset is: an index that went negative wraps to a
-    // huge unsigned value, which reads as 'past the end' and would end the run
-    // quietly instead of tripping a bound.
-    ptrdiff_t instruction_pointer;
+    // Where in its chunk the running frame is, as a pointer: the loop holds one
+    // too, so the two need no conversion at the boundary between them.
+    const Instruction *instruction_pointer;
 
     // Why the last run stopped. Cleared at the start of every run.
     VmError error;
@@ -173,11 +169,9 @@ struct GabArgs {
     size_t base;
 };
 
-// Where register r of the current frame begins, and where slot i of the stack
-// begins. Bytes, because a slot is a size rather than a type: what lives there
-// is whatever the static types said, and only the accessors below name a width.
-static inline uint8_t *vm_reg_at(const VM *vm, size_t r) { return vm->registers + r * VM_SLOT_SIZE; }
-
+// Where slot i of the stack begins. Bytes, because a slot is a size rather than
+// a type: what lives there is whatever the static types said, and only the
+// accessors below name a width.
 static inline uint8_t *vm_slot_at(const VM *vm, size_t i) { return vm->stack + i * VM_SLOT_SIZE; }
 
 // Scalar reads and writes. Every one goes through memcpy, which is the only
@@ -187,37 +181,56 @@ static inline uint8_t *vm_slot_at(const VM *vm, size_t i) { return vm->stack + i
 //
 // The pointer pair is the same operation over two slots, and sits here rather
 // than apart so that every access to a slot reads alike.
-static inline int32_t vm_read_i32(const VM *vm, size_t r) {
+/*
+    Each takes where the frame's registers begin rather than the VM, because
+    the interpreter holds that as a local and a register access must not reload
+    it. A field could not stay in a register across a handler: the slots are
+    bytes and the field naming them is a pointer to bytes, so a store into a
+    slot may, as far as the compiler knows, be a store to the field -- and every
+    access after a write reloads it. A local has no address for such a store to
+    have written through. Lua's 'StkId base' is a local for this reason.
+
+    Somewhere with no such local -- a frame being set up, a host reading a
+    result -- passes vm_registers(vm).
+*/
+static inline int32_t vm_read_i32_at(const uint8_t *regs, size_t r) {
     int32_t value;
-    memcpy(&value, vm_reg_at(vm, r), sizeof(value));
+    memcpy(&value, regs + r * VM_SLOT_SIZE, sizeof(value));
 
     return value;
 }
 
-static inline float vm_read_f32(const VM *vm, size_t r) {
+static inline float vm_read_f32_at(const uint8_t *regs, size_t r) {
     float value;
-    memcpy(&value, vm_reg_at(vm, r), sizeof(value));
+    memcpy(&value, regs + r * VM_SLOT_SIZE, sizeof(value));
 
     return value;
 }
 
-static inline void vm_write_i32(VM *vm, size_t r, int32_t value) {
-    memcpy(vm_reg_at(vm, r), &value, sizeof(value));
+static inline void vm_write_i32_at(uint8_t *regs, size_t r, int32_t value) {
+    memcpy(regs + r * VM_SLOT_SIZE, &value, sizeof(value));
 }
 
-static inline void vm_write_f32(VM *vm, size_t r, float value) {
-    memcpy(vm_reg_at(vm, r), &value, sizeof(value));
+static inline void vm_write_f32_at(uint8_t *regs, size_t r, float value) {
+    memcpy(regs + r * VM_SLOT_SIZE, &value, sizeof(value));
 }
 
-static inline uint8_t *vm_read_ptr(const VM *vm, size_t r) {
+static inline uint8_t *vm_read_ptr_at(const uint8_t *regs, size_t r) {
     uint8_t *address;
-    memcpy(&address, vm_reg_at(vm, r), sizeof(address));
+    memcpy(&address, regs + r * VM_SLOT_SIZE, sizeof(address));
 
     return address;
 }
 
-static inline void vm_write_ptr(VM *vm, size_t r, uint8_t *address) {
-    memcpy(vm_reg_at(vm, r), &address, sizeof(address));
+static inline void vm_write_ptr_at(uint8_t *regs, size_t r, uint8_t *address) {
+    memcpy(regs + r * VM_SLOT_SIZE, &address, sizeof(address));
+}
+
+// Where the running frame's registers begin. Derived rather than stored: it is
+// the stack plus that frame's base, and a field holding the same thing would be
+// a second statement of it to keep in step.
+static inline uint8_t *vm_registers(const VM *vm) {
+    return vm->stack + (vm->frame_count > 0 ? vm->frames[vm->frame_count - 1].base : 0);
 }
 
 VM *vm_create();

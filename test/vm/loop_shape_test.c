@@ -112,6 +112,31 @@ static void test_a_counting_loop_is_one_instruction_per_iteration() {
     test_program_free(&program);
 }
 
+// A body too long to reach back in the offset's eight bits keeps the general
+// compare-and-jump form, so the range bounds an optimisation rather than a
+// program.
+static void test_a_long_body_keeps_the_general_form() {
+    char source[8192];
+    size_t at = (size_t)snprintf(source, sizeof source,
+                                 "func run(n: int): int {\n"
+                                 "    let acc: int = 0;\n"
+                                 "    for let i: int = 0; i < n; i += 1 {\n");
+
+    for (int i = 0; i < 140; i++) {
+        at += (size_t)snprintf(source + at, sizeof source - at, "        acc = acc + %d;\n", i);
+    }
+
+    snprintf(source + at, sizeof source - at, "    }\n    return acc;\n}\n");
+
+    TestProgram program = test_compile(source);
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    assert(test_count_opcode(chunk, OP_FOR_LOOP) == 0);
+    assert(test_count_opcode(chunk, OP_JMP) == 1);
+
+    test_program_free(&program);
+}
+
 // 'i = i + 1' steps the counter exactly as 'i += 1' does, so it is the same
 // loop and takes the same instruction. The compound form is a spelling, not a
 // different operation, and recognising only that one would make the fused
@@ -311,6 +336,7 @@ int main() {
     test_a_counter_written_through_a_pointer_is_not_fused();
     test_a_counter_written_through_a_pointer_still_works();
     test_a_body_that_writes_the_counter_is_not_fused();
+    test_a_long_body_keeps_the_general_form();
     test_a_counting_loop_is_one_instruction_per_iteration();
     test_a_counting_loop_is_recognised_however_the_step_is_spelled();
     test_a_counting_loop_takes_the_step_from_either_side();

@@ -1109,6 +1109,17 @@ static void codegen_for_stmt(CodegenState *state, ASTForStmt *ast) {
         unsigned int counter_reg = codegen_slot_of(state, (Symbol *)counter);
         unsigned int bound_reg = codegen_slot_of(state, (Symbol *)bound);
 
+        // How many iterations are left, worked out once. The loop instruction
+        // spends one per pass and tests what remains, so the bound is read here
+        // and never again -- which is sound because neither operand may be
+        // assigned in the body. See for_is_countable.
+        //
+        // Held for the whole loop rather than released with the entry test: the
+        // instruction at the bottom reads it on every iteration.
+        unsigned int left = codegen_alloc_register(state, ast->condition->span);
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_LOOP_INIT, left, counter_reg, bound_reg));
+
         unsigned int entry_saved = state->next_reg;
         unsigned int entry = codegen_alloc_register(state, ast->condition->span);
 
@@ -1130,8 +1141,10 @@ static void codegen_for_stmt(CodegenState *state, ASTForStmt *ast) {
         // Too long a body to reach back in eight signed bits. Nothing is
         // emitted yet that assumes otherwise, so the general form still works.
         if (back >= -VM_MAX_LOOP_OFFSET) {
+            // The magnitude, since the instruction is what says the jump goes
+            // backwards. See VM_DECODE_R_BACK.
             chunk_add_instruction(state->chunk,
-                                  VM_ENCODE_R(OP_FOR_LOOP, counter_reg, bound_reg, (unsigned int)back));
+                                  VM_ENCODE_R(OP_FOR_LOOP, counter_reg, left, (unsigned int)-back));
 
             codegen_patch_jump(state, entry_label, OP_JMP_IF_FALSE, entry);
 

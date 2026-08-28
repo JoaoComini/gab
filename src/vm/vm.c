@@ -103,9 +103,8 @@ VM *vm_create() {
 
     vm->stack_capacity = VM_STACK_SIZE;
     vm->stack = calloc(vm->stack_capacity, VM_SLOT_SIZE);
-    vm->registers = vm->stack;
     vm->frame_count = 0;
-    vm->instruction_pointer = 0;
+    vm->instruction_pointer = NULL;
     vm->error = (VmError){.status = VM_RUN_OK};
 
     // After the program exists: a method's entry goes in its table.

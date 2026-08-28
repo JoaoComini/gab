@@ -785,7 +785,6 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
     // Frame zero is not on the stack during a host call; the callee's frame is
     // the only one, and it returns into its own slot 0.
     vm->frame_count = 0;
-    vm->registers = vm->stack + base;
 
     // Arguments start at slot 1 of the block, matching where the callee's
     // frame — based here — expects its parameters.
