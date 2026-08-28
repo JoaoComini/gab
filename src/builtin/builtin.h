@@ -31,6 +31,12 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
                              GabExternFn body, const Type *return_type, const Type *const *params,
                              size_t param_count);
 
+// As builtin_register_method, for a function reached on the type rather than on
+// a value: 'Type::name(args)'. Every parameter is in 'params', since nothing is
+// the receiver.
+void builtin_register_static(VM *vm, const Type *declared_on, const char *name, GabExternFn body,
+                             const Type *return_type, const Type *const *params, size_t param_count);
+
 // Each builtin type's methods, called by builtin_register_all.
 void builtin_register_string(VM *vm);
 

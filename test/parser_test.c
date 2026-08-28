@@ -536,7 +536,7 @@ static void test_function_cannot_be_declared_inside_another() {
 // A method body is a function body, so the same rule holds inside one.
 static void test_function_cannot_be_declared_inside_a_method() {
     assert_parse_error("struct P { n: int }\n"
-                       "func (p: ref P) m(): int {\n"
+                       "func P::m(p: ref P): int {\n"
                        "    func inner(): int { return 1; }\n"
                        "    return 0;\n"
                        "}\n",

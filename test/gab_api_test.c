@@ -873,7 +873,7 @@ static void test_a_method_is_not_reachable_from_a_host(void) {
     assert(gab_load(vm, "m.gab",
                     "module M;\n"
                     "struct Player { health: int }\n"
-                    "func (p: ref Player) hp(): int { return p.health; }\n",
+                    "func Player::hp(p: ref Player): int { return p.health; }\n",
                     &err));
 
     assert(!gab_lookup(vm, "M", "hp", &err));

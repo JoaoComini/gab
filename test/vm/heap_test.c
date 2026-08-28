@@ -61,15 +61,15 @@ static void test_two_objects_are_distinct() {
 // A method on a pointer receiver is called through a heap pointer with no
 // address-taking, since the receiver already is one.
 static void test_method_on_a_heap_object() {
-    assert(
-        test_run_int("struct Player { health: int }\n"
-                     "func (p: ref Player) hurt(n: int): int { p.health = p.health - n; return p.health; }\n"
-                     "func main(): int {\n"
-                     "    let p: box Player = new Player;\n"
-                     "    p.health = 50;\n"
-                     "    return p.hurt(8);\n"
-                     "}\n"
-                     "let r: int = main();") == 42);
+    assert(test_run_int(
+               "struct Player { health: int }\n"
+               "func Player::hurt(p: ref Player, n: int): int { p.health = p.health - n; return p.health; }\n"
+               "func main(): int {\n"
+               "    let p: box Player = new Player;\n"
+               "    p.health = 50;\n"
+               "    return p.hurt(8);\n"
+               "}\n"
+               "let r: int = main();") == 42);
 }
 
 // A heap object holding a pointer to another: the field is a 'box T' like any
@@ -227,7 +227,7 @@ static void test_an_owned_argument_is_freed_by_the_call_site() {
 // nobody's afterwards either.
 static void test_an_owned_receiver_is_freed_by_the_call_site() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func (b: ref Box) get(): int { return b.n + 2; }\n"
+                        "func Box::get(b: ref Box): int { return b.n + 2; }\n"
                         "func main(): int { return (new Box).get(); }\n"
                         "let r: int = main();") == 2);
 }
