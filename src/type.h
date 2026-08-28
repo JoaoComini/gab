@@ -543,21 +543,18 @@ bool type_is_copyable(const Type *type);
 const TypeField *type_find_field(const Type *type, const String *name);
 
 /*
-    Where a value of 'lender' keeps each part a reference to 'pointee' carries,
-    as byte offsets into the lender.
+    One part of a lender that a reference to its deref target is built from, as
+    a byte offset into the lender and how wide that piece is.
 
     Offsets rather than fields, because what a reference takes need not be a
     whole field or even a contiguous one: a 'ref str' is an address and a count,
-    and a String keeps both inside the block it owns, with the capacity sitting
-    between them.
+    and a String keeps both inside the block it owns with the capacity between
+    them.
 
-    Zero unless 'lender' derefs to 'pointee': the deref relation is what says a
-    lend is possible, so what a reference may be built from is one question
-    rather than a shape that happens to fit. A 'Vec<byte>' keeps the same block
-    a string does and lends nothing, never having been declared to stand for a
-    run of characters.
-
-    Returns how many parts were found, writing that many into 'out'.
+    Registered with the deref relation rather than derived, for the same reason
+    the relation itself is: nothing about a shape says which of its bytes stand
+    for the view it lends. Two types laid out alike lend differently, or not at
+    all.
 */
 typedef struct TypeRegistry TypeRegistry;
 
@@ -566,8 +563,9 @@ typedef struct LentPart {
     size_t size;
 } LentPart;
 
-size_t type_lent_parts(TypeRegistry *registry, const Type *lender, const Type *pointee, LentPart *out,
-                       size_t max);
+// The most parts a reference is built from: an address and whatever naming its
+// pointee requires beside it.
+#define GAB_MAX_LENT_PARTS 4
 
 // A type as the source wrote it, before any name is looked up. The syntactic
 // counterpart of Type: this is what a type position parses into, and the

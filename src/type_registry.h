@@ -140,7 +140,23 @@ GAB_HASH_MAP(DropTable, drop_key, const Type *, const DropPlan *)
 #define deref_key_key_dup(key) key
 #define deref_key_entry_free(key, value)
 
-GAB_HASH_MAP(DerefTable, deref_key, const Type *, const Type *)
+/*
+    What a type derefs to, and which of its bytes a reference to that view is
+    built from.
+
+    One statement, because they are one fact: saying a 'String' stands for a run
+    of characters is saying that its block's address and length are what naming
+    that run takes. A shape cannot imply either half -- a 'Vec<byte>' is laid
+    out identically and stands for nothing.
+*/
+typedef struct Deref {
+    const Type *to;
+
+    LentPart parts[GAB_MAX_LENT_PARTS];
+    size_t part_count;
+} Deref;
+
+GAB_HASH_MAP(DerefTable, deref_key, const Type *, const Deref *)
 
 /*
     Where a value of each type sits in memory, by the type it was derived from.
@@ -258,12 +274,17 @@ const Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind type);
 // Gives a type the borrowed view it derefs to, through which it answers the
 // methods written for that view. One direction: 'from' reaches 'to', never the
 // reverse.
-void type_registry_set_deref(TypeRegistry *registry, const Type *from, const Type *to);
+void type_registry_set_deref(TypeRegistry *registry, const Type *from, const Type *to, const LentPart *parts,
+                             size_t part_count);
 
 // What a type derefs to, or NULL for one that derefs to nothing. What a method
 // lookup walks, and what tells an owner apart from a value merely laid out like
 // it.
 const Type *type_registry_deref_of(TypeRegistry *registry, const Type *type);
+
+// The deref relation itself, parts included, or NULL for a type that derefs to
+// nothing. What a lend reads to know which bytes to copy.
+const Deref *type_registry_deref(TypeRegistry *registry, const Type *type);
 
 // The owning 'String'. Reached by name rather than through get_builtin, which
 // answers for kinds: a string is a struct, so there is no kind that names it.

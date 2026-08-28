@@ -374,11 +374,6 @@ typedef enum {
 // the script's layout the C one.
 #define VM_STRING_SLOTS ((unsigned int)(sizeof(GabStringValue) / VM_SLOT_SIZE))
 
-// The most fields any reference carries, which is the two a run of characters
-// is named by. A bound rather than an allocation, so a lend copies into a frame
-// array instead of asking the arena for two pointers.
-#define VM_MAX_LENT_FIELDS 4
-
 // The slots one frame addresses, which is what a register operand indexes.
 #define VM_MAX_FRAME_SLOTS ((1 << 8) - 1)
 

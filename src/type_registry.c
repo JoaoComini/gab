@@ -25,7 +25,7 @@ static Type *register_builtin(TypeRegistry *registry, TypeKind kind, const char 
 // what a 'Vec<byte>' is, with characters for elements. What it does not share
 // is how one is written: a literal and a comparison are about the characters
 // themselves, and no struct shape implies them.
-static Type *string_builtin_create(TypeRegistry *registry) {
+static Type *string_builtin_create(TypeRegistry *registry, const Type *str_type) {
     Type *type = type_struct_create(registry->arena, string_from_cstr(registry->strings, "String"), 1);
 
     // The block owns the characters and carries the capacity it was taken at,
@@ -39,6 +39,24 @@ static Type *string_builtin_create(TypeRegistry *registry) {
     // everything freeing it needs -- so how it frees follows from its shape and
     // is derived like any struct's.
     type_registry_drop_of(registry, type);
+
+    // What a string stands for, and which of its bytes say so. Registered here
+    // because this is what chose the layout: the address its block holds and
+    // the count of live characters beside it, with the capacity between them
+    // staying the owner's business.
+    //
+    // Both halves are one statement. That a 'String' denotes a run of
+    // characters is what lets it answer their methods and lend a 'ref str', and
+    // neither follows from its shape -- a 'Vec<byte>' is laid out identically
+    // and stands for nothing.
+    const LentPart characters_named_by[] = {
+        {.offset = offsetof(GabStringValue, block) + offsetof(GabBlockValue, data), .size = sizeof(void *)},
+        {.offset = offsetof(GabStringValue, block) + offsetof(GabBlockValue, length),
+         .size = sizeof(int32_t)},
+    };
+
+    type_registry_set_deref(registry, type, str_type, characters_named_by,
+                            sizeof(characters_named_by) / sizeof(*characters_named_by));
 
     return type;
 }
@@ -84,21 +102,19 @@ void type_registry_register_builtins(TypeRegistry *registry) {
 
     registry->builtins.byte_type = register_builtin(registry, TYPE_BYTE, "byte");
 
-    // A struct in its layout and a builtin in its semantics: the fields are
-    // where its size, its alignment and what it owns all come from, while
-    // comparison, literals and the borrow spelling stay the kind's own.
-    registry->builtins.string_type = string_builtin_create(registry);
-
     // The characters, which no slot holds: a 'ref str' is what names them, and
     // that reference is what carries how many there are. Zero-width because
     // nothing is ever laid out for it, and both of those follow from the kind
     // rather than being set here: see type_is_sized and type_metadata_of.
+    //
+    // Before the string that lends it, which registers what it derefs to as
+    // part of saying what it is.
     registry->builtins.str_type = register_builtin(registry, TYPE_STR, "str");
 
-    // A string is laid out as a run of characters, so it answers the methods
-    // written for them: this is what a method lookup walks, and what tells a
-    // 'String' apart from a 'Vec<byte>' laid out identically.
-    type_registry_set_deref(registry, registry->builtins.string_type, registry->builtins.str_type);
+    // A struct in its layout and a builtin in its semantics: the fields are
+    // where its size, its alignment and what it owns all come from, while
+    // comparison, literals and the borrow spelling stay the kind's own.
+    registry->builtins.string_type = string_builtin_create(registry, registry->builtins.str_type);
 
     // The VM and the host both read these two fields as GabStringValue, so the
     // computed layout and the C struct are two statements of one thing.
@@ -315,21 +331,37 @@ size_t type_registry_align_of(TypeRegistry *registry, const Type *type) {
     return type_registry_layout_of(registry, type)->alignment;
 }
 
-void type_registry_set_deref(TypeRegistry *registry, const Type *from, const Type *to) {
+void type_registry_set_deref(TypeRegistry *registry, const Type *from, const Type *to, const LentPart *parts,
+                             size_t part_count) {
     assert(from && to && "a deref relates two types");
+    assert(part_count <= GAB_MAX_LENT_PARTS && "a reference is built from at most GAB_MAX_LENT_PARTS parts");
     assert(!deref_key_lookup(registry->derefs, from) && "a type derefs to one thing");
 
-    deref_key_insert(registry->derefs, from, to);
+    Deref *deref = arena_alloc(registry->arena, sizeof(Deref));
+
+    *deref = (Deref){.to = to, .part_count = part_count};
+
+    for (size_t i = 0; i < part_count; i++) {
+        deref->parts[i] = parts[i];
+    }
+
+    deref_key_insert(registry->derefs, from, deref);
 }
 
-const Type *type_registry_deref_of(TypeRegistry *registry, const Type *type) {
+const Deref *type_registry_deref(TypeRegistry *registry, const Type *type) {
     if (!type) {
         return NULL;
     }
 
-    const Type **found = deref_key_lookup(registry->derefs, type);
+    const Deref **found = deref_key_lookup(registry->derefs, type);
 
     return found ? *found : NULL;
+}
+
+const Type *type_registry_deref_of(TypeRegistry *registry, const Type *type) {
+    const Deref *deref = type_registry_deref(registry, type);
+
+    return deref ? deref->to : NULL;
 }
 
 const DropPlan *type_registry_drop_of(TypeRegistry *registry, const Type *type) {

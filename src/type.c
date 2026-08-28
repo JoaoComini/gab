@@ -1,8 +1,5 @@
 #include "type.h"
 
-#include "object.h"
-#include "type_registry.h"
-
 #include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -54,37 +51,6 @@ const TypeField *type_find_field(const Type *type, const String *name) {
     }
 
     return NULL;
-}
-
-size_t type_lent_parts(TypeRegistry *registry, const Type *lender, const Type *pointee, LentPart *out,
-                       size_t max) {
-    // Only what the lender was declared to deref to. The relation is what says
-    // a lend is possible at all: a 'Vec<byte>' holds the same block a string
-    // does and lends nothing, because nothing declared it to stand for a run of
-    // anything.
-    if (!pointee || type_registry_deref_of(registry, lender) != pointee || max < 2) {
-        return 0;
-    }
-
-    // The block holding the characters, wherever the lender keeps it. Its
-    // address and its length are what a 'ref str' is; the capacity between them
-    // is what frees the memory, and stays the owner's business.
-    for (size_t i = 0; i < type_field_count(lender); i++) {
-        const TypeField *field = &type_fields(lender)[i];
-
-        if (!field->type || field->type->kind != TYPE_BLOCK) {
-            continue;
-        }
-
-        size_t base = type_registry_layout_of(registry, lender)->offsets[i];
-
-        out[0] = (LentPart){.offset = base + offsetof(GabBlockValue, data), .size = sizeof(void *)};
-        out[1] = (LentPart){.offset = base + offsetof(GabBlockValue, length), .size = sizeof(int32_t)};
-
-        return 2;
-    }
-
-    return 0;
 }
 
 // A raw pointer is deliberately not one of these. Every caller is a

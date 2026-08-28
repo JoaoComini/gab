@@ -3,6 +3,7 @@
 // there are; 'String' owns them.
 
 #include "support/run.h"
+#include "type_registry.h"
 
 #include <assert.h>
 
@@ -161,11 +162,66 @@ static void test_either_naming_compares_and_joins() {
                         "let r: int = f();") == 4);
 }
 
+// A lend hands over the count of live characters, never the capacity they sit
+// in. The two differ only once a string has room it has not filled, so the
+// borrow is taken from one that grew past its first allocation.
+static void test_a_lend_carries_the_length_not_the_capacity() {
+    assert(test_run_int("func f(): int {\n"
+                        "    let o: String = \"ab\".to_owned();\n"
+                        "    o.push(99);\n"
+                        "    let b: ref str = o;\n"
+                        "    return b.len();\n"
+                        "}\n"
+                        "let r: int = f();") == 3);
+}
+
+// What a lend copies is registered with the deref relation, so it says which of
+// the lender's bytes name the view. The parts must fit inside what the
+// reference occupies: a lend writing past that would run into whatever the
+// frame put next.
+static void test_a_lend_fits_the_reference_it_builds() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope scope;
+    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+
+    TypeRegistry *registry = scope.type_registry;
+
+    const Type *string_type = type_registry_string(registry);
+    const Type *reference = type_registry_ref_to(registry, registry->builtins.str_type);
+
+    const Deref *deref = type_registry_deref(registry, string_type);
+
+    assert(deref && deref->to == registry->builtins.str_type);
+
+    // An address and the count naming the run, which is what a 'ref str' is.
+    assert(deref->part_count == 2);
+
+    size_t total = 0;
+
+    for (size_t i = 0; i < deref->part_count; i++) {
+        // Every part is somewhere inside the lender.
+        assert(deref->parts[i].offset + deref->parts[i].size <= type_registry_size_of(registry, string_type));
+
+        total += deref->parts[i].size;
+    }
+
+    assert(total <= type_registry_size_of(registry, reference));
+
+    // A type nothing declared a view for lends nothing, however it is laid out.
+    assert(!type_registry_deref(registry, reference));
+
+    test_context_free(&ctx);
+}
+
 int main(void) {
     test_characters_are_reached_through_a_reference();
     test_nothing_holds_the_characters_themselves();
     test_a_literal_names_borrowed_characters();
     test_a_string_lends_a_reference_to_its_characters();
+    test_a_lend_carries_the_length_not_the_capacity();
+    test_a_lend_fits_the_reference_it_builds();
     test_a_string_lends_to_a_parameter();
     test_a_reference_cannot_borrow_a_temporary();
     test_a_reference_may_not_outlive_what_it_borrows();

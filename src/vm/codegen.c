@@ -1493,24 +1493,24 @@ static unsigned int codegen_lend_expr(CodegenState *state, ASTExpr *node) {
     unsigned int rd = codegen_alloc_slots(state, type_slot_count(state->registry, reference),
                                           type_align_slots(state->registry, reference), node->span);
 
-    // Each part the reference carries, as an offset into the header. Offsets
-    // rather than fields, because a String keeps both the address and the count
-    // inside the one block it owns, with the capacity between them -- so what
-    // is lent is neither a whole field nor a contiguous run of one.
-    LentPart carried[VM_MAX_LENT_FIELDS];
-    size_t count =
-        type_lent_parts(state->registry, lent, type_pointee(reference), carried, VM_MAX_LENT_FIELDS);
+    // Which of the lender's bytes name the view, registered with the deref
+    // relation itself: nothing about a shape says which of its parts stand for
+    // what it lends, so the type that chose the layout is what said so.
+    const Deref *deref = type_registry_deref(state->registry, lent);
 
-    assert(count > 0 && "a lend handed over nothing");
+    assert(deref && deref->to == type_pointee(reference) && "a lend builds what its lender derefs to");
+    assert(deref->part_count > 0 && "a lend handed over nothing");
 
     unsigned int at = 0;
 
-    for (size_t i = 0; i < count; i++) {
-        assert(carried[i].offset % VM_SLOT_SIZE == 0 && "a lent part is always slot-aligned");
+    for (size_t i = 0; i < deref->part_count; i++) {
+        const LentPart *part = &deref->parts[i];
 
-        unsigned int width = (unsigned int)((carried[i].size + VM_SLOT_SIZE - 1) / VM_SLOT_SIZE);
+        assert(part->offset % VM_SLOT_SIZE == 0 && "a lent part is always slot-aligned");
 
-        codegen_copy_slots(state, rd + at, source + (unsigned int)(carried[i].offset / VM_SLOT_SIZE), width);
+        unsigned int width = (unsigned int)((part->size + VM_SLOT_SIZE - 1) / VM_SLOT_SIZE);
+
+        codegen_copy_slots(state, rd + at, source + (unsigned int)(part->offset / VM_SLOT_SIZE), width);
 
         at += width;
     }
