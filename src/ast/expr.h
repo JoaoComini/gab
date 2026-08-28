@@ -146,6 +146,20 @@ typedef struct ASTExpr {
             ASTExpr *target;
         } unary;
 
+        // A value handing over a reference to what it stands for, inserted by
+        // the resolver where a lend was accepted.
+        //
+        // Carries the parts rather than leaving codegen to ask what the lender
+        // derefs to. Which bytes name a view is what a library said when it
+        // declared the type, so it is resolved once here -- the same reason a
+        // field access carries its owner rather than re-deriving it.
+        struct {
+            ASTExpr *target;
+
+            const LentPart *parts;
+            size_t part_count;
+        } lend;
+
         // 'int(x)' — a numeric conversion, parsed as a call whose target names
         // a type rather than a function. The resolver rewrites it into this,
         // so codegen never sees a call it would have to tell apart.

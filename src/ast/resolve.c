@@ -879,8 +879,17 @@ static bool borrow_into(ResolverState *state, ASTExpr **slot, const Type *destin
     // fields rather than being the header read at a narrower width, so the two
     // need not be the same bytes.
     if (lends_by_value(state->current_scope->type_registry, destination, (*slot)->type)) {
+        const Deref *deref = type_registry_deref(state->current_scope->type_registry, (*slot)->type);
+
         ASTExpr *lend = ast_lend_expr_create(span, *slot);
         lend->type = destination;
+
+        // Settled here rather than left for codegen: which bytes name the view
+        // is what the library said when it declared the type, and resolving is
+        // where a declaration is read.
+        lend->lend.parts = deref->parts;
+        lend->lend.part_count = deref->part_count;
+
         *slot = lend;
 
         return true;

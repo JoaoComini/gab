@@ -1485,26 +1485,22 @@ static Constant value_from_literal(Literal lit) {
 // a 'ref str' is and leaves the rest where it sits. That the two happen to be
 // the same bytes today is what this stops depending on.
 static unsigned int codegen_lend_expr(CodegenState *state, ASTExpr *node) {
-    const Type *lent = node->unary.target->type;
     const Type *reference = node->type;
 
-    unsigned int source = codegen_expr(state, node->unary.target);
+    unsigned int source = codegen_expr(state, node->lend.target);
 
     unsigned int rd = codegen_alloc_slots(state, type_slot_count(state->registry, reference),
                                           type_align_slots(state->registry, reference), node->span);
 
-    // Which of the lender's bytes name the view, registered with the deref
-    // relation itself: nothing about a shape says which of its parts stand for
-    // what it lends, so the type that chose the layout is what said so.
-    const Deref *deref = type_registry_deref(state->registry, lent);
-
-    assert(deref && deref->to == type_pointee(reference) && "a lend builds what its lender derefs to");
-    assert(deref->part_count > 0 && "a lend handed over nothing");
+    // Which of the lender's bytes name the view, settled where the lend was
+    // accepted. What a type stands for is a resolution question, so nothing
+    // here asks it again -- this copies the parts it was given.
+    assert(node->lend.part_count > 0 && "a lend handed over nothing");
 
     unsigned int at = 0;
 
-    for (size_t i = 0; i < deref->part_count; i++) {
-        const LentPart *part = &deref->parts[i];
+    for (size_t i = 0; i < node->lend.part_count; i++) {
+        const LentPart *part = &node->lend.parts[i];
 
         assert(part->offset % VM_SLOT_SIZE == 0 && "a lent part is always slot-aligned");
 
