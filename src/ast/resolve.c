@@ -725,6 +725,11 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 
     check_call_args(state, &expr->call.args, method->func.params + 1);
 
+    // The value filling parameter zero is an argument like the written ones, so
+    // it copies under the same rule: the sugar has nowhere to spell a transfer,
+    // and an owning type reached this way would be duplicated silently.
+    check_implicit_copy(state, receiver, method->func.params[0], expr->span);
+
     // An array's length is part of its type, so 'xs.len()' is known here and
     // becomes the literal it answers. Folded rather than called because there
     // is nothing at run time to read: the elements carry no count beside them.
@@ -1989,18 +1994,6 @@ static const Type *resolve_param_type(ResolverState *state, ASTField *param) {
     const Type *type = resolve_type_expr(state, param->type_expr, param->span);
 
     if (reject_unsized(state, type, param->span, "a parameter")) {
-        return resolver_error_type(state);
-    }
-
-    // A parameter by value is a copy, which a type holding an owner has no way
-    // to make. Consuming it is what 'box T' says and borrowing it is what
-    // 'ref T' says, so one of those is written rather than the copy assumed.
-    if (!type_is_indirect(type) && !type_is_copyable(type)) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, param->span,
-                   "%s owns what it holds, so a parameter by value cannot copy it; write 'ref %s' to "
-                   "borrow it or 'box %s' to consume it",
-                   type_name(state, type), type_name(state, type), type_name(state, type));
-
         return resolver_error_type(state);
     }
 

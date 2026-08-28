@@ -159,19 +159,29 @@ static void test_a_method_parameter_may_own() {
                         "let r: int = main();") == 3);
 }
 
-// A parameter by value is a copy, which a type that owns cannot make. The rule
-// is the parameter's, not a receiver's: a free function is bound by it too.
-static void test_a_parameter_by_value_needs_a_copyable_type() {
-    assert(!test_compiles("struct Node { child: box Node }\n"
-                          "func peek(n: Node): int { return 0; }\n"));
+// A parameter by value takes ownership, and the call site spells it: the copy
+// is what is refused, not the signature. This is what a receiver clause could
+// not express, since a call on a value had nowhere to write the move.
+static void test_a_by_value_parameter_takes_ownership_with_a_move() {
+    assert(test_compiles_on_vm("func take(s: String): int { return 0; }\n"
+                               "func main(): int {\n"
+                               "    let s: String = String::from(\"hi\");\n"
+                               "    return take(move s);\n"
+                               "}\n"));
 
-    assert(!test_compiles("struct Node { child: box Node }\n"
-                          "func Node::peek(n: Node): int { return 0; }\n"));
+    assert(!test_compiles_on_vm("func take(s: String): int { return 0; }\n"
+                                "func main(): int {\n"
+                                "    let s: String = String::from(\"hi\");\n"
+                                "    return take(s);\n"
+                                "}\n"));
 
-    // Borrowing and consuming are both spellable, so the rule names a copy
-    // rather than forbidding the type.
-    assert(test_compiles("struct Node { child: box Node }\n"
-                         "func peek(n: ref Node): int { return 0; }\n"));
+    // A pointer to one is the same story: what owns is moved, however the
+    // ownership is spelled.
+    assert(test_compiles_on_vm("func take(s: box String): int { return 0; }\n"
+                               "func main(): int {\n"
+                               "    let s: box String = new String;\n"
+                               "    return take(move s);\n"
+                               "}\n"));
 }
 
 int main(void) {
@@ -186,7 +196,7 @@ int main(void) {
     test_an_owned_parameter_may_be_returned();
     test_a_borrow_cannot_be_laundered_into_an_owned_return();
     test_parameter_zero_may_own();
-    test_a_parameter_by_value_needs_a_copyable_type();
+    test_a_by_value_parameter_takes_ownership_with_a_move();
     test_a_method_parameter_may_own();
 
     printf("All owning parameter tests passed\n");

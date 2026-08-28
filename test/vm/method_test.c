@@ -497,20 +497,24 @@ static void test_an_unknown_method_is_refused() {
                           "}\n"));
 }
 
-// A value receiver is a copy of what the caller holds, so a type that cannot be
-// copied cannot have one: the call would neither duplicate the receiver nor
-// take it, and 'ref T' is the form that says what is true.
-static void test_a_value_receiver_needs_a_copyable_type() {
-    assert(!test_compiles("struct Node { child: box Node }\n"
-                          "func Node::peek(n: Node): int { return 0; }\n"));
+// Parameter zero by value takes ownership of what it is given, which the call
+// site spells; borrowing it is 'ref T'. Both are ordinary parameter forms, so a
+// type that owns may be written either way.
+static void test_parameter_zero_takes_the_form_it_declares() {
+    assert(test_compiles("struct Node { child: box Node }\n"
+                         "func Node::peek(n: Node): int { return 0; }\n"));
 
-    // The borrow is what such a type takes instead.
     assert(test_compiles("struct Node { child: box Node }\n"
                          "func Node::peek(n: ref Node): int { return 0; }\n"));
 
-    // A type whose fields all copy is unaffected.
     assert(test_compiles("struct Point { x: int, y: int }\n"
                          "func Point::peek(p: Point): int { return p.x; }\n"));
+
+    // The sugar copies what it reaches, so an owning type is passed where the
+    // transfer can be written rather than through a value.
+    assert(!test_compiles("struct Node { child: box Node }\n"
+                          "func Node::peek(n: Node): int { return 0; }\n"
+                          "func main(): int { let a: Node; return a.peek(); }\n"));
 }
 
 // A method reached through a shared method set still has to be given the
@@ -559,7 +563,7 @@ int main(void) {
     test_struct_parameter_and_return();
     test_call_on_a_nested_struct();
     test_call_diagnostics();
-    test_a_value_receiver_needs_a_copyable_type();
+    test_parameter_zero_takes_the_form_it_declares();
     test_a_pointer_receiver_is_not_reached_from_another_type();
 
     printf("All method tests passed\n");
