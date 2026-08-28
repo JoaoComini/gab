@@ -37,7 +37,7 @@
     code.
 
     These macros read and write locals of the function that uses them --
-    'vm', 'frame', 'chunk', 'code', 'code_size', 'instruction' and 'op' -- and
+    'vm', 'chunk', 'pc', 'instruction' and 'op' -- and
     the goto form also needs a 'vm_dispatch_table' of label addresses and a
     'vm_done' label. That is the contract: a function spelling its interpreter
     with these declares all of them. Only vm_run_loop does.
@@ -76,7 +76,7 @@
 // lives in a local: a handler writing through 'vm' could be writing this field,
 // so every register access would reload it. It changes only where a frame does,
 // which is where VM_RELOAD already runs.
-#define VM_LOAD_REGS() (regs = vm->registers)
+#define VM_LOAD_REGS() (regs = vm->stack + (vm->frame_count > 0 ? vm->frames[vm->frame_count - 1].base : 0))
 
 // Where register r of the running frame begins, read from the local above.
 #define VM_REG(r) (regs + (r) * VM_SLOT_SIZE)
@@ -88,27 +88,31 @@
 #define VM_RELOAD()                                                                                          \
     do {                                                                                                     \
         if (vm->frame_count > 0) {                                                                           \
-            frame = &vm->frames[vm->frame_count - 1];                                                        \
-            chunk = frame->proto->chunk;                                                                     \
-            code = chunk->instructions.data;                                                                 \
-            code_size = chunk->instructions.size;                                                            \
+            chunk = vm->frames[vm->frame_count - 1].proto->chunk;                                            \
         }                                                                                                    \
                                                                                                              \
         VM_LOAD_REGS();                                                                                      \
         VM_LOAD_IP();                                                                                        \
     } while (0)
 
-// Reads the instruction the pointer names, leaving the loop once it has run
-// past the frame's code. The pointer is signed, so a jump that went too far
-// back reads as negative here rather than as a huge index that would pass for
-// a normal end of function.
+// Reads the instruction the pointer names, leaving the loop once no frame is
+// left to run.
+//
+// Where the pointer landed is not asked at run time: a jump offset comes from
+// an instruction codegen emitted, and every chunk ends in a return, so a
+// pointer outside the chunk is a compiler bug rather than something a run
+// recovers from. Checked in a debug build against the chunk the frame names,
+// which is why no bound has to be held in a register to compare against.
 #define VM_FETCH()                                                                                           \
     do {                                                                                                     \
-        if (vm->frame_count == 0 || pc < code || pc >= code + code_size) {                                   \
+        if (vm->frame_count == 0) {                                                                          \
             goto vm_done;                                                                                    \
         }                                                                                                    \
                                                                                                              \
-        instruction = *pc;                                                                                   \
+        assert(pc >= chunk->instructions.data && pc < chunk->instructions.data + chunk->instructions.size && \
+               "a jump left the chunk");                                                                     \
+                                                                                                             \
+        instruction = *pc++;                                                                                 \
         op = VM_DECODE_OPCODE(instruction);                                                                  \
     } while (0)
 
@@ -126,10 +130,11 @@
 // reading whatever follows the chunk.
 #define VM_FETCH_NEXT()                                                                                      \
     do {                                                                                                     \
-        assert(vm->frame_count > 0 && pc >= code && pc < code + code_size &&                                 \
+        assert(vm->frame_count > 0 && pc >= chunk->instructions.data &&                                      \
+               pc < chunk->instructions.data + chunk->instructions.size &&                                   \
                "a straight-line step left the chunk; it needed VM_JUMPED or VM_RETRY");                      \
                                                                                                              \
-        instruction = *pc;                                                                                   \
+        instruction = *pc++;                                                                                 \
         op = VM_DECODE_OPCODE(instruction);                                                                  \
     } while (0)
 
@@ -155,7 +160,6 @@
 // never gone back around.
 #define VM_NEXT()                                                                                            \
     do {                                                                                                     \
-        pc += 1;                                                                                             \
         VM_FETCH_NEXT();                                                                                     \
         VM_DISPATCH(op)                                                                                      \
     } while (0)
@@ -187,9 +191,12 @@
 // 'break' leaves the switch and the enclosing loop fetches the next
 // instruction. It must not be wrapped in a do-while: the break would leave
 // that instead, and the handler would fall through into the case below it.
+//
+// The step is the fetch's, not this macro's: VM_FETCH reads through the pointer
+// and advances it in one go, so a handler runs with 'pc' already naming the
+// instruction after its own. Advancing again here would skip that one.
 #define VM_NEXT()                                                                                            \
     {                                                                                                        \
-        ip += 1;                                                                                             \
         break;                                                                                               \
     }
 
@@ -293,6 +300,7 @@
         [OP_BOUNDS_CHECK] = &&OP_BOUNDS_CHECK_label,                                                         \
         [OP_LOAD_PTR_N] = &&OP_LOAD_PTR_N_label,                                                             \
         [OP_STORE_PTR_N] = &&OP_STORE_PTR_N_label,                                                           \
+        [OP_LOOP_INIT] = &&OP_LOOP_INIT_label,                                                               \
         [OP_FOR_LOOP] = &&OP_FOR_LOOP_label,                                                                 \
     };                                                                                                       \
                                                                                                              \
