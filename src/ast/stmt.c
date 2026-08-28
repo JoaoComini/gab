@@ -30,7 +30,7 @@ ASTStmt *ast_func_decl_stmt_create(Span span, StringRef name, ASTField *receiver
     stmt->kind = STMT_FUNC_DECL;
     stmt->func_decl.name = name;
     stmt->func_decl.receiver = receiver;
-    stmt->func_decl.owner = (StringRef){0};
+    stmt->func_decl.owner = NULL;
     stmt->func_decl.return_type = return_type;
     stmt->func_decl.params = params;
     stmt->func_decl.body = body;
@@ -127,6 +127,10 @@ void ast_stmt_destroy(ASTStmt *stmt) {
         if (stmt->func_decl.return_type) {
             type_expr_destroy(stmt->func_decl.return_type);
         }
+        if (stmt->func_decl.owner) {
+            type_expr_destroy(stmt->func_decl.owner);
+        }
+
         ast_field_destroy(stmt->func_decl.receiver);
         ast_field_list_free(&stmt->func_decl.params);
         ast_stmt_destroy(stmt->func_decl.body);

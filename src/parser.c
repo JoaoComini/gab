@@ -810,7 +810,10 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
     // 'func Vec::new(...)' declares a function on a type that no value reaches:
     // what was read as the name is the owning type, and the name follows.
-    StringRef owner = {0};
+    // The type this attaches to. A receiver clause names it as the receiver's
+    // own type, which the resolver reaches through; '::' names it here.
+    TypeExpr *owner = NULL;
+
     if (parser->current.type == TOKEN_COLON_COLON) {
         parser_next_token(parser); // eat '::'
 
@@ -819,15 +822,15 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
             return NULL;
         }
 
-        // A receiver says the function is reached through a value and an owner
-        // says it is not, so a declaration carrying both says nothing.
+        // A receiver says a value reaches the function and '::' says none does,
+        // so a declaration carrying both says nothing.
         if (receiver) {
             parser_error(parser, "a function has a receiver or an owning type, not both");
             ast_field_destroy(receiver);
             return NULL;
         }
 
-        owner = func_name;
+        owner = type_expr_name(func_name);
         func_name = parser->current.lexeme;
 
         parser_next_token(parser); // eat the function name
@@ -836,6 +839,7 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
         // this module, so a second has nothing left to qualify.
         if (parser->current.type == TOKEN_COLON_COLON) {
             parser_error(parser, "a function owned by a type has one '::', as 'Type::name'");
+            type_expr_destroy(owner);
             return NULL;
         }
     }

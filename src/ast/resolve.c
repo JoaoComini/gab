@@ -2157,11 +2157,9 @@ static Symbol *resolve_static_func(ResolverState *state, ASTExpr *expr) {
 }
 
 static void declare_static(ResolverState *state, ASTStmt *stmt) {
-    String *owner_name = resolver_intern(state, stmt->func_decl.owner);
-    const Type *owner = scope_type_lookup(state->current_scope, owner_name);
+    const Type *owner = resolve_type_expr(state, stmt->func_decl.owner, stmt->span);
 
-    if (!owner) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span, "unknown type '%s'", owner_name->data);
+    if (is_error_type(owner)) {
         return;
     }
 
@@ -2227,7 +2225,7 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
         return;
     }
 
-    if (stmt->func_decl.owner.data) {
+    if (stmt->func_decl.owner) {
         declare_static(state, stmt);
         return;
     }

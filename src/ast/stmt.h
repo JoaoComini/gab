@@ -57,15 +57,22 @@ typedef struct {
 typedef struct {
     StringRef name;
 
-    // 'func (p: box Player) damage(...)' — NULL for a free function. A receiver is
-    // a parameter in every respect, so it reuses ASTField, and the resolver
-    // makes it parameter zero of the symbol it declares.
-    ASTField *receiver;
+    // 'func Vec::new(...)' -- the type this attaches to without a value
+    // reaching it. NULL for anything else, including a method, whose owning
+    // type is its receiver's and reached through 'receiver' instead.
+    //
+    // A TypeExpr rather than a name so that both declaration paths resolve an
+    // owning type the same way.
+    TypeExpr *owner;
 
-    // 'func Vec::new(...)' -- the type the function belongs to without being
-    // reached through a value. Empty for anything else. Exclusive with
-    // 'receiver': a function is a method, a static, or neither.
-    StringRef owner;
+    // 'func (p: box Player) damage(...)' — the receiver's binding, which makes
+    // this a method: a value reaches it, and the resolver makes the receiver
+    // parameter zero of the symbol it declares. It reuses ASTField, being a
+    // parameter in every respect.
+    //
+    // NULL where 'owner' is not: 'func Vec::new(...)' attaches to a type
+    // without a value reaching it.
+    ASTField *receiver;
 
     TypeExpr *return_type;
     ASTFieldList params;
