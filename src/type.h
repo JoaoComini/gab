@@ -214,20 +214,9 @@ typedef enum {
     // Free the block an owning address names, at the capacity beside it. What
     // a string's characters are, for an element of any width.
     //
-    // Frees the memory and nothing in it. Which elements were ever written is
-    // not a question a capacity answers, so what owns them drops them before
-    // this runs -- see DROP_PREFIX.
+    // What the live elements own is freed first, then the memory: a block
+    // carries both numbers, so one step does the whole of it.
     DROP_BLOCK,
-
-    // Walk the live prefix of a block a sibling field names, freeing what each
-    // element owns.
-    //
-    // Its own step because the two numbers a vector is freed by live at
-    // different levels: the block knows how much memory it took, and the value
-    // holding it knows how far into that anything was written. So the holder
-    // drops the elements it counted, and the block then frees the memory -- in
-    // that order, since the second releases what the first walks.
-    DROP_PREFIX,
 
     // Walk a run of elements, freeing what each owns. Strides by a width the
     // plan carries rather than by one read back off a type.
@@ -251,22 +240,19 @@ struct DropPlan {
 
     // DROP_BOX: what the pointee owns, or NULL when it owns nothing and freeing
     // the block is the whole of it.
+    // DROP_BLOCK: what one element owns, or NULL when the memory is all there
+    // is to free.
     // DROP_ARRAY: what one element owns, which is why the run is walked at all.
     // DROP_FIELDS: unused; the steps carry the plans.
     const DropPlan *inner;
 
-    // DROP_ARRAY, DROP_BLOCK, DROP_PREFIX: how far apart the elements are.
+    // DROP_ARRAY, DROP_BLOCK: how far apart the elements are.
     size_t stride;
 
     // DROP_ARRAY: how many there are, which its type says. The other two count
     // at run time -- a block by the capacity it carries, a prefix by the field
     // named below.
     int32_t length;
-
-    // DROP_PREFIX: where the count of live elements sits, and where the block
-    // being walked does, both as offsets within the value the plan describes.
-    size_t count_offset;
-    size_t block_offset;
 
     // DROP_FIELDS: what owns, and where. Only the fields that own appear.
     const DropStep *steps;
@@ -364,27 +350,11 @@ typedef struct GenericMethod {
     size_t param_count;
 } GenericMethod;
 
-// Builds the plan that frees one type, composed from the drop_plan_* primitives.
-// NULL for a type whose shape already says how it frees.
-typedef struct TypeRegistry TypeRegistry;
-
-typedef const DropPlan *(*DropBuilder)(TypeRegistry *registry, const Type *type);
-
 typedef struct GenericDecl {
     size_t param_count;
 
     const GenericField *fields;
     size_t field_count;
-
-    // How an instantiation of this declaration frees, for one whose shape does
-    // not say. Called with each instantiation once its fields are laid out, and
-    // returns the plan that frees it -- or NULL to take the derived one.
-    //
-    // A builder rather than a description, because what the plan needs is
-    // offsets and a stride, and those follow from the element the instantiation
-    // was given. It is also what keeps the knowledge where it belongs: that a
-    // vector counts a block is Vec's business, not the registry's.
-    DropBuilder build_drop;
 
     // What every instantiation answers, in terms of the parameters. Registered
     // where an instantiation is interned, since only there is the parameter
@@ -546,6 +516,16 @@ bool type_is_sized(const Type *type);
 // ownership: a 'ref T' is as indirect as a 'box T'.
 bool type_is_indirect(const Type *type);
 
+// Whether a value of this type is an address it owns what lies behind -- a
+// 'box T' and a 'block T'. Both are freed as themselves rather than through
+// parts: a box frees its payload, a block its memory and the live elements in
+// it, and neither needs anything kept beside it.
+//
+// Distinct from type_is_indirect, which asks whether reaching the value means
+// going through it. A block is an address and is not dereferenceable: what
+// reaches its elements is the header owning it, never a deref.
+bool type_owns_through_an_address(const Type *type);
+
 // What one element of an array is, and how many it holds. Both are what the
 // application was given, so the element a walk strides by and the count it
 // stops at are read from the same place the type was interned on.
@@ -561,13 +541,6 @@ int32_t type_array_length(const Type *type);
 // is an indirection that owns nothing.
 bool type_is_owned(const Type *type);
 
-// Whether a value of this type holds a block, which it owns the memory of.
-//
-// Asked where a release is emitted and where its width is settled: such a value
-// is freed as one header rather than through the field naming the block, since
-// the count of what is live sits beside that field rather than in it.
-bool type_owns_a_block(const Type *type);
-
 // Whether a value of this type duplicates by copying its bytes, which is true
 // exactly when nothing it holds transitively owns. See the definition.
 bool type_is_copyable(const Type *type);
@@ -576,13 +549,26 @@ bool type_is_copyable(const Type *type);
 // begins is a layout question, so it is asked of the registry rather than here.
 const TypeField *type_find_field(const Type *type, const String *name);
 
-// The fields of 'lender' that a reference to 'pointee' carries, written into
-// 'out' in the order the reference holds them, and how many there are.
-//
-// By name rather than by position: what a reference carries is its own shape,
-// and a lender declaring more than that -- a capacity beside a count -- lends
-// the fields asked for wherever it happens to keep them.
-size_t type_lent_fields(const Type *lender, const Type *pointee, const TypeField **out, size_t max);
+/*
+    Where a value of 'lender' keeps each part a reference to 'pointee' carries,
+    as byte offsets into the lender.
+
+    Offsets rather than fields, because what a reference takes need not be a
+    whole field or even a contiguous one: a 'ref str' is an address and a count,
+    and a String keeps both inside the block it owns, with the capacity sitting
+    between them.
+
+    Returns how many parts were found, writing that many into 'out'.
+*/
+typedef struct TypeRegistry TypeRegistry;
+
+typedef struct LentPart {
+    size_t offset;
+    size_t size;
+} LentPart;
+
+size_t type_lent_parts(TypeRegistry *registry, const Type *lender, const Type *pointee, LentPart *out,
+                       size_t max);
 
 // A type as the source wrote it, before any name is looked up. The syntactic
 // counterpart of Type: this is what a type position parses into, and the

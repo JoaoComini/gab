@@ -1,7 +1,6 @@
 #include "type_registry.h"
 
 #include "arena.h"
-#include "builtin/builtin.h"
 #include "object.h"
 #include "string/string.h"
 #include "type.h"
@@ -27,7 +26,7 @@ static Type *register_builtin(TypeRegistry *registry, TypeKind kind, const char 
 // is how one is written: a literal and a comparison are about the characters
 // themselves, and no struct shape implies them.
 static Type *string_builtin_create(TypeRegistry *registry) {
-    Type *type = type_struct_create(registry->arena, string_from_cstr(registry->strings, "String"), 2);
+    Type *type = type_struct_create(registry->arena, string_from_cstr(registry->strings, "String"), 1);
 
     // The block owns the characters and carries the capacity it was taken at,
     // so freeing it asks nothing else -- and the room past the live ones is
@@ -35,17 +34,16 @@ static Type *string_builtin_create(TypeRegistry *registry) {
     const Type *characters = type_registry_block_of(registry, registry->builtins.byte_type);
 
     type_add_field(type, string_from_cstr(registry->strings, "data"), characters);
-    type_add_field(type, string_from_cstr(registry->strings, "length"), registry->builtins.int_type);
 
     // What separates it from a 'Vec<byte>', which is laid out identically: the
     // characters are text, so this is what lends a 'ref str' and what '=='
     // reads.
     type->holds_characters = true;
 
-    // How a string frees, which its shape does not say -- the same composition
-    // a vector's takes, since what differs between them is the element rather
-    // than how one is freed.
-    type_registry_set_drop(registry, type, string_build_drop(registry, type));
+    // A string owns its characters through the block naming them, which carries
+    // everything freeing it needs -- so how it frees follows from its shape and
+    // is derived like any struct's.
+    type_registry_drop_of(registry, type);
 
     return type;
 }
@@ -58,10 +56,11 @@ static Type *string_builtin_create(TypeRegistry *registry) {
 static Type *vec_decl_create(TypeRegistry *registry) {
     Type *type = register_builtin(registry, TYPE_STRUCT, "Vec");
 
-    GenericField *fields = arena_alloc(registry->arena, 2 * sizeof(GenericField));
+    GenericField *fields = arena_alloc(registry->arena, sizeof(GenericField));
 
-    // The block owns the memory and carries the capacity it was taken at, so
-    // freeing it asks nothing else.
+    // The block owns the memory and carries both the capacity it was taken at
+    // and how far into it anything was written, so freeing it asks nothing
+    // else -- which is the whole of what a vector is.
     fields[0] = (GenericField){
         .name = string_from_cstr(registry->strings, "data"),
         .from = GENERIC_FROM_PARAM,
@@ -69,23 +68,13 @@ static Type *vec_decl_create(TypeRegistry *registry) {
         .ctor = TYPE_CTOR_BLOCK,
     };
 
-    // How far into that block anything has been written. Beside the block
-    // rather than in it, because a capacity and a length answer different
-    // questions and only one of them is the memory's own.
-    fields[1] = (GenericField){
-        .name = string_from_cstr(registry->strings, "length"),
-        .fixed = registry->builtins.int_type,
-    };
-
     GenericDecl *generic = arena_alloc(registry->arena, sizeof(GenericDecl));
 
     *generic = (GenericDecl){
         .param_count = 1,
         .fields = fields,
-        .field_count = 2,
+        .field_count = 1,
 
-        // How a vector frees, which its shape does not say: see vec_build_drop.
-        .build_drop = vec_build_drop,
     };
 
     type->generic = generic;
@@ -128,6 +117,18 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     assert(str_ref_layout->size == sizeof(GabStrRef));
     assert(str_ref_layout->alignment == _Alignof(GabStrRef));
     (void)str_ref_layout;
+
+    // And a block is what every collection holds its elements in, read by the
+    // VM and by each builtin as a GabBlockValue. Its counts fit in what the
+    // address's alignment padded out, so this passes on a machine where they
+    // would not have to -- it catches a widened block or a third count, not a
+    // miscount of the two that already fit.
+    const TypeLayout *block_layout =
+        type_registry_layout_of(registry, type_registry_block_of(registry, registry->builtins.byte_type));
+
+    assert(block_layout->size == sizeof(GabBlockValue));
+    assert(block_layout->alignment == _Alignof(GabBlockValue));
+    (void)block_layout;
 
     // The bare name every '[T; N]' is interned under. Sized as the header the
     // elements make it, so that a diagnostic naming it says something true even
@@ -208,11 +209,17 @@ static void layout_of_indirect(const Type *type, size_t *size, size_t *alignment
     *size = sizeof(void *);
     *alignment = _Alignof(void *);
 
-    // A block carries the capacity it was allocated at, whatever it points to:
-    // the count is the block's own fact rather than something read off the
-    // element, which is what lets it be freed without asking anything else.
+    // A block carries the capacity it was allocated at and how far into it
+    // anything was written, whatever it points to: both are the block's own
+    // facts rather than something read off the element, which is what lets it
+    // be freed without asking anything else.
+    //
+    // Two counts where a reference carries one, and no wider for it: the second
+    // rides in what the address's alignment already padded out. Both counts are
+    // named here rather than one, so the arithmetic says what the block holds
+    // even where the padding makes the two spellings the same width.
     if (type->kind == TYPE_BLOCK) {
-        *size = align_up(*size + sizeof(int32_t), *alignment);
+        *size = align_up(*size + 2 * sizeof(int32_t), *alignment);
         return;
     }
 
@@ -306,13 +313,6 @@ size_t type_registry_size_of(TypeRegistry *registry, const Type *type) {
 
 size_t type_registry_align_of(TypeRegistry *registry, const Type *type) {
     return type_registry_layout_of(registry, type)->alignment;
-}
-
-void type_registry_set_drop(TypeRegistry *registry, const Type *type, const DropPlan *plan) {
-    assert(!drop_key_lookup(registry->drops, type) &&
-           "a supplied drop must be given before the type's plan is first asked for");
-
-    drop_key_insert(registry->drops, type, plan);
 }
 
 const DropPlan *type_registry_drop_of(TypeRegistry *registry, const Type *type) {
@@ -600,13 +600,6 @@ const Type *type_registry_instantiate(TypeRegistry *registry, const Type *decl, 
     // this entry rather than building a second.
     application_insert(registry, app, type);
 
-    // What the declaration says frees an instantiation, composed against the
-    // fields this one was laid out with. Nothing here knows what that plan
-    // walks: the declaration does, and hands back what it built.
-    if (generic->build_drop) {
-        type_registry_set_drop(registry, type, generic->build_drop(registry, type));
-    }
-
     type_registry_drop_of(registry, type);
 
     install_generic_methods(registry, type, generic, args);
@@ -625,8 +618,6 @@ const Type *type_registry_ref_to(TypeRegistry *registry, const Type *inner) {
 const Type *type_registry_ptr_to(TypeRegistry *registry, const Type *pointee) {
     return indirect_to(registry, TYPE_CTOR_PTR, TYPE_PTR, pointee);
 }
-
-Arena *type_registry_arena(TypeRegistry *registry) { return registry->arena; }
 
 const Type *type_registry_string(TypeRegistry *registry) { return registry->builtins.string_type; }
 

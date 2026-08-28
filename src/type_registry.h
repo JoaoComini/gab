@@ -231,19 +231,6 @@ void type_registry_destroy(TypeRegistry *registry);
 
 const Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind type);
 
-// Gives a type the plan that frees it, in place of the one its shape would
-// imply. For a type holding a block: what a block frees is its own capacity,
-// and how far into it anything was written is a number no layout pairs with it.
-//
-// Supplied before the type's plan is first asked for, since that memoizes.
-// Composed from the drop_plan_* primitives rather than being a C function, so
-// the free path still reads data and nothing else.
-void type_registry_set_drop(TypeRegistry *registry, const Type *type, const DropPlan *plan);
-
-// The arena every derived and supplied plan is allocated in, which outlives
-// each compile the way a plan has to.
-Arena *type_registry_arena(TypeRegistry *registry);
-
 // The owning 'String'. Reached by name rather than through get_builtin, which
 // answers for kinds: a string is a struct, so there is no kind that names it.
 const Type *type_registry_string(TypeRegistry *registry);

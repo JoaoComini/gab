@@ -185,7 +185,7 @@ bool args_return_string_copy(Args *args, const char *data, int32_t length) {
         memcpy(characters, data, (size_t)length);
     }
 
-    GabStringValue value = {.block = {.data = characters, .capacity = capacity}, .length = length};
+    GabStringValue value = {.block = {.data = characters, .capacity = capacity, .length = length}};
 
     memcpy(args_return_address(args), &value, sizeof(value));
 

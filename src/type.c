@@ -1,5 +1,8 @@
 #include "type.h"
 
+#include "object.h"
+#include "type_registry.h"
+
 #include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -58,30 +61,31 @@ const TypeField *type_find_field(const Type *type, const String *name) {
     return NULL;
 }
 
-size_t type_lent_fields(const Type *lender, const Type *pointee, const TypeField **out, size_t max) {
-    // What a reference to characters carries. Named here because the pointee is
-    // the characters themselves, which have no fields: a 'str' is a run of
-    // bytes, and the address and count naming it belong to the reference.
-    static const char *const of_characters[] = {"data", "length"};
-
-    if (!pointee || pointee->kind != TYPE_STR) {
+size_t type_lent_parts(TypeRegistry *registry, const Type *lender, const Type *pointee, LentPart *out,
+                       size_t max) {
+    if (!pointee || pointee->kind != TYPE_STR || max < 2) {
         return 0;
     }
 
-    size_t count = 0;
+    // The block holding the characters, wherever the lender keeps it. Its
+    // address and its length are what a 'ref str' is; the capacity between them
+    // is what frees the memory, and stays the owner's business.
+    for (size_t i = 0; i < type_field_count(lender); i++) {
+        const TypeField *field = &type_fields(lender)[i];
 
-    for (size_t i = 0; i < sizeof(of_characters) / sizeof(*of_characters) && count < max; i++) {
-        for (size_t j = 0; j < type_field_count(lender); j++) {
-            const TypeField *field = &type_fields(lender)[j];
-
-            if (field->name && strcmp(field->name->data, of_characters[i]) == 0) {
-                out[count++] = field;
-                break;
-            }
+        if (!field->type || field->type->kind != TYPE_BLOCK) {
+            continue;
         }
+
+        size_t base = type_registry_layout_of(registry, lender)->offsets[i];
+
+        out[0] = (LentPart){.offset = base + offsetof(GabBlockValue, data), .size = sizeof(void *)};
+        out[1] = (LentPart){.offset = base + offsetof(GabBlockValue, length), .size = sizeof(int32_t)};
+
+        return 2;
     }
 
-    return count;
+    return 0;
 }
 
 // A raw pointer is deliberately not one of these. Every caller is a
@@ -182,6 +186,10 @@ size_t type_field_count(const Type *type) {
 
 bool type_is_indirect(const Type *type) { return type && (type->kind == TYPE_BOX || type->kind == TYPE_REF); }
 
+bool type_owns_through_an_address(const Type *type) {
+    return type && (type->kind == TYPE_BOX || type->kind == TYPE_BLOCK);
+}
+
 const Type *type_array_element(const Type *type) {
     assert(type && type->kind == TYPE_ARRAY && "only an array has an element");
 
@@ -249,15 +257,6 @@ bool type_is_owned(const Type *type) {
 // Derived from the type rather than declared on it, so a struct becomes
 // non-copyable the moment it is given a field that owns, and no declaration
 // can disagree with what the type holds.
-bool type_owns_a_block(const Type *type) {
-    for (size_t i = 0; i < type_field_count(type); i++) {
-        if (type_fields(type)[i].type && type_fields(type)[i].type->kind == TYPE_BLOCK) {
-            return true;
-        }
-    }
-
-    return false;
-}
 
 bool type_is_copyable(const Type *type) {
     if (!type) {

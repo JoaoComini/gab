@@ -12,14 +12,6 @@
 #include <stdint.h>
 #include <string.h>
 
-const DropPlan *string_build_drop(TypeRegistry *registry, const Type *type) {
-    // 'length' counts what has been written into 'data'. A character owns
-    // nothing, so no prefix is walked and the block's own free is the whole of
-    // what a string has to do -- but the composition is the one a vector takes,
-    // since what differs between them is the element rather than how one frees.
-    return drop_plan_counted_block(type_registry_arena(registry), registry, type, 1, 0);
-}
-
 // Where 'needle' first occurs in 'haystack' at or after 'from', or -1. The
 // empty needle occurs at the position asked for, which is what makes
 // 'index_of("")' zero.
@@ -120,73 +112,19 @@ static void string_count(Args *args) {
     args_return_int(args, total);
 }
 
-// What an empty string's first allocation holds. Small enough that a string
-// pushed into once does not reserve a page, large enough that the first few
-// pushes do not each reallocate.
-#define STRING_INITIAL_CAPACITY 8
-
-// Makes room for 'extra' more characters, growing the block if the live ones
-// leave too little. Doubling, so that appending n characters copies O(n) times
-// rather than once per push.
-//
-// False when the allocation fails, having failed the run: the caller must not
-// then write the characters it was making room for.
-static bool string_reserve(Args *args, GabStringValue *string, int32_t extra) {
-    if (string->length + extra <= string->block.capacity) {
-        return true;
-    }
-
-    // Doubling overflows a signed int past 2^30 characters, which is undefined
-    // rather than merely wrong. A string that large has no room to grow, so the
-    // run fails here rather than wrapping to a smaller block than it holds.
-    if (string->length > INT32_MAX - extra || string->block.capacity > INT32_MAX / 2) {
-        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "a string cannot grow any further");
-        return false;
-    }
-
-    int32_t capacity = string->block.capacity ? string->block.capacity * 2 : STRING_INITIAL_CAPACITY;
-
-    // Doubling may still not reach what was asked for, since 'extra' is not
-    // bounded by the capacity: a long append onto a short string clears it in
-    // one step rather than looping.
-    if (capacity < string->length + extra) {
-        capacity = string->length + extra;
-    }
-
-    char *block = DEFAULT_ALLOCATOR.alloc(DEFAULT_ALLOCATOR.ctx, (size_t)capacity);
-
-    if (!block) {
-        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory growing a string");
-        return false;
-    }
-
-    if (string->length) {
-        memcpy(block, string->block.data, (size_t)string->length);
-    }
-
-    if (string->block.data) {
-        DEFAULT_ALLOCATOR.free_sized(DEFAULT_ALLOCATOR.ctx, string->block.data,
-                                     (size_t)string->block.capacity);
-    }
-
-    string->block.data = block;
-    string->block.capacity = capacity;
-
-    return true;
-}
-
 // 's.push(c)'. Writes one character past the live ones, growing first if there
 // is no room.
 static void string_push(Args *args) {
     GabStringValue string = args_string_at(args, 0);
     int32_t character = args_int(args, 1);
 
-    if (!string_reserve(args, &string, 1)) {
+    if (!block_reserve(DEFAULT_ALLOCATOR, &string.block, 1, sizeof(char))) {
+        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory growing a string");
         return;
     }
 
-    ((char *)string.block.data)[string.length] = (char)character;
-    string.length++;
+    ((char *)string.block.data)[string.block.length] = (char)character;
+    string.block.length++;
 
     memcpy(args_pointer(args, 0), &string, sizeof(string));
 }
@@ -203,8 +141,8 @@ static void string_append(Args *args) {
         return;
     }
 
-    // Copied out first for the reason above: 'other' may name the very block
-    // the reserve below frees.
+    // Copied out first: 'other' may name the very block the reserve below
+    // frees, which a string appended to itself does.
     char *copy = DEFAULT_ALLOCATOR.alloc(DEFAULT_ALLOCATOR.ctx, (size_t)other.length);
 
     if (!copy) {
@@ -214,11 +152,13 @@ static void string_append(Args *args) {
 
     memcpy(copy, other.data, (size_t)other.length);
 
-    if (string_reserve(args, &string, other.length)) {
-        memcpy((char *)string.block.data + string.length, copy, (size_t)other.length);
-        string.length += other.length;
+    if (block_reserve(DEFAULT_ALLOCATOR, &string.block, other.length, sizeof(char))) {
+        memcpy((char *)string.block.data + string.block.length, copy, (size_t)other.length);
+        string.block.length += other.length;
 
         memcpy(args_pointer(args, 0), &string, sizeof(string));
+    } else {
+        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory appending to a string");
     }
 
     DEFAULT_ALLOCATOR.free_sized(DEFAULT_ALLOCATOR.ctx, copy, (size_t)other.length);
@@ -241,7 +181,7 @@ static void string_to_owned(Args *args) {
 static void string_clone(Args *args) {
     GabStringValue string = args_string_at(args, 0);
 
-    args_return_string_copy(args, string.block.data, string.length);
+    args_return_string_copy(args, string.block.data, string.block.length);
 }
 
 // 'String::from(s)'. The characters a borrow names, copied into a string that

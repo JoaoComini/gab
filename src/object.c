@@ -55,9 +55,12 @@ static void drop_array_at(Allocator allocator, const DropPlan *plan, void *value
     }
 }
 
-// Frees the memory a block names, at the capacity it carries. Nothing in it:
-// which elements were ever written is not a question the capacity answers, so
-// whatever counted them dropped them before this ran.
+// Frees what the live elements of a block own, then the memory itself.
+//
+// Both numbers are the block's own: the length says how far anything was
+// written, the capacity what the memory was taken at. Walking before freeing is
+// the whole of the ordering, and it is local here rather than spread across two
+// steps that had to be sequenced.
 static void drop_block_at(Allocator allocator, const DropPlan *plan, void *value) {
     GabBlockValue block;
     memcpy(&block, value, sizeof(block));
@@ -66,28 +69,15 @@ static void drop_block_at(Allocator allocator, const DropPlan *plan, void *value
         return;
     }
 
+    // Only when the element owns something. A block of ints has no inner plan,
+    // and freeing the memory is the whole of what it does.
+    if (plan->inner) {
+        for (int32_t i = 0; i < block.length; i++) {
+            drop_run(allocator, plan->inner, (char *)block.data + (size_t)i * plan->stride);
+        }
+    }
+
     allocator.free_sized(allocator.ctx, block.data, (size_t)block.capacity * plan->stride);
-}
-
-// Frees what the live elements of a block own, leaving the memory to the block
-// itself. The two numbers come from different places: the count is a field of
-// the value being dropped, and the address is inside the block field beside it.
-//
-// Runs before the block is freed, since it walks memory the block releases.
-static void drop_prefix_at(Allocator allocator, const DropPlan *plan, void *value) {
-    int32_t count;
-    memcpy(&count, (char *)value + plan->count_offset, sizeof(count));
-
-    GabBlockValue block;
-    memcpy(&block, (char *)value + plan->block_offset, sizeof(block));
-
-    if (!block.data) {
-        return;
-    }
-
-    for (int32_t i = 0; i < count; i++) {
-        drop_run(allocator, plan->inner, (char *)block.data + (size_t)i * plan->stride);
-    }
 }
 
 // Frees what a value's fields own, so that freeing an object frees the tree
@@ -119,89 +109,73 @@ static void drop_run(Allocator allocator, const DropPlan *plan, void *value) {
     case DROP_BLOCK:
         drop_block_at(allocator, plan, value);
         break;
-    case DROP_PREFIX:
-        drop_prefix_at(allocator, plan, value);
-        break;
     case DROP_FIELDS:
         drop_fields_at(allocator, plan, value);
         break;
     }
 }
 
-const DropPlan *drop_plan_live_prefix(Arena *arena, TypeRegistry *registry, const Type *type,
-                                      size_t count_field, size_t block_field) {
-    const TypeField *block = &type_fields(type)[block_field];
-    const Type *element = type_pointee(block->type);
+// What an empty block's first allocation holds. Small enough that a collection
+// appended to once does not reserve a page, large enough that the first few
+// appends do not each reallocate.
+#define BLOCK_INITIAL_CAPACITY 8
 
-    const DropPlan *inner = type_registry_drop_of(registry, element);
-
-    if (!inner) {
-        return NULL;
+bool block_reserve(Allocator allocator, GabBlockValue *block, int32_t extra, size_t stride) {
+    if (extra <= 0) {
+        return true;
     }
 
-    const TypeLayout *layout = type_registry_layout_of(registry, type);
-
-    DropPlan *plan = arena_alloc(arena, sizeof(DropPlan));
-
-    *plan = (DropPlan){
-        .kind = DROP_PREFIX,
-        .inner = inner,
-        .stride = type_registry_size_of(registry, element),
-        .count_offset = layout->offsets[count_field],
-        .block_offset = layout->offsets[block_field],
-    };
-
-    return plan;
-}
-
-const DropPlan *drop_plan_counted_block(Arena *arena, TypeRegistry *registry, const Type *type,
-                                        size_t count_field, size_t block_field) {
-    DropStep steps[GAB_MAX_DROP_STEPS];
-    size_t count = 0;
-
-    const DropPlan *prefix = drop_plan_live_prefix(arena, registry, type, count_field, block_field);
-
-    // First, so that what the elements own is freed while the block naming them
-    // is still allocated. The offsets it reads are its own, so the step sits at
-    // the start of the value rather than at a field.
-    if (prefix) {
-        steps[count++] = (DropStep){.offset = 0, .plan = prefix};
+    // Checked before the sum, which would otherwise be the overflow it is
+    // guarding against.
+    if (block->length > INT32_MAX - extra) {
+        return false;
     }
 
-    for (size_t i = 0; i < type_field_count(type) && count < GAB_MAX_DROP_STEPS; i++) {
-        DropStep step = drop_plan_field(registry, type, i);
+    int32_t needed = block->length + extra;
 
-        if (step.plan) {
-            steps[count++] = step;
-        }
+    if (needed <= block->capacity) {
+        return true;
     }
 
-    return drop_plan_steps(arena, steps, count);
-}
-
-const DropPlan *drop_plan_steps(Arena *arena, const DropStep *steps, size_t count) {
-    if (count == 0) {
-        return NULL;
+    // Doubling overflows a signed int past 2^30 elements, which is undefined
+    // rather than merely wrong.
+    if (block->capacity > INT32_MAX / 2) {
+        return false;
     }
 
-    DropStep *copied = arena_alloc(arena, count * sizeof(DropStep));
+    int32_t capacity = block->capacity ? block->capacity * 2 : BLOCK_INITIAL_CAPACITY;
 
-    memcpy(copied, steps, count * sizeof(DropStep));
+    // Doubling may still fall short, since 'extra' is not bounded by the
+    // capacity: a long append onto a short block clears it in one step rather
+    // than looping.
+    if (capacity < needed) {
+        capacity = needed;
+    }
 
-    DropPlan *plan = arena_alloc(arena, sizeof(DropPlan));
+    void *memory = allocator.alloc(allocator.ctx, (size_t)capacity * stride);
 
-    *plan = (DropPlan){.kind = DROP_FIELDS, .steps = copied, .step_count = count};
+    if (!memory) {
+        return false;
+    }
 
-    return plan;
-}
+    if (block->length) {
+        memcpy(memory, block->data, (size_t)block->length * stride);
+    }
 
-DropStep drop_plan_field(TypeRegistry *registry, const Type *type, size_t field) {
-    const TypeLayout *layout = type_registry_layout_of(registry, type);
+    // Zeroed past the live ones for the reason every allocation is: an element
+    // that owns and was never written must read as NULL, since the drop walk
+    // has no other way to tell it from a live reference.
+    memset((char *)memory + (size_t)block->length * stride, 0,
+           ((size_t)capacity - (size_t)block->length) * stride);
 
-    return (DropStep){
-        .offset = layout->offsets[field],
-        .plan = type_registry_drop_of(registry, type_fields(type)[field].type),
-    };
+    if (block->data) {
+        allocator.free_sized(allocator.ctx, block->data, (size_t)block->capacity * stride);
+    }
+
+    block->data = memory;
+    block->capacity = capacity;
+
+    return true;
 }
 
 // Derives the plan for a type whose layout is known, or leaves it NULL when the
@@ -250,6 +224,7 @@ const DropPlan *object_build_drop(Arena *arena, TypeRegistry *registry, const Ty
     // written into it is counted by whatever holds the block.
     case TYPE_BLOCK:
         plan->kind = DROP_BLOCK;
+        plan->inner = type_registry_drop_of(registry, type_pointee(type));
         plan->stride = type_registry_size_of(registry, type_pointee(type));
         break;
 

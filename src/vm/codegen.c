@@ -534,11 +534,10 @@ typedef enum {
 // its characters.
 static void codegen_walk_owning_slots(CodegenState *state, const Type *type, unsigned int base,
                                       OwningSlotAction action) {
-    if (type_is_indirect(type)) {
-        if (!type_is_owned(type)) {
-            return;
-        }
-
+    // A value that owns as itself rather than through parts: the address is the
+    // whole of what a release needs. A 'ref' is not here at all -- it names
+    // what someone else owns, so nothing walks it looking for an owner.
+    if (type_owns_through_an_address(type)) {
         switch (action) {
         case OWNING_SLOT_NULL:
             chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_NULL, base, 0));
@@ -554,20 +553,11 @@ static void codegen_walk_owning_slots(CodegenState *state, const Type *type, uns
         return;
     }
 
-    // A string header owns as one value rather than through its 'data' field,
-    // which is a raw address claiming nothing: what must be freed is the block,
-    // and the count saying how far to walk it sits in the slot beside that
-    // pointer. Descending into the field would hand the free path the pointer
-    // alone.
-    //
-    // An array is here for the same reason and a different one: it owns through
-    // elements its type says how to walk, so one release naming it frees them
-    // all -- the way one release naming a struct frees every field that owns.
-    // A vector is here for the string's reason: what must be freed is the block
-    // its 'data' field names, and the capacity saying how big that block is
-    // sits inside that field while the count of live elements sits beside it.
-    // One release naming the whole header is what reaches both.
-    if (type && (type->kind == TYPE_ARRAY || type_owns_a_block(type))) {
+    // An array owns through elements its type says how to walk, so one release
+    // naming it frees them all -- the way one release naming a struct frees
+    // every field that owns. Its elements are not separately addressable slots,
+    // which is what keeps it from being walked like a struct.
+    if (type && type->kind == TYPE_ARRAY) {
         if (!type_is_owned(type)) {
             return;
         }
@@ -1503,37 +1493,26 @@ static unsigned int codegen_lend_expr(CodegenState *state, ASTExpr *node) {
     unsigned int rd = codegen_alloc_slots(state, type_slot_count(state->registry, reference),
                                           type_align_slots(state->registry, reference), node->span);
 
-    const TypeLayout *layout = type_registry_layout_of(state->registry, lent);
-
-    // Each field the reference carries, found in the header by name. By name
-    // rather than by position, so a header that declares a capacity between its
-    // address and its count still lends the two the reference asks for.
-    //
-    // What a block contributes is its address alone: a 'ref str' is where the
-    // characters are and how many, never the capacity they sit in.
-    const TypeField *carried[VM_MAX_LENT_FIELDS];
-    size_t count = type_lent_fields(lent, type_pointee(reference), carried, VM_MAX_LENT_FIELDS);
+    // Each part the reference carries, as an offset into the header. Offsets
+    // rather than fields, because a String keeps both the address and the count
+    // inside the one block it owns, with the capacity between them -- so what
+    // is lent is neither a whole field nor a contiguous run of one.
+    LentPart carried[VM_MAX_LENT_FIELDS];
+    size_t count =
+        type_lent_parts(state->registry, lent, type_pointee(reference), carried, VM_MAX_LENT_FIELDS);
 
     assert(count > 0 && "a lend handed over nothing");
 
     unsigned int at = 0;
 
     for (size_t i = 0; i < count; i++) {
-        size_t index = (size_t)(carried[i] - type_fields(lent));
+        assert(carried[i].offset % VM_SLOT_SIZE == 0 && "a lent part is always slot-aligned");
 
-        assert(layout->offsets[index] % VM_SLOT_SIZE == 0 && "a lent field is always slot-aligned");
+        unsigned int width = (unsigned int)((carried[i].size + VM_SLOT_SIZE - 1) / VM_SLOT_SIZE);
 
-        // A block hands over its address and nothing else: the capacity beside
-        // it is what frees the memory, which stays the owner's business. Every
-        // other field is lent whole.
-        size_t width = carried[i]->type->kind == TYPE_BLOCK
-                           ? VM_INDIRECT_SLOTS
-                           : type_slot_count(state->registry, carried[i]->type);
+        codegen_copy_slots(state, rd + at, source + (unsigned int)(carried[i].offset / VM_SLOT_SIZE), width);
 
-        codegen_copy_slots(state, rd + at, source + (unsigned int)(layout->offsets[index] / VM_SLOT_SIZE),
-                           width);
-
-        at += (unsigned int)width;
+        at += width;
     }
 
     return rd;
@@ -2969,22 +2948,18 @@ static void codegen_copy_slots(CodegenState *state, unsigned int dest, unsigned 
 // ---- Type layout in frame slots ----
 
 /*
-    The bytes a release has to clear so the slot is safe to visit again: the
-    pointer for an owning indirection, and the whole header for an array, whose
-    length must go with its pointer or a second visit would walk a freed block.
+    The bytes a release has to clear so the slot is safe to visit again, which
+    is what the value occupies: a box is its pointer, an array and a header
+    counting a block are their whole width -- a length left behind beside a
+    freed pointer is what a second visit would walk.
 
-    A decision about the slot rather than a fact about the type, which is why it
-    is settled here beside the other slot arithmetic and not asked of the type.
-    Nothing at run time computes it: what the VM carries is the number, and a
-    slot whose concrete type is not known until run time would carry its own.
+    That is the type's own width in every case, so it is asked rather than
+    derived. Nothing at run time computes it: what the VM carries is the number,
+    and a slot whose concrete type is not known until run time would carry its
+    own.
 */
 static size_t slot_release_width(TypeRegistry *registry, const Type *type) {
-    if (!type) {
-        return 0;
-    }
-
-    return type->kind == TYPE_ARRAY || type_owns_a_block(type) ? type_registry_size_of(registry, type)
-                                                               : sizeof(void *);
+    return type_registry_size_of(registry, type);
 }
 
 // A value occupies ceil(size / 4) consecutive slots, which is 1 for every
@@ -3023,11 +2998,12 @@ static bool type_owns_through_members(const Type *type) {
 
 // Whether a field is moved as a run of slots rather than through a width-tagged
 // field opcode. Anything laid out from fields is, because those slots sit
-// inline — a struct and a string alike — and so is a pointer, which is 8 bytes
-// and has no 8-wide opcode. Before heap objects existed no struct could hold a
-// pointer, so the two cases only meet now.
+// inline — a struct and a string alike — and so is anything wider than the
+// widest field opcode: a pointer is 8 bytes and a block 16, and there is no
+// opcode for either width.
 static bool type_moves_as_slots(const Type *type) {
-    return type_is_indirect(type) || (type && type_field_count(type) > 0);
+    return type_is_indirect(type) || type_owns_through_an_address(type) ||
+           (type && type_field_count(type) > 0);
 }
 
 // The field's width is known at compile time, so it picks the opcode instead

@@ -37,16 +37,6 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
 void builtin_register_static(VM *vm, const Type *declared_on, const char *name, GabExternFn body,
                              const Type *return_type, const Type *const *params, size_t param_count);
 
-// How a 'String' and a 'Vec<T>' free, which neither shape says: each holds a
-// block, and how far into it anything was written is a count beside it that no
-// layout pairs with it. Composed from the drop_plan_* primitives, which is what
-// a host declaring such a type would compose its own from.
-//
-// Reached by the registry rather than by a caller here: a string's is supplied
-// where the type is built, and a vector's where each instantiation is interned.
-const DropPlan *string_build_drop(TypeRegistry *registry, const Type *type);
-const DropPlan *vec_build_drop(TypeRegistry *registry, const Type *type);
-
 // Each builtin type's methods, called by builtin_register_all.
 void builtin_register_string(VM *vm);
 

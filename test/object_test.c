@@ -339,10 +339,11 @@ static void test_a_string_owns_and_a_reference_to_one_does_not() {
     const Type *owning = registry->builtins.string_type;
     const Type *borrowing = type_registry_ref_to(registry, registry->builtins.str_type);
 
-    // A header carries more than the reference it lends: the block it owns
-    // carries a capacity beside the address, where a reference names only the
-    // characters and the count.
-    assert(type_registry_size_of(registry, owning) > type_registry_size_of(registry, borrowing));
+    // The header carries a capacity the reference does not, and is no wider for
+    // it: the count rides in what the address's alignment already padded out.
+    // The two being equal is a fact about that padding rather than the same two
+    // words, which is why a lend copies parts by offset instead of the header.
+    assert(type_registry_size_of(registry, owning) == type_registry_size_of(registry, borrowing));
 
     assert(type_is_owned(owning));
     assert(!type_is_owned(borrowing));

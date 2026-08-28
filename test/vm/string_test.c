@@ -45,9 +45,10 @@ static void test_a_string_is_an_address_and_a_length() {
     test_context_free(&ctx);
 }
 
-// The two fields are what the layout comes from: the block holding the
-// characters and how many of them are live.
-static void test_a_string_is_two_fields() {
+// One field is what the layout comes from: the block holding the characters,
+// which carries how many of them are live. That the block owns and answers for
+// itself is what lets a string be freed by the walk any struct gets.
+static void test_a_string_is_one_owning_field() {
     TestContext ctx;
     test_context_init(&ctx);
 
@@ -56,22 +57,19 @@ static void test_a_string_is_two_fields() {
 
     const Type *string_type = type_registry_string(scope.type_registry);
 
-    const TypeField *data = type_find_field(string_type, string_from_cstr(&ctx.strings, "data"));
-    const TypeField *length = type_find_field(string_type, string_from_cstr(&ctx.strings, "length"));
+    assert(type_field_count(string_type) == 1);
 
-    assert(data && length);
+    const TypeField *data = type_find_field(string_type, string_from_cstr(&ctx.strings, "data"));
+
+    assert(data);
 
     const TypeLayout *layout = type_registry_layout_of(scope.type_registry, string_type);
 
-    // The C mirror the VM and the host both read is these fields' layout, so
-    // the two statements of it must agree.
+    // The C mirror the VM and the host both read is this field's layout, so the
+    // two statements of it must agree.
     assert(layout->offsets[data - type_fields(string_type)] == offsetof(GabStringValue, block));
-    assert(layout->offsets[length - type_fields(string_type)] == offsetof(GabStringValue, length));
 
-    // The block owns the characters, which is what makes freeing a string the
-    // same walk that frees a vector: the count beside it owns nothing.
     assert(type_is_owned(data->type));
-    assert(!type_is_owned(length->type));
 
     test_context_free(&ctx);
 }
@@ -294,7 +292,7 @@ int main(void) {
     test_string_names_a_type();
     test_a_literal_is_a_string();
     test_a_string_is_an_address_and_a_length();
-    test_a_string_is_two_fields();
+    test_a_string_is_one_owning_field();
     test_a_literal_loads_its_characters_and_length();
     test_equal_strings_compare_equal();
     test_equal_characters_at_different_addresses();

@@ -18,34 +18,38 @@ typedef struct TypeRegistry TypeRegistry;
 */
 
 /*
-    A 'block T' value: where the elements are and how many the memory has room
-    for.
+    A 'block T' value: where the elements are, how many the memory has room for,
+    and how many of them are live.
 
-    The capacity, not a length: how many elements have been written is the
-    business of whatever holds the block, since the memory itself carries no
-    mark distinguishing a written element from a zeroed one. So this is what the
-    block is freed at, and nothing more.
+    Everything freeing it needs, which is what makes a block the one owning
+    shape that answers for itself. The capacity is what the memory is freed at;
+    the length is how far into it anything was written, and the two are
+    different questions -- memory has no mark telling a written element from a
+    zeroed one.
+
+    The length rides in what the capacity's alignment already padded out, so
+    carrying it costs nothing: a block is two words either way.
+
+    Self-sufficiency is the point. A count kept in a sibling field would make
+    this field owning without being freeable alone, and every walk that descends
+    into a value would have to be told to stop here.
 */
 typedef struct {
     void *data;
     int32_t capacity;
+    int32_t length;
 } GabBlockValue;
 
 /*
-    A 'String' value: the block holding its characters and how many of them are
-    live.
+    A 'String' value: the block holding its characters, which carries how many
+    there are.
 
-    The same two fields a vector has, laid out the same way, because a string is
-    what a 'Vec<byte>' is. The capacity rides in the block, so a string has room
-    past its length to grow into, and the length is what every reader means by
-    how long the string is.
-
-    Laid out to tile the stack exactly, so a string in a frame slot and a string
-    in a struct field are the same bytes.
+    One field, because a block answers for itself -- what a string adds to it is
+    that the characters are text, not a number the block was missing. A
+    'Vec<T>' is the same shape with a different element.
 */
 typedef struct {
     GabBlockValue block;
-    int32_t length;
 } GabStringValue;
 
 /*
@@ -101,51 +105,19 @@ _Static_assert(sizeof(ObjectHeader) % 8 == 0, "the header must not misalign the 
 _Static_assert(sizeof(size_t) >= 8, "an array's size computation assumes a 64-bit size_t");
 
 /*
-    Composing a drop plan out of the primitives the free path already runs.
-
-    For a type whose shape does not say how it frees. A struct, an array and a
-    box are all derived: what they own is where their parts are, and the layout
-    is the whole answer. A type holding a block is the one shape that is not --
-    a block carries the capacity it was taken at, and how far into it anything
-    was written is a number beside it that no layout pairs with it.
-
-    So such a type supplies its plan instead of having one derived. Supplied by
-    composing these rather than by handing over a C function that frees: the
-    plan stays data the free path reads, which is what keeps a laid-out Type off
-    that path, keeps the walk terminating on a ring through a 'box', and keeps
-    the one ordering that matters -- the live elements dropped before the block
-    releases the memory they sit in -- a property of how a plan is built rather
-    than one each writer has to remember.
+    Growing a block, which is what every collection built on one does to make
+    room. Here rather than in each of them: a string and a vector reserve the
+    same way and differ only in what one element is, so 'stride' is the whole of
+    what they do not share.
 */
 
-// Frees what the live elements of a block own, leaving the memory to whatever
-// frees the block itself. 'count_field' is the field counting them and
-// 'block_field' the one holding the block, both as indices into 'type'.
+// Makes room for 'extra' more elements past the live ones, growing the block if
+// they do not fit. Doubling, so that appending n elements copies O(n) times
+// rather than once per append.
 //
-// NULL when the element owns nothing: there is then nothing to walk, and the
-// block's own free is the whole of what the value has to do.
-const DropPlan *drop_plan_live_prefix(Arena *arena, TypeRegistry *registry, const Type *type,
-                                      size_t count_field, size_t block_field);
-
-// The plan for a type holding a block: what the live elements own, dropped
-// before the block frees the memory they sit in, and then whatever the fields
-// own besides.
-//
-// The order is what this exists for. The prefix walks memory the block
-// releases, so it must go first -- a property of how the steps are built rather
-// than one each caller has to remember.
-const DropPlan *drop_plan_counted_block(Arena *arena, TypeRegistry *registry, const Type *type,
-                                        size_t count_field, size_t block_field);
-
-// Runs each of 'steps' in turn, at its own offset within the value. What a
-// struct's plan is, and what composes a supplied plan with the fields a type
-// owns besides -- the steps run in the order given, which is what lets a prefix
-// walk precede the block that frees it.
-const DropPlan *drop_plan_steps(Arena *arena, const DropStep *steps, size_t count);
-
-// The plan for one field of 'type', at the offset the layout gives it. What a
-// composed plan names its parts with.
-DropStep drop_plan_field(TypeRegistry *registry, const Type *type, size_t field);
+// False when the allocation would overflow or fails, leaving the block as it
+// was: the caller must not then write what it was making room for.
+bool block_reserve(Allocator allocator, GabBlockValue *block, int32_t extra, size_t stride);
 
 // Builds the drop plan for a laid-out type, or NULL when it owns nothing.
 // Derived once per type and never on a free path, which is what lets the plan
