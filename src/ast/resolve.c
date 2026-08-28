@@ -679,11 +679,8 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     }
 
     // A function the type owns has no receiver, so no value reaches it and
-    // there is no parameter zero to reconcile against. Whether a receiver was
-    // declared is the question, not what it is: a method reached through
-    // 'owner' takes the declaration rather than the instantiation, which
-    // reconcile_receiver below is what settles.
-    if (method->func.param_count == 0) {
+    // there is no parameter zero to reconcile against.
+    if (!method->func.has_receiver) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                    "'%s' belongs to %s, so it is called on the type rather than on a value",
                    method_name->data, type_name(state, base));
@@ -2072,6 +2069,7 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
                 .params = NULL,
                 .param_count = 0,
                 .func_index = SYMBOL_FUNC_NO_BODY,
+                .has_receiver = true,
             },
     };
 
@@ -2147,7 +2145,7 @@ static Symbol *resolve_static_func(ResolverState *state, ASTExpr *expr) {
 
     // A method's parameter zero is its receiver, which '::' has no way to
     // supply.
-    if (found->func.param_count > 0 && receiver_base_type(found->func.params[0]) == owner) {
+    if (found->func.has_receiver) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                    "'%s' is a method on %s, so it is called on a value rather than on the type", member->data,
                    owner->name->data);
@@ -2197,6 +2195,7 @@ static void declare_static(ResolverState *state, ASTStmt *stmt) {
                 .params = NULL,
                 .param_count = 0,
                 .func_index = SYMBOL_FUNC_NO_BODY,
+                .has_receiver = false,
             },
     };
 

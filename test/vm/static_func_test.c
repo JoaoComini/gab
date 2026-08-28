@@ -60,6 +60,14 @@ static void test_a_receiver_and_an_owner_do_not_combine() {
                           "func (c: ref Counter) Counter::start(): int { return 7; }\n"));
 }
 
+// The rule is what a declaration recorded, not what parameter zero looks like:
+// a static taking a parameter of its own type is still not reached on a value.
+static void test_a_static_is_refused_by_its_declaration_not_its_parameters() {
+    assert(!test_compiles("struct Counter { n: int }\n"
+                          "func Counter::of(c: ref Counter): int { return c.n; }\n"
+                          "func main(): int { let c: Counter; return c.of(); }\n"));
+}
+
 int main(void) {
     test_a_static_function_is_called_on_its_type();
     test_a_static_function_takes_its_declared_parameters();
@@ -68,6 +76,7 @@ int main(void) {
     test_an_unknown_name_on_a_type_is_rejected();
     test_a_static_function_needs_a_type_it_declares();
     test_a_receiver_and_an_owner_do_not_combine();
+    test_a_static_is_refused_by_its_declaration_not_its_parameters();
 
     printf("All static function tests passed\n");
     return 0;
