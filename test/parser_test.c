@@ -609,17 +609,53 @@ static void test_break_and_continue() {
     ast_unit_destroy(unit);
 }
 
+// A constructor's arguments are delimited, so a list of them is bounded by what
+// closes it rather than by what follows the last one. Two types is the shape a
+// map takes, and it parses without a rule of its own.
+static void test_a_type_takes_several_arguments() {
+    ASTUnit *unit = assert_parse("struct Holder { a: Map<int,float> }");
+
+    TypeExpr *apply = unit->statements.data[0]->struct_decl.fields.data[0]->type_expr;
+
+    assert(apply->kind == TYPE_EXPR_APPLY);
+    assert(string_ref_equals_cstr(apply->apply.base->name, "Map"));
+    assert(apply->apply.args.size == 2);
+    assert(string_ref_equals_cstr(apply->apply.args.data[0]->name, "int"));
+    assert(string_ref_equals_cstr(apply->apply.args.data[1]->name, "float"));
+
+    ast_unit_destroy(unit);
+}
+
+// An argument is a type like any other, so an application is one of its own
+// arguments. The delimiters are what bound each level.
+static void test_an_argument_may_be_an_application() {
+    ASTUnit *unit = assert_parse("struct Holder { a: Vec<Vec<int>> }");
+
+    TypeExpr *outer = unit->statements.data[0]->struct_decl.fields.data[0]->type_expr;
+
+    assert(outer->kind == TYPE_EXPR_APPLY);
+    assert(outer->apply.args.size == 1);
+
+    TypeExpr *inner = outer->apply.args.data[0];
+
+    assert(inner->kind == TYPE_EXPR_APPLY);
+    assert(string_ref_equals_cstr(inner->apply.base->name, "Vec"));
+    assert(string_ref_equals_cstr(inner->apply.args.data[0]->name, "int"));
+
+    ast_unit_destroy(unit);
+}
+
 // A type position parses into a tree: each 'box' or 'ref' wraps what follows
 // it, and an application holds its arguments. Nesting is what the shape says
 // rather than what a fixed-width encoding can count, so a spelling deeper than
 // any such width still parses.
 static void test_a_type_is_a_tree() {
-    ASTUnit *unit = assert_parse("struct Holder { a: ref box Array int,3 }");
+    ASTUnit *unit = assert_parse("struct Holder { a: ref box [int; 3] }");
 
     ASTStmt *stmt = unit->statements.data[0];
     ASTFieldList fields = stmt->struct_decl.fields;
 
-    // 'ref box Array int,3' reads outermost first: a borrow of an owning
+    // 'ref box [int; 3]' reads outermost first: a borrow of an owning
     // pointer to an array of ints.
     TypeExpr *ref = fields.data[0]->type_expr;
     assert(ref->kind == TYPE_EXPR_REF);
@@ -691,6 +727,8 @@ int main() {
     test_break_and_continue();
     test_return();
     test_a_type_is_a_tree();
+    test_a_type_takes_several_arguments();
+    test_an_argument_may_be_an_application();
 
     return 0;
 }

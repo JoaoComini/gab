@@ -37,9 +37,9 @@ static void test_a_local_loop_body_loads_no_constants() {
 // The same arithmetic over struct fields costs a load and a store per access,
 // where the local version addresses its slot directly.
 static void test_a_field_loop_body_loads_and_stores_each_access() {
-    TestProgram program = test_compile("struct Vec { x: int, y: int }\n"
+    TestProgram program = test_compile("struct Point { x: int, y: int }\n"
                                        "func run(n: int): int {\n"
-                                       "    let v: Vec;\n"
+                                       "    let v: Point;\n"
                                        "    v.x = 1;\n"
                                        "    v.y = 2;\n"
                                        "    for let i: int = 0; i < n; i += 1 {\n"

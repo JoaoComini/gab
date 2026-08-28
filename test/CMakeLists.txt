@@ -32,6 +32,7 @@ set(
     vm/str_test.c
     vm/array_test.c
     builtin/string_method_test.c
+    builtin/vec_test.c
     vm/neg_test.c
     vm/not_test.c
     vm/modulo_test.c

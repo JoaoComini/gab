@@ -41,8 +41,17 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
 void builtin_register_string(VM *vm);
 
 // The methods every array answers, declared once on the bare 'Array' type that
-// each 'Array T' reaches through 'owner'. None of them depend on the element,
+// each '[T; N]' reaches through 'owner'. None of them depend on the element,
 // so one set serves every array.
 void builtin_register_array(VM *vm);
+
+// The methods every 'Vec<T>' answers. Unlike an array's, these are declared on
+// the 'Vec' declaration in terms of its parameter and turned into Symbols where
+// each instantiation is interned -- 'push' takes a T, so there is no one set
+// that could serve every element.
+//
+// This registers the installer the registry calls to do that, so a 'Vec<T>'
+// named by any later compile gets its methods without the VM being asked again.
+void builtin_register_vec(VM *vm);
 
 #endif

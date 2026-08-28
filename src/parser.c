@@ -620,6 +620,57 @@ static ASTField *parse_field(Parser *parser, const char *name_message) {
 // inner is parsed, so the tree's shape is the spelling's own and nothing counts
 // levels or records which of them borrow.
 static TypeExpr *parse_type_expr(Parser *parser) {
+    // '[T; N]' is a run of N of T. The element is delimited rather than
+    // prefixed, so what the length counts is exactly what the brackets hold:
+    // '[box Box; 2]' is two pointers, and 'box [Box; 2]' is one pointer to two
+    // Boxes. A suffix would have had to answer which of those it meant.
+    if (parser->current.type == TOKEN_LBRACKET) {
+        parser_next_token(parser); // eat '['
+
+        TypeExpr *element = parse_type_expr(parser);
+
+        if (!element) {
+            return NULL;
+        }
+
+        if (!parser_expect(parser, TOKEN_SEMICOLON, "expected ';' and a length, as '[int; 3]'")) {
+            type_expr_destroy(element);
+            return NULL;
+        }
+
+        parser_next_token(parser); // eat ';'
+
+        // A literal and only a literal: interning a type on its length means
+        // the length has to be known where the type is named.
+        if (parser->current.type != TOKEN_INT) {
+            parser_error(parser, "an array's length must be an integer literal");
+            type_expr_destroy(element);
+            return NULL;
+        }
+
+        int32_t length = parser->current.value.as_int;
+
+        parser_next_token(parser); // eat the length
+
+        if (!parser_expect(parser, TOKEN_RBRACKET, "expected ']' after an array's length")) {
+            type_expr_destroy(element);
+            return NULL;
+        }
+
+        parser_next_token(parser); // eat ']'
+
+        // Named rather than given a constructor of its own: 'Array' is the
+        // declaration a run of elements is interned under, and the resolver
+        // looks it up as it does any other name. The literal outlives the
+        // parse, so the ref over it stays good.
+        TypeExpr *array = type_expr_apply(type_expr_name(string_ref_create("Array")));
+
+        type_expr_list_add(&array->apply.args, element);
+        array->apply.length = length;
+
+        return array;
+    }
+
     // 'ref T' is a borrow: a pointer that does not own what it names. It stands
     // in place of the 'box', not before it -- 'ref T' and 'box T' are both one
     // pointer deep, and differ only in who frees the inner. The two nest in any
@@ -670,46 +721,49 @@ static TypeExpr *parse_type_expr(Parser *parser) {
 
     TypeExpr *base = type_expr_name(name);
 
-    // 'Array T' names its element after it, the one constructor here that takes
-    // an argument. Recognised by the name rather than a keyword, so that
-    // 'Array' stays an ordinary type name the resolver looks up -- what makes
-    // this one special is that an argument follows, and the resolver reports it
-    // if the name was something else that cannot take one.
-    if (string_ref_equals_cstr(name, "Array")) {
+    // A type name followed by '<' applies it to what the delimiters hold:
+    // 'Vec<int>', 'Map<K,V>'. One rule for every constructor that takes type
+    // arguments, so a generic declaration added later parses here without a
+    // rule of its own.
+    //
+    // Delimited rather than juxtaposed. Where an argument simply followed the
+    // name, a type ending one construct and an identifier beginning the next
+    // could not be told from an application.
+    TypeExpr *type = base;
+
+    if (parser->current.type == TOKEN_LESS) {
+        parser_next_token(parser); // eat '<'
+
         TypeExpr *apply = type_expr_apply(base);
-        TypeExpr *argument = parse_type_expr(parser);
 
-        if (!argument) {
+        for (;;) {
+            TypeExpr *argument = parse_type_expr(parser);
+
+            if (!argument) {
+                type_expr_destroy(apply);
+                return NULL;
+            }
+
+            type_expr_list_add(&apply->apply.args, argument);
+
+            if (parser->current.type != TOKEN_COMMA) {
+                break;
+            }
+
+            parser_next_token(parser); // eat ','
+        }
+
+        if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after a type's arguments")) {
             type_expr_destroy(apply);
             return NULL;
         }
 
-        type_expr_list_add(&apply->apply.args, argument);
+        parser_next_token(parser); // eat '>'
 
-        // The length belongs to the type, so it is written with it. A literal
-        // and only a literal: interning a type on its length means the length
-        // has to be known where the type is named.
-        if (!parser_expect(parser, TOKEN_COMMA, "expected ',' and a length, as 'Array int,3'")) {
-            type_expr_destroy(apply);
-            return NULL;
-        }
-
-        parser_next_token(parser); // eat ','
-
-        if (parser->current.type != TOKEN_INT) {
-            parser_error(parser, "an array's length must be an integer literal");
-            type_expr_destroy(apply);
-            return NULL;
-        }
-
-        apply->apply.length = parser->current.value.as_int;
-
-        parser_next_token(parser); // eat the length
-
-        return apply;
+        type = apply;
     }
 
-    return base;
+    return type;
 }
 
 static ASTStmt *parse_struct_decl_stmt(Parser *parser) {

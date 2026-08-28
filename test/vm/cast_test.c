@@ -132,8 +132,8 @@ static void test_a_cast_takes_one_operand() {
 
 // A struct type is not callable: only the numeric builtins convert.
 static void test_a_struct_name_is_not_a_cast() {
-    assert(!test_compiles("struct Vec { x: int }\n"
-                          "func f(): int { let a: int = 1; return Vec(a).x; }\n"));
+    assert(!test_compiles("struct Point { x: int }\n"
+                          "func f(): int { let a: int = 1; return Point(a).x; }\n"));
 }
 
 // The result is a fresh value, so it has no address and no home to assign to.

@@ -605,7 +605,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
         }
 
         // A method declared on the declaration this level instantiates: the
-        // bare 'Array' every 'Array T,N' hangs its set on. What such a method
+        // bare 'Array' every '[T; N]' hangs its set on. What such a method
         // reads is the header, which every array has the same shape of, so the
         // element it was written over does not enter into it.
         if (declared == at->decl) {
@@ -1271,7 +1271,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         }
 
         // Reaches through every pointer level, as a field access does: an
-        // 'Array int' and a 'ref Array int' are indexed the same way.
+        // '[int; 3]' and a 'ref [int; 3]' are indexed the same way.
         while (type_is_indirect(target_type)) {
             target_type = type_pointee(target_type);
         }
@@ -1534,7 +1534,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         if (!expected || expected->kind != TYPE_ARRAY) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "an array's elements need the array's type to be written, as "
-                       "'let xs: Array int,3 = [1, 2, 3];'");
+                       "'let xs: [int; 3] = [1, 2, 3];'");
             expr->type = resolver_error_type(state);
             break;
         }
@@ -1691,6 +1691,53 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
             return resolver_error_type(state);
         }
 
+        // A generic declaration is instantiated by what it was applied to.
+        // Nothing here is 'Vec': what the constructor takes and how its
+        // instantiations are laid out are read off the declaration, so a second
+        // generic name resolves through this same arm.
+        if (base->generic) {
+            if (expr->apply.args.size != base->generic->param_count) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' takes %zu type argument(s), not %zu",
+                           base->name->data, base->generic->param_count, expr->apply.args.size);
+                return resolver_error_type(state);
+            }
+
+            const Type *args[GAB_MAX_TYPE_PARAMS];
+
+            for (size_t i = 0; i < expr->apply.args.size; i++) {
+                args[i] = resolve_type_expr(state, expr->apply.args.data[i], span);
+
+                if (is_error_type(args[i])) {
+                    return resolver_error_type(state);
+                }
+
+                if (reject_unsized(state, args[i], span, "a type argument")) {
+                    return resolver_error_type(state);
+                }
+
+                // The argument's width is what an instantiation is laid out by
+                // and what a walk over its elements strides by, so it is owed
+                // here -- and a struct still being laid out is one waiting on
+                // its own width.
+                StructDecl *cycle = element_completes_a_cycle(state, args[i]);
+
+                if (cycle) {
+                    diag_error(state->diagnostics, GAB_ERR_TYPE, span, "struct '%s' cannot contain itself",
+                               cycle->name->data);
+                    return resolver_error_type(state);
+                }
+
+                // A zero-width argument would put every element of a block at
+                // one address, leaving nothing for a length to count.
+                if (type_registry_size_of(registry, args[i]) == 0) {
+                    diag_error(state->diagnostics, GAB_ERR_TYPE, span, "a type argument must have a size");
+                    return resolver_error_type(state);
+                }
+            }
+
+            return type_registry_instantiate(registry, base, args, expr->apply.args.size);
+        }
+
         if (base != registry->builtins.array_type) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, span, "%s does not take an element type",
                        type_name(state, base));
@@ -1781,10 +1828,17 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
         return resolver_error_type(state);
     }
 
-    // 'Array' alone names no type: every array is 'Array T,N'.
+    // 'Array' alone names no type: every array is '[T; N]'.
     if (type == registry->builtins.array_type) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, span,
-                   "'Array' needs an element type and a length, as 'Array int,3'");
+                   "'Array' needs an element type and a length, as '[int; 3]'");
+        return resolver_error_type(state);
+    }
+
+    // Nor does a generic declaration: what it takes is what makes it a type.
+    if (type->generic) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' needs a type argument, as '%s<int>'",
+                   type->name->data, type->name->data);
         return resolver_error_type(state);
     }
 

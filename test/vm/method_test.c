@@ -247,10 +247,10 @@ static void test_method_calls_another_method() {
 // excludes it.
 static void test_method_arguments() {
     assert(test_run_int(
-               "struct Vec { x: int, y: int }\n"
-               "func Vec::set(v: ref Vec, a: int, b: int): int { v.x = a; v.y = b; return v.x + v.y; }\n"
+               "struct Point { x: int, y: int }\n"
+               "func Point::set(v: ref Point, a: int, b: int): int { v.x = a; v.y = b; return v.x + v.y; }\n"
                "func main(): int {\n"
-               "    let v: Vec;\n"
+               "    let v: Point;\n"
                "    return v.set(3, 4);\n"
                "}\n"
                "let r: int = main();") == 7);
@@ -303,10 +303,10 @@ static void test_value_method_through_a_pointer() {
 // A struct parameter and a struct return share the argument block with the
 // receiver, so their slots must not overlap it.
 static void test_struct_parameter_and_return() {
-    assert(test_run_int("struct Vec { x: int, y: int }\n"
+    assert(test_run_int("struct Point { x: int, y: int }\n"
                         "struct Adder { bias: int }\n"
-                        "func Adder::add(a: ref Adder, v: Vec): Vec {\n"
-                        "    let out: Vec;\n"
+                        "func Adder::add(a: ref Adder, v: Point): Point {\n"
+                        "    let out: Point;\n"
                         "    out.x = v.x + a.bias;\n"
                         "    out.y = v.y + a.bias;\n"
                         "    return out;\n"
@@ -314,10 +314,10 @@ static void test_struct_parameter_and_return() {
                         "func main(): int {\n"
                         "    let a: Adder;\n"
                         "    a.bias = 10;\n"
-                        "    let v: Vec;\n"
+                        "    let v: Point;\n"
                         "    v.x = 1;\n"
                         "    v.y = 2;\n"
-                        "    let out: Vec = a.add(v);\n"
+                        "    let out: Point = a.add(v);\n"
                         "    return out.x * 100 + out.y;\n"
                         "}\n"
                         "let r: int = main();") == 1112);

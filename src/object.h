@@ -50,7 +50,7 @@ typedef struct {
 } GabStrRef;
 
 /*
-    An 'Array T' value: where the elements are and how many. The same two slots
+    An '[T; N]' value: where the elements are and how many. The same two slots
     a string has, and copied the same way -- what differs is that the element is
     whatever the array was written over, which is what its drop walk reads.
 */
@@ -58,6 +58,20 @@ typedef struct {
     void *data;
     int32_t length;
 } GabArrayValue;
+
+/*
+    A 'block T' value: where the elements are and how many the memory has room
+    for.
+
+    The capacity, not a length: how many elements have been written is the
+    business of whatever holds the block, since the memory itself carries no
+    mark distinguishing a written element from a zeroed one. So this is what the
+    block is freed at, and nothing more.
+*/
+typedef struct {
+    void *data;
+    int32_t capacity;
+} GabBlockValue;
 
 typedef struct ObjectHeader {
     // What freeing the payload has to do, and the only thing the header

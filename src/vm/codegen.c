@@ -563,7 +563,11 @@ static void codegen_walk_owning_slots(CodegenState *state, const Type *type, uns
     // An array is here for the same reason and a different one: it owns through
     // elements its type says how to walk, so one release naming it frees them
     // all -- the way one release naming a struct frees every field that owns.
-    if (type && (type->kind == TYPE_ARRAY || type->kind == TYPE_STRING)) {
+    // A vector is here for the string's reason: what must be freed is the block
+    // its 'data' field names, and the capacity saying how big that block is
+    // sits inside that field while the count of live elements sits beside it.
+    // One release naming the whole header is what reaches both.
+    if (type && (type->kind == TYPE_ARRAY || type->kind == TYPE_STRING || type_owns_a_block(type))) {
         if (!type_is_owned(type)) {
             return;
         }
@@ -1778,7 +1782,7 @@ static unsigned int codegen_index_base(CodegenState *state, ASTExpr *target) {
     unsigned int pointer = codegen_expr(state, target);
 
     // Every level, as a field access reaches through every level: a
-    // 'ref box Array int,3' is two hops from the elements.
+    // 'ref box [int; 3]' is two hops from the elements.
     const Type *type = target->type;
 
     while (type_is_indirect(type_pointee(type))) {
@@ -2991,8 +2995,9 @@ static size_t slot_release_width(TypeRegistry *registry, const Type *type) {
         return 0;
     }
 
-    return type->kind == TYPE_ARRAY || type->kind == TYPE_STRING ? type_registry_size_of(registry, type)
-                                                                 : sizeof(void *);
+    return type->kind == TYPE_ARRAY || type->kind == TYPE_STRING || type_owns_a_block(type)
+               ? type_registry_size_of(registry, type)
+               : sizeof(void *);
 }
 
 // A value occupies ceil(size / 4) consecutive slots, which is 1 for every

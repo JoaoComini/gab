@@ -61,6 +61,19 @@ typedef enum {
     // changes what the constructor computes and nothing else.
     TYPE_BOX,
     TYPE_REF,
+
+    // An owning address with a capacity beside it: a run of elements the value
+    // itself frees, however many it was allocated for.
+    //
+    // A third owning shape rather than a 'box' of many, because the two differ
+    // in what says how far the memory runs. A 'box' payload carries an
+    // ObjectHeader and is always one element, so nothing has to be counted; a
+    // block carries no header, so the capacity rides here and the free is told
+    // its size. That is what the raw allocation instructions were reserved for.
+    //
+    // How many of those elements are live is not its business: a block is
+    // capacity, and whatever holds one counts what has been written into it.
+    TYPE_BLOCK,
     TYPE_UNKNOWN,
     TYPE_ERROR,
 } TypeKind;
@@ -73,6 +86,15 @@ typedef enum {
 // resolver that must reject the type: by the time codegen is picking operands,
 // the diagnostic naming the offending declaration is long gone.
 #define GAB_MAX_TYPE_BYTES 255
+
+// How many parameters a generic declaration may take. A bound so that
+// instantiating one builds its key on the stack; nothing declares more than the
+// one 'Vec' takes.
+#define GAB_MAX_TYPE_PARAMS 4
+
+// How many slots a method's signature may take, receiver included. A bound so
+// that installing one builds its signature on the stack.
+#define GAB_MAX_METHOD_PARAMS 8
 
 /*
     Types compare by pointer identity, so every one a program can name came from
@@ -114,7 +136,7 @@ typedef enum {
     A type constructor, and what it was applied to.
 
     Every parameterized type in the language is one of these: 'box T', 'ref T',
-    'ptr T' and 'Array T,N' differ in which constructor and how many arguments,
+    'ptr T' and '[T; N]' differ in which constructor and how many arguments,
     not in kind. One interning table keyed by an application therefore serves
     all of them, and serves a generic 'List T' or 'Map K,V' with no new table --
     which is why this is a key rather than one map per constructor.
@@ -124,13 +146,14 @@ typedef enum {
     TYPE_CTOR_BOX,
     TYPE_CTOR_REF,
     TYPE_CTOR_PTR,
+    TYPE_CTOR_BLOCK,
 
     // A constructor with a declaration behind it: 'Array' today, and whatever
     // a generic declaration introduces later.
     TYPE_CTOR_NOMINAL,
 } TypeCtor;
 
-// One argument of an application. A type or a compile-time value: 'Array T,N'
+// One argument of an application. A type or a compile-time value: '[T; N]'
 // is one of each. Tagged rather than promoting a value into a Type, because a
 // length has no size and no alignment to answer for, and every question asked
 // of a Type would have to special-case one that is really a number.
@@ -147,7 +170,7 @@ typedef struct TypeArg {
 } TypeArg;
 
 // The interning key. Types compare by pointer identity, so two mentions of
-// 'Array int,3' must find one Type: that is what this is looked up by.
+// '[int; 3]' must find one Type: that is what this is looked up by.
 //
 // A key and only a key. What a type is built of lives in the type itself, so
 // that an array's element is one fact rather than two that could disagree.
@@ -190,6 +213,24 @@ typedef enum {
     // address, since a block has no header to ask how far it runs.
     DROP_STRING,
 
+    // Free the block an owning address names, at the capacity beside it. What
+    // a string's characters are, for an element of any width.
+    //
+    // Frees the memory and nothing in it. Which elements were ever written is
+    // not a question a capacity answers, so what owns them drops them before
+    // this runs -- see DROP_PREFIX.
+    DROP_BLOCK,
+
+    // Walk the live prefix of a block a sibling field names, freeing what each
+    // element owns.
+    //
+    // Its own step because the two numbers a vector is freed by live at
+    // different levels: the block knows how much memory it took, and the value
+    // holding it knows how far into that anything was written. So the holder
+    // drops the elements it counted, and the block then frees the memory -- in
+    // that order, since the second releases what the first walks.
+    DROP_PREFIX,
+
     // Walk a run of elements, freeing what each owns. Strides by a width the
     // plan carries rather than by one read back off a type.
     DROP_ARRAY,
@@ -216,9 +257,18 @@ struct DropPlan {
     // DROP_FIELDS: unused; the steps carry the plans.
     const DropPlan *inner;
 
-    // DROP_ARRAY: how far apart the elements are, and how many there are.
+    // DROP_ARRAY, DROP_BLOCK, DROP_PREFIX: how far apart the elements are.
     size_t stride;
+
+    // DROP_ARRAY: how many there are, which its type says. The other two count
+    // at run time -- a block by the capacity it carries, a prefix by the field
+    // named below.
     int32_t length;
+
+    // DROP_PREFIX: where the count of live elements sits, and where the block
+    // being walked does, both as offsets within the value the plan describes.
+    size_t count_offset;
+    size_t block_offset;
 
     // DROP_FIELDS: what owns, and where. Only the fields that own appear.
     const DropStep *steps;
@@ -234,6 +284,111 @@ typedef struct TypeField {
     String *name;
     const Type *type;
 } TypeField;
+
+/*
+    A generic declaration: the fields its instantiations are laid out from, in
+    terms of the parameters it takes.
+
+    What makes it a declaration rather than a type is that a field may name a
+    parameter rather than a type. 'Vec' says its block holds T without saying
+    what T is, and interning 'Vec<int>' is that said with int -- which is the
+    whole of what instantiating one does.
+
+    Held beside the type the name binds to, so that 'Vec' resolves to something
+    a diagnostic can print while naming no value. Nothing is laid out here: a
+    width follows from an instantiation's fields, and a parameter has none.
+*/
+typedef struct TypeParamRef TypeParamRef;
+
+// One field of a declaration, whose type is either fixed or built from the
+// parameters. A constructor plus an argument rather than a tree, because what
+// a declaration's field may say is exactly this today: 'int', or one of the
+// built-in constructors applied to a parameter.
+typedef struct GenericField {
+    String *name;
+
+    // The type, when it does not mention a parameter.
+    const Type *fixed;
+
+    // What the type is built from, when it is not fixed.
+    enum {
+        // No type at all: what a method returning nothing returns. First, so
+        // that a field left zeroed says the thing that cannot be mistaken for
+        // an element.
+        GENERIC_FROM_NOTHING,
+
+        // One of the declaration's parameters, named by 'param'.
+        GENERIC_FROM_PARAM,
+
+        // The instantiation itself, which is what a method's receiver is: a
+        // 'Vec<T>' method takes the 'Vec<T>' it was instantiated for, and that
+        // type does not exist until the instantiation does.
+        GENERIC_FROM_SELF,
+    } from;
+
+    // Which parameter, counting from zero. Read only for GENERIC_FROM_PARAM.
+    size_t param;
+
+    // What is applied to it, or TYPE_CTOR_NOMINAL to take it as it is.
+    TypeCtor ctor;
+} GenericField;
+
+/*
+    What a generic name declares: how many parameters it takes and what its
+    instantiations hold.
+
+    One of these per generic type, built where the builtins are and read where
+    an application is interned. A user's own generic declaration would be
+    another, which is why this is a shape rather than a special case for 'Vec'.
+*/
+/*
+    One method a generic declaration answers, in terms of its parameters.
+
+    The same shape a field is: a type is either fixed or built from a parameter,
+    so what 'push' takes and what 'at' returns are written once and substituted
+    per instantiation. A body stays C, since growing a block is what a C body is
+    for.
+*/
+typedef struct GenericMethod {
+    const char *name;
+
+    // The body, as a GabExternFn. Typed as a void pointer because what a C body
+    // is belongs to the VM's header, which this one is reached from rather than
+    // reaching.
+    void *body;
+
+    // The receiver and the return, each either fixed or from a parameter, and
+    // what the caller writes. See GenericField for how one is read.
+    GenericField receiver;
+    GenericField result;
+
+    const GenericField *params;
+    size_t param_count;
+} GenericMethod;
+
+typedef struct GenericDecl {
+    size_t param_count;
+
+    const GenericField *fields;
+    size_t field_count;
+
+    // Which field counts the live elements of which block, for a declaration
+    // whose instantiations hold one. Both are indices into 'fields'.
+    //
+    // Here rather than derived from the fields, because nothing about a block
+    // beside an int says that int counts it: a vector's length and its capacity
+    // are both numbers, and only the declaration knows which is which. Freeing
+    // the wrong prefix is silent, so this is said once where it is true.
+    bool counts_a_block;
+    size_t count_field;
+    size_t block_field;
+
+    // What every instantiation answers, in terms of the parameters. Registered
+    // where an instantiation is interned, since only there is the parameter
+    // known -- which is what separates these from an array's shared set.
+    const GenericMethod *methods;
+    size_t method_count;
+} GenericDecl;
 
 /*
     Where a value of a type sits in memory: how wide it is, what it must be
@@ -277,7 +432,7 @@ struct Type {
     // address. Beside the width for that reason -- a type that has no width of
     // its own is exactly one whose reference carries what it lacks.
     //
-    // The declaration an application instantiates: every 'Array T,N' names the
+    // The declaration an application instantiates: every '[T; N]' names the
     // bare 'Array'. NULL for a type that is not an instantiation.
     //
     // Only the constructor, never the arguments -- those are the application
@@ -291,6 +446,11 @@ struct Type {
     // is reached from 'String' by lending, which is a step down the chain a
     // receiver already walks, not a set held somewhere else.
     const Type *decl;
+
+    // What this name declares, for a generic one: the fields an instantiation
+    // is built from, in terms of the parameters. NULL for every type that is
+    // not a generic declaration, which is all but the bare names.
+    const GenericDecl *generic;
 
     /*
         What the kind gives it, and nothing another kind would give.
@@ -383,6 +543,14 @@ int32_t type_array_length(const Type *type);
 // is an indirection that owns nothing.
 bool type_is_owned(const Type *type);
 
+// Whether a value of this type owns a block it counts live elements of -- what
+// a generic declaration says when its instantiations hold one.
+//
+// Asked where a release is emitted and where its width is settled: such a value
+// is freed as one header rather than through the field naming the block, since
+// the count of what is live sits beside that field rather than in it.
+bool type_owns_a_block(const Type *type);
+
 // Whether a value of this type duplicates by copying its bytes, which is true
 // exactly when nothing it holds transitively owns. See the definition.
 bool type_is_copyable(const Type *type);
@@ -424,7 +592,7 @@ typedef enum {
     TYPE_EXPR_BOX,
     TYPE_EXPR_REF,
 
-    // A constructor applied to arguments: 'Array int' today, and whatever takes
+    // A constructor applied to arguments: 'Vec<int>' today, and whatever takes
     // more than one later. A list rather than a single argument, so that a
     // second one needs no second field.
     TYPE_EXPR_APPLY,
@@ -447,7 +615,7 @@ struct TypeExpr {
             TypeExpr *base;
             TypeExprList args;
 
-            // How many elements, for 'Array T,N'. An integer literal rather
+            // How many elements, for '[T; N]'. An integer literal rather
             // than an argument of its own: a length is not a type, and the one
             // constructor that takes one always takes exactly one.
             int32_t length;

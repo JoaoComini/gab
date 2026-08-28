@@ -387,7 +387,7 @@ static void test_array_of_a_struct_declared_below() {
 
     TypeRegistry *registry = NULL;
     const Type *holder = resolve_struct(&ctx,
-                                        "struct Holder { cells: Array Cell,2 }\n"
+                                        "struct Holder { cells: [Cell; 2] }\n"
                                         "struct Cell { value: int }\n",
                                         "Holder", &registry);
 
@@ -421,7 +421,7 @@ static void test_rejects_an_array_of_the_struct_declaring_it() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Lexer lexer = lexer_create(test_in_a_module("struct A { cells: Array A,2 }"), ctx.arena, &ctx.strings,
+    Lexer lexer = lexer_create(test_in_a_module("struct A { cells: [A; 2] }"), ctx.arena, &ctx.strings,
                                &ctx.diagnostics);
     Parser parser = parser_create(&lexer, &ctx.diagnostics);
     ASTUnit *unit = ast_unit_create();

@@ -14,7 +14,7 @@ void builtin_register_array(VM *vm) {
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
     // Declared on the bare 'Array', which no slot ever holds: what reaches this
-    // set is each 'Array T' through its 'owner'. The receiver is that same bare
+    // set is each '[T; N]' through its 'owner'. The receiver is that same bare
     // type, so the method is written once however many element types exist.
     const Type *array_type = registry->builtins.array_type;
 
