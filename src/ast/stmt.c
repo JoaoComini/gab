@@ -30,6 +30,7 @@ ASTStmt *ast_func_decl_stmt_create(Span span, StringRef name, ASTField *receiver
     stmt->kind = STMT_FUNC_DECL;
     stmt->func_decl.name = name;
     stmt->func_decl.receiver = receiver;
+    stmt->func_decl.owner = (StringRef){0};
     stmt->func_decl.return_type = return_type;
     stmt->func_decl.params = params;
     stmt->func_decl.body = body;

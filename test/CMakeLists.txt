@@ -19,6 +19,7 @@ set(
     vm/encoding_test.c
     vm/pointer_test.c
     vm/method_test.c
+    vm/static_func_test.c
     vm/heap_test.c
     vm/ownership_test.c
     vm/move_test.c

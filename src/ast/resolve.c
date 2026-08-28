@@ -631,6 +631,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
 // '[1, 2, 3]' has no type of its own, so what it must be is whatever it is
 // being stored into.
 static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expected);
+static Symbol *resolve_static_func(ResolverState *state, ASTExpr *expr);
 
 // A call whose target is a field expression: 'recv.m(args)'. Resolves the
 // method against the receiver's type, checks the call, and lowers the whole
@@ -673,6 +674,20 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         // receiver that is one reaches here.
         diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "%s has no method '%s'",
                    type_name(state, base), method_name->data);
+        expr->type = resolver_error_type(state);
+        return;
+    }
+
+    // A function the type owns has no receiver, so no value reaches it and
+    // there is no parameter zero to reconcile against. Whether a receiver was
+    // declared is the question, not what it is: a method reached through
+    // 'owner' takes the declaration rather than the instantiation, which
+    // reconcile_receiver below is what settles.
+    if (method->func.param_count == 0) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                   "'%s' belongs to %s, so it is called on the type rather than on a value",
+                   method_name->data, type_name(state, base));
+
         expr->type = resolver_error_type(state);
         return;
     }
@@ -1147,6 +1162,13 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
     }
     case EXPR_VARIABLE: {
         Symbol *entry = scope_symbol_lookup(state->current_scope, resolver_intern(state, expr->var.name));
+
+        // 'Type::name' where the first half names no module: a function the
+        // type owns. Tried after the scope lookup rather than before, so a
+        // module keeps the meaning it already had where both could answer.
+        if (!entry) {
+            entry = resolve_static_func(state, expr);
+        }
 
         if (!entry) {
             char *name = string_ref_to_cstr(expr->var.name);
@@ -2094,11 +2116,120 @@ static void declare_method(ResolverState *state, ASTStmt *stmt) {
     stmt->func_decl.symbol = method;
 }
 
+// 'func Vec::new(...)' -- a function on a type that no value reaches. It lands
+// in the same method table a method does, since what a type answers to is one
+// set; what tells the two apart is that nothing here is parameter zero.
+// 'Type::name' resolved against the type's own function set. NULL when the name
+// is not qualified, when the first half names no type, or when the type answers
+// with a method: a method needs a receiver, and this spelling gives none.
+static Symbol *resolve_static_func(ResolverState *state, ASTExpr *expr) {
+    StringRef owner_ref, member_ref;
+
+    if (!string_ref_split_colons(expr->var.name, &owner_ref, &member_ref)) {
+        return NULL;
+    }
+
+    const Type *owner = scope_type_lookup(state->current_scope, resolver_intern(state, owner_ref));
+
+    if (!owner) {
+        return NULL;
+    }
+
+    String *member = resolver_intern(state, member_ref);
+    Symbol *found = type_registry_find_method(state->current_scope->type_registry, owner, member);
+
+    if (!found) {
+        diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "'%s' has no function '%s'",
+                   owner->name->data, member->data);
+
+        return NULL;
+    }
+
+    // A method's parameter zero is its receiver, which '::' has no way to
+    // supply.
+    if (found->func.param_count > 0 && receiver_base_type(found->func.params[0]) == owner) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                   "'%s' is a method on %s, so it is called on a value rather than on the type", member->data,
+                   owner->name->data);
+
+        return NULL;
+    }
+
+    return found;
+}
+
+static void declare_static(ResolverState *state, ASTStmt *stmt) {
+    String *owner_name = resolver_intern(state, stmt->func_decl.owner);
+    const Type *owner = scope_type_lookup(state->current_scope, owner_name);
+
+    if (!owner) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span, "unknown type '%s'", owner_name->data);
+        return;
+    }
+
+    // A method belongs with the module declaring its type, and a static
+    // belongs with it for the same reason.
+    if (!scope_type_lookup_local(state->current_scope, owner->name)) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
+                   "cannot declare a function on '%s', which this module does not declare",
+                   owner->name->data);
+        return;
+    }
+
+    const Type *return_type = resolve_type_expr(state, stmt->func_decl.return_type, stmt->span);
+
+    if (reject_unsized(state, return_type, stmt->span, "returned")) {
+        return_type = resolver_error_type(state);
+    }
+
+    stmt->func_decl.resolved_return_type = return_type;
+
+    String *name = resolver_intern(state, stmt->func_decl.name);
+
+    Symbol *func = arena_alloc(resolver_owner_arena(state), sizeof(Symbol));
+    *func = (Symbol){
+        .kind = SYMBOL_FUNC,
+        .scope_depth = state->current_scope->depth,
+        .pinned = false,
+        .func =
+            {
+                .return_type = return_type,
+                .params = NULL,
+                .param_count = 0,
+                .func_index = SYMBOL_FUNC_NO_BODY,
+            },
+    };
+
+    size_t param_count = stmt->func_decl.params.size;
+
+    if (param_count > 0) {
+        func->func.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(const Type *));
+        func->func.param_count = param_count;
+
+        for (size_t i = 0; i < param_count; i++) {
+            func->func.params[i] = resolve_param_type(state, stmt->func_decl.params.data[i]);
+        }
+    }
+
+    if (!type_registry_add_method(state->current_scope->type_registry, owner, name, func)) {
+        diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' already has a method '%s'",
+                   owner->name->data, name->data);
+        return;
+    }
+
+    stmt->func_decl.symbol = func;
+}
+
 static void declare_func(ResolverState *state, ASTStmt *stmt) {
     stmt->func_decl.declared = true;
 
     if (stmt->func_decl.receiver) {
         declare_method(state, stmt);
+        return;
+    }
+
+    if (stmt->func_decl.owner.data) {
+        declare_static(state, stmt);
         return;
     }
 

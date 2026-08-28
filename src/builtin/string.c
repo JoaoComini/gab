@@ -129,6 +129,16 @@ static void string_clone(Args *args) {
     args_return_string_copy(args, string.data, string.length);
 }
 
+// 'String::from(s)'. The characters a borrow names, copied into a string that
+// owns them -- what 's.to_owned()' does, reached on the type rather than on the
+// characters. The two spellings suit different call sites: a constructor where
+// the source is an expression, a method where it is already a receiver.
+static void string_from(Args *args) {
+    GabStrRef string = args_string(args, 0);
+
+    args_return_string_copy(args, string.data, string.length);
+}
+
 void builtin_register_string(VM *vm) {
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
@@ -177,6 +187,11 @@ void builtin_register_string(VM *vm) {
     // allocation the caller frees.
     builtin_register_method(vm, registry->builtins.str_type, str_type, "to_owned", string_to_owned,
                             registry->builtins.string_type, NULL, 0);
+
+    // Reached on the owning type, since that is what it yields: 'String::from'
+    // hands back an allocation, where every method above reads a borrow.
+    builtin_register_static(vm, string_type, "from", string_from, registry->builtins.string_type,
+                            string_param, 1);
 
     // The one method belonging to the owner rather than to the characters: what
     // it duplicates is the allocation, which only a 'String' has.

@@ -808,6 +808,38 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
     StringRef func_name = parser->current.lexeme;
     parser_next_token(parser); // eat func name
 
+    // 'func Vec::new(...)' declares a function on a type that no value reaches:
+    // what was read as the name is the owning type, and the name follows.
+    StringRef owner = {0};
+    if (parser->current.type == TOKEN_COLON_COLON) {
+        parser_next_token(parser); // eat '::'
+
+        if (!parser_expect(parser, TOKEN_IDENT, "expected a function name after '::'")) {
+            ast_field_destroy(receiver);
+            return NULL;
+        }
+
+        // A receiver says the function is reached through a value and an owner
+        // says it is not, so a declaration carrying both says nothing.
+        if (receiver) {
+            parser_error(parser, "a function has a receiver or an owning type, not both");
+            ast_field_destroy(receiver);
+            return NULL;
+        }
+
+        owner = func_name;
+        func_name = parser->current.lexeme;
+
+        parser_next_token(parser); // eat the function name
+
+        // One '::', as everywhere else it is written: the owner is a type in
+        // this module, so a second has nothing left to qualify.
+        if (parser->current.type == TOKEN_COLON_COLON) {
+            parser_error(parser, "a function owned by a type has one '::', as 'Type::name'");
+            return NULL;
+        }
+    }
+
     if (!parser_expect(parser, TOKEN_LPAREN, "expected '(' after function name")) {
         ast_field_destroy(receiver);
         return NULL;
@@ -867,7 +899,10 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
             return NULL;
         }
 
-        return ast_func_decl_stmt_create(span, func_name, receiver, func_type, func_params, NULL);
+        ASTStmt *decl = ast_func_decl_stmt_create(span, func_name, receiver, func_type, func_params, NULL);
+        decl->func_decl.owner = owner;
+
+        return decl;
     }
 
     ASTStmt *func_body = parse_block_stmt(parser);
@@ -882,7 +917,10 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
         return NULL;
     }
 
-    return ast_func_decl_stmt_create(span, func_name, receiver, func_type, func_params, func_body);
+    ASTStmt *decl = ast_func_decl_stmt_create(span, func_name, receiver, func_type, func_params, func_body);
+    decl->func_decl.owner = owner;
+
+    return decl;
 }
 
 static ASTStmt *parse_return_stmt(Parser *parser) {
@@ -1315,10 +1353,33 @@ static ASTExpr *parse_primary(Parser *parser) {
     }
     case TOKEN_IDENT: {
         Token name = parser->current;
+        StringRef lexeme = name.lexeme;
 
         parser_next_token(parser); // eat identifier
 
-        return ast_variable_expr_create(span, name.lexeme);
+        // 'Module::name' and 'Type::name' are one qualified name, kept as one
+        // ref over the source the way a qualified type name is: which of the
+        // two the first half names is the resolver's question, not the
+        // grammar's.
+        if (parser->current.type == TOKEN_COLON_COLON) {
+            parser_next_token(parser); // eat '::'
+
+            if (!parser_expect(parser, TOKEN_IDENT, "expected a name after '::'")) {
+                return NULL;
+            }
+
+            StringRef member = parser->current.lexeme;
+            lexeme.length = (size_t)(member.data - lexeme.data) + member.length;
+
+            parser_next_token(parser); // eat the member name
+
+            if (parser->current.type == TOKEN_COLON_COLON) {
+                parser_error(parser, "a qualified name has one '::', as 'Module::name'");
+                return NULL;
+            }
+        }
+
+        return ast_variable_expr_create(span, lexeme);
     }
     case TOKEN_LPAREN: {
         parser_next_token(parser); // eat '('

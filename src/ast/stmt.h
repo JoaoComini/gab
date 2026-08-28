@@ -62,6 +62,11 @@ typedef struct {
     // makes it parameter zero of the symbol it declares.
     ASTField *receiver;
 
+    // 'func Vec::new(...)' -- the type the function belongs to without being
+    // reached through a value. Empty for anything else. Exclusive with
+    // 'receiver': a function is a method, a static, or neither.
+    StringRef owner;
+
     TypeExpr *return_type;
     ASTFieldList params;
     struct ASTStmt *body;

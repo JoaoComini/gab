@@ -138,6 +138,16 @@ static void test_count_answers_how_many_times_the_characters_occur() {
 // 's.to_owned()'. The characters a borrow names, copied into a string that owns
 // them -- the one string method that allocates, and how anything arena-backed
 // becomes something a 'string' slot may hold.
+// 'String::from(s)' copies borrowed characters into a string that owns them,
+// reached on the type rather than on the characters.
+static void test_string_from_gives_an_owning_copy() {
+    assert(test_run_bool("func f(): bool { let s: String = String::from(\"hi\"); return s == \"hi\"; }\n"
+                         "let r: bool = f();") == true);
+
+    assert(test_run_bool("func f(a: ref str): bool { let s: String = String::from(a); return s == \"hi\"; }\n"
+                         "let r: bool = f(\"hi\");") == true);
+}
+
 static void test_to_owned_gives_an_owning_copy() {
     assert(test_run_bool("func f(): bool { let s: String = \"hi\".to_owned(); return s == \"hi\"; }\n"
                          "let r: bool = f();") == true);
@@ -172,6 +182,7 @@ static void test_cloning_an_empty_string_is_empty() {
 
 int main(void) {
     test_to_owned_gives_an_owning_copy();
+    test_string_from_gives_an_owning_copy();
     test_cloning_an_empty_string_is_empty();
     test_an_owned_copy_is_released_where_its_slot_dies();
     test_len_answers_the_character_count();
