@@ -758,21 +758,23 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 // The reverse is deliberately absent: promoting 'ref T' to 'box T' would hand out
 // ownership nobody granted, and the object already has an owner that will free
 // it.
-// A value handing over a reference to what it already holds. An owning string
-// is laid out as the address of its characters and their count, which is
-// exactly what a reference to them is, so it lends one rather than being
-// pointed at.
+// A value handing over a reference to what it stands for: an owning string
+// lends a 'ref str', because what it derefs to is the run of characters such a
+// reference names.
 //
-// Written for the one owner there is. The rule it is an instance of -- a value
-// already laid out as an address and its metadata lends a reference to what it
-// names -- is what a growable buffer lending a slice would want too, and is
-// worth generalising once there is a second owner to check it against.
+// Stated in terms of the deref relation rather than of strings, so a second
+// owner -- a growable buffer lending a slice -- lends by declaring what it
+// stands for and nothing here changes.
 //
-// The reverse is refused, as every borrow-to-owner is: the characters a
-// reference names belong to someone else, and an owning slot would free what it
-// never allocated.
+// The reverse is refused, as every borrow-to-owner is: what a reference names
+// belongs to someone else, and an owning slot would free what it never
+// allocated.
 static bool lends_by_value(TypeRegistry *registry, const Type *to, const Type *from) {
-    return type_is_str_ref(to) && type_registry_deref_of(registry, from) == type_pointee(to);
+    const Type *view = type_registry_deref_of(registry, from);
+
+    // A type that stands for nothing lends nothing. Checked rather than left to
+    // the comparison, which two absent answers would otherwise satisfy.
+    return view && to->kind == TYPE_REF && view == type_pointee(to);
 }
 
 // What a value derefs to, or NULL for a type that derefs to nothing. Registered

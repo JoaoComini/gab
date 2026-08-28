@@ -13,42 +13,6 @@
 #include <stdint.h>
 #include <string.h>
 
-// The 'String' type: a block of characters, which carries how many are live.
-//
-// The same field a vector has, and freed by the same walk -- a string is what a
-// 'Vec<byte>' is, with characters for elements. What it does not share is what
-// it stands for: a run of characters, which is what lets it answer their
-// methods and lend a 'ref str'.
-static const Type *string_declare_type(VM *vm) {
-    TypeRegistry *registry = vm->env.global_scope.type_registry;
-
-    // The block owns the characters and carries the capacity it was taken at,
-    // so freeing it asks nothing else -- and the room past the live ones is
-    // what lets a string grow without reallocating on every push.
-    const TypeFieldDecl fields[] = {
-        {.name = "data", .type = type_registry_block_of(registry, registry->primitives.byte_type)},
-    };
-
-    // Which of its bytes name the characters it stands for: the address its
-    // block holds and the count of live ones beside it. The capacity between
-    // them is what frees the memory and stays the owner's business.
-    const LentPart characters_named_by[] = {
-        {.offset = offsetof(GabStringValue, block) + offsetof(GabBlockValue, data), .size = sizeof(void *)},
-        {.offset = offsetof(GabStringValue, block) + offsetof(GabBlockValue, length),
-         .size = sizeof(int32_t)},
-    };
-
-    const TypeDecl decl = {
-        .name = "String",
-        .fields = fields,
-        .field_count = sizeof(fields) / sizeof(*fields),
-        .derefs_to = registry->primitives.str_type,
-        .lent_parts = characters_named_by,
-        .lent_part_count = sizeof(characters_named_by) / sizeof(*characters_named_by),
-    };
-
-    return builtin_declare_type(vm, &decl);
-}
 
 // Where 'needle' first occurs in 'haystack' at or after 'from', or -1. The
 // empty needle occurs at the position asked for, which is what makes
@@ -235,9 +199,34 @@ static void string_from(Args *args) {
 void builtin_register_string(VM *vm) {
     // Declared here and held as a local: what a provider gets back is its
     // handle to the type, and one VM's types are not another's.
-    const Type *string_type = string_declare_type(vm);
-
     TypeRegistry *registry = vm->env.global_scope.type_registry;
+
+    // The block owns the characters and carries the capacity it was taken at,
+    // so freeing it asks nothing else -- and the room past the live ones is
+    // what lets a string grow without reallocating on every push.
+    const TypeFieldDecl fields[] = {
+        {.name = "data", .type = type_registry_block_of(registry, registry->primitives.byte_type)},
+    };
+
+    // Which of its bytes name the characters it stands for: the address its
+    // block holds and the count of live ones beside it. The capacity between
+    // them is what frees the memory and stays the owner's business.
+    const LentPart characters_named_by[] = {
+        {.offset = offsetof(GabStringValue, block) + offsetof(GabBlockValue, data), .size = sizeof(void *)},
+        {.offset = offsetof(GabStringValue, block) + offsetof(GabBlockValue, length),
+         .size = sizeof(int32_t)},
+    };
+
+    const TypeDecl decl = {
+        .name = "String",
+        .fields = fields,
+        .field_count = sizeof(fields) / sizeof(*fields),
+        .derefs_to = registry->primitives.str_type,
+        .lent_parts = characters_named_by,
+        .lent_part_count = sizeof(characters_named_by) / sizeof(*characters_named_by),
+    };
+
+    const Type *string_type = builtin_declare_type(vm, &decl);
 
     // Every method here reads its receiver and allocates nothing, so it takes a
     // borrow: an owning string lends to one, and a literal already is one.
@@ -250,9 +239,6 @@ void builtin_register_string(VM *vm) {
     // reference that carries how many. The owning string lends one.
     const Type *str_type = type_registry_ref_to(registry, registry->primitives.str_type);
 
-    // What 'clone' takes. A receiver by value would have to copy it, which an
-    // owning string cannot do -- the rule a script's own method obeys -- so it
-    // borrows the slot the header sits in.
     const Type *ref_string = type_registry_ref_to(registry, string_type);
 
     const Type *int_type = registry->primitives.int_type;
