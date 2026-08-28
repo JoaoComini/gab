@@ -8,9 +8,49 @@
 
 #include "allocator.h"
 
+#include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+
+// The type this library declared, kept from where it was declared: a provider
+// is handed its type back, so nothing looks one up by name.
+static const Type *string_type = NULL;
+
+// The 'String' type: a block of characters, which carries how many are live.
+//
+// The same field a vector has, and freed by the same walk -- a string is what a
+// 'Vec<byte>' is, with characters for elements. What it does not share is what
+// it stands for: a run of characters, which is what lets it answer their
+// methods and lend a 'ref str'.
+void builtin_register_string_type(TypeRegistry *registry) {
+    // The block owns the characters and carries the capacity it was taken at,
+    // so freeing it asks nothing else -- and the room past the live ones is
+    // what lets a string grow without reallocating on every push.
+    const TypeFieldDecl fields[] = {
+        {.name = "data", .type = type_registry_block_of(registry, registry->primitives.byte_type)},
+    };
+
+    // Which of its bytes name the characters it stands for: the address its
+    // block holds and the count of live ones beside it. The capacity between
+    // them is what frees the memory and stays the owner's business.
+    const LentPart characters_named_by[] = {
+        {.offset = offsetof(GabStringValue, block) + offsetof(GabBlockValue, data), .size = sizeof(void *)},
+        {.offset = offsetof(GabStringValue, block) + offsetof(GabBlockValue, length),
+         .size = sizeof(int32_t)},
+    };
+
+    const TypeDecl decl = {
+        .name = "String",
+        .fields = fields,
+        .field_count = sizeof(fields) / sizeof(*fields),
+        .derefs_to = registry->primitives.str_type,
+        .lent_parts = characters_named_by,
+        .lent_part_count = sizeof(characters_named_by) / sizeof(*characters_named_by),
+    };
+
+    string_type = type_registry_declare(registry, &decl);
+}
 
 // Where 'needle' first occurs in 'haystack' at or after 'from', or -1. The
 // empty needle occurs at the position asked for, which is what makes
@@ -204,49 +244,49 @@ void builtin_register_string(VM *vm) {
     // read: a borrow reaches it through 'owner', while the owning string has no
     // route to the borrow's own set. What each takes stays the borrow, so a
     // 'String' receiver lends where the parameter says 'str'.
-    const Type *string_type = registry->builtins.string_type;
+    assert(string_type && "the string type is declared before its methods");
 
     // What every method takes and what a literal is: characters named by a
     // reference that carries how many. The owning string lends one.
-    const Type *str_type = type_registry_ref_to(registry, registry->builtins.str_type);
+    const Type *str_type = type_registry_ref_to(registry, registry->primitives.str_type);
 
     // What 'clone' takes. A receiver by value would have to copy it, which an
     // owning string cannot do -- the rule a script's own method obeys -- so it
     // borrows the slot the header sits in.
     const Type *ref_string = type_registry_ref_to(registry, string_type);
 
-    const Type *int_type = registry->builtins.int_type;
-    const Type *bool_type = registry->builtins.bool_type;
+    const Type *int_type = registry->primitives.int_type;
+    const Type *bool_type = registry->primitives.bool_type;
 
     const Type *const int_param[] = {int_type};
     const Type *const string_param[] = {str_type};
 
-    builtin_register_method(vm, registry->builtins.str_type, str_type, "len", string_len, int_type, NULL, 0);
-    builtin_register_method(vm, registry->builtins.str_type, str_type, "is_empty", string_is_empty, bool_type,
-                            NULL, 0);
-    builtin_register_method(vm, registry->builtins.str_type, str_type, "at", string_at, int_type, int_param,
+    builtin_register_method(vm, registry->primitives.str_type, str_type, "len", string_len, int_type, NULL,
+                            0);
+    builtin_register_method(vm, registry->primitives.str_type, str_type, "is_empty", string_is_empty,
+                            bool_type, NULL, 0);
+    builtin_register_method(vm, registry->primitives.str_type, str_type, "at", string_at, int_type, int_param,
                             1);
-    builtin_register_method(vm, registry->builtins.str_type, str_type, "starts_with", string_starts_with,
+    builtin_register_method(vm, registry->primitives.str_type, str_type, "starts_with", string_starts_with,
                             bool_type, string_param, 1);
-    builtin_register_method(vm, registry->builtins.str_type, str_type, "ends_with", string_ends_with,
+    builtin_register_method(vm, registry->primitives.str_type, str_type, "ends_with", string_ends_with,
                             bool_type, string_param, 1);
-    builtin_register_method(vm, registry->builtins.str_type, str_type, "contains", string_contains, bool_type,
-                            string_param, 1);
-    builtin_register_method(vm, registry->builtins.str_type, str_type, "index_of", string_index_of, int_type,
-                            string_param, 1);
-    builtin_register_method(vm, registry->builtins.str_type, str_type, "count", string_count, int_type,
+    builtin_register_method(vm, registry->primitives.str_type, str_type, "contains", string_contains,
+                            bool_type, string_param, 1);
+    builtin_register_method(vm, registry->primitives.str_type, str_type, "index_of", string_index_of,
+                            int_type, string_param, 1);
+    builtin_register_method(vm, registry->primitives.str_type, str_type, "count", string_count, int_type,
                             string_param, 1);
 
     // Declared on the characters like every other reader, and returning the
     // owning string rather than the borrowed one: what it hands back is a fresh
     // allocation the caller frees.
-    builtin_register_method(vm, registry->builtins.str_type, str_type, "to_owned", string_to_owned,
-                            registry->builtins.string_type, NULL, 0);
+    builtin_register_method(vm, registry->primitives.str_type, str_type, "to_owned", string_to_owned,
+                            string_type, NULL, 0);
 
     // Reached on the owning type, since that is what it yields: 'String::from'
     // hands back an allocation, where every method above reads a borrow.
-    builtin_register_static(vm, string_type, "from", string_from, registry->builtins.string_type,
-                            string_param, 1);
+    builtin_register_static(vm, string_type, "from", string_from, string_type, string_param, 1);
 
     // Growing belongs to the owner: what is written into is the block, and only
     // a 'String' has one. Each takes a pointer to the header for the reason
@@ -262,6 +302,5 @@ void builtin_register_string(VM *vm) {
     // Its receiver is a pointer to the header. A receiver by value would have to
     // copy it, which an owning string cannot do; and 'ref String' is the address
     // of a slot holding one, which is not what a 'ref str' is.
-    builtin_register_method(vm, string_type, ref_string, "clone", string_clone,
-                            registry->builtins.string_type, NULL, 0);
+    builtin_register_method(vm, string_type, ref_string, "clone", string_clone, string_type, NULL, 0);
 }

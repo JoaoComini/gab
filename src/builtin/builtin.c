@@ -71,6 +71,11 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
 // These land at the bottom of the extern table, before any unit loads. That
 // costs a unit's own externs nothing: the two tables are numbered apart, so a
 // script function's index is unaffected by how many builtins exist.
+void builtin_register_types(TypeRegistry *registry) {
+    builtin_register_string_type(registry);
+    builtin_register_vec_type(registry);
+}
+
 void builtin_register_all(VM *vm) {
     builtin_register_string(vm);
     builtin_register_array(vm);

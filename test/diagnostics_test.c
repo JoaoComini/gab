@@ -21,8 +21,11 @@ static void compile(TestContext *ctx, const char *source) {
     Parser parser = parser_create(&lexer, diagnostics);
     ASTUnit *unit = ast_unit_create();
 
+    // Over a registry the standard library registered into: some rules here are
+    // stated with a 'String', which is a registered type rather than a
+    // primitive and is absent from a bare scope.
     Scope global_scope;
-    scope_init(&global_scope, arena, &ctx->strings, NULL);
+    test_scope_with_library(ctx, &global_scope);
 
     if (parser_parse(&parser, unit)) {
         resolve_unit(arena, unit, &global_scope, NULL, diagnostics);

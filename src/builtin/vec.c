@@ -11,6 +11,42 @@
 #include <stdint.h>
 #include <string.h>
 
+// The declaration this library made, kept from where it was made: a provider is
+// handed its type back, so nothing looks one up by name.
+static const Type *vec_decl = NULL;
+
+// The 'Vec' declaration: a block of the element it is given.
+//
+// A declaration, so no width is settled here -- what a vector is laid out as
+// follows from the element, and that is not known until one is applied.
+void builtin_register_vec_type(TypeRegistry *registry) {
+    // The block owns the memory and carries both the capacity it was taken at
+    // and how far into it anything was written, so freeing it asks nothing
+    // else -- which is the whole of what a vector is.
+    GenericField *fields = arena_alloc(registry->arena, sizeof(GenericField));
+
+    fields[0] = (GenericField){
+        .name = string_from_cstr(registry->strings, "data"),
+        .from = GENERIC_FROM_PARAM,
+        .param = 0,
+        .ctor = TYPE_CTOR_BLOCK,
+    };
+
+    // Arena-allocated rather than local: every instantiation reads this, and
+    // the declaration outlives the call that made it.
+    GenericDecl *generic = arena_alloc(registry->arena, sizeof(GenericDecl));
+
+    *generic = (GenericDecl){
+        .param_count = 1,
+        .fields = fields,
+        .field_count = 1,
+    };
+
+    const TypeDecl decl = {.name = "Vec", .generic = generic};
+
+    vec_decl = type_registry_declare(registry, &decl);
+}
+
 // A vector's header: the block it owns, which carries how far into it anything
 // was written.
 //
@@ -116,7 +152,7 @@ void builtin_register_vec(VM *vm) {
     // what 'at' hands back are the same type, filled in per instantiation.
     const GenericField element = {.from = GENERIC_FROM_PARAM, .param = 0, .ctor = TYPE_CTOR_NOMINAL};
 
-    const GenericField an_int = {.fixed = registry->builtins.int_type};
+    const GenericField an_int = {.fixed = registry->primitives.int_type};
 
     // Arena-allocated rather than local: the declaration holds these for as
     // long as the VM lives, since an instantiation reads them whenever one is
@@ -160,7 +196,7 @@ void builtin_register_vec(VM *vm) {
 
     // Written into the declaration rather than registered against a type: what
     // answers these is every 'Vec<T>', and none of them exists yet.
-    GenericDecl *generic = (GenericDecl *)registry->builtins.vec_type->generic;
+    GenericDecl *generic = (GenericDecl *)vec_decl->generic;
 
     generic->methods = methods;
     generic->method_count = 3;

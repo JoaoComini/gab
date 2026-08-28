@@ -89,14 +89,14 @@ static void test_a_raw_pointer_carries_a_stride_and_drops_nothing() {
     test_context_init(&ctx);
 
     Scope scope;
-    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+    test_scope_with_library(&ctx, &scope);
 
     TypeRegistry *registry = scope.type_registry;
 
-    const Type *characters = type_registry_ptr_to(registry, registry->builtins.byte_type);
+    const Type *characters = type_registry_ptr_to(registry, registry->primitives.byte_type);
 
     assert(characters->kind == TYPE_PTR);
-    assert(type_pointee(characters) == registry->builtins.byte_type);
+    assert(type_pointee(characters) == registry->primitives.byte_type);
     assert(type_registry_drop_of(registry, characters) == NULL);
 
     // One byte, which is the unit the count of an allocation is given in.
@@ -332,12 +332,12 @@ static void test_a_string_owns_and_a_reference_to_one_does_not() {
     test_context_init(&ctx);
 
     Scope scope;
-    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+    test_scope_with_library(&ctx, &scope);
 
     TypeRegistry *registry = scope.type_registry;
 
-    const Type *owning = registry->builtins.string_type;
-    const Type *borrowing = type_registry_ref_to(registry, registry->builtins.str_type);
+    const Type *owning = test_declared_type(registry, "String");
+    const Type *borrowing = type_registry_ref_to(registry, registry->primitives.str_type);
 
     // The header carries a capacity the reference does not, and is no wider for
     // it: the count rides in what the address's alignment already padded out.
@@ -353,20 +353,20 @@ static void test_a_string_owns_and_a_reference_to_one_does_not() {
 
     // The characters themselves are held by nothing, so a slot never reserves
     // room for them and every use goes through the reference above.
-    assert(!type_is_sized(registry->builtins.str_type));
+    assert(!type_is_sized(registry->primitives.str_type));
     assert(type_is_sized(borrowing));
 
     // What a reference carries is a fact the type is given, while whether a
     // value can be held is what its kind means. So a reference to characters
     // carries a count while the reference itself is held like any other value.
-    assert(type_metadata_of(registry->builtins.str_type) == TYPE_META_LENGTH);
+    assert(type_metadata_of(registry->primitives.str_type) == TYPE_META_LENGTH);
     assert(type_metadata_of(borrowing) == TYPE_META_NONE);
     assert(type_metadata_of(owning) == TYPE_META_NONE);
     assert(type_is_sized(owning));
 
     // An array of an owning element frees each of them, so it carries a drop
     // the same way. An array of ints owns nothing and has none.
-    const Type *ints = type_registry_array_of(registry, registry->builtins.int_type, 4);
+    const Type *ints = type_registry_array_of(registry, registry->primitives.int_type, 4);
 
     assert(type_registry_drop_of(registry, ints) == NULL);
     assert(!type_is_owned(ints));
@@ -386,24 +386,24 @@ static void test_an_array_is_its_elements_laid_end_to_end() {
     test_context_init(&ctx);
 
     Scope scope;
-    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+    test_scope_with_library(&ctx, &scope);
 
     TypeRegistry *registry = scope.type_registry;
 
-    const Type *floats = type_registry_array_of(registry, registry->builtins.float_type, 3);
+    const Type *floats = type_registry_array_of(registry, registry->primitives.float_type, 3);
 
-    assert(type_array_element(floats) == registry->builtins.float_type);
+    assert(type_array_element(floats) == registry->primitives.float_type);
     assert(type_array_length(floats) == 3);
 
     // The whole run and nothing else: what a C 'float[3]' occupies.
     assert(type_registry_size_of(registry, floats) ==
-           type_registry_size_of(registry, registry->builtins.float_type) * 3);
+           type_registry_size_of(registry, registry->primitives.float_type) * 3);
     assert(type_registry_align_of(registry, floats) ==
-           type_registry_align_of(registry, registry->builtins.float_type));
+           type_registry_align_of(registry, registry->primitives.float_type));
 
     // Interned on both arguments, so a second length is a second type.
-    assert(type_registry_array_of(registry, registry->builtins.float_type, 3) == floats);
-    assert(type_registry_array_of(registry, registry->builtins.float_type, 4) != floats);
+    assert(type_registry_array_of(registry, registry->primitives.float_type, 3) == floats);
+    assert(type_registry_array_of(registry, registry->primitives.float_type, 4) != floats);
 
     test_context_free(&ctx);
 }
@@ -416,11 +416,11 @@ static void test_an_array_owns_exactly_when_its_element_does() {
     test_context_init(&ctx);
 
     Scope scope;
-    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+    test_scope_with_library(&ctx, &scope);
 
     TypeRegistry *registry = scope.type_registry;
 
-    const Type *ints = type_registry_array_of(registry, registry->builtins.int_type, 4);
+    const Type *ints = type_registry_array_of(registry, registry->primitives.int_type, 4);
 
     assert(!type_is_owned(ints));
     assert(type_is_copyable(ints));
@@ -452,10 +452,10 @@ static void test_a_type_carries_only_what_its_kind_has() {
     test_context_init(&ctx);
 
     Scope scope;
-    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+    test_scope_with_library(&ctx, &scope);
 
     TypeRegistry *registry = scope.type_registry;
-    const Type *int_type = registry->builtins.int_type;
+    const Type *int_type = registry->primitives.int_type;
 
     const Type *box = type_registry_box_to(registry, int_type);
 
@@ -493,10 +493,10 @@ static void test_methods_live_beside_the_type_not_in_it() {
     test_context_init(&ctx);
 
     Scope scope;
-    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+    test_scope_with_library(&ctx, &scope);
 
     TypeRegistry *registry = scope.type_registry;
-    const Type *int_type = registry->builtins.int_type;
+    const Type *int_type = registry->primitives.int_type;
 
     String *name = string_from_cstr(&ctx.strings, "twice");
 
@@ -513,7 +513,7 @@ static void test_methods_live_beside_the_type_not_in_it() {
 
     // Another type is unaffected, since the set is keyed by which type it is
     // declared on.
-    assert(type_registry_find_method(registry, registry->builtins.bool_type, name) == NULL);
+    assert(type_registry_find_method(registry, registry->primitives.bool_type, name) == NULL);
 
     test_context_free(&ctx);
 }
@@ -526,18 +526,18 @@ static void test_a_builtin_is_interned_and_found_by_its_kind() {
     test_context_init(&ctx);
 
     Scope scope;
-    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+    test_scope_with_library(&ctx, &scope);
 
     TypeRegistry *registry = scope.type_registry;
 
-    assert(type_registry_get_builtin(registry, TYPE_INT) == registry->builtins.int_type);
-    assert(type_registry_get_builtin(registry, TYPE_BOOL) == registry->builtins.bool_type);
+    assert(type_registry_get_builtin(registry, TYPE_INT) == registry->primitives.int_type);
+    assert(type_registry_get_builtin(registry, TYPE_BOOL) == registry->primitives.bool_type);
 
     // A byte is not an int of another width: it is its own kind, which is what
     // lets a kind name exactly one type.
-    assert(type_registry_get_builtin(registry, TYPE_BYTE) == registry->builtins.byte_type);
-    assert(registry->builtins.byte_type != registry->builtins.int_type);
-    assert(registry->builtins.byte_type->kind == TYPE_BYTE);
+    assert(type_registry_get_builtin(registry, TYPE_BYTE) == registry->primitives.byte_type);
+    assert(registry->primitives.byte_type != registry->primitives.int_type);
+    assert(registry->primitives.byte_type->kind == TYPE_BYTE);
 
     test_context_free(&ctx);
 }

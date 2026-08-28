@@ -12,8 +12,8 @@
 
 // 'string' is a builtin type name, resolvable wherever a type is written.
 static void test_string_names_a_type() {
-    assert(test_compiles("func f(s: ref String): int { return 0; }\n"));
-    assert(test_compiles("struct Person { name: String }\n"));
+    assert(test_compiles_on_vm("func f(s: ref String): int { return 0; }\n"));
+    assert(test_compiles_on_vm("struct Person { name: String }\n"));
 }
 
 // A literal is a string, so it may initialise one and nothing else.
@@ -30,9 +30,9 @@ static void test_a_string_is_an_address_and_a_length() {
     test_context_init(&ctx);
 
     Scope scope;
-    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+    test_scope_with_library(&ctx, &scope);
 
-    const Type *string_type = type_registry_string(scope.type_registry);
+    const Type *string_type = test_declared_type(scope.type_registry, "String");
 
     const TypeLayout *layout = type_registry_layout_of(scope.type_registry, string_type);
 
@@ -53,9 +53,9 @@ static void test_a_string_is_one_owning_field() {
     test_context_init(&ctx);
 
     Scope scope;
-    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+    test_scope_with_library(&ctx, &scope);
 
-    const Type *string_type = type_registry_string(scope.type_registry);
+    const Type *string_type = test_declared_type(scope.type_registry, "String");
 
     assert(type_field_count(string_type) == 1);
 
@@ -252,13 +252,15 @@ static void test_a_heap_struct_frees_its_string_field() {
 // Only an owned value may be stored where a string owns: a borrow would leave
 // the slot naming characters it did not allocate and must not free.
 static void test_an_owning_string_slot_refuses_a_borrow() {
-    assert(!test_compiles("func f(): int { let s: box String = new String; *s = \"ab\"; return 0; }\n"));
+    assert(
+        !test_compiles_on_vm("func f(): int { let s: box String = new String; *s = \"ab\"; return 0; }\n"));
 
-    assert(!test_compiles("func f(a: ref str): int { let s: box String = new String; *s = a; return 0; }\n"));
+    assert(!test_compiles_on_vm(
+        "func f(a: ref str): int { let s: box String = new String; *s = a; return 0; }\n"));
 }
 
 static void test_refusing_a_borrow_names_the_remedy() {
-    assert(!test_compiles("func f(): int { let a: String = \"hi\"; return 0; }\n"));
+    assert(!test_compiles_on_vm("func f(): int { let a: String = \"hi\"; return 0; }\n"));
 
     assert(test_compiles("func f(): int { let a: ref str = \"hi\"; return 0; }\n"));
 }
@@ -285,7 +287,7 @@ static void test_a_literal_borrows() {
 // An owning string may not take what a borrow names: the arena's characters
 // would be freed by a slot that never allocated them.
 static void test_an_owning_string_refuses_a_borrow() {
-    assert(!test_compiles("func f(): int { let s: String = \"hi\"; return 0; }\n"));
+    assert(!test_compiles_on_vm("func f(): int { let s: String = \"hi\"; return 0; }\n"));
 }
 
 int main(void) {

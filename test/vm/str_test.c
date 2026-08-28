@@ -184,16 +184,16 @@ static void test_a_lend_fits_the_reference_it_builds() {
     test_context_init(&ctx);
 
     Scope scope;
-    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
+    test_scope_with_library(&ctx, &scope);
 
     TypeRegistry *registry = scope.type_registry;
 
-    const Type *string_type = type_registry_string(registry);
-    const Type *reference = type_registry_ref_to(registry, registry->builtins.str_type);
+    const Type *string_type = test_declared_type(registry, "String");
+    const Type *reference = type_registry_ref_to(registry, registry->primitives.str_type);
 
     const Deref *deref = type_registry_deref(registry, string_type);
 
-    assert(deref && deref->to == registry->builtins.str_type);
+    assert(deref && deref->to == registry->primitives.str_type);
 
     // An address and the count naming the run, which is what a 'ref str' is.
     assert(deref->part_count == 2);

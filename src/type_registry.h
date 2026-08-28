@@ -44,6 +44,16 @@ GAB_HASH_MAP(TypeMap, type_map, String *, TypeBinding)
 
 GAB_HASH_MAP(TypeAppMap, type_app_map, TypeApp, Type *)
 
+/*
+    The types the language itself is written in terms of: what a literal
+    produces, what an operator answers, what a spec spells without anything
+    having been registered.
+
+    Primitives rather than a standard library. A resolver holds these with no VM
+    in sight, because nothing about 'let n: int = 1 + 2' asks for a runtime. What
+    a VM provides -- 'String', 'Vec<T>', and whatever a host adds beside them --
+    is registered instead, and is absent from a compile that never had one.
+*/
 typedef struct {
     const Type *int_type;
 
@@ -53,7 +63,6 @@ typedef struct {
     const Type *byte_type;
     const Type *float_type;
     const Type *bool_type;
-    const Type *string_type;
 
     // 'str'. The characters of a string, borrowed: where they are and how many
     // there are, owning nothing. A distinct interned Type from the owning one
@@ -69,15 +78,54 @@ typedef struct {
     // element is applied, and what a diagnostic prints when one is missing.
     const Type *array_type;
 
-    // 'Vec', the bare name: the generic declaration every 'Vec<T>' is
-    // instantiated from, and what a diagnostic prints when an element is
-    // missing. Names no value on its own.
-    const Type *vec_type;
-
     const Type *error_type;
-} TypeBuiltins;
+} TypePrimitives;
 
-// Interning, not naming. One registry per VM holds the builtins and every
+// The most types one standard library declares. A bound rather than a list, so
+// declaring costs no allocation and a scope walks a plain array.
+#define GAB_MAX_DECLARED_TYPES 16
+
+/*
+    Declaring a type a standard library provides, which a scope then finds by
+    name the way it finds a primitive.
+
+    Filled in once and handed over, rather than built up by a provider holding a
+    half-made Type: what a type is arrives in one statement, and the registry is
+    what interns it, lays it out and settles how it frees. That is also what
+    keeps the library out of the language -- a compile with no VM declares
+    nothing, so nothing in the resolver names a 'String'.
+*/
+
+// One field of a declared struct.
+typedef struct TypeFieldDecl {
+    const char *name;
+    const Type *type;
+} TypeFieldDecl;
+
+// What a standard library says a type is.
+//
+// Either a struct with fields, or a generic declaration whose instantiations
+// have them -- 'generic' decides which, and the two are never both given.
+typedef struct TypeDecl {
+    const char *name;
+
+    // A struct's fields, laid out in the order given.
+    const TypeFieldDecl *fields;
+    size_t field_count;
+
+    // Or the declaration every instantiation is built from, for a generic.
+    const GenericDecl *generic;
+
+    // What a value of this type stands for, and which of its bytes name that
+    // view. Both or neither: a deref with no parts could not be lent, and parts
+    // with nothing to deref to name nothing. NULL for a type that stands only
+    // for itself.
+    const Type *derefs_to;
+    const LentPart *lent_parts;
+    size_t lent_part_count;
+} TypeDecl;
+
+// Interning, not naming. One registry per VM holds the primitives and every
 // pointer type, because the type system compares types by pointer identity: a
 // second 'int' or a second 'box Player' would silently break every comparison.
 //
@@ -221,7 +269,16 @@ typedef struct TypeRegistry {
     // How wide a value of each type is, and where its fields begin.
     LayoutTable *layouts;
 
-    TypeBuiltins builtins;
+    TypePrimitives primitives;
+
+    // The types a standard library declared, in the order it declared them.
+    // Named in a scope the same way a primitive is; the registry holds them
+    // only so a scope can find them.
+    //
+    // A fixed array because a library declares a handful and says so once. The
+    // count is what a scope walks.
+    const Type *declared[GAB_MAX_DECLARED_TYPES];
+    size_t declared_count;
 } TypeRegistry;
 
 // Declares a method, or fails if the type already answers that name. Finds one
@@ -271,6 +328,16 @@ void type_registry_destroy(TypeRegistry *registry);
 
 const Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind type);
 
+// Interns what 'decl' describes, lays it out, settles how it frees, and names
+// it for every scope built from this registry afterwards.
+//
+// Returns the finished type, which is the provider's handle to it: nothing
+// looks one up by name later.
+const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl);
+
+// Every type declared so far, in declaration order, and how many. What a scope
+// walks to give them names.
+const Type *const *type_registry_declared(TypeRegistry *registry, size_t *count);
 // Gives a type the borrowed view it derefs to, through which it answers the
 // methods written for that view. One direction: 'from' reaches 'to', never the
 // reverse.
@@ -286,9 +353,6 @@ const Type *type_registry_deref_of(TypeRegistry *registry, const Type *type);
 // nothing. What a lend reads to know which bytes to copy.
 const Deref *type_registry_deref(TypeRegistry *registry, const Type *type);
 
-// The owning 'String'. Reached by name rather than through get_builtin, which
-// answers for kinds: a string is a struct, so there is no kind that names it.
-const Type *type_registry_string(TypeRegistry *registry);
 const Type *type_registry_error_type(TypeRegistry *registry);
 
 // The interned '[element; N]': a header of {data, length} owning a block of

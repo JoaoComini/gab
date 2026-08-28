@@ -19,23 +19,28 @@ void scope_init(Scope *scope, Arena *arena, StringPool *strings, Scope *parent) 
 // by the ordinary chain walk from wherever it is written, with no special case
 // in the resolver. The registry still owns the Types themselves; this only
 // gives them names to be found by.
-static void scope_declare_builtins(Scope *scope) {
-    const TypeBuiltins *builtins = &scope->type_registry->builtins;
+static void scope_declare_primitives(Scope *scope) {
+    const TypePrimitives *primitives = &scope->type_registry->primitives;
 
-    scope_decl_type(scope, builtins->int_type->name, builtins->int_type);
-    scope_decl_type(scope, builtins->float_type->name, builtins->float_type);
-    scope_decl_type(scope, builtins->bool_type->name, builtins->bool_type);
-    scope_decl_type(scope, builtins->string_type->name, builtins->string_type);
-    scope_decl_type(scope, builtins->str_type->name, builtins->str_type);
+    scope_decl_type(scope, primitives->int_type->name, primitives->int_type);
+    scope_decl_type(scope, primitives->float_type->name, primitives->float_type);
+    scope_decl_type(scope, primitives->bool_type->name, primitives->bool_type);
+    scope_decl_type(scope, primitives->str_type->name, primitives->str_type);
 
     // The bare name. Never a usable type on its own -- resolving a spec turns
     // it into the '[T; N]' its element names -- but it must be found here for
     // that spec to get as far as applying one.
-    scope_decl_type(scope, builtins->array_type->name, builtins->array_type);
+    scope_decl_type(scope, primitives->array_type->name, primitives->array_type);
 
-    // A generic declaration, bound for the same reason: applying it is what
-    // names a type, and the name has to be found for that to happen.
-    scope_decl_type(scope, builtins->vec_type->name, builtins->vec_type);
+    // And whatever a standard library registered, named the same way. Absent
+    // from a compile that never had one, which is what keeps 'String' out of
+    // the language and in the library that provides it.
+    size_t count = 0;
+    const Type *const *declared = type_registry_declared(scope->type_registry, &count);
+
+    for (size_t i = 0; i < count; i++) {
+        scope_decl_type(scope, declared[i]->name, declared[i]);
+    }
 }
 
 void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope *parent, int depth) {
@@ -55,7 +60,23 @@ void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope 
     }
 
     scope->type_registry = type_registry_create(arena, strings);
-    scope_declare_builtins(scope);
+    scope_declare_primitives(scope);
+}
+
+void scope_init_over(Scope *scope, Arena *arena, StringPool *strings, TypeRegistry *registry) {
+    scope->arena = arena;
+    scope->strings = strings;
+    scope->symbol_table = symbol_table_create_alloc(arena_allocator(arena), SYMBOL_TABLE_INITIAL_CAPACITY);
+    scope->types = type_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    scope->parent = NULL;
+    scope->depth = 0;
+    scope->declares_module = false;
+
+    // The registry it was given, never one of its own: interning must be single
+    // for the whole chain, and this one already holds what a library registered.
+    scope->type_registry = registry;
+
+    scope_declare_primitives(scope);
 }
 
 void scope_init_module(Scope *scope, Arena *arena, StringPool *strings, Scope *parent) {

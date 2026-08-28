@@ -920,7 +920,7 @@ bool is_ordered_type(const Type *t) { return is_numeric_type(t) || is_boolean_ty
 // a reference to someone else's. Comparison reads the same two words from
 // either, so what may be compared is the pair rather than one of them.
 static bool is_string_type(TypeRegistry *registry, const Type *t) {
-    return type_registry_deref_of(registry, t) == registry->builtins.str_type || type_is_str_ref(t);
+    return type_registry_deref_of(registry, t) == registry->primitives.str_type || type_is_str_ref(t);
 }
 
 // Ordering is left out: '<' on text asks which comes first, and no order is
@@ -1155,8 +1155,9 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         // the count, and reading it as a reference would compare that capacity
         // as though it were the length.
         if (both_strings) {
-            const Type *characters = type_registry_ref_to(
-                state->current_scope->type_registry, state->current_scope->type_registry->builtins.str_type);
+            const Type *characters =
+                type_registry_ref_to(state->current_scope->type_registry,
+                                     state->current_scope->type_registry->primitives.str_type);
 
             borrow_into(state, &expr->bin_op.left, characters, expr->span);
             borrow_into(state, &expr->bin_op.right, characters, expr->span);
@@ -1276,7 +1277,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             break;
         }
 
-        if (expr->index.index->type != state->current_scope->type_registry->builtins.int_type) {
+        if (expr->index.index->type != state->current_scope->type_registry->primitives.int_type) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "an index must be an int, not %s",
                        type_name(state, expr->index.index->type));
             expr->type = resolver_error_type(state);
@@ -1584,8 +1585,9 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         // A literal names characters the unit's arena holds, which outlive every
         // value that reads them. What names them is a reference: no slot holds
         // the characters themselves, so the count rides with the address.
-        expr->type = expr->lit.kind == TYPE_STR ? type_registry_ref_to(registry, registry->builtins.str_type)
-                                                : type_registry_get_builtin(registry, expr->lit.kind);
+        expr->type = expr->lit.kind == TYPE_STR
+                         ? type_registry_ref_to(registry, registry->primitives.str_type)
+                         : type_registry_get_builtin(registry, expr->lit.kind);
         break;
     }
     default:
@@ -1730,7 +1732,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
             return type_registry_instantiate(registry, base, args, expr->apply.args.size);
         }
 
-        if (base != registry->builtins.array_type) {
+        if (base != registry->primitives.array_type) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, span, "%s does not take an element type",
                        type_name(state, base));
             return resolver_error_type(state);
@@ -1821,7 +1823,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
     }
 
     // 'Array' alone names no type: every array is '[T; N]'.
-    if (type == registry->builtins.array_type) {
+    if (type == registry->primitives.array_type) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, span,
                    "'Array' needs an element type and a length, as '[int; 3]'");
         return resolver_error_type(state);
