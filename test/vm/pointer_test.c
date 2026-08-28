@@ -185,8 +185,8 @@ static void test_field_write_through_a_pointer() {
 // A pointer to a field addresses that field alone, so writing through it must
 // not touch its neighbours.
 static void test_pointer_to_a_struct_field() {
-    assert(test_run_int("struct Vec { x: int, y: int }\n"
-                        "func f(): int { let v: Vec; v.x = 1; v.y = 2;\n"
+    assert(test_run_int("struct Point { x: int, y: int }\n"
+                        "func f(): int { let v: Point; v.x = 1; v.y = 2;\n"
                         "let p: ref int = v.y; *p = 9;\n"
                         "return v.x * 100 + v.y; }\n"
                         "let r: int = f();") == 109);
@@ -211,10 +211,10 @@ static void test_pointer_to_a_sub_word_field() {
 // Dereferencing a whole struct copies its slots out, so the copy is independent
 // of the original.
 static void test_dereferencing_a_whole_struct() {
-    assert(test_run_int("struct Vec { x: int, y: int }\n"
-                        "func f(): int { let v: Vec; v.x = 3; v.y = 4;\n"
-                        "let p: ref Vec = v;\n"
-                        "let copy: Vec = *p;\n"
+    assert(test_run_int("struct Point { x: int, y: int }\n"
+                        "func f(): int { let v: Point; v.x = 3; v.y = 4;\n"
+                        "let p: ref Point = v;\n"
+                        "let copy: Point = *p;\n"
                         "v.x = 100;\n"
                         "return copy.x * 10 + copy.y; }\n"
                         "let r: int = f();") == 34);

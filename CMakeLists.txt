@@ -55,6 +55,7 @@ add_library(gab
     src/builtin/builtin.c
     src/builtin/string.c
     src/builtin/array.c
+    src/builtin/vec.c
     src/vm/args.c
     src/vm/constant_pool.c
     src/vm/chunk.c

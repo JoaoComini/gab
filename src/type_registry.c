@@ -42,6 +42,52 @@ static Type *string_builtin_create(TypeRegistry *registry) {
     return type;
 }
 
+// The 'Vec' declaration: a block of the element it is given, and a count of how
+// many of that block have been written.
+//
+// A declaration, so no width is settled here -- what a vector is laid out as
+// follows from the element, and that is not known until one is applied.
+static Type *vec_decl_create(TypeRegistry *registry) {
+    Type *type = register_builtin(registry, TYPE_STRUCT, "Vec");
+
+    GenericField *fields = arena_alloc(registry->arena, 2 * sizeof(GenericField));
+
+    // The block owns the memory and carries the capacity it was taken at, so
+    // freeing it asks nothing else.
+    fields[0] = (GenericField){
+        .name = string_from_cstr(registry->strings, "data"),
+        .from = GENERIC_FROM_PARAM,
+        .param = 0,
+        .ctor = TYPE_CTOR_BLOCK,
+    };
+
+    // How far into that block anything has been written. Beside the block
+    // rather than in it, because a capacity and a length answer different
+    // questions and only one of them is the memory's own.
+    fields[1] = (GenericField){
+        .name = string_from_cstr(registry->strings, "length"),
+        .fixed = registry->builtins.int_type,
+    };
+
+    GenericDecl *generic = arena_alloc(registry->arena, sizeof(GenericDecl));
+
+    *generic = (GenericDecl){
+        .param_count = 1,
+        .fields = fields,
+        .field_count = 2,
+
+        // 'length' counts what has been written into 'data'. What the block
+        // frees is its own capacity; what these elements own is dropped first.
+        .counts_a_block = true,
+        .count_field = 1,
+        .block_field = 0,
+    };
+
+    type->generic = generic;
+
+    return type;
+}
+
 void type_registry_register_builtins(TypeRegistry *registry) {
     registry->builtins.int_type = register_builtin(registry, TYPE_INT, "int");
     registry->builtins.float_type = register_builtin(registry, TYPE_FLOAT, "float");
@@ -78,10 +124,16 @@ void type_registry_register_builtins(TypeRegistry *registry) {
     assert(str_ref_layout->alignment == _Alignof(GabStrRef));
     (void)str_ref_layout;
 
-    // The bare name every 'Array T' is interned under. Sized as the header the
+    // The bare name every '[T; N]' is interned under. Sized as the header the
     // elements make it, so that a diagnostic naming it says something true even
     // though no slot ever holds this type itself.
     registry->builtins.array_type = register_builtin(registry, TYPE_ARRAY, "Array");
+
+    // 'Vec', the bare name every 'Vec<T>' is instantiated from. A declaration
+    // rather than a type: it says what its instantiations hold -- a block of
+    // the parameter, and how many of that block are live -- without naming an
+    // element, which is what makes it generic.
+    registry->builtins.vec_type = vec_decl_create(registry);
 
     // Poison type. Deliberately never given a name in any scope: no script can
     // name it, it only arises from a failed resolution.
@@ -130,7 +182,7 @@ static bool layout_of_scalar(TypeKind kind, size_t *size, size_t *alignment) {
     }
 }
 
-// A run of elements, laid out exactly as a C 'T[N]' is: the elements live in
+// A run of elements, laid out exactly as a C '[T; N]' is: the elements live in
 // the array itself, so its width is the run of them and its alignment is one
 // element's.
 static void layout_of_array(TypeRegistry *registry, const Type *type, size_t *size, size_t *alignment) {
@@ -150,6 +202,14 @@ static void layout_of_array(TypeRegistry *registry, const Type *type, size_t *si
 static void layout_of_indirect(const Type *type, size_t *size, size_t *alignment) {
     *size = sizeof(void *);
     *alignment = _Alignof(void *);
+
+    // A block carries the capacity it was allocated at, whatever it points to:
+    // the count is the block's own fact rather than something read off the
+    // element, which is what lets it be freed without asking anything else.
+    if (type->kind == TYPE_BLOCK) {
+        *size = align_up(*size + sizeof(int32_t), *alignment);
+        return;
+    }
 
     // A pointee whose bounds are not in its type is named by more than an
     // address: how many elements it runs to lives with the value, so the
@@ -213,6 +273,7 @@ const TypeLayout *type_registry_layout_of(TypeRegistry *registry, const Type *ty
         case TYPE_BOX:
         case TYPE_REF:
         case TYPE_PTR:
+        case TYPE_BLOCK:
             layout_of_indirect(type, &layout->size, &layout->alignment);
             break;
 
@@ -273,6 +334,8 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
         type_app_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
     registry->strings = strings;
+    registry->install_method = NULL;
+    registry->install_ctx = NULL;
     type_registry_register_builtins(registry);
 
     return registry;
@@ -309,7 +372,7 @@ Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, cons
     }
 
     // An instantiation answers what its declaration declares: every
-    // 'Array T,N' reaches the bare 'Array's set. Its own is consulted first,
+    // '[T; N]' reaches the bare 'Array's set. Its own is consulted first,
     // since what the two do not share is what tells them apart.
     return type_registry_find_method(registry, type->decl, name);
 }
@@ -349,8 +412,8 @@ const Type *type_registry_array_of(TypeRegistry *registry, const Type *element, 
     }
 
     // The elements live in the array itself, so its width is the run of them
-    // and its alignment is one element's. No header, no block: an 'Array T,N'
-    // is laid out exactly as a C 'T[N]' is, which is what lets a host lay one
+    // and its alignment is one element's. No header, no block: an '[T; N]'
+    // is laid out exactly as a C '[T; N]' is, which is what lets a host lay one
     // out with sizeof.
     Type *type = type_create(registry->arena, TYPE_ARRAY, registry->builtins.array_type->name);
 
@@ -410,6 +473,130 @@ static const Type *indirect_to(TypeRegistry *registry, TypeCtor ctor, TypeKind k
 
 const Type *type_registry_box_to(TypeRegistry *registry, const Type *inner) {
     return indirect_to(registry, TYPE_CTOR_BOX, TYPE_BOX, inner);
+}
+
+// What one field of a declaration comes to, once the parameters are known. A
+// field naming no parameter is already its own answer; one that does is that
+// parameter with the field's constructor applied.
+static const Type *generic_field_type(TypeRegistry *registry, const GenericField *field,
+                                      const Type *const *args, const Type *self) {
+    if (field->fixed) {
+        return field->fixed;
+    }
+
+    // A method that returns nothing, which is what a NULL type is everywhere.
+    if (field->from == GENERIC_FROM_NOTHING) {
+        return NULL;
+    }
+
+    const Type *argument = field->from == GENERIC_FROM_SELF ? self : args[field->param];
+
+    switch (field->ctor) {
+    case TYPE_CTOR_BOX:
+        return type_registry_box_to(registry, argument);
+    case TYPE_CTOR_REF:
+        return type_registry_ref_to(registry, argument);
+    case TYPE_CTOR_PTR:
+        return type_registry_ptr_to(registry, argument);
+    case TYPE_CTOR_BLOCK:
+        return type_registry_block_of(registry, argument);
+
+    // The parameter itself, held by value. A nominal constructor is what a
+    // declaration naming another generic would be, which nothing declares yet.
+    case TYPE_CTOR_NOMINAL:
+        break;
+    }
+
+    return argument;
+}
+
+// Declares what this instantiation answers to, with the parameters filled in.
+// Nothing at all where no installer was registered: a compile with no VM has no
+// extern table to number a body in, and nothing in it can call one.
+static void install_generic_methods(TypeRegistry *registry, const Type *type, const GenericDecl *generic,
+                                    const Type *const *args) {
+    if (!registry->install_method) {
+        return;
+    }
+
+    for (size_t i = 0; i < generic->method_count; i++) {
+        const GenericMethod *method = &generic->methods[i];
+
+        // The receiver is parameter zero, as it is for every method: what a
+        // call writes follows it.
+        const Type *signature[GAB_MAX_METHOD_PARAMS];
+
+        signature[0] = generic_field_type(registry, &method->receiver, args, type);
+
+        for (size_t p = 0; p < method->param_count; p++) {
+            signature[p + 1] = generic_field_type(registry, &method->params[p], args, type);
+        }
+
+        registry->install_method(registry->install_ctx, type, method->name, method->body,
+                                 generic_field_type(registry, &method->result, args, type), signature,
+                                 method->param_count + 1);
+    }
+}
+
+const Type *type_registry_instantiate(TypeRegistry *registry, const Type *decl, const Type *const *args,
+                                      size_t arg_count) {
+    assert(decl && decl->generic && "only a generic declaration is instantiated");
+    assert(arg_count == decl->generic->param_count && "an instantiation was given the wrong argument count");
+
+    TypeArg key_args[GAB_MAX_TYPE_PARAMS];
+
+    for (size_t i = 0; i < arg_count; i++) {
+        key_args[i] = (TypeArg){.kind = TYPE_ARG_TYPE, .type = args[i]};
+    }
+
+    TypeApp app = {
+        .ctor = TYPE_CTOR_NOMINAL,
+        .decl = decl,
+        .args = key_args,
+        .arg_count = arg_count,
+    };
+
+    Type **existing = application_lookup(registry, app);
+    if (existing) {
+        return *existing;
+    }
+
+    // A struct in every way that is laid out: the fields are where its width,
+    // its alignment and what it owns all come from. What the declaration adds
+    // is that they were written in terms of a parameter.
+    Type *type = type_create(registry->arena, TYPE_STRUCT, decl->name);
+
+    const GenericDecl *generic = decl->generic;
+
+    TypeField *fields = arena_alloc(registry->arena, generic->field_count * sizeof(TypeField));
+
+    for (size_t i = 0; i < generic->field_count; i++) {
+        fields[i] = (TypeField){
+            .name = generic->fields[i].name,
+            .type = generic_field_type(registry, &generic->fields[i], args, type),
+        };
+    }
+
+    type->record.fields = fields;
+    type->record.field_count = generic->field_count;
+
+    // The declaration this instantiates, which is where its methods are
+    // declared and where a substituted signature is read from.
+    type->decl = decl;
+
+    // Interned before the drop is selected, so a field reaching back here finds
+    // this entry rather than building a second.
+    application_insert(registry, app, type);
+
+    type_registry_drop_of(registry, type);
+
+    install_generic_methods(registry, type, generic, args);
+
+    return type;
+}
+
+const Type *type_registry_block_of(TypeRegistry *registry, const Type *element) {
+    return indirect_to(registry, TYPE_CTOR_BLOCK, TYPE_BLOCK, element);
 }
 
 const Type *type_registry_ref_to(TypeRegistry *registry, const Type *inner) {

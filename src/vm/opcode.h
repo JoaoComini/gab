@@ -199,8 +199,10 @@ typedef enum {
     // drop walk reads its element off the header that names the block -- so the
     // word it would cost buys nothing, and OP_FREE is told the size instead.
     //
-    // No emitter today: an 'Array T,N' holds its elements inline, and the
-    // resizable vector that will allocate a block is not written yet.
+    // Not what a vector grows through: a block is taken and released by the C
+    // body that owns the header, since growing one is a copy and a free rather
+    // than an allocation an instruction could stand for. An '[T; N]' holds its
+    // elements inline and allocates nothing at all.
     OP_ALLOC,
 
     // Frees the block whose address is at rd, whose size is in r1. The

@@ -43,7 +43,7 @@ typedef enum {
     EXPR_CAST,
     EXPR_NEW,
 
-    // 'xs[i]' -- one element of an array, and 'Array T[n]', which allocates
+    // 'xs[i]' -- one element of an array, and '[T; N]', which allocates
     // one. Distinguished by which of the two fields is set.
     EXPR_INDEX,
 

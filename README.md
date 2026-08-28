@@ -240,20 +240,36 @@ the struct, so the levels never have to be spelled: `s.n` and `s.bump()` work
 whether `s` is a `Box`, a `box Box`, or a `ref box Box`. Only `*` is explicit,
 for when the pointer itself is what you mean.
 
-An `Array T` is a header like a string's -- where the elements are and how many
--- over a block it owns. Its length is fixed when it is allocated, and every
-index is checked against it: an index outside the array fails the run rather
-than reading past the block.
+An `[T; N]` is a run of N elements laid out inline, exactly as a C `T[N]` is.
+Its length is part of its type, so `xs.len()` is known where it is written, and
+every index is checked against it: an index outside the array fails the run
+rather than reading past the last element.
 
 ```
-let xs: Array int = Array int[3];
+let xs: [int; 3];
 xs[0] = 1;
 let n: int = xs.len();
 ```
 
-No `new`: what a slot holds is the header itself, and `new` is for what a slot
-points at. The header owns, so a second binding to one is refused exactly as it
-is for any owning value, and `move` is how it changes hands.
+No `new`: the elements are the array, so a slot holding one holds them. An
+array owns exactly what its elements do -- a run of ints owns nothing and
+copies freely, while a run of `box T` owns each of them and moves rather than
+copies.
+
+A `Vec<T>` is what grows. Its length is in the value rather than in its type, so
+it holds whatever has been pushed into it, and the block behind it is replaced
+as that outgrows it.
+
+```
+let xs: Vec<int>;
+xs.push(1);
+let n: int = xs.len();
+```
+
+It owns its block and the live elements in it: both go when the vector does.
+`Vec<T>` is an instantiation of a generic declaration rather than a kind of its
+own, so what it is laid out as, what it owns, and what it refuses are the same
+rules any struct answers.
 
 Freeing an array frees what its elements own, however deep that goes. How many
 elements are live is the count the block carries rather than anything its type
@@ -381,7 +397,7 @@ more or less, and a second spelling would say nothing the first does not.
 
 | | |
 | --- | --- |
-| Types | `int` (32-bit), `float` (32-bit), `bool`, `String` and characters named by `ref str`, `Array T`, structs, owning `box T`, borrows `ref T` |
+| Types | `int` (32-bit), `float` (32-bit), `bool`, `String` and characters named by `ref str`, `[T; N]`, `Vec<T>`, structs, owning `box T`, borrows `ref T` |
 | Declarations | `let` with inferred or annotated type, `func`, `struct`, `module` |
 | Functions | Parameters and returns of any type, structs by value, functions a type owns, recursion, forward references |
 | Control flow | `if` / `else`, `for` in three forms, `break`, `continue`, `return`, nested blocks with shadowing |
@@ -398,7 +414,9 @@ Not yet implemented:
 | | |
 | --- | --- |
 | Strings | No interpolation, no `substring` or case conversion |
-| Arrays | Fixed length once allocated: no `push`, no growth, and no slice type |
+| Arrays | Fixed length once allocated: no growth and no slice type. `Vec<T>` is what grows |
+| Vectors | `push`, `at` and `len` only: no removal, no iteration, and no literal |
+| Generics | Only the built-in declarations. A script cannot declare a generic type of its own |
 | Operators | Bitwise |
 | Literals | No struct literals (`V{x: 1}`) |
 

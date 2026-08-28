@@ -74,4 +74,5 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
 void builtin_register_all(VM *vm) {
     builtin_register_string(vm);
     builtin_register_array(vm);
+    builtin_register_vec(vm);
 }

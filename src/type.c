@@ -13,6 +13,7 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->kind = kind;
     type->name = name;
     type->decl = NULL;
+    type->generic = NULL;
 
     // One arm zeroed is every arm zeroed: whichever the kind reads, it reads
     // nothing rather than whatever the arena held.
@@ -136,6 +137,7 @@ const Type *type_pointee(const Type *type) {
     case TYPE_BOX:
     case TYPE_REF:
     case TYPE_PTR:
+    case TYPE_BLOCK:
         return type->indirect.pointee;
 
     default:
@@ -200,6 +202,10 @@ bool type_is_owned(const Type *type) {
     case TYPE_REF:
         return false;
 
+    // The memory is the value's own, and freeing it is what holding one means.
+    case TYPE_BLOCK:
+        return true;
+
     // A raw address claims nothing about what it names, so nothing frees
     // through one. The header naming a block is what owns it.
     case TYPE_PTR:
@@ -244,6 +250,10 @@ bool type_is_owned(const Type *type) {
 // Derived from the type rather than declared on it, so a struct becomes
 // non-copyable the moment it is given a field that owns, and no declaration
 // can disagree with what the type holds.
+bool type_owns_a_block(const Type *type) {
+    return type && type->decl && type->decl->generic && type->decl->generic->counts_a_block;
+}
+
 bool type_is_copyable(const Type *type) {
     if (!type) {
         return true;
@@ -258,6 +268,11 @@ bool type_is_copyable(const Type *type) {
     case TYPE_REF:
     case TYPE_PTR:
         return true;
+
+    // Copying one would make a second value freeing the same block, which is
+    // what an owning pointer is refused for.
+    case TYPE_BLOCK:
+        return false;
 
     // An array copies exactly when its elements do: copying one duplicates each
     // of them, so a run of a non-copyable element is as uncopyable as one is.
@@ -337,7 +352,7 @@ void type_expr_destroy(TypeExpr *expr) {
     free(expr);
 }
 
-// Mixed rather than summed, so that 'Array int,3' and 'Array int,4' -- and an
+// Mixed rather than summed, so that '[int; 3]' and '[int; 4]' -- and an
 // application whose arguments were given in the other order -- land in
 // different buckets. dj2b's shift-and-add over each argument's bytes, which is
 // what the string hash beside it does over characters.

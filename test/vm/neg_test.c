@@ -49,8 +49,8 @@ static void test_binds_tighter_than_a_binary_operator() {
 // ...but looser than a postfix, so this negates the field rather than trying
 // to reach through a negated struct.
 static void test_binds_looser_than_a_postfix() {
-    assert(test_run_int("struct Vec { x: int, y: int }\n"
-                        "func f(): int { let v: Vec; v.x = 4; return -v.x; }\n"
+    assert(test_run_int("struct Point { x: int, y: int }\n"
+                        "func f(): int { let v: Point; v.x = 4; return -v.x; }\n"
                         "let r: int = f();\n") == -4);
 }
 

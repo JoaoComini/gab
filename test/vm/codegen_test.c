@@ -383,8 +383,8 @@ static void test_a_function_compiles_into_its_own_chunk() {
 // A method takes its receiver as parameter zero, so its arity is one more than
 // the parameters it declares.
 static void test_a_method_counts_its_receiver() {
-    TestProgram program = test_compile("struct Vec { x: int }\n"
-                                       "func Vec::scaled(v: ref Vec, by: int): int { return v.x * by; }\n");
+    TestProgram program = test_compile("struct Point { x: int }\n"
+                                       "func Point::scaled(v: ref Point, by: int): int { return v.x * by; }\n");
 
     assert(test_func_count(&program) == 1);
     assert(test_func_proto(&program, 0)->arity == 2);
@@ -396,10 +396,10 @@ static void test_a_method_counts_its_receiver() {
 // the dispatch, not the four bytes a slot move writes, so a struct of N slots
 // must not become N moves.
 static void test_a_struct_copy_is_one_instruction() {
-    TestProgram program = test_compile("struct Vec { x: int, y: int, z: int }\n"
+    TestProgram program = test_compile("struct Point { x: int, y: int, z: int }\n"
                                        "func f() {\n"
-                                       "    let a: Vec;\n"
-                                       "    let b: Vec = a;\n"
+                                       "    let a: Point;\n"
+                                       "    let b: Point = a;\n"
                                        "}\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
@@ -465,9 +465,9 @@ static void test_a_pointer_copy_batches_when_it_is_wide() {
 // Copying a slot onto itself emits nothing at all: the guard is what keeps
 // 'x = x' from spending an instruction to achieve nothing.
 static void test_a_self_copy_emits_nothing() {
-    TestProgram self = test_compile("struct Vec { x: int, y: int }\n"
+    TestProgram self = test_compile("struct Point { x: int, y: int }\n"
                                     "func f() {\n"
-                                    "    let a: Vec;\n"
+                                    "    let a: Point;\n"
                                     "    a = a;\n"
                                     "}\n");
 
@@ -483,11 +483,11 @@ static void test_a_self_copy_emits_nothing() {
 // batches on the same argument: one OP_LOAD_PTR_N carrying the slot count
 // rather than a load per slot.
 static void test_a_struct_read_through_a_pointer_is_one_instruction() {
-    TestProgram program = test_compile("struct Vec { x: int, y: int, z: int }\n"
+    TestProgram program = test_compile("struct Point { x: int, y: int, z: int }\n"
                                        "func f() {\n"
-                                       "    let a: Vec;\n"
-                                       "    let p: ref Vec = a;\n"
-                                       "    let b: Vec = *p;\n"
+                                       "    let a: Point;\n"
+                                       "    let p: ref Point = a;\n"
+                                       "    let b: Point = *p;\n"
                                        "}\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
@@ -502,11 +502,11 @@ static void test_a_struct_read_through_a_pointer_is_one_instruction() {
 
 // And writing one back, which is the store side of the same encoding.
 static void test_a_struct_write_through_a_pointer_is_one_instruction() {
-    TestProgram program = test_compile("struct Vec { x: int, y: int, z: int }\n"
+    TestProgram program = test_compile("struct Point { x: int, y: int, z: int }\n"
                                        "func f() {\n"
-                                       "    let a: Vec;\n"
-                                       "    let b: Vec;\n"
-                                       "    let p: ref Vec = a;\n"
+                                       "    let a: Point;\n"
+                                       "    let b: Point;\n"
+                                       "    let p: ref Point = a;\n"
                                        "    *p = b;\n"
                                        "}\n");
 
