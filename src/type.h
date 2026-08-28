@@ -551,6 +551,12 @@ const TypeField *type_find_field(const Type *type, const String *name);
     and a String keeps both inside the block it owns, with the capacity sitting
     between them.
 
+    Zero unless 'lender' derefs to 'pointee': the deref relation is what says a
+    lend is possible, so what a reference may be built from is one question
+    rather than a shape that happens to fit. A 'Vec<byte>' keeps the same block
+    a string does and lends nothing, never having been declared to stand for a
+    run of characters.
+
     Returns how many parts were found, writing that many into 'out'.
 */
 typedef struct TypeRegistry TypeRegistry;

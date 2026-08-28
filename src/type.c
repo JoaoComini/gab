@@ -58,7 +58,11 @@ const TypeField *type_find_field(const Type *type, const String *name) {
 
 size_t type_lent_parts(TypeRegistry *registry, const Type *lender, const Type *pointee, LentPart *out,
                        size_t max) {
-    if (!pointee || pointee->kind != TYPE_STR || max < 2) {
+    // Only what the lender was declared to deref to. The relation is what says
+    // a lend is possible at all: a 'Vec<byte>' holds the same block a string
+    // does and lends nothing, because nothing declared it to stand for a run of
+    // anything.
+    if (!pointee || type_registry_deref_of(registry, lender) != pointee || max < 2) {
         return 0;
     }
 
