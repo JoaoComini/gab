@@ -631,7 +631,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
 // '[1, 2, 3]' has no type of its own, so what it must be is whatever it is
 // being stored into.
 static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expected);
-static Symbol *resolve_static_func(ResolverState *state, ASTExpr *expr);
+static Symbol *resolve_qualified_func(ResolverState *state, ASTExpr *expr);
 
 // A call whose target is a field expression: 'recv.m(args)'. Resolves the
 // method against the receiver's type, checks the call, and lowers the whole
@@ -1184,7 +1184,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         // type owns. Tried after the scope lookup rather than before, so a
         // module keeps the meaning it already had where both could answer.
         if (!entry) {
-            entry = resolve_static_func(state, expr);
+            entry = resolve_qualified_func(state, expr);
         }
 
         if (!entry) {
@@ -2107,9 +2107,9 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
 }
 
 // 'Type::name' resolved against the type's own function set. NULL when the name
-// is not qualified, when the first half names no type, or when the type answers
-// with a method: a method needs a receiver, and this spelling gives none.
-static Symbol *resolve_static_func(ResolverState *state, ASTExpr *expr) {
+// is not qualified or when the first half names no type -- a module-qualified
+// name is looked up in a scope before this is reached.
+static Symbol *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
     StringRef owner_ref, member_ref;
 
     if (!string_ref_split_colons(expr->var.name, &owner_ref, &member_ref)) {

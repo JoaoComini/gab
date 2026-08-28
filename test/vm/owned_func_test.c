@@ -95,6 +95,6 @@ int main(void) {
     test_a_function_consumes_what_it_is_given();
     test_a_consuming_function_is_not_reached_through_a_value();
 
-    printf("All static function tests passed\n");
+    printf("All owned function tests passed\n");
     return 0;
 }
