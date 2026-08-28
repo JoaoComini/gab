@@ -723,16 +723,12 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         return;
     }
 
-    check_call_args(state, &expr->call.args, method->func.params + 1);
-
-    // The value filling parameter zero is an argument like the written ones, so
-    // it copies under the same rule: the sugar has nowhere to spell a transfer,
-    // and an owning type reached this way would be duplicated silently.
-    check_implicit_copy(state, receiver, method->func.params[0], expr->span);
-
     // An array's length is part of its type, so 'xs.len()' is known here and
     // becomes the literal it answers. Folded rather than called because there
     // is nothing at run time to read: the elements carry no count beside them.
+    //
+    // Ahead of the lowering below, which would otherwise build a call this
+    // discards.
     if (base->kind == TYPE_ARRAY &&
         method_name == string_from_cstr(state->current_scope->type_registry->strings, "len")) {
         ast_expr_free(expr->call.target);
@@ -744,7 +740,13 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         return;
     }
 
+    // Lowered before the arguments are checked, so that the value reaching
+    // parameter zero is checked as the argument it has become. It is one: the
+    // sugar writes it rather than the caller, but what it costs -- a copy of a
+    // type that owns -- is the same either way.
     lower_method_call(expr, method, adjustment);
+
+    check_call_args(state, &expr->call.args, method->func.params);
 
     expr->type = method->func.return_type;
 }
