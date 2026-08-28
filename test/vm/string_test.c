@@ -29,12 +29,13 @@ static void test_a_string_is_an_address_and_a_length() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope scope;
-    test_scope_with_library(&ctx, &scope);
+    VM *vm = vm_create();
 
-    const Type *string_type = test_declared_type(scope.type_registry, "String");
+    Scope *scope_ptr = &vm->env.global_scope;
 
-    const TypeLayout *layout = type_registry_layout_of(scope.type_registry, string_type);
+    const Type *string_type = scope_type_lookup(scope_ptr, string_from_cstr(&vm->env.strings, "String"));
+
+    const TypeLayout *layout = type_registry_layout_of(scope_ptr->type_registry, string_type);
 
     assert(layout->size == sizeof(GabStringValue));
     assert(layout->alignment == _Alignof(GabStringValue));
@@ -43,6 +44,7 @@ static void test_a_string_is_an_address_and_a_length() {
     assert(layout->size == VM_STRING_SLOTS * VM_SLOT_SIZE);
 
     test_context_free(&ctx);
+    vm_free(vm);
 }
 
 // One field is what the layout comes from: the block holding the characters,
@@ -52,18 +54,19 @@ static void test_a_string_is_one_owning_field() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope scope;
-    test_scope_with_library(&ctx, &scope);
+    VM *vm = vm_create();
 
-    const Type *string_type = test_declared_type(scope.type_registry, "String");
+    Scope *scope_ptr = &vm->env.global_scope;
+
+    const Type *string_type = scope_type_lookup(scope_ptr, string_from_cstr(&vm->env.strings, "String"));
 
     assert(type_field_count(string_type) == 1);
 
-    const TypeField *data = type_find_field(string_type, string_from_cstr(&ctx.strings, "data"));
+    const TypeField *data = type_find_field(string_type, string_from_cstr(&vm->env.strings, "data"));
 
     assert(data);
 
-    const TypeLayout *layout = type_registry_layout_of(scope.type_registry, string_type);
+    const TypeLayout *layout = type_registry_layout_of(scope_ptr->type_registry, string_type);
 
     // The C mirror the VM and the host both read is this field's layout, so the
     // two statements of it must agree.
@@ -72,6 +75,7 @@ static void test_a_string_is_one_owning_field() {
     assert(type_is_owned(data->type));
 
     test_context_free(&ctx);
+    vm_free(vm);
 }
 
 // Running a literal writes the header the type describes: the characters where

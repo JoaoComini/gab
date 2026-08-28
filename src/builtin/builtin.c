@@ -10,6 +10,16 @@
 
 #include <stddef.h>
 
+const Type *builtin_declare_type(VM *vm, const TypeDecl *decl) {
+    Scope *scope = &vm->env.global_scope;
+
+    const Type *type = type_registry_declare(scope->type_registry, decl);
+
+    scope_decl_type(scope, type->name, type);
+
+    return type;
+}
+
 void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiver, const char *name,
                              GabExternFn body, const Type *return_type, const Type *const *params,
                              size_t param_count) {
@@ -71,11 +81,6 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
 // These land at the bottom of the extern table, before any unit loads. That
 // costs a unit's own externs nothing: the two tables are numbered apart, so a
 // script function's index is unaffected by how many builtins exist.
-void builtin_register_types(TypeRegistry *registry) {
-    builtin_register_string_type(registry);
-    builtin_register_vec_type(registry);
-}
-
 void builtin_register_all(VM *vm) {
     builtin_register_string(vm);
     builtin_register_array(vm);

@@ -6,7 +6,6 @@
 #include <string.h>
 
 #include "arena.h"
-#include "builtin/builtin.h"
 #include "diagnostics.h"
 #include "scope.h"
 #include "string/string_pool.h"
@@ -52,30 +51,11 @@ static inline void test_context_init(TestContext *ctx) {
     diagnostics_init(&ctx->diagnostics, ctx->arena, "<test>");
 }
 
-// A scope over a registry the standard library has registered into, which is
-// what a VM builds. For a test that names 'String' or 'Vec<T>' without running
-// one: those are registered types, so a bare scope has never heard of them.
-static inline void test_scope_with_library(TestContext *ctx, Scope *scope) {
-    TypeRegistry *registry = type_registry_create(ctx->arena, &ctx->strings);
-
-    builtin_register_types(registry);
-
-    scope_init_over(scope, ctx->arena, &ctx->strings, registry);
-}
-
-// The type a standard library declared under 'name', or NULL. What a test
-// reaches for when it means the 'String' a VM would have provided.
-static inline const Type *test_declared_type(TypeRegistry *registry, const char *name) {
-    size_t count = 0;
-    const Type *const *declared = type_registry_declared(registry, &count);
-
-    for (size_t i = 0; i < count; i++) {
-        if (strcmp(declared[i]->name->data, name) == 0) {
-            return declared[i];
-        }
-    }
-
-    return NULL;
+// The type named 'name' in a scope, which is how any name is resolved. For a
+// test that means the 'String' a VM provides: it is named in that VM's global
+// scope like any other type, so this is the lookup a script's own spec does.
+static inline const Type *test_named_type(TestContext *ctx, Scope *scope, const char *name) {
+    return scope_type_lookup(scope, string_from_cstr(&ctx->strings, name));
 }
 
 // Mirrors vm_free's ordering: the pool releases its buckets before the arena

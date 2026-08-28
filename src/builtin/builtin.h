@@ -13,6 +13,17 @@
 // would do; nothing yet makes that worth a second mechanism.
 void builtin_register_all(VM *vm);
 
+// Declares a type the standard library provides: interned on the VM's registry
+// and named in its global scope, which is where every other type name lives.
+//
+// One call rather than two phases. The VM owns both the registry that interns
+// and the scope that names, so a library says what a type is once and gets it
+// back -- and may then declare methods on it with the calls below.
+//
+// Absent from a compile that never had a VM, which is what keeps 'String' out
+// of the language and in the library that provides it.
+const Type *builtin_declare_type(VM *vm, const TypeDecl *decl);
+
 // Declares one method on a builtin type: a Symbol in the type's method map, and
 // an entry in the table OP_CALL_EXTERN indexes. The body is a GabExternFn
 // because that is what a C body is here, whether the host wrote it or the VM
@@ -37,21 +48,8 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
 void builtin_register_static(VM *vm, const Type *declared_on, const char *name, GabExternFn body,
                              const Type *return_type, const Type *const *params, size_t param_count);
 
-// The types the standard library provides, registered with the registry before
-// any scope is built from it: a scope names what is registered when it is
-// created, so a type declared later would be invisible to it.
-//
-// Separate from the methods below because those need a VM -- an extern table to
-// be numbered in -- while a type needs only the registry. That split is also
-// what a compile with no VM sees: the types exist to be named, and nothing is
-// callable on them.
-void builtin_register_types(TypeRegistry *registry);
-
 // Each builtin type's methods, called by builtin_register_all.
 void builtin_register_string(VM *vm);
-
-// The 'String' type itself, and the view it lends. Registered before any scope.
-void builtin_register_string_type(TypeRegistry *registry);
 
 // The methods every array answers, declared once on the bare 'Array' type that
 // each '[T; N]' reaches through 'owner'. None of them depend on the element,
@@ -66,8 +64,5 @@ void builtin_register_array(VM *vm);
 // This registers the installer the registry calls to do that, so a 'Vec<T>'
 // named by any later compile gets its methods without the VM being asked again.
 void builtin_register_vec(VM *vm);
-
-// The 'Vec' declaration every 'Vec<T>' is instantiated from.
-void builtin_register_vec_type(TypeRegistry *registry);
 
 #endif

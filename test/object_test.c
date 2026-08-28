@@ -89,7 +89,7 @@ static void test_a_raw_pointer_carries_a_stride_and_drops_nothing() {
     test_context_init(&ctx);
 
     Scope scope;
-    test_scope_with_library(&ctx, &scope);
+    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
 
     TypeRegistry *registry = scope.type_registry;
 
@@ -328,16 +328,20 @@ static void test_freeing_null_is_a_no_op() {
 // A string owns its characters and a reference to them owns nothing, which the
 // kinds say on their own: neither answer is read off the glue that frees.
 static void test_a_string_owns_and_a_reference_to_one_does_not() {
+    // On a VM, because a 'String' is what its standard library declares: a
+    // scope built without one has never heard the name.
+    VM *vm = vm_create();
+
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope scope;
-    test_scope_with_library(&ctx, &scope);
+    Scope *scope = &vm->env.global_scope;
+    TypeRegistry *registry = scope->type_registry;
 
-    TypeRegistry *registry = scope.type_registry;
-
-    const Type *owning = test_declared_type(registry, "String");
+    const Type *owning = scope_type_lookup(scope, string_from_cstr(&vm->env.strings, "String"));
     const Type *borrowing = type_registry_ref_to(registry, registry->primitives.str_type);
+
+    assert(owning);
 
     // The header carries a capacity the reference does not, and is no wider for
     // it: the count rides in what the address's alignment already padded out.
@@ -377,6 +381,7 @@ static void test_a_string_owns_and_a_reference_to_one_does_not() {
     assert(type_is_owned(strings));
 
     test_context_free(&ctx);
+    vm_free(vm);
 }
 
 // An array's element and its length are what its type was applied to, so they
@@ -386,7 +391,7 @@ static void test_an_array_is_its_elements_laid_end_to_end() {
     test_context_init(&ctx);
 
     Scope scope;
-    test_scope_with_library(&ctx, &scope);
+    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
 
     TypeRegistry *registry = scope.type_registry;
 
@@ -416,7 +421,7 @@ static void test_an_array_owns_exactly_when_its_element_does() {
     test_context_init(&ctx);
 
     Scope scope;
-    test_scope_with_library(&ctx, &scope);
+    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
 
     TypeRegistry *registry = scope.type_registry;
 
@@ -452,7 +457,7 @@ static void test_a_type_carries_only_what_its_kind_has() {
     test_context_init(&ctx);
 
     Scope scope;
-    test_scope_with_library(&ctx, &scope);
+    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
 
     TypeRegistry *registry = scope.type_registry;
     const Type *int_type = registry->primitives.int_type;
@@ -493,7 +498,7 @@ static void test_methods_live_beside_the_type_not_in_it() {
     test_context_init(&ctx);
 
     Scope scope;
-    test_scope_with_library(&ctx, &scope);
+    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
 
     TypeRegistry *registry = scope.type_registry;
     const Type *int_type = registry->primitives.int_type;
@@ -526,7 +531,7 @@ static void test_a_builtin_is_interned_and_found_by_its_kind() {
     test_context_init(&ctx);
 
     Scope scope;
-    test_scope_with_library(&ctx, &scope);
+    scope_init(&scope, ctx.arena, &ctx.strings, NULL);
 
     TypeRegistry *registry = scope.type_registry;
 

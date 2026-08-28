@@ -11,15 +11,13 @@
 #include <stdint.h>
 #include <string.h>
 
-// The declaration this library made, kept from where it was made: a provider is
-// handed its type back, so nothing looks one up by name.
-static const Type *vec_decl = NULL;
-
 // The 'Vec' declaration: a block of the element it is given.
 //
 // A declaration, so no width is settled here -- what a vector is laid out as
 // follows from the element, and that is not known until one is applied.
-void builtin_register_vec_type(TypeRegistry *registry) {
+static const Type *vec_declare_type(VM *vm) {
+    TypeRegistry *registry = vm->env.global_scope.type_registry;
+
     // The block owns the memory and carries both the capacity it was taken at
     // and how far into it anything was written, so freeing it asks nothing
     // else -- which is the whole of what a vector is.
@@ -44,7 +42,7 @@ void builtin_register_vec_type(TypeRegistry *registry) {
 
     const TypeDecl decl = {.name = "Vec", .generic = generic};
 
-    vec_decl = type_registry_declare(registry, &decl);
+    return builtin_declare_type(vm, &decl);
 }
 
 // A vector's header: the block it owns, which carries how far into it anything
@@ -139,6 +137,10 @@ static void vec_install_method(void *ctx, const Type *on, const char *name, void
 }
 
 void builtin_register_vec(VM *vm) {
+    // Declared here and held as a local: what a provider gets back is its
+    // handle to the declaration, and one VM's types are not another's.
+    const Type *vec_decl = vec_declare_type(vm);
+
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
     Arena *arena = vm->env.arena;

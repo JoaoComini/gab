@@ -3,6 +3,7 @@
 // is not, because nothing registered it.
 
 #include "support/run.h"
+#include "vm/vm.h"
 
 #include <assert.h>
 
@@ -30,9 +31,37 @@ static void test_a_registered_type_needs_the_library() {
     assert(test_compiles_on_vm("func f(): int { let v: Vec<int>; return 0; }\n"));
 }
 
+// Types are interned per registry, and a registry belongs to a VM. So what a
+// library declares is that VM's: two of them each get their own 'String',
+// deriving to their own 'str'.
+static void test_each_vm_declares_its_own() {
+    VM *first = vm_create();
+    VM *second = vm_create();
+
+    const Type *here =
+        scope_type_lookup(&first->env.global_scope, string_from_cstr(&first->env.strings, "String"));
+    const Type *there =
+        scope_type_lookup(&second->env.global_scope, string_from_cstr(&second->env.strings, "String"));
+
+    assert(here && there);
+
+    // Never shared. Types compare by pointer identity, so one VM's 'String'
+    // standing in for another's would silently answer for the wrong registry.
+    assert(here != there);
+
+    assert(type_registry_deref_of(first->env.global_scope.type_registry, here) ==
+           first->env.global_scope.type_registry->primitives.str_type);
+    assert(type_registry_deref_of(second->env.global_scope.type_registry, there) ==
+           second->env.global_scope.type_registry->primitives.str_type);
+
+    vm_free(first);
+    vm_free(second);
+}
+
 int main(void) {
     test_a_primitive_needs_no_library();
     test_a_registered_type_needs_the_library();
+    test_each_vm_declares_its_own();
 
     return 0;
 }

@@ -273,7 +273,6 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
     registry->drops = drop_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->derefs = deref_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
-    registry->declared_count = 0;
     registry->layouts = layout_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->methods = method_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->applications =
@@ -300,7 +299,6 @@ Type *type_registry_declare_struct(TypeRegistry *registry, String *name, size_t 
 
 const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl) {
     assert(decl && decl->name && "a declared type is found by name");
-    assert(registry->declared_count < GAB_MAX_DECLARED_TYPES && "too many declared types");
     assert(!(decl->fields && decl->generic) && "a type is a struct or a generic declaration, not both");
     assert((decl->derefs_to != NULL) == (decl->lent_part_count > 0) &&
            "a deref and the parts naming it are one statement");
@@ -324,15 +322,7 @@ const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl) 
         type_registry_set_deref(registry, type, decl->derefs_to, decl->lent_parts, decl->lent_part_count);
     }
 
-    registry->declared[registry->declared_count++] = type;
-
     return type;
-}
-
-const Type *const *type_registry_declared(TypeRegistry *registry, size_t *count) {
-    *count = registry->declared_count;
-
-    return registry->declared;
 }
 
 bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method) {

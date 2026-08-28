@@ -183,12 +183,13 @@ static void test_a_lend_fits_the_reference_it_builds() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope scope;
-    test_scope_with_library(&ctx, &scope);
+    VM *vm = vm_create();
 
-    TypeRegistry *registry = scope.type_registry;
+    Scope *scope_ptr = &vm->env.global_scope;
 
-    const Type *string_type = test_declared_type(registry, "String");
+    TypeRegistry *registry = scope_ptr->type_registry;
+
+    const Type *string_type = scope_type_lookup(scope_ptr, string_from_cstr(&vm->env.strings, "String"));
     const Type *reference = type_registry_ref_to(registry, registry->primitives.str_type);
 
     const Deref *deref = type_registry_deref(registry, string_type);
@@ -213,6 +214,7 @@ static void test_a_lend_fits_the_reference_it_builds() {
     assert(!type_registry_deref(registry, reference));
 
     test_context_free(&ctx);
+    vm_free(vm);
 }
 
 int main(void) {

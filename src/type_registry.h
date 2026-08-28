@@ -81,10 +81,6 @@ typedef struct {
     const Type *error_type;
 } TypePrimitives;
 
-// The most types one standard library declares. A bound rather than a list, so
-// declaring costs no allocation and a scope walks a plain array.
-#define GAB_MAX_DECLARED_TYPES 16
-
 /*
     Declaring a type a standard library provides, which a scope then finds by
     name the way it finds a primitive.
@@ -271,14 +267,6 @@ typedef struct TypeRegistry {
 
     TypePrimitives primitives;
 
-    // The types a standard library declared, in the order it declared them.
-    // Named in a scope the same way a primitive is; the registry holds them
-    // only so a scope can find them.
-    //
-    // A fixed array because a library declares a handful and says so once. The
-    // count is what a scope walks.
-    const Type *declared[GAB_MAX_DECLARED_TYPES];
-    size_t declared_count;
 } TypeRegistry;
 
 // Declares a method, or fails if the type already answers that name. Finds one
@@ -328,16 +316,12 @@ void type_registry_destroy(TypeRegistry *registry);
 
 const Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind type);
 
-// Interns what 'decl' describes, lays it out, settles how it frees, and names
-// it for every scope built from this registry afterwards.
+// Interns what 'decl' describes, lays it out and settles how it frees. Returns
+// the finished type, which is the provider's handle to it.
 //
-// Returns the finished type, which is the provider's handle to it: nothing
-// looks one up by name later.
+// Interning only. What names a type is a Scope, which is where every other name
+// lives -- so a provider declares the type here and binds it there.
 const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl);
-
-// Every type declared so far, in declaration order, and how many. What a scope
-// walks to give them names.
-const Type *const *type_registry_declared(TypeRegistry *registry, size_t *count);
 // Gives a type the borrowed view it derefs to, through which it answers the
 // methods written for that view. One direction: 'from' reaches 'to', never the
 // reverse.

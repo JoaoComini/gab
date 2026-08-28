@@ -1,7 +1,5 @@
 #include "vm/vm.h"
 
-#include "builtin/builtin.h"
-
 #include "arena.h"
 #include "ast/ast.h"
 #include "builtin/builtin.h"
@@ -51,14 +49,7 @@ static void environment_init(Environment *env) {
     // TypeRegistry, which interns the builtin type names.
     string_pool_init(&env->strings, env->arena);
 
-    // The registry first, then what the standard library adds to it, and only
-    // then the scope: a scope names what is registered when it is built, so a
-    // type declared afterwards would never be found.
-    TypeRegistry *registry = type_registry_create(env->arena, &env->strings);
-
-    builtin_register_types(registry);
-
-    scope_init_over(&env->global_scope, env->arena, &env->strings, registry);
+    scope_init(&env->global_scope, env->arena, &env->strings, NULL);
     env->module_scopes = module_scope_map_create_alloc(arena_allocator(env->arena), 8);
 
     env->module_imports = module_import_list_create();

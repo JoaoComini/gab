@@ -13,17 +13,15 @@
 #include <stdint.h>
 #include <string.h>
 
-// The type this library declared, kept from where it was declared: a provider
-// is handed its type back, so nothing looks one up by name.
-static const Type *string_type = NULL;
-
 // The 'String' type: a block of characters, which carries how many are live.
 //
 // The same field a vector has, and freed by the same walk -- a string is what a
 // 'Vec<byte>' is, with characters for elements. What it does not share is what
 // it stands for: a run of characters, which is what lets it answer their
 // methods and lend a 'ref str'.
-void builtin_register_string_type(TypeRegistry *registry) {
+static const Type *string_declare_type(VM *vm) {
+    TypeRegistry *registry = vm->env.global_scope.type_registry;
+
     // The block owns the characters and carries the capacity it was taken at,
     // so freeing it asks nothing else -- and the room past the live ones is
     // what lets a string grow without reallocating on every push.
@@ -49,7 +47,7 @@ void builtin_register_string_type(TypeRegistry *registry) {
         .lent_part_count = sizeof(characters_named_by) / sizeof(*characters_named_by),
     };
 
-    string_type = type_registry_declare(registry, &decl);
+    return builtin_declare_type(vm, &decl);
 }
 
 // Where 'needle' first occurs in 'haystack' at or after 'from', or -1. The
@@ -235,6 +233,10 @@ static void string_from(Args *args) {
 }
 
 void builtin_register_string(VM *vm) {
+    // Declared here and held as a local: what a provider gets back is its
+    // handle to the type, and one VM's types are not another's.
+    const Type *string_type = string_declare_type(vm);
+
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
     // Every method here reads its receiver and allocates nothing, so it takes a
@@ -244,8 +246,6 @@ void builtin_register_string(VM *vm) {
     // read: a borrow reaches it through 'owner', while the owning string has no
     // route to the borrow's own set. What each takes stays the borrow, so a
     // 'String' receiver lends where the parameter says 'str'.
-    assert(string_type && "the string type is declared before its methods");
-
     // What every method takes and what a literal is: characters named by a
     // reference that carries how many. The owning string lends one.
     const Type *str_type = type_registry_ref_to(registry, registry->primitives.str_type);

@@ -32,15 +32,9 @@ static void scope_declare_primitives(Scope *scope) {
     // that spec to get as far as applying one.
     scope_decl_type(scope, primitives->array_type->name, primitives->array_type);
 
-    // And whatever a standard library registered, named the same way. Absent
-    // from a compile that never had one, which is what keeps 'String' out of
-    // the language and in the library that provides it.
-    size_t count = 0;
-    const Type *const *declared = type_registry_declared(scope->type_registry, &count);
-
-    for (size_t i = 0; i < count; i++) {
-        scope_decl_type(scope, declared[i]->name, declared[i]);
-    }
+    // And nothing else. What a standard library provides is named where it is
+    // declared -- see builtin_declare_type -- which is what keeps 'String' out
+    // of the language and in the library that provides it.
 }
 
 void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope *parent, int depth) {
