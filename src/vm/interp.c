@@ -531,39 +531,6 @@ static void vm_run_loop(VM *vm) {
                 vm_conditional(regs, instruction, vm_greater_thanf);
                 VM_NEXT();
             }
-            VM_CASE(OP_CONCAT) {
-                unsigned int rd = VM_DECODE_R_RD(instruction);
-                unsigned int r1 = VM_DECODE_R_R1(instruction);
-                unsigned int r2 = VM_DECODE_R_R2(instruction);
-
-                // The operands are references to characters, whatever they were
-                // lent from; the result below is a header that owns.
-                GabStrRef left;
-                GabStrRef right;
-
-                memcpy(&left, regs + r1 * VM_SLOT_SIZE, sizeof(left));
-                memcpy(&right, regs + r2 * VM_SLOT_SIZE, sizeof(right));
-
-                size_t total = (size_t)left.length + (size_t)right.length;
-
-                // Typed as characters rather than as a string: what is being
-                // allocated is the bytes themselves, and they own nothing
-                // further. The string header naming them is the value below.
-                char *characters = DEFAULT_ALLOCATOR.alloc(DEFAULT_ALLOCATOR.ctx, total == 0 ? 1 : total);
-
-                if (!characters) {
-                    vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory concatenating strings");
-                    VM_NEXT();
-                }
-
-                memcpy(characters, left.data, (size_t)left.length);
-                memcpy(characters + left.length, right.data, (size_t)right.length);
-
-                GabStringValue result = {.data = characters, .length = (int32_t)total};
-
-                memcpy(regs + rd * VM_SLOT_SIZE, &result, sizeof(result));
-                VM_NEXT();
-            }
             VM_CASE(OP_CMP_EQS) {
                 vm_conditional(regs, instruction, vm_equals);
                 VM_NEXT();

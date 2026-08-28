@@ -114,20 +114,6 @@ static void test_multiple_statements() {
     ast_unit_destroy(unit);
 }
 
-// Arithmetic binds tighter than a join, so '..' takes the sum as one operand
-// rather than the nearer number.
-static void test_a_join_takes_a_sum_whole() {
-    ASTUnit *unit = assert_parse(func_wrap("a .. 3 + 4;"));
-
-    ASTStmt *stmt = func_unwrap(unit).data[0];
-    ASTExpr *join = stmt->expr.value;
-
-    assert(join->bin_op.op == BIN_OP_CONCAT);
-    assert(join->bin_op.right->bin_op.op == BIN_OP_ADD);
-
-    ast_unit_destroy(unit);
-}
-
 static void test_simple_addition() {
     ASTUnit *unit = assert_parse(func_wrap("3 + 4;"));
 
@@ -694,7 +680,6 @@ int main() {
     test_single_number();
     test_booleans();
     test_multiple_statements();
-    test_a_join_takes_a_sum_whole();
     test_simple_addition();
     test_operator_precedence();
     test_parentheses();

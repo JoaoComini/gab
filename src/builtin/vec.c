@@ -11,6 +11,13 @@
 #include <stdint.h>
 #include <string.h>
 
+const DropPlan *vec_build_drop(TypeRegistry *registry, const Type *type) {
+    // 'length' counts what has been written into 'data'. What the block frees
+    // is its own capacity; what the elements it counted own is dropped first,
+    // since that walk reads memory the block releases.
+    return drop_plan_counted_block(type_registry_arena(registry), registry, type, 1, 0);
+}
+
 // What an empty vector's first allocation holds. Small enough that a vector
 // pushed into once does not reserve a page, large enough that the first few
 // pushes do not each reallocate.

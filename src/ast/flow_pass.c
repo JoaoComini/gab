@@ -69,7 +69,7 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
         // exactly as long as the variable does. A pointer variable is the other
         // case: what it names was decided wherever it was assigned, which is
         // what the lattice carries.
-        if (expr->type && expr->type->kind == TYPE_STRING && type_is_owned(expr->type)) {
+        if (type_is_string(expr->type) && type_is_owned(expr->type)) {
             return expr->symbol->scope_depth;
         }
 
@@ -201,7 +201,7 @@ static bool borrows_memory(const Type *type) {
         return false;
     }
 
-    return type_is_indirect(type) || (type->kind == TYPE_STRING && !type_is_owned(type));
+    return type_is_indirect(type) || (type_is_string(type) && !type_is_owned(type));
 }
 
 // Rejects a borrow being stored somewhere that outlives what it names.

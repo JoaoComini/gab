@@ -1,6 +1,7 @@
 #include "type_registry.h"
 
 #include "arena.h"
+#include "builtin/builtin.h"
 #include "object.h"
 #include "string/string.h"
 #include "type.h"
@@ -19,25 +20,32 @@ static Type *register_builtin(TypeRegistry *registry, TypeKind kind, const char 
     return type_create(registry->arena, kind, string_from_cstr(registry->strings, name));
 }
 
-// The 'String' type, laid out from its two fields. Whether the header owns the
-// characters it names is the whole difference between a string and a view of
-// one, and it is the header's own business: the raw address naming them cannot
-// say.
+// The 'String' type: a block of characters and how many of them are live.
+//
+// The same two fields a vector has, and freed by the same walk -- a string is
+// what a 'Vec<byte>' is, with characters for elements. What it does not share
+// is how one is written: a literal and a comparison are about the characters
+// themselves, and no struct shape implies them.
 static Type *string_builtin_create(TypeRegistry *registry) {
     Type *type = type_struct_create(registry->arena, string_from_cstr(registry->strings, "String"), 2);
-    type->kind = TYPE_STRING;
 
-    // A raw address either way: who frees the characters is the header's own
-    // business rather than this field's.
-    const Type *characters = type_registry_ptr_to(registry, registry->builtins.byte_type);
+    // The block owns the characters and carries the capacity it was taken at,
+    // so freeing it asks nothing else -- and the room past the live ones is
+    // what lets a string grow without reallocating on every push.
+    const Type *characters = type_registry_block_of(registry, registry->builtins.byte_type);
 
     type_add_field(type, string_from_cstr(registry->strings, "data"), characters);
     type_add_field(type, string_from_cstr(registry->strings, "length"), registry->builtins.int_type);
 
-    // A string owns its characters, always: what borrows them is a 'ref str',
-    // which owns nothing because no reference does. So this is not a question
-    // the type has to be asked -- it is what being a String means.
-    type_registry_drop_of(registry, type);
+    // What separates it from a 'Vec<byte>', which is laid out identically: the
+    // characters are text, so this is what lends a 'ref str' and what '=='
+    // reads.
+    type->holds_characters = true;
+
+    // How a string frees, which its shape does not say -- the same composition
+    // a vector's takes, since what differs between them is the element rather
+    // than how one is freed.
+    type_registry_set_drop(registry, type, string_build_drop(registry, type));
 
     return type;
 }
@@ -76,11 +84,8 @@ static Type *vec_decl_create(TypeRegistry *registry) {
         .fields = fields,
         .field_count = 2,
 
-        // 'length' counts what has been written into 'data'. What the block
-        // frees is its own capacity; what these elements own is dropped first.
-        .counts_a_block = true,
-        .count_field = 1,
-        .block_field = 0,
+        // How a vector frees, which its shape does not say: see vec_build_drop.
+        .build_drop = vec_build_drop,
     };
 
     type->generic = generic;
@@ -301,6 +306,13 @@ size_t type_registry_size_of(TypeRegistry *registry, const Type *type) {
 
 size_t type_registry_align_of(TypeRegistry *registry, const Type *type) {
     return type_registry_layout_of(registry, type)->alignment;
+}
+
+void type_registry_set_drop(TypeRegistry *registry, const Type *type, const DropPlan *plan) {
+    assert(!drop_key_lookup(registry->drops, type) &&
+           "a supplied drop must be given before the type's plan is first asked for");
+
+    drop_key_insert(registry->drops, type, plan);
 }
 
 const DropPlan *type_registry_drop_of(TypeRegistry *registry, const Type *type) {
@@ -588,6 +600,13 @@ const Type *type_registry_instantiate(TypeRegistry *registry, const Type *decl, 
     // this entry rather than building a second.
     application_insert(registry, app, type);
 
+    // What the declaration says frees an instantiation, composed against the
+    // fields this one was laid out with. Nothing here knows what that plan
+    // walks: the declaration does, and hands back what it built.
+    if (generic->build_drop) {
+        type_registry_set_drop(registry, type, generic->build_drop(registry, type));
+    }
+
     type_registry_drop_of(registry, type);
 
     install_generic_methods(registry, type, generic, args);
@@ -607,6 +626,10 @@ const Type *type_registry_ptr_to(TypeRegistry *registry, const Type *pointee) {
     return indirect_to(registry, TYPE_CTOR_PTR, TYPE_PTR, pointee);
 }
 
+Arena *type_registry_arena(TypeRegistry *registry) { return registry->arena; }
+
+const Type *type_registry_string(TypeRegistry *registry) { return registry->builtins.string_type; }
+
 const Type *type_registry_error_type(TypeRegistry *registry) { return registry->builtins.error_type; }
 
 const Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind kind) {
@@ -619,8 +642,6 @@ const Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind kind) {
         return registry->builtins.bool_type;
     case TYPE_BYTE:
         return registry->builtins.byte_type;
-    case TYPE_STRING:
-        return registry->builtins.string_type;
     default:
         break;
     }

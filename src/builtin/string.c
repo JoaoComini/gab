@@ -6,8 +6,19 @@
 #include "vm/interp.h"
 #include "vm/vm.h"
 
+#include "allocator.h"
+
 #include <stddef.h>
+#include <stdint.h>
 #include <string.h>
+
+const DropPlan *string_build_drop(TypeRegistry *registry, const Type *type) {
+    // 'length' counts what has been written into 'data'. A character owns
+    // nothing, so no prefix is walked and the block's own free is the whole of
+    // what a string has to do -- but the composition is the one a vector takes,
+    // since what differs between them is the element rather than how one frees.
+    return drop_plan_counted_block(type_registry_arena(registry), registry, type, 1, 0);
+}
 
 // Where 'needle' first occurs in 'haystack' at or after 'from', or -1. The
 // empty needle occurs at the position asked for, which is what makes
@@ -109,6 +120,110 @@ static void string_count(Args *args) {
     args_return_int(args, total);
 }
 
+// What an empty string's first allocation holds. Small enough that a string
+// pushed into once does not reserve a page, large enough that the first few
+// pushes do not each reallocate.
+#define STRING_INITIAL_CAPACITY 8
+
+// Makes room for 'extra' more characters, growing the block if the live ones
+// leave too little. Doubling, so that appending n characters copies O(n) times
+// rather than once per push.
+//
+// False when the allocation fails, having failed the run: the caller must not
+// then write the characters it was making room for.
+static bool string_reserve(Args *args, GabStringValue *string, int32_t extra) {
+    if (string->length + extra <= string->block.capacity) {
+        return true;
+    }
+
+    // Doubling overflows a signed int past 2^30 characters, which is undefined
+    // rather than merely wrong. A string that large has no room to grow, so the
+    // run fails here rather than wrapping to a smaller block than it holds.
+    if (string->length > INT32_MAX - extra || string->block.capacity > INT32_MAX / 2) {
+        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "a string cannot grow any further");
+        return false;
+    }
+
+    int32_t capacity = string->block.capacity ? string->block.capacity * 2 : STRING_INITIAL_CAPACITY;
+
+    // Doubling may still not reach what was asked for, since 'extra' is not
+    // bounded by the capacity: a long append onto a short string clears it in
+    // one step rather than looping.
+    if (capacity < string->length + extra) {
+        capacity = string->length + extra;
+    }
+
+    char *block = DEFAULT_ALLOCATOR.alloc(DEFAULT_ALLOCATOR.ctx, (size_t)capacity);
+
+    if (!block) {
+        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory growing a string");
+        return false;
+    }
+
+    if (string->length) {
+        memcpy(block, string->block.data, (size_t)string->length);
+    }
+
+    if (string->block.data) {
+        DEFAULT_ALLOCATOR.free_sized(DEFAULT_ALLOCATOR.ctx, string->block.data,
+                                     (size_t)string->block.capacity);
+    }
+
+    string->block.data = block;
+    string->block.capacity = capacity;
+
+    return true;
+}
+
+// 's.push(c)'. Writes one character past the live ones, growing first if there
+// is no room.
+static void string_push(Args *args) {
+    GabStringValue string = args_string_at(args, 0);
+    int32_t character = args_int(args, 1);
+
+    if (!string_reserve(args, &string, 1)) {
+        return;
+    }
+
+    ((char *)string.block.data)[string.length] = (char)character;
+    string.length++;
+
+    memcpy(args_pointer(args, 0), &string, sizeof(string));
+}
+
+// 's.append(o)'. Spells the characters of 'o' after the receiver's own.
+//
+// The source is read before the reserve may move the block, since a string
+// appended to itself would otherwise copy out of freed memory.
+static void string_append(Args *args) {
+    GabStringValue string = args_string_at(args, 0);
+    GabStrRef other = args_string(args, 1);
+
+    if (other.length == 0) {
+        return;
+    }
+
+    // Copied out first for the reason above: 'other' may name the very block
+    // the reserve below frees.
+    char *copy = DEFAULT_ALLOCATOR.alloc(DEFAULT_ALLOCATOR.ctx, (size_t)other.length);
+
+    if (!copy) {
+        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory appending to a string");
+        return;
+    }
+
+    memcpy(copy, other.data, (size_t)other.length);
+
+    if (string_reserve(args, &string, other.length)) {
+        memcpy((char *)string.block.data + string.length, copy, (size_t)other.length);
+        string.length += other.length;
+
+        memcpy(args_pointer(args, 0), &string, sizeof(string));
+    }
+
+    DEFAULT_ALLOCATOR.free_sized(DEFAULT_ALLOCATOR.ctx, copy, (size_t)other.length);
+}
+
 // 's.to_owned()'. The characters a borrow names, copied into a string that owns
 // them. The one string method that allocates, and the way anything arena-backed
 // -- a literal, or the join of two -- becomes something a 'String' slot may
@@ -126,7 +241,7 @@ static void string_to_owned(Args *args) {
 static void string_clone(Args *args) {
     GabStringValue string = args_string_at(args, 0);
 
-    args_return_string_copy(args, string.data, string.length);
+    args_return_string_copy(args, string.block.data, string.length);
 }
 
 // 'String::from(s)'. The characters a borrow names, copied into a string that
@@ -192,6 +307,14 @@ void builtin_register_string(VM *vm) {
     // hands back an allocation, where every method above reads a borrow.
     builtin_register_static(vm, string_type, "from", string_from, registry->builtins.string_type,
                             string_param, 1);
+
+    // Growing belongs to the owner: what is written into is the block, and only
+    // a 'String' has one. Each takes a pointer to the header for the reason
+    // 'clone' does, and writes the grown header back through it.
+    const Type *const char_param[] = {int_type};
+
+    builtin_register_method(vm, string_type, ref_string, "push", string_push, NULL, char_param, 1);
+    builtin_register_method(vm, string_type, ref_string, "append", string_append, NULL, string_param, 1);
 
     // The one method belonging to the owner rather than to the characters: what
     // it duplicates is the allocation, which only a 'String' has.

@@ -224,8 +224,6 @@ static const char *bin_op_name(BinOp op) {
         return "/";
     case BIN_OP_MOD:
         return "%";
-    case BIN_OP_CONCAT:
-        return "..";
     case BIN_OP_LESS:
         return "<";
     case BIN_OP_GREATER:
@@ -773,7 +771,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 // reference names belong to someone else, and an owning slot would free what it
 // never allocated.
 static bool lends_by_value(const Type *to, const Type *from) {
-    return type_is_str_ref(to) && from && from->kind == TYPE_STRING;
+    return type_is_str_ref(to) && type_is_string(from);
 }
 
 // What a value derefs to, or NULL for a type that derefs to nothing. An owning
@@ -788,7 +786,7 @@ static bool lends_by_value(const Type *to, const Type *from) {
 // Written for the one such pair there is. A buffer and its slice would be the
 // second, and would add an arm here rather than a case wherever this is walked.
 static const Type *derefs_to(TypeRegistry *registry, const Type *type) {
-    return type && type->kind == TYPE_STRING ? registry->builtins.str_type : NULL;
+    return type_is_string(type) ? registry->builtins.str_type : NULL;
 }
 
 // A pointer handing over a reference to what it points at, reaching through
@@ -851,10 +849,9 @@ static bool type_accepts(const Type *to, const Type *from) {
 // Returns false for a temporary, which has no address to take.
 static bool borrow_into(ResolverState *state, ASTExpr **slot, const Type *destination, Span span) {
     // Only something with a home in memory can be lent. A string that owns and
-    // has no home is a temporary -- a concatenation -- and its characters are
+    // has no home is a temporary -- an owned copy -- and its characters are
     // freed where the expression ends, so the borrow would name freed memory.
-    if (type_is_str_ref(destination) && (*slot)->type && (*slot)->type->kind == TYPE_STRING &&
-        !is_addressable(*slot)) {
+    if (type_is_str_ref(destination) && type_is_string((*slot)->type) && !is_addressable(*slot)) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, span,
                    "cannot borrow a string that nothing holds, since its characters are freed where the "
                    "expression ends");
@@ -921,7 +918,7 @@ bool is_ordered_type(const Type *t) { return is_numeric_type(t) || is_boolean_ty
 // Characters, however they are named: the owning header or a reference to
 // someone else's. Comparison and joining read the same two words from either,
 // so what may be compared or joined is the pair rather than one of them.
-bool is_string_type(const Type *t) { return t->kind == TYPE_STRING || type_is_str_ref(t); }
+bool is_string_type(const Type *t) { return type_is_string(t) || type_is_str_ref(t); }
 
 // Ordering is left out: '<' on text asks which comes first, and no order is
 // defined for it. Equality asks only whether two strings spell the same thing.
@@ -969,18 +966,6 @@ static bool bin_op_accepts(ResolverState *state, BinOp op, const Type *type, Spa
     const char *op_name = bin_op_name(op);
 
     switch (op) {
-    // Joining is the one operator a string answers beyond equality. Which types
-    // are joinable is the whole rule: an array becomes joinable by saying so
-    // here, and nothing else about '..' has to change.
-    case BIN_OP_CONCAT:
-        if (is_string_type(type)) {
-            return true;
-        }
-
-        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' requires a joinable type, found %s", op_name,
-                   type_name(state, type));
-        return false;
-
     case BIN_OP_ADD:
     case BIN_OP_SUB:
     case BIN_OP_MUL:
@@ -1143,8 +1128,8 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
 
         const char *op_name = bin_op_name(expr->bin_op.op);
 
-        // Two strings are one operand type however each of them owns: what '..'
-        // and '==' read is the characters, and ownership decides who frees the
+        // Two strings are one operand type however each of them owns: what
+        // '==' reads is the characters, and ownership decides who frees the
         // result rather than whether the operator applies.
         bool both_strings = is_string_type(left_type) && is_string_type(right_type);
 
@@ -1160,13 +1145,16 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             break;
         }
 
-        if (both_strings && expr->bin_op.op == BIN_OP_CONCAT) {
-            // '..' allocates the characters it yields, so the result owns
-            // them however its operands were written. Two literals are not
-            // joined here: the result would still have to be copied into a
-            // slot that owns, which is what OP_CONCAT already does.
-            expr->type = state->current_scope->type_registry->builtins.string_type;
-            break;
+        // An owning string is compared through a reference to its characters,
+        // never as the slots it occupies: a header carries a capacity beside
+        // the count, and reading it as a reference would compare that capacity
+        // as though it were the length.
+        if (both_strings) {
+            const Type *characters = type_registry_ref_to(
+                state->current_scope->type_registry, state->current_scope->type_registry->builtins.str_type);
+
+            borrow_into(state, &expr->bin_op.left, characters, expr->span);
+            borrow_into(state, &expr->bin_op.right, characters, expr->span);
         }
 
         expr->type = bin_op_yields_bool(expr->bin_op.op)
@@ -1591,9 +1579,8 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         // A literal names characters the unit's arena holds, which outlive every
         // value that reads them. What names them is a reference: no slot holds
         // the characters themselves, so the count rides with the address.
-        expr->type = expr->lit.kind == TYPE_STRING
-                         ? type_registry_ref_to(registry, registry->builtins.str_type)
-                         : type_registry_get_builtin(registry, expr->lit.kind);
+        expr->type = expr->lit.kind == TYPE_STR ? type_registry_ref_to(registry, registry->builtins.str_type)
+                                                : type_registry_get_builtin(registry, expr->lit.kind);
         break;
     }
     default:
@@ -2328,7 +2315,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
                     // with a remedy to name: the characters belong to the
                     // arena, and 'to_owned()' is what copies them into a string
                     // this slot may free.
-                    if (decl_type->kind == TYPE_STRING && init_type->kind == TYPE_STRING) {
+                    if (type_is_string(decl_type) && type_is_str_ref(init_type)) {
                         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->var_decl.initializer->span,
                                    "a %s borrows characters it does not own, so a 'String' cannot take it; "
                                    "write 'str', or '.to_owned()' to copy them",

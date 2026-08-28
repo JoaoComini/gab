@@ -567,7 +567,7 @@ static void codegen_walk_owning_slots(CodegenState *state, const Type *type, uns
     // its 'data' field names, and the capacity saying how big that block is
     // sits inside that field while the count of live elements sits beside it.
     // One release naming the whole header is what reaches both.
-    if (type && (type->kind == TYPE_ARRAY || type->kind == TYPE_STRING || type_owns_a_block(type))) {
+    if (type && (type->kind == TYPE_ARRAY || type_owns_a_block(type))) {
         if (!type_is_owned(type)) {
             return;
         }
@@ -1508,6 +1508,9 @@ static unsigned int codegen_lend_expr(CodegenState *state, ASTExpr *node) {
     // Each field the reference carries, found in the header by name. By name
     // rather than by position, so a header that declares a capacity between its
     // address and its count still lends the two the reference asks for.
+    //
+    // What a block contributes is its address alone: a 'ref str' is where the
+    // characters are and how many, never the capacity they sit in.
     const TypeField *carried[VM_MAX_LENT_FIELDS];
     size_t count = type_lent_fields(lent, type_pointee(reference), carried, VM_MAX_LENT_FIELDS);
 
@@ -1520,10 +1523,17 @@ static unsigned int codegen_lend_expr(CodegenState *state, ASTExpr *node) {
 
         assert(layout->offsets[index] % VM_SLOT_SIZE == 0 && "a lent field is always slot-aligned");
 
-        codegen_copy_slots(state, rd + at, source + (unsigned int)(layout->offsets[index] / VM_SLOT_SIZE),
-                           type_slot_count(state->registry, carried[i]->type));
+        // A block hands over its address and nothing else: the capacity beside
+        // it is what frees the memory, which stays the owner's business. Every
+        // other field is lent whole.
+        size_t width = carried[i]->type->kind == TYPE_BLOCK
+                           ? VM_INDIRECT_SLOTS
+                           : type_slot_count(state->registry, carried[i]->type);
 
-        at += type_slot_count(state->registry, carried[i]->type);
+        codegen_copy_slots(state, rd + at, source + (unsigned int)(layout->offsets[index] / VM_SLOT_SIZE),
+                           width);
+
+        at += (unsigned int)width;
     }
 
     return rd;
@@ -1563,7 +1573,7 @@ static unsigned int codegen_string_literal(CodegenState *state, ASTExpr *node) {
 }
 
 static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node) {
-    if (node->lit.kind == TYPE_STRING) {
+    if (node->lit.kind == TYPE_STR) {
         return codegen_string_literal(state, node);
     }
 
@@ -1728,9 +1738,9 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
             owned_args[owned_arg_count].type = arg->type;
             owned_arg_count++;
 
-            // That slot is the only owner now: an expression that
-            // registered its result as a statement temporary -- a join does --
-            // would otherwise be freed both here and where the statement ends.
+            // That slot is the only owner now: an expression that registered
+            // its result as a statement temporary would otherwise be freed both
+            // here and where the statement ends.
             codegen_drop_temporary(state, arg_reg);
         }
 
@@ -2527,7 +2537,7 @@ static OpCode bin_op_opcode_for(BinOp op, const Type *left_type, RhsKind kind) {
     // way a header does, since what is read is the characters either way. A
     // reference falling through to the integer families would compare the
     // address alone, which answers only for two names of one allocation.
-    if (left_type->kind == TYPE_STRING || type_is_str_ref(left_type)) {
+    if (type_is_string(left_type) || type_is_str_ref(left_type)) {
         return op == BIN_OP_EQUAL ? OP_CMP_EQS : OP_CMP_NES;
     }
 
@@ -2668,27 +2678,6 @@ static unsigned int codegen_bin_op_expr(CodegenState *state, ASTExpr *node) {
         break;
     }
 
-    // A concatenation lands in a string's worth of slots rather than one, and
-    // its result owns, so it takes neither the immediate encoding nor the
-    // single-register destination the arithmetic path allocates.
-    if (node->bin_op.op == BIN_OP_CONCAT) {
-        unsigned int left = codegen_expr(state, node->bin_op.left);
-        unsigned int right = codegen_expr(state, node->bin_op.right);
-        unsigned int result = codegen_alloc_slots(state, VM_STRING_SLOTS, VM_INDIRECT_SLOTS, node->span);
-
-        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_CONCAT, result, left, right));
-
-        // Whoever consumes this may bind it -- a 'let' takes ownership of the
-        // slot -- but an operand position does not, and nothing else would free
-        // it. Recorded as a temporary, which the statement's end releases and
-        // binding disowns.
-        owned_list_add(&state->temporaries,
-                       (OwnedSlot){.slot = result, .depth = state->depth, .type = node->type});
-        codegen_record_frame_ref(state, result, node->type);
-
-        return result;
-    }
-
     unsigned int lhs = codegen_expr(state, node->bin_op.left);
 
     RhsKind rhs_kind = RHS_REGISTER;
@@ -2761,10 +2750,9 @@ static bool expr_yields_owned(const ASTExpr *expr) {
     }
 
     switch (expr->kind) {
-    // A concatenation allocates the characters it yields; every other binary op
-    // answers with a value that owns nothing.
+    // Every binary op answers with a value that owns nothing.
     case EXPR_BIN_OP:
-        return expr->bin_op.op == BIN_OP_CONCAT;
+        return false;
 
     case EXPR_NEW:
     case EXPR_CALL:
@@ -2995,9 +2983,8 @@ static size_t slot_release_width(TypeRegistry *registry, const Type *type) {
         return 0;
     }
 
-    return type->kind == TYPE_ARRAY || type->kind == TYPE_STRING || type_owns_a_block(type)
-               ? type_registry_size_of(registry, type)
-               : sizeof(void *);
+    return type->kind == TYPE_ARRAY || type_owns_a_block(type) ? type_registry_size_of(registry, type)
+                                                               : sizeof(void *);
 }
 
 // A value occupies ceil(size / 4) consecutive slots, which is 1 for every

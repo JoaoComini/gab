@@ -34,18 +34,14 @@ typedef enum {
     // business of the header that knows how many of its elements are live.
     TYPE_PTR,
 
-    // A header by value: the address of the characters and their count. Nominal
-    // rather than structural, so it is interned once like the other builtins.
-    TYPE_STRING,
-
     // The characters themselves, however many there are. Unsized: no slot holds
     // one, because how far it runs is not in the type. Reached only through a
     // 'ref str', which carries that count beside the address.
     TYPE_STR,
 
-    // A header owning a run of elements: where they are and how many. Laid out
-    // like a string and freed like one, differing in that its element is
-    // whatever it was written over rather than always a byte.
+    // A header owning a run of elements: where they are and how many. Its
+    // element is whatever it was written over, which is what its drop walk
+    // reads.
     TYPE_ARRAY,
     TYPE_STRUCT,
 
@@ -91,6 +87,12 @@ typedef enum {
 // instantiating one builds its key on the stack; nothing declares more than the
 // one 'Vec' takes.
 #define GAB_MAX_TYPE_PARAMS 4
+
+// The most steps a supplied drop plan is composed from: what the type's fields
+// own, and the live prefix of a block besides. A bound rather than an
+// allocation, so composing one fills a local array instead of asking the arena
+// twice.
+#define GAB_MAX_DROP_STEPS 16
 
 // How many slots a method's signature may take, receiver included. A bound so
 // that installing one builds its signature on the stack.
@@ -208,10 +210,6 @@ typedef enum {
     // Free what the address at this offset names, then the plan of the pointee.
     // What 'new box T' allocates and what every owning pointer field holds.
     DROP_BOX,
-
-    // Free the characters a string header names. The count sits beside the
-    // address, since a block has no header to ask how far it runs.
-    DROP_STRING,
 
     // Free the block an owning address names, at the capacity beside it. What
     // a string's characters are, for an element of any width.
@@ -366,22 +364,27 @@ typedef struct GenericMethod {
     size_t param_count;
 } GenericMethod;
 
+// Builds the plan that frees one type, composed from the drop_plan_* primitives.
+// NULL for a type whose shape already says how it frees.
+typedef struct TypeRegistry TypeRegistry;
+
+typedef const DropPlan *(*DropBuilder)(TypeRegistry *registry, const Type *type);
+
 typedef struct GenericDecl {
     size_t param_count;
 
     const GenericField *fields;
     size_t field_count;
 
-    // Which field counts the live elements of which block, for a declaration
-    // whose instantiations hold one. Both are indices into 'fields'.
+    // How an instantiation of this declaration frees, for one whose shape does
+    // not say. Called with each instantiation once its fields are laid out, and
+    // returns the plan that frees it -- or NULL to take the derived one.
     //
-    // Here rather than derived from the fields, because nothing about a block
-    // beside an int says that int counts it: a vector's length and its capacity
-    // are both numbers, and only the declaration knows which is which. Freeing
-    // the wrong prefix is silent, so this is said once where it is true.
-    bool counts_a_block;
-    size_t count_field;
-    size_t block_field;
+    // A builder rather than a description, because what the plan needs is
+    // offsets and a stride, and those follow from the element the instantiation
+    // was given. It is also what keeps the knowledge where it belongs: that a
+    // vector counts a block is Vec's business, not the registry's.
+    DropBuilder build_drop;
 
     // What every instantiation answers, in terms of the parameters. Registered
     // where an instantiation is interned, since only there is the parameter
@@ -452,6 +455,13 @@ struct Type {
     // not a generic declaration, which is all but the bare names.
     const GenericDecl *generic;
 
+    // Whether the block this counts holds characters, making the type the
+    // owning 'String'. What a 'Vec<byte>' would not be: the two are laid out
+    // alike, and only this says one of them denotes text -- which is what
+    // decides that it lends a 'ref str', joins with '+' and compares by
+    // characters rather than by its bytes.
+    bool holds_characters;
+
     /*
         What the kind gives it, and nothing another kind would give.
 
@@ -467,8 +477,8 @@ struct Type {
             const Type *pointee;
         } indirect;
 
-        // TYPE_STRUCT, TYPE_STRING: the fields the layout came from. A string's
-        // two are its characters and their count.
+        // TYPE_STRUCT: the fields the layout came from. A string's two are the
+        // block holding its characters and how many of them are live.
         //
         // Not TYPE_STR: those characters are what a 'str' is, so it holds no
         // fields naming them. What does is a reference to one, and that is the
@@ -518,6 +528,14 @@ TypeMetadata type_metadata_of(const Type *type);
 // receiver reconciles to, what a C body reads, and what '==' and '..' take.
 bool type_is_str_ref(const Type *type);
 
+// Whether this is the owning 'String': a struct whose block holds characters,
+// which is what lends a 'ref str' and what a literal is copied into.
+//
+// A flag rather than a kind, because nothing about the shape says it: a string
+// is laid out exactly as a 'Vec<byte>' is, and what tells them apart is that
+// one denotes text. See 'holds_characters'.
+bool type_is_string(const Type *type);
+
 // Whether a value of this type can be held at all: an unsized type names
 // something no slot, field or parameter may contain, and is reached only
 // through a reference.
@@ -543,8 +561,7 @@ int32_t type_array_length(const Type *type);
 // is an indirection that owns nothing.
 bool type_is_owned(const Type *type);
 
-// Whether a value of this type owns a block it counts live elements of -- what
-// a generic declaration says when its instantiations hold one.
+// Whether a value of this type holds a block, which it owns the memory of.
 //
 // Asked where a release is emitted and where its width is settled: such a value
 // is freed as one header rather than through the field naming the block, since

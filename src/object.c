@@ -44,22 +44,6 @@ static void drop_box_at(Allocator allocator, const DropPlan *plan, void *value) 
     object_free(allocator, owned);
 }
 
-// Frees the characters a string header owns. What must be freed is the block
-// the header names, which the address alone cannot describe: the count sits in
-// the slot beside it, since a block has no header to ask.
-static void drop_string_at(Allocator allocator, void *value) {
-    GabStringValue string;
-    memcpy(&string, value, sizeof(string));
-
-    if (!string.data) {
-        return;
-    }
-
-    // Cast away the const the host reads its characters through: what is being
-    // freed is the block, and only an owning header ever reaches here.
-    allocator.free_sized(allocator.ctx, (void *)(uintptr_t)string.data, (size_t)string.length);
-}
-
 // Frees what an array's elements own. The elements live in the array itself, so
 // there is no block to free -- only the run of them to walk, striding by a
 // width the plan carries.
@@ -129,9 +113,6 @@ static void drop_run(Allocator allocator, const DropPlan *plan, void *value) {
     case DROP_BOX:
         drop_box_at(allocator, plan, value);
         break;
-    case DROP_STRING:
-        drop_string_at(allocator, value);
-        break;
     case DROP_ARRAY:
         drop_array_at(allocator, plan, value);
         break;
@@ -147,14 +128,9 @@ static void drop_run(Allocator allocator, const DropPlan *plan, void *value) {
     }
 }
 
-// The step that frees what a value's live elements own, for a type whose
-// declaration says one of its fields counts another's block.
-//
-// NULL when the element owns nothing: there is then nothing to walk the prefix
-// for, and the block's own free is the whole of what the value has to do.
-static const DropPlan *drop_of_live_prefix(Arena *arena, TypeRegistry *registry, const Type *type,
-                                           const GenericDecl *generic) {
-    const TypeField *block = &type_fields(type)[generic->block_field];
+const DropPlan *drop_plan_live_prefix(Arena *arena, TypeRegistry *registry, const Type *type,
+                                      size_t count_field, size_t block_field) {
+    const TypeField *block = &type_fields(type)[block_field];
     const Type *element = type_pointee(block->type);
 
     const DropPlan *inner = type_registry_drop_of(registry, element);
@@ -171,15 +147,70 @@ static const DropPlan *drop_of_live_prefix(Arena *arena, TypeRegistry *registry,
         .kind = DROP_PREFIX,
         .inner = inner,
         .stride = type_registry_size_of(registry, element),
-        .count_offset = layout->offsets[generic->count_field],
-        .block_offset = layout->offsets[generic->block_field],
+        .count_offset = layout->offsets[count_field],
+        .block_offset = layout->offsets[block_field],
     };
 
     return plan;
 }
 
-// Builds the plan for a type whose layout is known, or leaves it NULL when the
+const DropPlan *drop_plan_counted_block(Arena *arena, TypeRegistry *registry, const Type *type,
+                                        size_t count_field, size_t block_field) {
+    DropStep steps[GAB_MAX_DROP_STEPS];
+    size_t count = 0;
+
+    const DropPlan *prefix = drop_plan_live_prefix(arena, registry, type, count_field, block_field);
+
+    // First, so that what the elements own is freed while the block naming them
+    // is still allocated. The offsets it reads are its own, so the step sits at
+    // the start of the value rather than at a field.
+    if (prefix) {
+        steps[count++] = (DropStep){.offset = 0, .plan = prefix};
+    }
+
+    for (size_t i = 0; i < type_field_count(type) && count < GAB_MAX_DROP_STEPS; i++) {
+        DropStep step = drop_plan_field(registry, type, i);
+
+        if (step.plan) {
+            steps[count++] = step;
+        }
+    }
+
+    return drop_plan_steps(arena, steps, count);
+}
+
+const DropPlan *drop_plan_steps(Arena *arena, const DropStep *steps, size_t count) {
+    if (count == 0) {
+        return NULL;
+    }
+
+    DropStep *copied = arena_alloc(arena, count * sizeof(DropStep));
+
+    memcpy(copied, steps, count * sizeof(DropStep));
+
+    DropPlan *plan = arena_alloc(arena, sizeof(DropPlan));
+
+    *plan = (DropPlan){.kind = DROP_FIELDS, .steps = copied, .step_count = count};
+
+    return plan;
+}
+
+DropStep drop_plan_field(TypeRegistry *registry, const Type *type, size_t field) {
+    const TypeLayout *layout = type_registry_layout_of(registry, type);
+
+    return (DropStep){
+        .offset = layout->offsets[field],
+        .plan = type_registry_drop_of(registry, type_fields(type)[field].type),
+    };
+}
+
+// Derives the plan for a type whose layout is known, or leaves it NULL when the
 // type owns nothing.
+//
+// Derivation answers for every shape that implies how it frees: a struct owns
+// through its fields, an array through its elements, a box through its pointee.
+// A type holding a block is the shape that does not imply it -- see
+// drop_plan_live_prefix -- and supplies its own plan instead.
 //
 // Every constructed type comes through here, headers included: what a free has
 // to do follows from the kind, and whether anything is freed at all follows
@@ -222,10 +253,6 @@ const DropPlan *object_build_drop(Arena *arena, TypeRegistry *registry, const Ty
         plan->stride = type_registry_size_of(registry, type_pointee(type));
         break;
 
-    case TYPE_STRING:
-        plan->kind = DROP_STRING;
-        break;
-
     default: {
         // Only the fields that own become steps: what a free walks is the shape
         // of what owns rather than the shape of the type.
@@ -237,23 +264,10 @@ const DropPlan *object_build_drop(Arena *arena, TypeRegistry *registry, const Ty
             }
         }
 
-        // A value counting a block's live elements drops them before the block
-        // frees the memory they sit in, so it is one step more.
-        const GenericDecl *generic = type->decl ? type->decl->generic : NULL;
-        const DropPlan *prefix =
-            generic && generic->counts_a_block ? drop_of_live_prefix(arena, registry, type, generic) : NULL;
-
-        DropStep *steps = arena_alloc(arena, (owning + (prefix ? 1 : 0)) * sizeof(DropStep));
+        DropStep *steps = arena_alloc(arena, owning * sizeof(DropStep));
         size_t count = 0;
 
         const TypeLayout *layout = type_registry_layout_of(registry, type);
-
-        // First, so that what the elements own is freed while the block naming
-        // them is still allocated. The offsets it reads are its own, so the
-        // step sits at the start of the value rather than at a field.
-        if (prefix) {
-            steps[count++] = (DropStep){.offset = 0, .plan = prefix};
-        }
 
         for (size_t i = 0; i < type_field_count(type); i++) {
             const DropPlan *inner = type_registry_drop_of(registry, type_fields(type)[i].type);

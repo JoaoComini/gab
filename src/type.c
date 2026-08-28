@@ -15,6 +15,11 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->decl = NULL;
     type->generic = NULL;
 
+    // Nothing holds characters until the type that does says so: this is read
+    // of every type, so the arena's leftovers would make an arbitrary one
+    // answer as a string.
+    type->holds_characters = false;
+
     // One arm zeroed is every arm zeroed: whichever the kind reads, it reads
     // nothing rather than whatever the arena held.
     memset(&type->record, 0, sizeof(type->record));
@@ -101,6 +106,8 @@ TypeMetadata type_metadata_of(const Type *type) {
     }
 }
 
+bool type_is_string(const Type *type) { return type && type->holds_characters; }
+
 bool type_is_str_ref(const Type *type) {
     return type && type->kind == TYPE_REF && type->indirect.pointee &&
            type->indirect.pointee->kind == TYPE_STR;
@@ -152,7 +159,6 @@ const TypeField *type_fields(const Type *type) {
 
     switch (type->kind) {
     case TYPE_STRUCT:
-    case TYPE_STRING:
         return type->record.fields;
 
     default:
@@ -167,7 +173,6 @@ size_t type_field_count(const Type *type) {
 
     switch (type->kind) {
     case TYPE_STRUCT:
-    case TYPE_STRING:
         return type->record.field_count;
 
     default:
@@ -216,12 +221,6 @@ bool type_is_owned(const Type *type) {
     case TYPE_ARRAY:
         return type_is_owned(type_array_element(type));
 
-    // A string owns its characters, always: what borrows them is a 'ref str',
-    // and no reference owns anything. So the kind is the whole answer here, as
-    // it is for the two indirections.
-    case TYPE_STRING:
-        return true;
-
     // Characters nothing holds. A 'ref str' names them and owns nothing; the
     // type itself is never a value, so it is never a value that owns.
     case TYPE_STR:
@@ -251,7 +250,13 @@ bool type_is_owned(const Type *type) {
 // non-copyable the moment it is given a field that owns, and no declaration
 // can disagree with what the type holds.
 bool type_owns_a_block(const Type *type) {
-    return type && type->decl && type->decl->generic && type->decl->generic->counts_a_block;
+    for (size_t i = 0; i < type_field_count(type); i++) {
+        if (type_fields(type)[i].type && type_fields(type)[i].type->kind == TYPE_BLOCK) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool type_is_copyable(const Type *type) {
@@ -278,11 +283,6 @@ bool type_is_copyable(const Type *type) {
     // of them, so a run of a non-copyable element is as uncopyable as one is.
     case TYPE_ARRAY:
         return type_is_copyable(type_array_element(type));
-
-    // A string frees its characters, so copying one would make a second header
-    // that frees them too.
-    case TYPE_STRING:
-        return false;
 
     // Never held, so never copied. What names characters is a reference, and
     // copying one of those duplicates no ownership.

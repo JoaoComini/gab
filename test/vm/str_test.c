@@ -63,15 +63,16 @@ static void test_a_string_lends_to_a_parameter() {
 }
 
 // A reference to characters nothing holds names memory freed where the
-// expression ends, so a join has to be given a home before it can be lent.
+// expression ends, so an owned copy has to be given a home before it can be
+// lent.
 static void test_a_reference_cannot_borrow_a_temporary() {
-    assert(!test_compiles("func f(): int { let s: ref str = \"a\" .. \"b\"; return 0; }\n"));
+    assert(!test_compiles("func f(): int { let s: ref str = \"ab\".to_owned(); return 0; }\n"));
 }
 
 // A reference may not outlive the string whose characters it names.
 static void test_a_reference_may_not_outlive_what_it_borrows() {
     assert(!test_compiles("func f(): ref str {\n"
-                          "    let o: String = \"a\" .. \"b\";\n"
+                          "    let o: String = \"ab\".to_owned();\n"
                           "    return o;\n"
                           "}\n"));
 }
@@ -154,7 +155,7 @@ static void test_either_naming_compares_and_joins() {
                          "let r: bool = f();") == true);
 
     assert(test_run_int("func f(): int {\n"
-                        "    let o: String = \"ab\" .. \"cd\";\n"
+                        "    let o: String = \"abcd\".to_owned();\n"
                         "    return o.len();\n"
                         "}\n"
                         "let r: int = f();") == 4);

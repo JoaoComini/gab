@@ -59,12 +59,6 @@ typedef enum {
     BIN_OP_DIV,
     BIN_OP_MOD,
 
-    // '..' joins two values of one joinable type -- strings today -- into a
-    // freshly allocated one. Its own operator rather than an overload of '+':
-    // joining allocates and arithmetic does not, and a reader should not have
-    // to know the operand types to know which happened.
-    BIN_OP_CONCAT,
-
     BIN_OP_LESS,
     BIN_OP_GREATER,
     BIN_OP_EQUAL,
