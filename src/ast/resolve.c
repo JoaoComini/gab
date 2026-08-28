@@ -691,12 +691,12 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         return;
     }
 
-    // A function the type owns has no receiver, so no value reaches it and
-    // there is no parameter zero to reconcile against.
-    if (!method->func.has_receiver) {
+    // The sugar fills parameter zero, so a function that declares none has
+    // nothing for the value to become and is reached on the type instead.
+    if (method->func.param_count == 0) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                   "'%s' belongs to %s, so it is called on the type rather than on a value",
-                   method_name->data, type_name(state, base));
+                   "'%s' takes nothing, so it is called as '%s::%s()' rather than on a value",
+                   method_name->data, type_name(state, base), method_name->data);
 
         expr->type = resolver_error_type(state);
         return;
@@ -1992,6 +1992,18 @@ static const Type *resolve_param_type(ResolverState *state, ASTField *param) {
         return resolver_error_type(state);
     }
 
+    // A parameter by value is a copy, which a type holding an owner has no way
+    // to make. Consuming it is what 'box T' says and borrowing it is what
+    // 'ref T' says, so one of those is written rather than the copy assumed.
+    if (!type_is_indirect(type) && !type_is_copyable(type)) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, param->span,
+                   "%s owns what it holds, so a parameter by value cannot copy it; write 'ref %s' to "
+                   "borrow it or 'box %s' to consume it",
+                   type_name(state, type), type_name(state, type), type_name(state, type));
+
+        return resolver_error_type(state);
+    }
+
     return type;
 }
 
@@ -2004,70 +2016,33 @@ static const Type *resolve_param_type(ResolverState *state, ASTField *param) {
 // That is what makes the call free at runtime: codegen puts the receiver in the
 // first argument slot and emits the OP_CALL it already would.
 // Declares a function into a type's own set rather than into a scope: it has no
-// free-standing name, so 'Player.update' and 'Enemy.update' coexist and neither
-// is reachable as a bare 'update'.
+// free-standing name, so 'Player::update' and 'Enemy::update' coexist and
+// neither is reachable as a bare 'update'.
 //
-// One path for both spellings. 'func (p: ref Player) damage(...)' and
-// 'func Vec::new(...)' differ only in whether a receiver clause bound parameter
-// zero; what a type answers to is one set either way, and the Symbol is an
-// ordinary SYMBOL_FUNC in both cases.
+// Every parameter is an ordinary parameter, parameter zero included. Whether a
+// value reaches this is not a property of the declaration but of the call:
+// 'p.damage(30)' is sugar for 'Player::damage(p, 30)', and what makes the sugar
+// apply is parameter zero's type rather than anything written here.
 static void declare_owned(ResolverState *state, ASTStmt *stmt) {
-    ASTField *receiver = stmt->func_decl.receiver;
+    const Type *owner = resolve_type_expr(state, stmt->func_decl.owner, stmt->span);
 
-    // A receiver names the owning type as its own; '::' names it directly.
-    const Type *declared_owner = receiver ? resolve_type_expr(state, receiver->type_expr, receiver->span)
-                                          : resolve_type_expr(state, stmt->func_decl.owner, stmt->span);
-
-    if (is_error_type(declared_owner)) {
-        return;
-    }
-
-    Span owner_span = receiver ? receiver->span : stmt->span;
-    const Type *base = receiver ? receiver_base_type(declared_owner) : declared_owner;
-
-    if (!base) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, owner_span,
-                   "a receiver must be a struct or a pointer to one, found %s",
-                   type_name(state, declared_owner));
+    if (is_error_type(owner)) {
         return;
     }
 
     // A unit declares functions on its own structs only. A builtin carries the
     // ones the VM registered, and a second set declared over them would have no
     // module to belong to and no way to be told apart from the first.
-    if (receiver && base->kind != TYPE_STRUCT) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, owner_span,
-                   "a receiver must be a struct or a pointer to one, found %s",
-                   type_name(state, declared_owner));
+    if (owner->kind != TYPE_STRUCT) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
+                   "a function belongs to a struct this module declares, not to %s", type_name(state, owner));
         return;
     }
 
-    // A receiver never owns: the sugar that reaches it -- 'p.consume()' -- has
-    // no place to mark the transfer, so 'box T' here would be an ownership
-    // nothing could grant. A function that consumes takes it as an ordinary
-    // parameter instead, where the call site says 'move'.
-    if (receiver && declared_owner->kind == TYPE_BOX) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, owner_span,
-                   "a receiver borrows rather than owns; write 'ref %s', or take it as a parameter of "
-                   "'%s::%.*s' to consume it",
-                   base->name->data, base->name->data, (int)stmt->func_decl.name.length,
-                   stmt->func_decl.name.data);
-        return;
-    }
-
-    // The other axis: a receiver by value is a copy, which a type holding an
-    // owner has no way to make. The borrow is the only thing such a receiver
-    // could mean, and it is written rather than assumed.
-    if (receiver && !type_is_indirect(declared_owner) && !type_is_copyable(declared_owner)) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, owner_span,
-                   "%s owns what it holds, so a receiver by value cannot copy it; write 'ref %s'",
-                   base->name->data, base->name->data);
-        return;
-    }
-
-    if (!scope_type_lookup_local(state->current_scope, base->name)) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, owner_span,
-                   "cannot declare a function on '%s', which this module does not declare", base->name->data);
+    if (!owner->name || !scope_type_lookup_local(state->current_scope, owner->name)) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
+                   "cannot declare a function on '%s', which this module does not declare",
+                   type_name(state, owner));
         return;
     }
 
@@ -2094,50 +2069,42 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
                 .params = NULL,
                 .param_count = 0,
                 .func_index = SYMBOL_FUNC_NO_BODY,
-                .has_receiver = receiver != NULL,
             },
     };
 
-    // A receiver is parameter zero, so the declared parameters shift up one.
-    size_t declared = stmt->func_decl.params.size;
-    size_t param_count = declared + (receiver ? 1 : 0);
+    size_t param_count = stmt->func_decl.params.size;
 
     if (param_count > 0) {
         func->func.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(const Type *));
         func->func.param_count = param_count;
 
-        if (receiver) {
-            func->func.params[0] = declared_owner;
-        }
-
-        for (size_t i = 0; i < declared; i++) {
-            func->func.params[i + (receiver ? 1 : 0)] =
-                resolve_param_type(state, stmt->func_decl.params.data[i]);
+        for (size_t i = 0; i < param_count; i++) {
+            func->func.params[i] = resolve_param_type(state, stmt->func_decl.params.data[i]);
         }
     }
 
     // 'clone' is the remedy the implicit-copy diagnostic names, so its shape is
-    // fixed: it duplicates its receiver and yields another of the same type.
+    // fixed: it duplicates what it is given and yields another of the same type.
     // Checked here rather than at a call so a type declaring the wrong thing
     // hears about it where it wrote it.
-    if (receiver && name == resolver_intern(state, string_ref_create("clone"))) {
-        if (return_type != base) {
+    if (name == resolver_intern(state, string_ref_create("clone"))) {
+        if (return_type != owner) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
-                       "'clone' duplicates its receiver, so it must return %s, not %s", base->name->data,
+                       "'clone' duplicates what it takes, so it must return %s, not %s", owner->name->data,
                        type_name(state, return_type));
             return;
         }
 
-        if (declared > 0) {
+        if (param_count != 1) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
-                       "'clone' duplicates its receiver and takes nothing else");
+                       "'clone' duplicates what it takes and takes nothing else");
             return;
         }
     }
 
-    if (!type_registry_add_method(state->current_scope->type_registry, base, name, func)) {
+    if (!type_registry_add_method(state->current_scope->type_registry, owner, name, func)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' already has a function '%s'",
-                   base->name->data, name->data);
+                   owner->name->data, name->data);
         return;
     }
 
@@ -2170,23 +2137,13 @@ static Symbol *resolve_static_func(ResolverState *state, ASTExpr *expr) {
         return NULL;
     }
 
-    // A method's parameter zero is its receiver, which '::' has no way to
-    // supply.
-    if (found->func.has_receiver) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                   "'%s' is a method on %s, so it is called on a value rather than on the type", member->data,
-                   owner->name->data);
-
-        return NULL;
-    }
-
     return found;
 }
 
 static void declare_func(ResolverState *state, ASTStmt *stmt) {
     stmt->func_decl.declared = true;
 
-    if (stmt->func_decl.receiver || stmt->func_decl.owner) {
+    if (stmt->func_decl.owner) {
         declare_owned(state, stmt);
         return;
     }
@@ -2238,18 +2195,6 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
 
     resolver_enter_scope(state);
 
-    // The receiver is an ordinary local in the body's scope, so 'p.health'
-    // resolves through the existing field path — including the auto-deref that
-    // a 'box Player' receiver needs.
-    ASTField *receiver = stmt->func_decl.receiver;
-
-    if (receiver) {
-        const Type *receiver_type = resolve_type_expr(state, receiver->type_expr, receiver->span);
-
-        receiver->symbol =
-            scope_decl_var(state->current_scope, resolver_intern(state, receiver->name), receiver_type);
-    }
-
     for (size_t i = 0; i < stmt->func_decl.params.size; i++) {
         ASTField *param = stmt->func_decl.params.data[i];
 
@@ -2287,10 +2232,6 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
         size_t param_count = stmt->func_decl.params.size;
         Symbol **params = arena_alloc(state->compile_arena, (param_count + 1) * sizeof(Symbol *));
         size_t count = 0;
-
-        if (receiver) {
-            params[count++] = receiver->symbol;
-        }
 
         for (size_t i = 0; i < param_count; i++) {
             params[count++] = stmt->func_decl.params.data[i]->symbol;

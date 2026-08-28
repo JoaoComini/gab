@@ -12,7 +12,7 @@
 
 // 'string' is a builtin type name, resolvable wherever a type is written.
 static void test_string_names_a_type() {
-    assert(test_compiles("func f(s: String): int { return 0; }\n"));
+    assert(test_compiles("func f(s: ref String): int { return 0; }\n"));
     assert(test_compiles("struct Person { name: String }\n"));
 }
 

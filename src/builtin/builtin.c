@@ -21,7 +21,6 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
     symbol->func.param_count = param_count + 1;
     symbol->func.params = arena_alloc(arena, sizeof(const Type *) * (param_count + 1));
     symbol->func.is_extern = true;
-    symbol->func.has_receiver = true;
     symbol->func.name = string_from_cstr(&vm->env.strings, name);
     symbol->func.module = NULL;
 
@@ -54,7 +53,6 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
     symbol->func.param_count = param_count;
     symbol->func.params = param_count ? arena_alloc(arena, sizeof(const Type *) * param_count) : NULL;
     symbol->func.is_extern = true;
-    symbol->func.has_receiver = false;
     symbol->func.name = string_from_cstr(&vm->env.strings, name);
     symbol->func.module = NULL;
 

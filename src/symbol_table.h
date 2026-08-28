@@ -57,14 +57,6 @@ typedef struct Symbol {
             // codegen reserves carries a C function pointer instead of a chunk.
             bool is_extern;
 
-            // Whether parameter zero is a receiver, and so whether a value
-            // reaches this at all: a method has one, a function a type owns
-            // does not. Recorded rather than read back off parameter zero,
-            // which cannot answer it -- a method declared on 'Array' takes the
-            // declaration where the receiver is an instantiation, so a
-            // parameter that is not the type is still a receiver.
-            bool has_receiver;
-
             // What the host binds a body to. Only an extern carries these: a
             // symbol is otherwise found by the name it is stored under, and
             // nothing needs to ask a symbol what it is called.

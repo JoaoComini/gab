@@ -1341,15 +1341,6 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         .failed = false,
     };
 
-    // The receiver is parameter zero, so it takes the first slot above the
-    // return slot and every declared parameter shifts up past it.
-    if (ast->receiver && ast->receiver->symbol) {
-        Symbol *receiver = ast->receiver->symbol;
-
-        codegen_set_slot(&func_state, receiver, func_next_reg);
-        func_next_reg += type_slot_count(state->registry, receiver->var.type);
-    }
-
     // A multi-slot parameter owns consecutive slots starting at its base, so
     // the callee addresses it by that slot exactly like a local.
     for (size_t i = 0; i < ast->params.size; i++) {
@@ -1415,8 +1406,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
 
     *state->unit->prototypes.data[func_index] = (FuncPrototype){
         .chunk = func_chunk,
-        // The receiver is parameter zero, so it counts.
-        .arity = ast->params.size + (ast->receiver ? 1 : 0),
+        .arity = ast->params.size,
         .max_registers = func_state.max_reg,
         .refs = func_state.frame_refs,
     };

@@ -110,7 +110,7 @@ func heal(p: ref Player, amount: int) {
     p.health = p.health + amount;
 }
 
-func (p: ref Player) is_alive(): bool {
+func Player::is_alive(p: ref Player): bool {
     return p.health > 0;
 }
 ```
@@ -148,10 +148,11 @@ caller gave it up, so returning it transfers rather than duplicating — while a
 `ref T` may not become a `box T` return, which would hand out ownership nobody
 granted.
 
-A receiver is `T` or `ref T` — by value, which copies, or by borrow, which
-mutates what the caller holds. Never `box T`: a method is handed its receiver for
-the duration of the call, and there is no call-site spelling that would give
-that ownership away.
+A function a type owns is declared `func Type::name(...)`, and one whose first
+parameter is that type may also be called on a value: `p.is_alive()` is
+`Player::is_alive(p)`. The sugar borrows and derefs to reach parameter zero, but
+never moves — a function taking `box T` first consumes it, so it is called as
+`Type::name(move v)`, where the transfer is written.
 
 Only something with a home in memory can be borrowed. A call result is a
 temporary with no address to name, so it must be bound to a variable first. A
@@ -197,7 +198,7 @@ could evaluate early, so a literal is the only string that borrows the arena.
 `to_owned()` copies the characters a borrow names into a string that owns them,
 which is how anything arena-backed becomes something a `String` slot may hold.
 It is named for what it produces rather than `clone`, since it does not hand
-back its own type: a `ref str` receiver yields a `String`.
+back its own type: a `ref str` yields a `String`.
 
 ```
 let borrowed: ref str = "ab";            // borrows the arena
@@ -290,19 +291,19 @@ slots believing they own one object. Assigning something new to a moved-from
 slot revives it — deadness is about what the slot holds, not a mark the name
 carries forever.
 
-A type may say how it is duplicated by declaring a `clone` method, which takes
-nothing but its receiver and returns another of its own type. `String` ships
+A type may say how it is duplicated by declaring a `clone` function, which takes
+one of its own type and returns another. `String` ships
 with one; `ref str` does not, since a reference already copies by assignment and what
 it needs is `to_owned()`, which changes the type rather than duplicating it. A
 struct declares its own:
 
 ```
-func (h: ref Holder) clone(): Holder { ... }
+func Holder::clone(h: ref Holder): Holder { ... }
 
 let g = h.clone();   // 'h' is still live; 'g' owns a separate object
 ```
 
-`clone` is a reserved method name: a `clone` returning some other type, or
+`clone` is a reserved name: a `clone` returning some other type, or
 taking parameters, is refused where it is declared rather than surprising a
 caller. Declaring one does not make the type implicitly copyable — `let g = h;`
 stays refused — so duplicating an owning value is always visible at the point
@@ -333,7 +334,7 @@ body is refused because the back-edge would move the same slot twice.
 
 The rule behind all of this: **`box T` marks a slot that can free what it holds.**
 That is a `let`, a struct field, a parameter, and a return type — each is where
-a free may be emitted. A receiver is not one, so it takes `ref T`; a borrow is an
+a free may be emitted. A borrowed parameter is not one, so it takes `ref T`; a borrow is an
 address rather than an allocation, so it yields one too.
 
 There is no reference count and no runtime liveness check: a `ref T` whose
@@ -382,7 +383,7 @@ more or less, and a second spelling would say nothing the first does not.
 | --- | --- |
 | Types | `int` (32-bit), `float` (32-bit), `bool`, `String` and characters named by `ref str`, `Array T`, structs, owning `box T`, borrows `ref T` |
 | Declarations | `let` with inferred or annotated type, `func`, `struct`, `module` |
-| Functions | Parameters and returns of any type, structs by value, methods with a receiver, recursion, forward references |
+| Functions | Parameters and returns of any type, structs by value, functions a type owns, recursion, forward references |
 | Control flow | `if` / `else`, `for` in three forms, `break`, `continue`, `return`, nested blocks with shadowing |
 | Operators | `+` `-` `*` `/` `%`, unary `-` `!`, `==` `!=` `<` `>` `<=` `>=`, `&&` `||`, unary `*`, field access, indexing `xs[i]`, `..` joins |
 | Conversions | `int(x)` and `float(x)`; nothing converts implicitly |

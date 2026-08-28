@@ -126,17 +126,30 @@ static void test_a_borrow_cannot_be_laundered_into_an_owned_return() {
                           "func launder(b: ref Box): box Box { return b; }\n"));
 }
 
-// A method borrows its receiver. Ownership of the receiver is not something a
-// call site can spell, so 'box T' there stays refused.
-static void test_a_method_receiver_still_cannot_own() {
+// Parameter zero owns like any other parameter, and the call site spells the
+// transfer: what a value cannot do is give up ownership through the sugar.
+static void test_parameter_zero_may_own() {
+    assert(test_run_int("struct Box { n: int }\n"
+                        "func Box::take(b: box Box): int { return b.n; }\n"
+                        "func main(): int {\n"
+                        "    let a: box Box = new Box;\n"
+                        "    a.n = 4;\n"
+                        "    return Box::take(move a);\n"
+                        "}\n"
+                        "let r: int = main();") == 4);
+
     assert(!test_compiles("struct Box { n: int }\n"
-                          "func (b: box Box) get(): int { return b.n; }\n"));
+                          "func Box::take(b: box Box): int { return b.n; }\n"
+                          "func main(): int {\n"
+                          "    let a: box Box = new Box;\n"
+                          "    return a.take();\n"
+                          "}\n"));
 }
 
 // A method's own parameters are parameters like any other, so one may own.
 static void test_a_method_parameter_may_own() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func (b: ref Box) adopt(other: box Box): int { return other.n; }\n"
+                        "func Box::adopt(b: ref Box, other: box Box): int { return other.n; }\n"
                         "func main(): int {\n"
                         "    let host: box Box = new Box;\n"
                         "    let gift: box Box = new Box;\n"
@@ -144,6 +157,21 @@ static void test_a_method_parameter_may_own() {
                         "    return host.adopt(move gift);\n"
                         "}\n"
                         "let r: int = main();") == 3);
+}
+
+// A parameter by value is a copy, which a type that owns cannot make. The rule
+// is the parameter's, not a receiver's: a free function is bound by it too.
+static void test_a_parameter_by_value_needs_a_copyable_type() {
+    assert(!test_compiles("struct Node { child: box Node }\n"
+                          "func peek(n: Node): int { return 0; }\n"));
+
+    assert(!test_compiles("struct Node { child: box Node }\n"
+                          "func Node::peek(n: Node): int { return 0; }\n"));
+
+    // Borrowing and consuming are both spellable, so the rule names a copy
+    // rather than forbidding the type.
+    assert(test_compiles("struct Node { child: box Node }\n"
+                         "func peek(n: ref Node): int { return 0; }\n"));
 }
 
 int main(void) {
@@ -157,7 +185,8 @@ int main(void) {
     test_only_the_callee_frees_an_owned_argument();
     test_an_owned_parameter_may_be_returned();
     test_a_borrow_cannot_be_laundered_into_an_owned_return();
-    test_a_method_receiver_still_cannot_own();
+    test_parameter_zero_may_own();
+    test_a_parameter_by_value_needs_a_copyable_type();
     test_a_method_parameter_may_own();
 
     printf("All owning parameter tests passed\n");

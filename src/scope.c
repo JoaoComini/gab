@@ -196,7 +196,6 @@ Symbol *scope_decl_func(Scope *scope, String *name, const Type *return_type) {
     sym->func.param_count = 0;
     sym->func.func_index = SYMBOL_FUNC_NO_BODY;
     sym->func.is_extern = false;
-    sym->func.has_receiver = false;
 
     Symbol **decl = symbol_table_insert(scope->symbol_table, name, sym);
     if (!decl) {

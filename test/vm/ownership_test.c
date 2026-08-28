@@ -192,7 +192,7 @@ static void test_a_field_reaches_through_every_pointer_level() {
 // finds the method and still names the one object.
 static void test_a_method_reaches_through_every_pointer_level() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func (b: ref Box) bump(): int { b.n = b.n + 1; return b.n; }\n"
+                        "func Box::bump(b: ref Box): int { b.n = b.n + 1; return b.n; }\n"
                         "func poke(s: ref box Box): int { return s.bump(); }\n"
                         "func main(): int {\n"
                         "    let o: box Box = new Box;\n"

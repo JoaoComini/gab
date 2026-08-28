@@ -384,7 +384,7 @@ static void test_a_function_compiles_into_its_own_chunk() {
 // the parameters it declares.
 static void test_a_method_counts_its_receiver() {
     TestProgram program = test_compile("struct Vec { x: int }\n"
-                                       "func (v: ref Vec) scaled(by: int): int { return v.x * by; }\n");
+                                       "func Vec::scaled(v: ref Vec, by: int): int { return v.x * by; }\n");
 
     assert(test_func_count(&program) == 1);
     assert(test_func_proto(&program, 0)->arity == 2);

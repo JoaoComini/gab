@@ -33,7 +33,7 @@ static void test_method_lands_on_its_receiver_type() {
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Player { health: int }\n"
-                           "func (p: ref Player) damage(n: int): bool { return true; }\n");
+                           "func Player::damage(p: ref Player, n: int): bool { return true; }\n");
     assert(ok);
 
     Symbol *damage = lookup_method(&ctx, scope, "Player", "damage");
@@ -61,7 +61,7 @@ static void test_method_is_not_reachable_as_a_bare_name() {
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Player { health: int }\n"
-                           "func (p: ref Player) damage(n: int): bool { return true; }\n");
+                           "func Player::damage(p: ref Player, n: int): bool { return true; }\n");
     assert(ok);
 
     assert(!scope_symbol_lookup(scope, string_from_cstr(&ctx.strings, "damage")));
@@ -82,8 +82,8 @@ static void test_same_name_on_two_types() {
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Player { health: int }\n"
                            "struct Enemy { health: int }\n"
-                           "func (p: ref Player) update(): int { return 1; }\n"
-                           "func (e: ref Enemy) update(): int { return 2; }\n");
+                           "func Player::update(p: ref Player): int { return 1; }\n"
+                           "func Enemy::update(e: ref Enemy): int { return 2; }\n");
     assert(ok);
 
     Symbol *player = lookup_method(&ctx, scope, "Player", "update");
@@ -105,7 +105,7 @@ static void test_value_receiver() {
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Player { health: int }\n"
-                           "func (p: Player) is_alive(): bool { return true; }\n");
+                           "func Player::is_alive(p: Player): bool { return true; }\n");
     assert(ok);
 
     Symbol *alive = lookup_method(&ctx, scope, "Player", "is_alive");
@@ -127,7 +127,7 @@ static void test_method_declared_above_its_struct() {
     ASTUnit *unit = ast_unit_create();
 
     bool ok = test_resolve(&ctx, scope, unit,
-                           "func (p: ref Player) health_of(): int { return p.health; }\n"
+                           "func Player::health_of(p: ref Player): int { return p.health; }\n"
                            "struct Player { health: int }\n");
     assert(ok);
 
@@ -148,8 +148,8 @@ static void test_receiver_fields_resolve_in_the_body() {
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Player { health: int }\n"
-                           "func (p: ref Player) hp(): int { return p.health; }\n"
-                           "func (q: Player) hp2(): int { return q.health; }\n");
+                           "func Player::hp(p: ref Player): int { return p.health; }\n"
+                           "func Player::hp2(q: Player): int { return q.health; }\n");
     assert(ok);
 
     ast_unit_destroy(unit);
@@ -174,36 +174,37 @@ static bool fails(const char *source) {
 static void test_diagnostics() {
     // One type may not declare the same method twice.
     assert(fails("struct Player { health: int }\n"
-                 "func (p: ref Player) update(): int { return 1; }\n"
-                 "func (p: ref Player) update(): int { return 2; }\n"));
+                 "func Player::update(p: ref Player): int { return 1; }\n"
+                 "func Player::update(p: ref Player): int { return 2; }\n"));
 
     // A receiver has to be a struct; 'int' has no method set to hang one on.
-    assert(fails("func (n: int) double(): int { return n; }\n"));
+    assert(fails("func int::double(n: int): int { return n; }\n"));
 
     // Nor a type that does not exist at all.
-    assert(fails("func (p: ref Missing) update(): int { return 1; }\n"));
+    assert(fails("func Missing::update(p: ref Missing): int { return 1; }\n"));
 }
 
 // A pointer receiver mutates what the caller holds, which is the whole reason
 // to declare one.
 static void test_pointer_receiver_mutates_the_caller() {
-    assert(test_run_int(
-               "struct Player { health: int }\n"
-               "func (p: ref Player) damage(n: int): int { p.health = p.health - n; return p.health; }\n"
-               "func main(): int {\n"
-               "    let p: Player;\n"
-               "    p.health = 100;\n"
-               "    let ignored: int = p.damage(30);\n"
-               "    return p.health;\n"
-               "}\n"
-               "let r: int = main();") == 70);
+    assert(
+        test_run_int(
+            "struct Player { health: int }\n"
+            "func Player::damage(p: ref Player, n: int): int { p.health = p.health - n; return p.health; }\n"
+            "func main(): int {\n"
+            "    let p: Player;\n"
+            "    p.health = 100;\n"
+            "    let ignored: int = p.damage(30);\n"
+            "    return p.health;\n"
+            "}\n"
+            "let r: int = main();") == 70);
 }
 
 // A value receiver is a copy, so assigning to it leaves the caller's struct
 // alone. The mirror of the test above, and the reason the two modes exist.
 static void test_value_receiver_does_not_mutate_the_caller() {
     assert(test_run_int("struct Player { health: int }\n"
-                        "func (p: Player) zero(): int { p.health = 0; return p.health; }\n"
+                        "func Player::zero(p: Player): int { p.health = 0; return p.health; }\n"
                         "func main(): int {\n"
                         "    let p: Player;\n"
                         "    p.health = 55;\n"
@@ -218,8 +219,8 @@ static void test_value_receiver_does_not_mutate_the_caller() {
 static void test_same_name_dispatches_by_type() {
     assert(test_run_int("struct Player { health: int }\n"
                         "struct Enemy { health: int }\n"
-                        "func (p: ref Player) tag(): int { return 1; }\n"
-                        "func (e: ref Enemy) tag(): int { return 2; }\n"
+                        "func Player::tag(p: ref Player): int { return 1; }\n"
+                        "func Enemy::tag(e: ref Enemy): int { return 2; }\n"
                         "func main(): int {\n"
                         "    let p: Player;\n"
                         "    let e: Enemy;\n"
@@ -232,8 +233,8 @@ static void test_same_name_dispatches_by_type() {
 // own argument block inside the outer one's frame.
 static void test_method_calls_another_method() {
     assert(test_run_int("struct Player { health: int }\n"
-                        "func (p: ref Player) hp(): int { return p.health; }\n"
-                        "func (p: ref Player) double_hp(): int { return p.hp() + p.hp(); }\n"
+                        "func Player::hp(p: ref Player): int { return p.health; }\n"
+                        "func Player::double_hp(p: ref Player): int { return p.hp() + p.hp(); }\n"
                         "func main(): int {\n"
                         "    let p: Player;\n"
                         "    p.health = 21;\n"
@@ -245,20 +246,21 @@ static void test_method_calls_another_method() {
 // A method takes arguments after the receiver, and the arity the user writes
 // excludes it.
 static void test_method_arguments() {
-    assert(test_run_int("struct Vec { x: int, y: int }\n"
-                        "func (v: ref Vec) set(a: int, b: int): int { v.x = a; v.y = b; return v.x + v.y; }\n"
-                        "func main(): int {\n"
-                        "    let v: Vec;\n"
-                        "    return v.set(3, 4);\n"
-                        "}\n"
-                        "let r: int = main();") == 7);
+    assert(test_run_int(
+               "struct Vec { x: int, y: int }\n"
+               "func Vec::set(v: ref Vec, a: int, b: int): int { v.x = a; v.y = b; return v.x + v.y; }\n"
+               "func main(): int {\n"
+               "    let v: Vec;\n"
+               "    return v.set(3, 4);\n"
+               "}\n"
+               "let r: int = main();") == 7);
 }
 
 // Recursion through a method, so each invocation gets its own frame and its own
 // copy of the receiver slot.
 static void test_recursive_method() {
     assert(test_run_int("struct Counter { n: int }\n"
-                        "func (c: ref Counter) countdown(n: int): int {\n"
+                        "func Counter::countdown(c: ref Counter, n: int): int {\n"
                         "    if n <= 0 { return c.n; }\n"
                         "    c.n = c.n + n;\n"
                         "    return c.countdown(n - 1);\n"
@@ -275,7 +277,7 @@ static void test_recursive_method() {
 // address needs taking.
 static void test_call_through_a_pointer_receiver() {
     assert(test_run_int("struct Player { health: int }\n"
-                        "func (p: ref Player) hp(): int { return p.health; }\n"
+                        "func Player::hp(p: ref Player): int { return p.health; }\n"
                         "func main(): int {\n"
                         "    let p: Player;\n"
                         "    p.health = 9;\n"
@@ -288,7 +290,7 @@ static void test_call_through_a_pointer_receiver() {
 // A value method reached through a pointer copies the inner in.
 static void test_value_method_through_a_pointer() {
     assert(test_run_int("struct Player { health: int }\n"
-                        "func (p: Player) hp(): int { return p.health; }\n"
+                        "func Player::hp(p: Player): int { return p.health; }\n"
                         "func main(): int {\n"
                         "    let p: Player;\n"
                         "    p.health = 13;\n"
@@ -303,7 +305,7 @@ static void test_value_method_through_a_pointer() {
 static void test_struct_parameter_and_return() {
     assert(test_run_int("struct Vec { x: int, y: int }\n"
                         "struct Adder { bias: int }\n"
-                        "func (a: ref Adder) add(v: Vec): Vec {\n"
+                        "func Adder::add(a: ref Adder, v: Vec): Vec {\n"
                         "    let out: Vec;\n"
                         "    out.x = v.x + a.bias;\n"
                         "    out.y = v.y + a.bias;\n"
@@ -326,7 +328,7 @@ static void test_struct_parameter_and_return() {
 static void test_call_on_a_nested_struct() {
     assert(test_run_int("struct Inner { n: int }\n"
                         "struct Outer { inner: Inner }\n"
-                        "func (i: ref Inner) bump(): int { i.n = i.n + 1; return i.n; }\n"
+                        "func Inner::bump(i: ref Inner): int { i.n = i.n + 1; return i.n; }\n"
                         "func main(): int {\n"
                         "    let o: Outer;\n"
                         "    o.inner.n = 5;\n"
@@ -343,18 +345,18 @@ static void test_call_diagnostics() {
 
     // The arity a caller sees excludes the receiver.
     assert(fails("struct Player { health: int }\n"
-                 "func (p: ref Player) hp(): int { return p.health; }\n"
+                 "func Player::hp(p: ref Player): int { return p.health; }\n"
                  "func main(): int { let p: Player; return p.hp(1); }\n"));
 
     // Argument types are checked past the receiver.
     assert(fails("struct Player { health: int }\n"
-                 "func (p: ref Player) set(n: int): int { return n; }\n"
+                 "func Player::set(p: ref Player, n: int): int { return n; }\n"
                  "func main(): int { let p: Player; return p.set(true); }\n"));
 
     // A pointer receiver needs something with an address; a call result is a
     // temporary and has none.
     assert(fails("struct Player { health: int }\n"
-                 "func (p: ref Player) hp(): int { return p.health; }\n"
+                 "func Player::hp(p: ref Player): int { return p.health; }\n"
                  "func make(): Player { let p: Player; return p; }\n"
                  "func main(): int { return make().hp(); }\n"));
 
@@ -369,7 +371,7 @@ static void test_call_diagnostics() {
 // The receiver already matches parameter zero, so it is passed as written.
 static void test_a_matching_receiver_needs_no_adjustment() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func (b: ref Box) get(): int { return b.n; }\n"
+                        "func Box::get(b: ref Box): int { return b.n; }\n"
                         "func main(): int {\n"
                         "    let b: box Box = new Box;\n"
                         "    b.n = 7;\n"
@@ -382,7 +384,7 @@ static void test_a_matching_receiver_needs_no_adjustment() {
 // spells as a real address-of node.
 static void test_a_value_receiver_has_its_address_taken() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func (b: ref Box) bump(): int { b.n = b.n + 1; return b.n; }\n"
+                        "func Box::bump(b: ref Box): int { b.n = b.n + 1; return b.n; }\n"
                         "func main(): int {\n"
                         "    let b: Box;\n"
                         "    b.n = 4;\n"
@@ -396,7 +398,7 @@ static void test_a_value_receiver_has_its_address_taken() {
 // spells as a '*recv' node.
 static void test_a_pointer_receiver_is_dereferenced() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func (b: Box) peek(): int { return b.n; }\n"
+                        "func Box::peek(b: Box): int { return b.n; }\n"
                         "func main(): int {\n"
                         "    let b: box Box = new Box;\n"
                         "    b.n = 9;\n"
@@ -409,7 +411,7 @@ static void test_a_pointer_receiver_is_dereferenced() {
 // called on one is ordinary and reads what the owner holds.
 static void test_a_method_on_a_ref_receiver() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func (b: ref Box) get(): int { return b.n; }\n"
+                        "func Box::get(b: ref Box): int { return b.n; }\n"
                         "func main(): int {\n"
                         "    let owner: box Box = new Box;\n"
                         "    owner.n = 6;\n"
@@ -423,7 +425,7 @@ static void test_a_method_on_a_ref_receiver() {
 // the same address, so the mutation is visible to the owner.
 static void test_a_method_through_a_ref_mutates_the_owned_object() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func (b: ref Box) bump(): int { b.n = b.n + 1; return b.n; }\n"
+                        "func Box::bump(b: ref Box): int { b.n = b.n + 1; return b.n; }\n"
                         "func main(): int {\n"
                         "    let owner: box Box = new Box;\n"
                         "    owner.n = 4;\n"
@@ -441,7 +443,7 @@ static void test_a_method_through_a_ref_mutates_the_owned_object() {
 // a 'ref Box' method, which is one hop to the 'box Box' and a lend from there.
 static void test_a_receiver_two_levels_out_reaches_the_method() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func (b: ref Box) get(): int { return b.n; }\n"
+                        "func Box::get(b: ref Box): int { return b.n; }\n"
                         "func main(): int {\n"
                         "    let owner: box Box = new Box;\n"
                         "    owner.n = 7;\n"
@@ -451,16 +453,25 @@ static void test_a_receiver_two_levels_out_reaches_the_method() {
                         "let r: int = main();") == 7);
 }
 
-static void test_an_owning_receiver_is_refused() {
+// A function consuming parameter zero is declared like any other, and is
+// reached where the transfer can be written rather than through a value.
+static void test_a_consuming_function_is_not_reached_through_a_value() {
+    assert(test_compiles("struct Box { n: int }\n"
+                         "func Box::peek(b: box Box): int { return b.n; }\n"));
+
     assert(!test_compiles("struct Box { n: int }\n"
-                          "func (b: box Box) peek(): int { return b.n; }\n"));
+                          "func Box::peek(b: box Box): int { return b.n; }\n"
+                          "func main(): int {\n"
+                          "    let a: box Box = new Box;\n"
+                          "    return a.peek();\n"
+                          "}\n"));
 }
 
 // A method on a temporary that takes a pointer receiver has no address to take,
 // and the rewrite must not invent one.
 static void test_a_pointer_method_on_a_temporary_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
-                          "func (b: ref Box) get(): int { return b.n; }\n"
+                          "func Box::get(b: ref Box): int { return b.n; }\n"
                           "func make(): Box { let b: Box; return b; }\n"
                           "func main(): int { return make().get(); }\n"));
 }
@@ -469,7 +480,7 @@ static void test_a_pointer_method_on_a_temporary_is_refused() {
 // count only the arguments the user actually wrote.
 static void test_arity_errors_exclude_the_receiver() {
     assert(!test_compiles("struct Box { n: int }\n"
-                          "func (b: ref Box) add(x: int): int { return b.n + x; }\n"
+                          "func Box::add(b: ref Box, x: int): int { return b.n + x; }\n"
                           "func main(): int {\n"
                           "    let b: box Box = new Box;\n"
                           "    return b.add(1, 2);\n"
@@ -491,15 +502,15 @@ static void test_an_unknown_method_is_refused() {
 // take it, and 'ref T' is the form that says what is true.
 static void test_a_value_receiver_needs_a_copyable_type() {
     assert(!test_compiles("struct Node { child: box Node }\n"
-                          "func (n: Node) peek(): int { return 0; }\n"));
+                          "func Node::peek(n: Node): int { return 0; }\n"));
 
     // The borrow is what such a type takes instead.
     assert(test_compiles("struct Node { child: box Node }\n"
-                         "func (n: ref Node) peek(): int { return 0; }\n"));
+                         "func Node::peek(n: ref Node): int { return 0; }\n"));
 
     // A type whose fields all copy is unaffected.
     assert(test_compiles("struct Point { x: int, y: int }\n"
-                         "func (p: Point) peek(): int { return p.x; }\n"));
+                         "func Point::peek(p: Point): int { return p.x; }\n"));
 }
 
 // A method reached through a shared method set still has to be given the
@@ -526,7 +537,7 @@ int main(void) {
     test_a_method_on_a_ref_receiver();
     test_a_method_through_a_ref_mutates_the_owned_object();
     test_a_receiver_two_levels_out_reaches_the_method();
-    test_an_owning_receiver_is_refused();
+    test_a_consuming_function_is_not_reached_through_a_value();
     test_a_pointer_method_on_a_temporary_is_refused();
     test_arity_errors_exclude_the_receiver();
     test_an_unknown_method_is_refused();

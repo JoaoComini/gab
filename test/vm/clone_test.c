@@ -13,7 +13,7 @@
 static void test_a_clone_yields_an_independent_object() {
     assert(test_run_int("struct Box { n: int }\n"
                         "struct Holder { b: box Box }\n"
-                        "func (h: ref Holder) clone(): Holder {\n"
+                        "func Holder::clone(h: ref Holder): Holder {\n"
                         "    let out: Holder;\n"
                         "    out.b = new Box;\n"
                         "    out.b.n = h.b.n;\n"
@@ -35,7 +35,7 @@ static void test_a_clone_yields_an_independent_object() {
 static void test_the_source_of_a_clone_stays_live() {
     assert(test_run_int("struct Box { n: int }\n"
                         "struct Holder { b: box Box }\n"
-                        "func (h: ref Holder) clone(): Holder {\n"
+                        "func Holder::clone(h: ref Holder): Holder {\n"
                         "    let out: Holder;\n"
                         "    out.b = new Box;\n"
                         "    out.b.n = h.b.n;\n"
@@ -57,7 +57,7 @@ static void test_the_source_of_a_clone_stays_live() {
 static void test_a_clone_returning_another_type_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "struct Holder { b: box Box }\n"
-                          "func (h: ref Holder) clone(): int {\n"
+                          "func Holder::clone(h: ref Holder): int {\n"
                           "    return 0;\n"
                           "}\n"));
 }
@@ -66,7 +66,7 @@ static void test_a_clone_returning_another_type_is_refused() {
 static void test_a_clone_taking_parameters_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "struct Holder { b: box Box }\n"
-                          "func (h: ref Holder) clone(deep: bool): Holder {\n"
+                          "func Holder::clone(h: ref Holder, deep: bool): Holder {\n"
                           "    let out: Holder;\n"
                           "    out.b = new Box;\n"
                           "    return out;\n"
@@ -78,7 +78,7 @@ static void test_a_clone_taking_parameters_is_refused() {
 static void test_a_type_with_a_clone_still_refuses_an_implicit_copy() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "struct Holder { b: box Box }\n"
-                          "func (h: ref Holder) clone(): Holder {\n"
+                          "func Holder::clone(h: ref Holder): Holder {\n"
                           "    let out: Holder;\n"
                           "    out.b = new Box;\n"
                           "    return out;\n"

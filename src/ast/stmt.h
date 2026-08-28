@@ -57,22 +57,12 @@ typedef struct {
 typedef struct {
     StringRef name;
 
-    // 'func Vec::new(...)' -- the type this attaches to without a value
-    // reaching it. NULL for anything else, including a method, whose owning
-    // type is its receiver's and reached through 'receiver' instead.
+    // 'func Vec::new(...)' -- the type whose set this is declared into. NULL
+    // for a free function, which is declared into a scope instead.
     //
-    // A TypeExpr rather than a name so that both declaration paths resolve an
-    // owning type the same way.
+    // A TypeExpr rather than a name so that resolving it is the same walk every
+    // other written type goes through.
     TypeExpr *owner;
-
-    // 'func (p: box Player) damage(...)' — the receiver's binding, which makes
-    // this a method: a value reaches it, and the resolver makes the receiver
-    // parameter zero of the symbol it declares. It reuses ASTField, being a
-    // parameter in every respect.
-    //
-    // NULL where 'owner' is not: 'func Vec::new(...)' attaches to a type
-    // without a value reaching it.
-    ASTField *receiver;
 
     TypeExpr *return_type;
     ASTFieldList params;
@@ -179,8 +169,8 @@ typedef struct ASTStmt {
 
 ASTStmt *ast_expr_stmt_create(Span span, ASTExpr *value);
 ASTStmt *ast_var_decl_stmt_create(Span span, StringRef name, TypeExpr *type, ASTExpr *initializer);
-ASTStmt *ast_func_decl_stmt_create(Span span, StringRef name, ASTField *receiver, TypeExpr *return_type,
-                                   ASTFieldList params, ASTStmt *body);
+ASTStmt *ast_func_decl_stmt_create(Span span, StringRef name, TypeExpr *return_type, ASTFieldList params,
+                                   ASTStmt *body);
 ASTStmt *ast_struct_decl_stmt_create(Span span, StringRef name, ASTFieldList fields);
 ASTStmt *ast_assign_stmt_create(Span span, ASTExpr *target, ASTExpr *value);
 ASTStmt *ast_compound_assign_stmt_create(Span span, ASTExpr *target, BinOp op, ASTExpr *value);
