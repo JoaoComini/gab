@@ -67,15 +67,6 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
                              GabExternFn body, const Type *return_type, const Type *const *params,
                              size_t param_count);
 
-// As builtin_register_method, for a set every instantiation of a declaration
-// answers rather than one type's: an array's 'len' is the same whatever the
-// element, so it is declared once on 'Array' and every '[T; N]' finds it.
-//
-// No receiver, because there is no one type to be parameter zero: a call takes
-// the instantiation whose set answered.
-void builtin_register_shared_method(VM *vm, const TypeDef *declared_on, const char *name, GabExternFn body,
-                                    const Type *return_type, const Type *const *params, size_t param_count);
-
 // As builtin_register_method, for a function reached on the type rather than on
 // a value: 'Type::name(args)'. Every parameter is in 'params', since nothing is
 // the receiver.
@@ -84,11 +75,6 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
 
 // Each builtin type's methods, called by builtin_register_all.
 void builtin_register_string(VM *vm);
-
-// The methods every array answers, declared once on the bare 'Array' type that
-// each '[T; N]' reaches through 'owner'. None of them depend on the element,
-// so one set serves every array.
-void builtin_register_array(VM *vm);
 
 // The methods every 'Vec<T>' answers. Unlike an array's, these are declared on
 // the 'Vec' declaration in terms of its parameter and turned into Symbols where

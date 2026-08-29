@@ -87,17 +87,6 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
                              string_from_cstr(&vm->env.strings, name), symbol);
 }
 
-void builtin_register_shared_method(VM *vm, const TypeDef *declared_on, const char *name, GabExternFn body,
-                                    const Type *return_type, const Type *const *params, size_t param_count) {
-    // No receiver: the set is the declaration's, so there is no one type for
-    // parameter zero to take. What a call reaches it on is the instantiation
-    // whose set answered.
-    Symbol *symbol = method_symbol(vm, NULL, name, body, return_type, params, param_count);
-
-    type_registry_add_shared_method(vm->env.global_scope.type_registry, declared_on,
-                                    string_from_cstr(&vm->env.strings, name), symbol);
-}
-
 // As builtin_register_method, for a function the type owns rather than one a
 // value reaches: 'params' are every parameter, since there is no receiver to be
 // parameter zero.
@@ -131,6 +120,5 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
 // script function's index is unaffected by how many builtins exist.
 void builtin_register_all(VM *vm) {
     builtin_register_string(vm);
-    builtin_register_array(vm);
     builtin_register_vec(vm);
 }

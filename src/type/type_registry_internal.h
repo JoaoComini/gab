@@ -37,20 +37,16 @@ GAB_HASH_MAP(TypeAppMap, type_app_map, TypeApp, Type *)
 // what a type is was settled when it was interned. Keeping them apart is what
 // lets a type be finished when the registry hands it over.
 typedef struct MethodKey {
-    // The type a method was registered against, or NULL when it was registered
-    // against a declaration instead -- what every instantiation of one shares.
+    // The type a method was registered against. Every method hangs on one: a
+    // generic declaration's are substituted per instantiation, so each of them
+    // owns its own, and nothing is shared across them.
     const Type *type;
-
-    // The declaration, for a set every instantiation answers. Set exactly when
-    // 'type' is not, so one table holds both without the two colliding.
-    const TypeDef *def;
 
     const String *name;
 } MethodKey;
 
-#define method_key_hash(key) ((((size_t)(key).type ^ (size_t)(key).def) * 31) ^ (size_t)(key).name)
-#define method_key_key_equals(key, other)                                                                    \
-    ((key).type == (other).type && (key).def == (other).def && (key).name == (other).name)
+#define method_key_hash(key) (((size_t)(key).type * 31) ^ (size_t)(key).name)
+#define method_key_key_equals(key, other) ((key).type == (other).type && (key).name == (other).name)
 #define method_key_key_dup(key) key
 #define method_key_entry_free(key, value)
 

@@ -162,6 +162,20 @@ static void test_a_struct_element_keeps_its_own_slot() {
 
 // How many elements an array holds is what its type says, so the call answers
 // without reading anything.
+// A length answers what its type says and takes nothing, so an argument written
+// to it is as wrong as one written to any other call.
+static void test_a_length_takes_no_argument() {
+    assert(!test_compiles("func f(): int { let xs: [int; 4]; return xs.len(1); }\n"
+                          "let r: int = f();"));
+}
+
+// A borrow of an array reaches the length the same way, since what answers it
+// is the type the borrow names rather than anything held beside the elements.
+static void test_a_borrowed_array_knows_its_length() {
+    assert(test_run_int("func f(): int { let xs: [int; 4]; let r: ref [int; 4] = xs; return r.len(); }\n"
+                        "let r: int = f();") == 4);
+}
+
 static void test_an_array_knows_its_length() {
     assert(test_run_int("func f(): int {\n"
                         "    let xs: [int; 4];\n"
@@ -260,6 +274,8 @@ int main(void) {
     test_an_array_too_wide_for_a_frame_is_refused();
     test_an_owning_element_is_freed_with_the_array();
     test_a_struct_element_keeps_its_own_slot();
+    test_a_length_takes_no_argument();
+    test_a_borrowed_array_knows_its_length();
     test_an_array_knows_its_length();
     test_an_array_of_a_copyable_element_copies();
     test_an_array_of_an_owning_element_does_not_copy();

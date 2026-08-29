@@ -664,6 +664,33 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     // borrowed view finds what it borrows by lending, which the walk follows.
     String *method_name = resolver_intern(state, name);
 
+    // How far an array runs is in its type, so 'xs.len()' is answered here and
+    // becomes the literal it stands for. Not a method: the elements carry no
+    // count beside them, so there is nothing at run time for a body to read,
+    // and registering one would be registering a name over an empty body.
+    //
+    // Ahead of the lookup for that reason -- nothing declares this, so a lookup
+    // would report that an array has no such method.
+    if (type_kind(receiver_base_type(receiver_type)) == TYPE_ARRAY &&
+        method_name == string_from_cstr(state->current_scope->strings, "len")) {
+        const Type *array = receiver_base_type(receiver_type);
+
+        if (expr->call.args.size != 0) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected 0 argument(s), found %zu",
+                       expr->call.args.size);
+            expr->type = resolver_error_type(state);
+            return;
+        }
+
+        ast_expr_free(expr->call.target);
+        ast_expr_list_free(&expr->call.args);
+
+        expr->kind = EXPR_LITERAL;
+        expr->lit = (Literal){.kind = TYPE_INT, .as_int = type_array_length(array)};
+        expr->type = type_registry_get_primitive(state->current_scope->type_registry, TYPE_INT);
+        return;
+    }
+
     const Type *base = NULL;
     Symbol *method =
         find_method_on_chain(state->current_scope->type_registry, receiver_type, method_name, &base);
@@ -677,18 +704,15 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         return;
     }
 
-    // What the call has to reach. A set hung on a declaration names no one
-    // receiver, since every instantiation of it answers the same method, so
-    // what such a call takes is the type whose set answered -- the level the
-    // walk stopped at.
-    const Type *declared_receiver =
-        method->func.param_count > 0 && method->func.params[0] ? method->func.params[0] : base;
+    // What the call has to reach: parameter zero, which is the receiver for
+    // every method. A function declaring none is refused below, and 'base' -- the
+    // type whose set answered -- stands in until then so that nothing here reads
+    // past an empty parameter list.
+    const Type *declared_receiver = method->func.param_count > 0 ? method->func.params[0] : base;
 
     // The sugar borrows, and never moves: a function consuming parameter zero
     // is reached where the transfer can be written, so that no call site gives
     // up ownership without saying so.
-    // A method declared on a declaration has no one receiver type -- every
-    // instantiation answers it -- so there is no box for it to consume.
     if (method->func.param_count > 0 && type_kind(declared_receiver) == TYPE_BOX) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                    "'%s' consumes what it takes, so it is called as '%s::%s(move ...)' rather than on a "
@@ -727,23 +751,6 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %zu argument(s), found %zu",
                    declared_params, expr->call.args.size);
         expr->type = resolver_error_type(state);
-        return;
-    }
-
-    // An array's length is part of its type, so 'xs.len()' is known here and
-    // becomes the literal it answers. Folded rather than called because there
-    // is nothing at run time to read: the elements carry no count beside them.
-    //
-    // Ahead of the lowering below, which would otherwise build a call this
-    // discards.
-    if (type_kind(base) == TYPE_ARRAY &&
-        method_name == string_from_cstr(state->current_scope->strings, "len")) {
-        ast_expr_free(expr->call.target);
-        ast_expr_list_free(&expr->call.args);
-
-        expr->kind = EXPR_LITERAL;
-        expr->lit = (Literal){.kind = TYPE_INT, .as_int = type_array_length(base)};
-        expr->type = method->func.return_type;
         return;
     }
 

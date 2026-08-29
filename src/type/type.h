@@ -272,9 +272,9 @@ typedef struct TypeDef {
     const TypeField *fields;
     size_t field_count;
 
-    // What every instantiation answers, in terms of the parameters. Registered
-    // where an instantiation is interned, since only there is the parameter
-    // known -- which is what separates these from an array's shared set.
+    // What every instantiation answers, in terms of the parameters. Substituted
+    // and registered where an instantiation is interned, since only there is
+    // the argument known: each instantiation ends up owning its own set.
     const GenericMethod *methods;
     size_t method_count;
 } TypeDef;

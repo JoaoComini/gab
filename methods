@@ -1,0 +1,2 @@
+src/type/type_registry.c:596:        const GenericMethod *method = &generic->methods[i];
+src/builtin/vec.c:191:    def->methods = methods;

@@ -382,20 +382,6 @@ bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *
     return true;
 }
 
-bool type_registry_add_shared_method(TypeRegistry *registry, const TypeDef *def, String *name,
-                                     Symbol *method) {
-    assert(def && name && method && "a shared method is a declaration, a name and a body");
-
-    MethodKey key = {.def = def, .name = name};
-
-    if (method_key_lookup(registry->methods, key)) {
-        return false;
-    }
-
-    method_key_insert(registry->methods, key, method);
-    return true;
-}
-
 const TypeDef *type_registry_array_def(TypeRegistry *registry) { return registry->primitives.array_def; }
 
 Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name) {
@@ -404,19 +390,6 @@ Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, cons
     }
 
     Symbol **found = method_key_lookup(registry->methods, (MethodKey){.type = type, .name = name});
-
-    if (found) {
-        return *found;
-    }
-
-    // An instantiation answers what its declaration declares: every
-    // '[T; N]' reaches the bare 'Array's set. Its own is consulted first,
-    // since what the two do not share is what tells them apart.
-    if (!type->decl) {
-        return NULL;
-    }
-
-    found = method_key_lookup(registry->methods, (MethodKey){.def = type->decl, .name = name});
 
     return found ? *found : NULL;
 }

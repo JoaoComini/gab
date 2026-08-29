@@ -145,27 +145,15 @@ typedef struct Deref {
 /*
     Declaring a method on one type.
 
-    Where nearly every method goes, because nearly every signature mentions the
-    type it hangs on. One whose signature does not -- an array's 'len', the same
-    for every element -- is declared on the declaration instead, so that one
-    entry serves every instantiation. See type_registry_add_shared_method.
-
-    Both land in one table, and a lookup consults the type before the
-    declaration it came from.
+    Every method hangs on a type, including those a generic declaration states:
+    those are substituted where each instantiation is interned, so 'Vec<int>'
+    and 'Vec<bool>' own their own rather than sharing one whose signature could
+    not name either element.
 */
 bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method);
 
-// Declares a method every instantiation of a declaration answers, rather than
-// one a single type does. Its signature mentions no parameter -- otherwise it
-// would have to be substituted, and could not be shared.
-bool type_registry_add_shared_method(TypeRegistry *registry, const TypeDef *def, String *name,
-                                     Symbol *method);
-
-// Declares a method every instantiation of a declaration answers, rather than
-// one a single type does. What an array's shared set is: no '[T; N]' declares
-// it, and every one of them finds it.
-// 'Array', the declaration every '[T; N]' applies. What a spec resolves to
-// before its element and length are given.
+// 'Array', the declaration every '[T; N]' is interned against. Reached from the
+// syntax rather than from a scope: no name resolves to it.
 const TypeDef *type_registry_array_def(TypeRegistry *registry);
 
 Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name);
@@ -290,7 +278,7 @@ const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDef *def
 
 // As type_registry_instantiate, where every argument is a type. What all but
 // 'Array' takes: a length is the one argument that is a number rather than a
-// type, so only an array's spec builds the TypeArgs itself.
+// type, so only type_registry_array_of builds the TypeArgs itself.
 const Type *type_registry_apply(TypeRegistry *registry, const TypeDef *def, const Type *const *args,
                                 size_t arg_count);
 
