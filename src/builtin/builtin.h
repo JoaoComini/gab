@@ -67,6 +67,26 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
                              GabExternFn body, const Type *return_type, const Type *const *params,
                              size_t param_count);
 
+/*
+    Declares a method on a generic declaration, written over its parameters.
+
+    Separate from builtin_declare because a signature may name the declaration
+    it hangs on -- a vector's 'push' takes a 'ref Vec<T>' -- and that type
+    cannot be built until the declaration exists. So a provider states the type,
+    then states what it answers.
+
+    Nothing is registered against a type here: what answers these is every
+    instantiation, and none of them exists yet. Each is substituted and
+    registered where an instantiation is interned.
+
+    'receiver' is parameter zero and 'params' are what a call writes after it.
+    Both may mention type_registry_param, which is what makes this a
+    declaration's method rather than one type's.
+*/
+void builtin_declare_method(VM *vm, const TypeDef *declared_on, const char *name, GabExternFn body,
+                            const Type *receiver, const Type *result, const Type *const *params,
+                            size_t param_count);
+
 // As builtin_register_method, for a function reached on the type rather than on
 // a value: 'Type::name(args)'. Every parameter is in 'params', since nothing is
 // the receiver.

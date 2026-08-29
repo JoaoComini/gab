@@ -87,6 +87,52 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
                              string_from_cstr(&vm->env.strings, name), symbol);
 }
 
+void builtin_declare_method(VM *vm, const TypeDef *declared_on, const char *name, GabExternFn body,
+                            const Type *receiver, const Type *result, const Type *const *params,
+                            size_t param_count) {
+    Arena *arena = vm->env.arena;
+
+    // Const to every reader, since what a declaration says is settled once it
+    // is stated; this is the one writer, and it is what states the methods.
+    TypeDef *def = (TypeDef *)declared_on;
+
+    // Grown one at a time rather than sized up front: a provider states its
+    // methods one per call, and nothing knows how many there will be until it
+    // stops. Copied because the old array is the arena's and cannot be resized.
+
+    GenericMethod *methods = arena_alloc(arena, (def->method_count + 1) * sizeof(GenericMethod));
+
+    for (size_t i = 0; i < def->method_count; i++) {
+        methods[i] = def->methods[i];
+    }
+
+    // In the arena for the same reason the declaration is: an instantiation
+    // reads this signature whenever one is first named, long after this call.
+    const Type **owned = NULL;
+
+    if (param_count > 0) {
+        const Type **copy = arena_alloc(arena, param_count * sizeof(const Type *));
+
+        for (size_t i = 0; i < param_count; i++) {
+            copy[i] = params[i];
+        }
+
+        owned = copy;
+    }
+
+    methods[def->method_count] = (GenericMethod){
+        .name = string_from_cstr(&vm->env.strings, name),
+        .body = (void *)body,
+        .receiver = receiver,
+        .result = result,
+        .params = owned,
+        .param_count = param_count,
+    };
+
+    def->methods = methods;
+    def->method_count++;
+}
+
 // As builtin_register_method, for a function the type owns rather than one a
 // value reaches: 'params' are every parameter, since there is no receiver to be
 // parameter zero.

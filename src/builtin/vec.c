@@ -128,8 +128,6 @@ void builtin_register_vec(VM *vm) {
 
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
-    Arena *arena = vm->env.arena;
-
     // Every method reaches the header in place, so each takes a pointer to it:
     // a receiver by value would copy a vector, which owns its block and so
     // cannot be copied at all.
@@ -144,50 +142,12 @@ void builtin_register_vec(VM *vm) {
 
     const Type *an_int = type_registry_get_primitive(registry, TYPE_INT);
 
-    // Arena-allocated rather than local: the declaration holds these for as
-    // long as the VM lives, since an instantiation reads them whenever one is
-    // first named.
-    const Type **push_params = arena_alloc(arena, sizeof(const Type *));
-    const Type **at_params = arena_alloc(arena, sizeof(const Type *));
-    GenericMethod *methods = arena_alloc(arena, 3 * sizeof(GenericMethod));
+    const Type *const push_params[] = {element};
+    const Type *const at_params[] = {an_int};
 
-    push_params[0] = element;
-    at_params[0] = an_int;
-
-    methods[0] = (GenericMethod){
-        .name = string_from_cstr(&vm->env.strings, "push"),
-        .body = (void *)vec_push,
-        .receiver = receiver,
-
-        // Nothing: a push is done for what it leaves in the vector, and a type
-        // returning nothing is what a NULL return type is everywhere.
-        .result = NULL,
-        .params = push_params,
-        .param_count = 1,
-    };
-
-    methods[1] = (GenericMethod){
-        .name = string_from_cstr(&vm->env.strings, "at"),
-        .body = (void *)vec_at,
-        .receiver = receiver,
-        .result = element,
-        .params = at_params,
-        .param_count = 1,
-    };
-
-    methods[2] = (GenericMethod){
-        .name = string_from_cstr(&vm->env.strings, "len"),
-        .body = (void *)vec_len,
-        .receiver = receiver,
-        .result = an_int,
-        .params = NULL,
-        .param_count = 0,
-    };
-
-    // Written into the declaration rather than registered against a type: what
-    // answers these is every 'Vec<T>', and none of them exists yet.
-    TypeDef *def = (TypeDef *)vec_def;
-
-    def->methods = methods;
-    def->method_count = 3;
+    // Nothing comes back from a push: it is done for what it leaves in the
+    // vector, and a NULL result is what returning nothing is everywhere.
+    builtin_declare_method(vm, vec_def, "push", vec_push, receiver, NULL, push_params, 1);
+    builtin_declare_method(vm, vec_def, "at", vec_at, receiver, element, at_params, 1);
+    builtin_declare_method(vm, vec_def, "len", vec_len, receiver, an_int, NULL, 0);
 }
