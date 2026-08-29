@@ -162,6 +162,20 @@ static void test_a_struct_element_keeps_its_own_slot() {
 
 // How many elements an array holds is what its type says, so the call answers
 // without reading anything.
+// A length answers what its type says and takes nothing, so an argument written
+// to it is as wrong as one written to any other call.
+static void test_a_length_takes_no_argument() {
+    assert(!test_compiles("func f(): int { let xs: [int; 4]; return xs.len(1); }\n"
+                          "let r: int = f();"));
+}
+
+// A borrow of an array reaches the length the same way, since what answers it
+// is the type the borrow names rather than anything held beside the elements.
+static void test_a_borrowed_array_knows_its_length() {
+    assert(test_run_int("func f(): int { let xs: [int; 4]; let r: ref [int; 4] = xs; return r.len(); }\n"
+                        "let r: int = f();") == 4);
+}
+
 static void test_an_array_knows_its_length() {
     assert(test_run_int("func f(): int {\n"
                         "    let xs: [int; 4];\n"
@@ -237,6 +251,16 @@ static void test_the_brackets_say_what_the_length_counts() {
                         "let r: int = f();") == 5);
 }
 
+// 'Array' names a declaration rather than a type: what it takes is what makes
+// it one, so a mention supplying nothing has no type to be.
+static void test_the_bare_array_names_no_type() {
+    assert(!test_compiles("func f(): int {\n"
+                          "    let xs: Array;\n"
+                          "    return 0;\n"
+                          "}\n"
+                          "let r: int = f();"));
+}
+
 int main(void) {
     test_a_fixed_array_holds_its_length_in_its_type();
     test_elements_are_distinct();
@@ -250,6 +274,8 @@ int main(void) {
     test_an_array_too_wide_for_a_frame_is_refused();
     test_an_owning_element_is_freed_with_the_array();
     test_a_struct_element_keeps_its_own_slot();
+    test_a_length_takes_no_argument();
+    test_a_borrowed_array_knows_its_length();
     test_an_array_knows_its_length();
     test_an_array_of_a_copyable_element_copies();
     test_an_array_of_an_owning_element_does_not_copy();
@@ -257,6 +283,7 @@ int main(void) {
     test_an_array_lends_to_a_borrow();
     test_what_may_be_indexed_and_by_what();
     test_the_brackets_say_what_the_length_counts();
+    test_the_bare_array_names_no_type();
 
     return 0;
 }

@@ -22,7 +22,6 @@ typedef struct TypePrimitiveNames {
     String *bool_name;
     String *byte_name;
     String *str_name;
-    String *array_name;
     String *error_name;
 } TypePrimitiveNames;
 
@@ -33,7 +32,17 @@ typedef struct Symbol Symbol;
 // The named types of one scope. Scope owns these and chains them, the same way
 // it chains symbol tables.
 typedef struct {
+    // What the name stands for, when it stands for a type at all. NULL for a
+    // declaration that takes parameters: 'Vec' names no type until one mention
+    // supplies them, so there is nothing here for it to be.
     const Type *type;
+
+    // What the name declares, or NULL for a type that stands for itself -- a
+    // primitive, or a declaration's own parameter -- which was interned from no
+    // declaration. Which of the two a binding is is read from this rather than
+    // from the type, so a lookup answers what the name means without asking
+    // what it names.
+    const TypeDef *def;
 } TypeBinding;
 
 #define type_map_hash(key) (size_t)key
@@ -53,28 +62,15 @@ GAB_HASH_MAP(TypeMap, type_map, String *, TypeBinding)
     nothing, so nothing in the resolver names a 'String'.
 */
 
-// One field of a declared struct.
-typedef struct TypeFieldDecl {
-    String *name;
-    const Type *type;
-} TypeFieldDecl;
-
-// What a standard library says a type is.
+// What a standard library says a type is: the declaration itself, and what a
+// value of it stands for.
 //
-// Either a struct with fields, or a generic declaration whose instantiations
-// have them -- 'generic' decides which, and the two are never both given.
+// One shape for a plain struct and a generic alike -- the declaration says how
+// many parameters it takes, and a struct takes none.
 typedef struct TypeDecl {
-    // Interned by the provider, as every name the registry is given is: what
-    // interns them is the pool the provider already holds, so the registry needs
-    // none of its own.
-    String *name;
-
-    // A struct's fields, laid out in the order given.
-    const TypeFieldDecl *fields;
-    size_t field_count;
-
-    // Or the declaration every instantiation is built from, for a generic.
-    const GenericDecl *generic;
+    // What the name declares. Its own name is carried here, so nothing has to
+    // pair a declaration with a type to know what it is called.
+    const TypeDef *def;
 
     // What a value of this type stands for, and which of its bytes name that
     // view. Both or neither: a deref with no parts could not be lent, and parts
@@ -84,6 +80,29 @@ typedef struct TypeDecl {
     const LentPart *lent_parts;
     size_t lent_part_count;
 } TypeDecl;
+
+/*
+    Stating a struct type in one call, for a provider that knows its fields.
+
+    What a host and a standard library declare with. The declaration and its
+    field array are allocated in the registry's arena, so the caller states what
+    the type is and holds nothing: a TypeDef outlives the call that names it,
+    and getting that wrong is a use-after-free the type system cannot see.
+
+    A plain struct only. A generic declaration is stated with a TypeDecl
+    directly, since its fields are written over parameters the caller has to
+    name.
+*/
+typedef struct TypeFieldSpec {
+    String *name;
+    const Type *type;
+} TypeFieldSpec;
+
+// Interns the struct, lays it out and settles how it frees. The returned type
+// is finished: unlike a unit's struct, whose name is interned before its fields
+// resolve, everything about this one is known at the call.
+const Type *type_registry_declare_struct(TypeRegistry *registry, String *name, const TypeFieldSpec *fields,
+                                         size_t field_count);
 
 // Interning, not naming. One registry per VM holds the primitives and every
 // pointer type, because the type system compares types by pointer identity: a
@@ -122,34 +141,28 @@ typedef struct Deref {
     size_t part_count;
 } Deref;
 
-// Declares a method, or fails if the type already answers that name. Finds one
-// by following 'owner' when the type itself does not answer, so that a type
-// sharing another's identity reaches its set.
+/*
+    Declaring a method on one type.
+
+    Every method hangs on a type, including those a generic declaration states:
+    those are substituted where each instantiation is interned, so 'Vec<int>'
+    and 'Vec<bool>' own their own rather than sharing one whose signature could
+    not name either element.
+*/
 bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method);
+
 Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name);
 
-/*
-    Declaring a type in two steps, for the one caller that cannot do it in one.
-
-    A struct's fields may name types not yet declared, so its name has to be
-    bound before they resolve: 'struct A { b: box B }' is legal, and B may come
-    later in the unit. The name is therefore opened here and the fields added as
-    each resolves with type_add_field, and type_registry_complete settling the
-    layout once they all have.
-
-    A provider that knows its fields up front -- the standard library, and a host
-    -- states them at once with type_registry_declare instead, which is these
-    three calls in order.
-
-    Between the two, the type has no layout: what may be done with it is what
-    needs no width, which is to name it and to point at it.
-*/
-Type *type_registry_open_struct(TypeRegistry *registry, String *name, size_t max_fields);
-
-// Lays the type out and settles how it frees, which is what finishes it. Called
-// once every field is added; a type whose fields did not resolve is withdrawn
-// instead of completed.
-void type_registry_complete(TypeRegistry *registry, Type *type);
+// Lays the type out and settles how it frees, which is what finishes it. A
+// declaration's own fields are what it reads, so this is called once they have
+// resolved.
+//
+// Separate from interning because the two answer different questions and are
+// demanded at different times: a name is interned when it is declared, so that
+// a sibling's field may reach it, while a width cannot be settled until every
+// field it is composed of has one. That is the split rustc draws between
+// 'adt_def' and 'layout_of'.
+void type_registry_complete(TypeRegistry *registry, const Type *type);
 
 /*
     What freeing a value of this type does, or NULL when it owns nothing.
@@ -255,8 +268,14 @@ const Type *type_registry_ptr_to(TypeRegistry *registry, const Type *pointee);
 */
 const Type *type_registry_param(TypeRegistry *registry, size_t index);
 
-const Type *type_registry_instantiate(TypeRegistry *registry, const Type *decl, const Type *const *args,
+const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDef *def, const TypeArg *args,
                                       size_t arg_count);
+
+// As type_registry_instantiate, where every argument is a type. What every
+// declaration takes: a length is the one argument that is a number rather than
+// a type, and nothing declares the constructor that takes one.
+const Type *type_registry_apply(TypeRegistry *registry, const TypeDef *def, const Type *const *args,
+                                size_t arg_count);
 
 // The interned 'block element': an owning address and the capacity it was
 // allocated at. What a collection holds its elements in, and the one owning

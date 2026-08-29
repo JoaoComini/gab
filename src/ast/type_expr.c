@@ -31,6 +31,14 @@ TypeExpr *type_expr_apply(TypeExpr *base) {
     return expr;
 }
 
+TypeExpr *type_expr_array(TypeExpr *element, int32_t length) {
+    TypeExpr *expr = type_expr_create(TYPE_EXPR_ARRAY);
+    expr->array.element = element;
+    expr->array.length = length;
+
+    return expr;
+}
+
 void type_expr_destroy(TypeExpr *expr) {
     if (!expr) {
         return;
@@ -44,6 +52,9 @@ void type_expr_destroy(TypeExpr *expr) {
     case TYPE_EXPR_APPLY:
         type_expr_destroy(expr->apply.base);
         type_expr_list_free(&expr->apply.args);
+        break;
+    case TYPE_EXPR_ARRAY:
+        type_expr_destroy(expr->array.element);
         break;
     case TYPE_EXPR_NAME:
         break;

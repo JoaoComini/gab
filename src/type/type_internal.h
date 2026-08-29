@@ -24,25 +24,25 @@ struct Type {
     // address. Beside the width for that reason -- a type that has no width of
     // its own is exactly one whose reference carries what it lacks.
     //
-    // The declaration an application instantiates: every '[T; N]' names the
-    // bare 'Array'. NULL for a type that is not an instantiation.
+    // The declaration an application instantiates: the 'Vec' behind every
+    // 'Vec<T>'. NULL for a type nothing declares -- a primitive, or one of the
+    // built-in constructors, which the language spells rather than naming.
     //
     // Only the constructor, never the arguments -- those are the application
-    // this type was interned on. What it buys today is the method set, which
-    // every instantiation of a declaration shares because the one method there
-    // is does not read its element. A method that did could not be shared, and
-    // this becomes the key an instantiated set is built from rather than a link
-    // followed to another type's.
+    // this type was interned on. What it buys is the fields: an instantiation
+    // applied to none reads them straight through this.
     //
     // Distinct from the relation a borrowed view has to what it borrows: 'str'
     // is reached from 'String' by lending, which is a step down the chain a
     // receiver already walks, not a set held somewhere else.
-    const Type *decl;
-
-    // What this name declares, for a generic one: the fields an instantiation
-    // is built from, in terms of the parameters. NULL for every type that is
-    // not a generic declaration, which is all but the bare names.
-    const GenericDecl *generic;
+    //
+    // With the application this type was interned on, this is the whole of what
+    // a nominal type is: a declaration applied to arguments, which is rustc's
+    // Adt(AdtDef, GenericArgs). Its fields are that declaration's with those
+    // arguments substituted in, and are held by the registry rather than here
+    // -- so a name may be interned before its fields resolve, and no copy of
+    // them can disagree with the declaration.
+    const TypeDef *decl;
 
     // Whether a parameter is reachable from here, settled as this type is
     // built rather than walked on demand. A walk cannot answer it: a struct
@@ -66,15 +66,21 @@ struct Type {
             const Type *pointee;
         } indirect;
 
-        // TYPE_STRUCT: the fields the layout came from. A string's two are the
-        // block holding its characters and how many of them are live.
+        // TYPE_STRUCT: where its fields were derived, for an instantiation
+        // given arguments. Owned by the registry that derived them.
         //
-        // Not TYPE_STR: those characters are what a 'str' is, so it holds no
-        // fields naming them. What does is a reference to one, and that is the
-        // reference's own shape rather than anything read off the pointee.
+        // Not TYPE_STR: a string's characters are what a 'str' is, so it holds
+        // no fields naming them. What does is a reference to one, and that is
+        // the reference's own shape rather than anything read off the pointee.
+        //
+        // NULL for one applied to no arguments, whose fields are its
+        // declaration's unsubstituted and are read through 'decl' -- so a
+        // struct interned before its fields resolve needs nothing written here
+        // once they do. What the type was applied to is not held either: that
+        // is the application it was interned on, which is where its identity
+        // was settled.
         struct {
-            TypeField *fields;
-            size_t field_count;
+            const TypeFields *substituted;
         } record;
 
         // TYPE_ARRAY: a run of one element, as many as the length says.

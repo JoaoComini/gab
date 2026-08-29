@@ -39,12 +39,18 @@ ASTStmt *ast_func_decl_stmt_create(Span span, StringRef name, TypeExpr *return_t
     return stmt;
 }
 
-ASTStmt *ast_struct_decl_stmt_create(Span span, StringRef name, ASTFieldList fields) {
+ASTStmt *ast_struct_decl_stmt_create(Span span, StringRef name, const StringRef *params, size_t param_count,
+                                     ASTFieldList fields) {
     ASTStmt *stmt = ast_stmt_create(span);
     stmt->kind = STMT_STRUCT_DECL;
     stmt->struct_decl.name = name;
     stmt->struct_decl.fields = fields;
-    stmt->struct_decl.type = NULL;
+    stmt->struct_decl.param_count = param_count;
+
+    for (size_t i = 0; i < param_count; i++) {
+        stmt->struct_decl.params[i] = params[i];
+    }
+
     stmt->struct_decl.declared = false;
     return stmt;
 }

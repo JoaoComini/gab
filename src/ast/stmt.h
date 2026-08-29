@@ -86,7 +86,11 @@ typedef struct {
     StringRef name;
     ASTFieldList fields;
 
-    const Type *type;
+    // The names this declaration takes, in the order a mention supplies them.
+    // Empty for a plain struct, which is therefore a declaration applied to no
+    // arguments rather than a shape of its own.
+    StringRef params[GAB_MAX_TYPE_PARAMS];
+    size_t param_count;
 
     // As ASTFuncDecl::declared.
     bool declared;
@@ -172,7 +176,8 @@ ASTStmt *ast_expr_stmt_create(Span span, ASTExpr *value);
 ASTStmt *ast_var_decl_stmt_create(Span span, StringRef name, TypeExpr *type, ASTExpr *initializer);
 ASTStmt *ast_func_decl_stmt_create(Span span, StringRef name, TypeExpr *return_type, ASTFieldList params,
                                    ASTStmt *body);
-ASTStmt *ast_struct_decl_stmt_create(Span span, StringRef name, ASTFieldList fields);
+ASTStmt *ast_struct_decl_stmt_create(Span span, StringRef name, const StringRef *params, size_t param_count,
+                                     ASTFieldList fields);
 ASTStmt *ast_assign_stmt_create(Span span, ASTExpr *target, ASTExpr *value);
 ASTStmt *ast_compound_assign_stmt_create(Span span, ASTExpr *target, BinOp op, ASTExpr *value);
 ASTStmt *ast_if_stmt_create(Span span, ASTExpr *condition, ASTStmt *then_block, ASTStmt *else_block);

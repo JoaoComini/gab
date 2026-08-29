@@ -146,14 +146,21 @@ typedef struct Type Type;
     which is why this is a key rather than one map per constructor.
 */
 typedef enum {
-    // The built-in constructors, named directly by the compiler.
+    // The built-in constructors, named directly by the compiler. Nothing
+    // declares them: the language spells each, so none has a declaration behind
+    // it and none can be named or shadowed.
     TYPE_CTOR_BOX,
     TYPE_CTOR_REF,
     TYPE_CTOR_PTR,
     TYPE_CTOR_BLOCK,
 
-    // A constructor with a declaration behind it: 'Array' today, and whatever
-    // a generic declaration introduces later.
+    // '[T; N]', which takes a type and a length rather than a type alone. A
+    // constructor like the four above rather than a declaration applied to
+    // arguments -- as rustc separates ty::Array from ty::Adt.
+    TYPE_CTOR_ARRAY,
+
+    // A constructor with a declaration behind it: what a struct or a generic
+    // declaration introduces.
     TYPE_CTOR_NOMINAL,
 } TypeCtor;
 
@@ -175,6 +182,27 @@ typedef struct TypeField {
     String *name;
     const Type *type;
 } TypeField;
+
+/*
+    A nominal type's fields, as its declaration's with its arguments substituted
+    in.
+
+    Held apart from the Type for the reason a layout and a drop plan are: what a
+    type is -- a declaration applied to arguments -- is settled when it is
+    interned, while what follows from that is derived, and a declaration's own
+    fields may not have resolved yet. An instantiation applied to no arguments
+    has none of these at all: substituting nothing is the identity, so it reads
+    the declaration's directly.
+
+    The count grows as the fields are filled. A field may name the very
+    instantiation being built -- 'Node<T>' holding a 'box Node<T>' -- and what
+    that reaches must be the fields settled so far rather than a count standing
+    over memory nothing has written.
+*/
+typedef struct TypeFields {
+    const TypeField *fields;
+    size_t count;
+} TypeFields;
 
 /*
     One method a generic declaration answers, in terms of its parameters.
@@ -203,33 +231,47 @@ typedef struct GenericMethod {
 } GenericMethod;
 
 /*
-    A generic declaration: the fields its instantiations are laid out from and
-    the methods they answer, in terms of the parameters it takes.
+    What a nominal name declares: the fields its instantiations are laid out
+    from and the methods they answer, in terms of the parameters it takes.
 
-    What makes it a declaration rather than a type is that a field may mention a
-    parameter. 'Vec' says its block holds T without saying what T is, and
-    interning 'Vec<int>' is that said with int -- which is the whole of what
-    instantiating one does.
+    One shape for every nominal type, generic or not. A plain struct takes no
+    parameters and is its own instantiation; 'Vec' takes one and is laid out
+    only once given it. Genericity is how many parameters there are rather than
+    a different kind of declaration, which is what keeps one path for both.
 
-    Held beside the type the name binds to, so that 'Vec' resolves to something
-    a diagnostic can print while naming no value. Nothing is laid out here: a
-    width follows from an instantiation's fields, and a parameter has none.
+    A field may mention a parameter, which is what makes this a declaration
+    rather than a type: 'Vec' says its block holds T without saying what T is,
+    and interning 'Vec<int>' is that said with int. Nothing is laid out here --
+    a width follows from an instantiation's fields, and a parameter has none.
 */
-typedef struct GenericDecl {
+typedef struct TypeDef {
+    // Interned by whoever declares it, as every name the registry is given is.
+    // Carried here rather than read off a type, since a declaration is what a
+    // name resolves to and no type stands for one.
+    String *name;
+
+    // How many arguments an instantiation supplies. Zero for a plain struct,
+    // which is therefore instantiated by supplying none.
     size_t param_count;
 
     // The fields an instantiation is laid out from, as ordinary types written
     // over the parameters. A field naming no parameter is already its own
     // answer; one that does is rebuilt when the arguments are known.
+    //
+    // The one place a nominal type's fields live. An instantiation applied to
+    // no arguments reads these directly rather than copying them, which is what
+    // lets its type be interned before they are resolved -- so these may be
+    // empty while a unit's structs are still being read, and filling them is
+    // what gives that type its fields.
     const TypeField *fields;
     size_t field_count;
 
-    // What every instantiation answers, in terms of the parameters. Registered
-    // where an instantiation is interned, since only there is the parameter
-    // known -- which is what separates these from an array's shared set.
+    // What every instantiation answers, in terms of the parameters. Substituted
+    // and registered where an instantiation is interned, since only there is
+    // the argument known: each instantiation ends up owning its own set.
     const GenericMethod *methods;
     size_t method_count;
-} GenericDecl;
+} TypeDef;
 
 // What an indirection names, or NULL for a kind that names nothing. The walks
 // asking how many levels deep something is read it that way, so "not an
@@ -240,13 +282,10 @@ typedef struct GenericDecl {
 TypeKind type_kind(const Type *type);
 String *type_name_of(const Type *type);
 
-// The declaration an instantiation was built from -- the bare 'Array' behind
-// every '[T; N]' -- or NULL for a type that is not one.
-const Type *type_decl(const Type *type);
-
-// The generic declaration a name introduces, or NULL for every type that is not
-// one. What tells 'Vec' apart from 'Vec<int>'.
-const GenericDecl *type_generic(const Type *type);
+// The declaration an instantiation was built from -- the 'Vec' behind every
+// 'Vec<T>' -- or NULL for a type nothing declares: a primitive, or one of the
+// built-in constructors.
+const TypeDef *type_decl(const Type *type);
 
 // A list of types nothing in it owns: they belong to the scope arena and outlive
 // every compile, so this holds borrowed pointers and frees none.
@@ -264,8 +303,14 @@ size_t type_param_index(const Type *type);
 // substitution, which is what keeps the walk to the declarations that need it.
 bool type_has_param(const Type *type);
 
-// The fields a layout was computed from. Empty for a kind laid out some other
+// The fields a layout is computed from. Empty for a kind laid out some other
 // way, so a walk over them is the right no-op there.
+//
+// A nominal type's are its declaration's with its arguments substituted in, and
+// neither is held by the type itself: one applied to no arguments reads its
+// declaration's, and one given them reads what the registry derived. So a
+// struct interned before its fields resolve answers with them once they do,
+// with nothing written back into the type.
 const TypeField *type_fields(const Type *type);
 size_t type_field_count(const Type *type);
 
@@ -278,9 +323,6 @@ size_t type_field_count(const Type *type);
     reaching for one outside the registry is building a type nothing interned.
 */
 Type *type_create(Arena *arena, TypeKind kind, String *name);
-Type *type_struct_create(Arena *arena, String *name, size_t max_fields);
-
-void type_add_field(Type *type, String *name, const Type *field_type);
 
 // What a reference to this type carries besides the address.
 TypeMetadata type_metadata_of(const Type *type);
@@ -295,6 +337,12 @@ bool type_is_str_ref(const Type *type);
 // something no slot, field or parameter may contain, and is reached only
 // through a reference.
 bool type_is_sized(const Type *type);
+
+// Whether a name bound to this type reaches the type itself, rather than a
+// declaration an instantiation of it comes from. True of what the language
+// declares -- the primitives -- and of a declaration's own parameter, neither
+// of which is laid out from a field list.
+bool type_names_itself(const Type *type);
 
 // Whether reaching the value means going through an indirection -- what a
 // deref, an auto-deref, and a field access all ask. Says nothing about

@@ -13,6 +13,26 @@
 // would do; nothing yet makes that worth a second mechanism.
 void builtin_register_all(VM *vm);
 
+// What a library says one of its types is: the name, the fields, and how many
+// parameters those fields are written over. Zero for a plain struct.
+//
+// The declaration itself is built in the VM's arena rather than by the caller,
+// because the type interned from it reads its fields for as long as it lives --
+// a TypeDef on a stack frame is a use-after-free the type system cannot see.
+typedef struct BuiltinTypeSpec {
+    const char *name;
+    size_t param_count;
+
+    const TypeFieldSpec *fields;
+    size_t field_count;
+
+    // What a value of this type stands for, and which of its bytes name that
+    // view. Both or neither, as in TypeDecl.
+    const Type *derefs_to;
+    const LentPart *lent_parts;
+    size_t lent_part_count;
+} BuiltinTypeSpec;
+
 // Declares a type the standard library provides: interned on the VM's registry
 // and named in its global scope, which is where every other type name lives.
 //
@@ -22,7 +42,12 @@ void builtin_register_all(VM *vm);
 //
 // Absent from a compile that never had a VM, which is what keeps 'String' out
 // of the language and in the library that provides it.
-const Type *builtin_declare_type(VM *vm, const TypeDecl *decl);
+//
+// Returns the declaration rather than the type, since one taking parameters
+// stands for no type until a mention supplies them. A caller wanting the type a
+// declaration taking none stands for asks the registry for it, which is that
+// declaration applied to nothing.
+const TypeDef *builtin_declare(VM *vm, const BuiltinTypeSpec *spec);
 
 // Declares one method on a builtin type: a Symbol in the type's method map, and
 // an entry in the table OP_CALL_EXTERN indexes. The body is a GabExternFn
@@ -42,6 +67,26 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
                              GabExternFn body, const Type *return_type, const Type *const *params,
                              size_t param_count);
 
+/*
+    Declares a method on a generic declaration, written over its parameters.
+
+    Separate from builtin_declare because a signature may name the declaration
+    it hangs on -- a vector's 'push' takes a 'ref Vec<T>' -- and that type
+    cannot be built until the declaration exists. So a provider states the type,
+    then states what it answers.
+
+    Nothing is registered against a type here: what answers these is every
+    instantiation, and none of them exists yet. Each is substituted and
+    registered where an instantiation is interned.
+
+    'receiver' is parameter zero and 'params' are what a call writes after it.
+    Both may mention type_registry_param, which is what makes this a
+    declaration's method rather than one type's.
+*/
+void builtin_declare_method(VM *vm, const TypeDef *declared_on, const char *name, GabExternFn body,
+                            const Type *receiver, const Type *result, const Type *const *params,
+                            size_t param_count);
+
 // As builtin_register_method, for a function reached on the type rather than on
 // a value: 'Type::name(args)'. Every parameter is in 'params', since nothing is
 // the receiver.
@@ -50,11 +95,6 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
 
 // Each builtin type's methods, called by builtin_register_all.
 void builtin_register_string(VM *vm);
-
-// The methods every array answers, declared once on the bare 'Array' type that
-// each '[T; N]' reaches through 'owner'. None of them depend on the element,
-// so one set serves every array.
-void builtin_register_array(VM *vm);
 
 // The methods every 'Vec<T>' answers. Unlike an array's, these are declared on
 // the 'Vec' declaration in terms of its parameter and turned into Symbols where

@@ -37,7 +37,11 @@ GAB_HASH_MAP(TypeAppMap, type_app_map, TypeApp, Type *)
 // what a type is was settled when it was interned. Keeping them apart is what
 // lets a type be finished when the registry hands it over.
 typedef struct MethodKey {
+    // The type a method was registered against. Every method hangs on one: a
+    // generic declaration's are substituted per instantiation, so each of them
+    // owns its own, and nothing is shared across them.
     const Type *type;
+
     const String *name;
 } MethodKey;
 
@@ -120,11 +124,6 @@ typedef struct {
     // Not what 'ref String' names. That is an indirection to a slot holding a
     // header, which is what 'ref' builds for every type in the language.
     const Type *str_type;
-
-    // 'Array', the bare name. Not a usable type on its own -- every array is
-    // '[T; N]' for some element -- but the name a spec resolves to before its
-    // element is applied, and what a diagnostic prints when one is missing.
-    const Type *array_type;
 
     const Type *error_type;
 } TypePrimitives;

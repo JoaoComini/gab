@@ -15,33 +15,30 @@
 //
 // A declaration, so no width is settled here -- what a vector is laid out as
 // follows from the element, and that is not known until one is applied.
-static const Type *vec_declare_type(VM *vm) {
-    Arena *arena = vm->env.arena;
+static const TypeDef *vec_declare_type(VM *vm) {
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
     // The block owns the memory and carries both the capacity it was taken at
     // and how far into it anything was written, so freeing it asks nothing
     // else -- which is the whole of what a vector is.
-    TypeField *fields = arena_alloc(arena, sizeof(TypeField));
-
-    fields[0] = (TypeField){
-        .name = string_from_cstr(&vm->env.strings, "data"),
-        .type = type_registry_block_of(registry, type_registry_param(registry, 0)),
+    //
+    // Written over parameter zero, which is what makes this a declaration: what
+    // a vector holds is not known until a mention supplies an element.
+    const TypeFieldSpec fields[] = {
+        {
+            .name = string_from_cstr(&vm->env.strings, "data"),
+            .type = type_registry_block_of(registry, type_registry_param(registry, 0)),
+        },
     };
 
-    // Arena-allocated rather than local: every instantiation reads this, and
-    // the declaration outlives the call that made it.
-    GenericDecl *generic = arena_alloc(arena, sizeof(GenericDecl));
-
-    *generic = (GenericDecl){
+    const BuiltinTypeSpec spec = {
+        .name = "Vec",
         .param_count = 1,
         .fields = fields,
-        .field_count = 1,
+        .field_count = sizeof(fields) / sizeof(*fields),
     };
 
-    const TypeDecl decl = {.name = string_from_cstr(&vm->env.strings, "Vec"), .generic = generic};
-
-    return builtin_declare_type(vm, &decl);
+    return builtin_declare(vm, &spec);
 }
 
 // A vector's header: the block it owns, which carries how far into it anything
@@ -127,11 +124,9 @@ static void vec_len(Args *args) { args_return_int(args, vec_load(args).block.len
 void builtin_register_vec(VM *vm) {
     // Declared here and held as a local: what a provider gets back is its
     // handle to the declaration, and one VM's types are not another's.
-    const Type *vec_decl = vec_declare_type(vm);
+    const TypeDef *vec_def = vec_declare_type(vm);
 
     TypeRegistry *registry = vm->env.global_scope.type_registry;
-
-    Arena *arena = vm->env.arena;
 
     // Every method reaches the header in place, so each takes a pointer to it:
     // a receiver by value would copy a vector, which owns its block and so
@@ -142,55 +137,17 @@ void builtin_register_vec(VM *vm) {
     // finds the instantiation being built, so no receiver needs naming a self
     // the declaration could not otherwise say.
     const Type *element = type_registry_param(registry, 0);
-    const Type *self = type_registry_instantiate(registry, vec_decl, &element, 1);
+    const Type *self = type_registry_apply(registry, vec_def, &element, 1);
     const Type *receiver = type_registry_ref_to(registry, self);
 
     const Type *an_int = type_registry_get_primitive(registry, TYPE_INT);
 
-    // Arena-allocated rather than local: the declaration holds these for as
-    // long as the VM lives, since an instantiation reads them whenever one is
-    // first named.
-    const Type **push_params = arena_alloc(arena, sizeof(const Type *));
-    const Type **at_params = arena_alloc(arena, sizeof(const Type *));
-    GenericMethod *methods = arena_alloc(arena, 3 * sizeof(GenericMethod));
+    const Type *const push_params[] = {element};
+    const Type *const at_params[] = {an_int};
 
-    push_params[0] = element;
-    at_params[0] = an_int;
-
-    methods[0] = (GenericMethod){
-        .name = string_from_cstr(&vm->env.strings, "push"),
-        .body = (void *)vec_push,
-        .receiver = receiver,
-
-        // Nothing: a push is done for what it leaves in the vector, and a type
-        // returning nothing is what a NULL return type is everywhere.
-        .result = NULL,
-        .params = push_params,
-        .param_count = 1,
-    };
-
-    methods[1] = (GenericMethod){
-        .name = string_from_cstr(&vm->env.strings, "at"),
-        .body = (void *)vec_at,
-        .receiver = receiver,
-        .result = element,
-        .params = at_params,
-        .param_count = 1,
-    };
-
-    methods[2] = (GenericMethod){
-        .name = string_from_cstr(&vm->env.strings, "len"),
-        .body = (void *)vec_len,
-        .receiver = receiver,
-        .result = an_int,
-        .params = NULL,
-        .param_count = 0,
-    };
-
-    // Written into the declaration rather than registered against a type: what
-    // answers these is every 'Vec<T>', and none of them exists yet.
-    GenericDecl *generic = (GenericDecl *)type_generic(vec_decl);
-
-    generic->methods = methods;
-    generic->method_count = 3;
+    // Nothing comes back from a push: it is done for what it leaves in the
+    // vector, and a NULL result is what returning nothing is everywhere.
+    builtin_declare_method(vm, vec_def, "push", vec_push, receiver, NULL, push_params, 1);
+    builtin_declare_method(vm, vec_def, "at", vec_at, receiver, element, at_params, 1);
+    builtin_declare_method(vm, vec_def, "len", vec_len, receiver, an_int, NULL, 0);
 }

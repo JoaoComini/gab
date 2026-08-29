@@ -10,19 +10,48 @@
 
 #include <stddef.h>
 
-const Type *builtin_declare_type(VM *vm, const TypeDecl *decl) {
+const TypeDef *builtin_declare(VM *vm, const BuiltinTypeSpec *spec) {
+    Arena *arena = vm->env.arena;
+
+    TypeField *fields = spec->field_count ? arena_alloc(arena, spec->field_count * sizeof(TypeField)) : NULL;
+
+    for (size_t i = 0; i < spec->field_count; i++) {
+        fields[i] = (TypeField){.name = spec->fields[i].name, .type = spec->fields[i].type};
+    }
+
+    // In the VM's arena, not the caller's frame: every instantiation reads
+    // these, and the declaration outlives the call that states it.
+    TypeDef *def = arena_alloc(arena, sizeof(TypeDef));
+
+    *def = (TypeDef){
+        .name = string_from_cstr(&vm->env.strings, spec->name),
+        .param_count = spec->param_count,
+        .fields = fields,
+        .field_count = spec->field_count,
+    };
+
+    const TypeDecl decl = {
+        .def = def,
+        .derefs_to = spec->derefs_to,
+        .lent_parts = spec->lent_parts,
+        .lent_part_count = spec->lent_part_count,
+    };
+
     Scope *scope = &vm->env.global_scope;
 
-    const Type *type = type_registry_declare(scope->type_registry, decl);
+    type_registry_declare(scope->type_registry, &decl);
 
-    scope_decl_type(scope, type_name_of(type), type);
+    // The name binds to what it declares, whatever its arity: one taking no
+    // parameters is the type it was just instantiated into, and one taking them
+    // becomes a type where a mention supplies them.
+    scope_decl_type_def(scope, def->name, def);
 
-    return type;
+    return def;
 }
 
-void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiver, const char *name,
-                             GabExternFn body, const Type *return_type, const Type *const *params,
-                             size_t param_count) {
+// The Symbol a method is, whichever of the two it is registered against.
+static Symbol *method_symbol(VM *vm, const Type *receiver, const char *name, GabExternFn body,
+                             const Type *return_type, const Type *const *params, size_t param_count) {
     Arena *arena = vm->env.arena;
 
     Symbol *symbol = arena_alloc(arena, sizeof(Symbol));
@@ -46,8 +75,62 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
 
     extern_proto_list_add(&vm->program.extern_protos, (ExternProto){.body = body, .symbol = symbol});
 
+    return symbol;
+}
+
+void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiver, const char *name,
+                             GabExternFn body, const Type *return_type, const Type *const *params,
+                             size_t param_count) {
+    Symbol *symbol = method_symbol(vm, receiver, name, body, return_type, params, param_count);
+
     type_registry_add_method(vm->env.global_scope.type_registry, declared_on,
                              string_from_cstr(&vm->env.strings, name), symbol);
+}
+
+void builtin_declare_method(VM *vm, const TypeDef *declared_on, const char *name, GabExternFn body,
+                            const Type *receiver, const Type *result, const Type *const *params,
+                            size_t param_count) {
+    Arena *arena = vm->env.arena;
+
+    // Const to every reader, since what a declaration says is settled once it
+    // is stated; this is the one writer, and it is what states the methods.
+    TypeDef *def = (TypeDef *)declared_on;
+
+    // Grown one at a time rather than sized up front: a provider states its
+    // methods one per call, and nothing knows how many there will be until it
+    // stops. Copied because the old array is the arena's and cannot be resized.
+
+    GenericMethod *methods = arena_alloc(arena, (def->method_count + 1) * sizeof(GenericMethod));
+
+    for (size_t i = 0; i < def->method_count; i++) {
+        methods[i] = def->methods[i];
+    }
+
+    // In the arena for the same reason the declaration is: an instantiation
+    // reads this signature whenever one is first named, long after this call.
+    const Type **owned = NULL;
+
+    if (param_count > 0) {
+        const Type **copy = arena_alloc(arena, param_count * sizeof(const Type *));
+
+        for (size_t i = 0; i < param_count; i++) {
+            copy[i] = params[i];
+        }
+
+        owned = copy;
+    }
+
+    methods[def->method_count] = (GenericMethod){
+        .name = string_from_cstr(&vm->env.strings, name),
+        .body = (void *)body,
+        .receiver = receiver,
+        .result = result,
+        .params = owned,
+        .param_count = param_count,
+    };
+
+    def->methods = methods;
+    def->method_count++;
 }
 
 // As builtin_register_method, for a function the type owns rather than one a
@@ -83,6 +166,5 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
 // script function's index is unaffected by how many builtins exist.
 void builtin_register_all(VM *vm) {
     builtin_register_string(vm);
-    builtin_register_array(vm);
     builtin_register_vec(vm);
 }

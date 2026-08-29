@@ -35,9 +35,17 @@ typedef enum {
     TYPE_EXPR_BOX,
     TYPE_EXPR_REF,
 
-    // A constructor applied to arguments: 'Vec<int>' today, and whatever takes
-    // more than one later. A list rather than a single argument, so that a
-    // second one needs no second field.
+    // '[T; N]': a run of one element, as many as the length says.
+    //
+    // Its own kind rather than a name applied to arguments, as 'box' and 'ref'
+    // are: the language spells it, so no scope has to name it and no lookup can
+    // be shadowed out from under it. What rustc separates as TyKind::Array from
+    // TyKind::Path, and for the same reason.
+    TYPE_EXPR_ARRAY,
+
+    // A declaration applied to type arguments: 'Vec<int>' today, and whatever
+    // takes more than one later. A list rather than a single argument, so that
+    // a second one needs no second field.
     TYPE_EXPR_APPLY,
 } TypeExprKind;
 
@@ -57,17 +65,20 @@ struct TypeExpr {
         struct {
             TypeExpr *base;
             TypeExprList args;
-
-            // How many elements, for '[T; N]'. An integer literal rather
-            // than an argument of its own: a length is not a type, and the one
-            // constructor that takes one always takes exactly one.
-            int32_t length;
         } apply;
+
+        // What '[T; N]' runs over, and how far. A literal rather than an
+        // argument of its own: a length is not a type, so nothing resolves it.
+        struct {
+            TypeExpr *element;
+            int32_t length;
+        } array;
     };
 };
 
 TypeExpr *type_expr_name(StringRef name);
 TypeExpr *type_expr_indirect(TypeExprKind kind, TypeExpr *inner);
 TypeExpr *type_expr_apply(TypeExpr *base);
+TypeExpr *type_expr_array(TypeExpr *element, int32_t length);
 
 #endif

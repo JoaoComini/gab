@@ -17,6 +17,15 @@
 // type nothing is laid out for is.
 static const TypeLayout empty_layout = {.size = 0, .alignment = 1};
 
+// A primitive is declared by the language rather than by a unit, but it is
+// declared: what it answers to hangs on its declaration exactly as a struct's
+// does, so a method set has one kind of owner rather than two.
+//
+// Taking no parameters, which is what makes the bare name a type: 'int' is its
+// own instantiation, as every declaration applying none is.
+// A primitive is the type it names, declared by nothing: no declaration stands
+// behind it, so 'decl' stays NULL and nothing instantiates it. That is rustc's
+// position too -- Res::PrimTy is its own resolution kind, apart from Res::Def.
 static Type *register_builtin(TypeRegistry *registry, TypeKind kind, String *name) {
     return type_create(registry->arena, kind, name);
 }
@@ -39,11 +48,6 @@ static void register_primitives(TypeRegistry *registry, const TypePrimitiveNames
     // Before the string that lends it, which registers what it derefs to as
     // part of saying what it is.
     registry->primitives.str_type = register_builtin(registry, TYPE_STR, names->str_name);
-
-    // The bare name every '[T; N]' is interned under. Sized as the header the
-    // elements make it, so that a diagnostic naming it says something true even
-    // though no slot ever holds this type itself.
-    registry->primitives.array_type = register_builtin(registry, TYPE_ARRAY, names->array_name);
 
     // Poison type. Deliberately never given a name in any scope: no script can
     // name it, it only arises from a failed resolution.
@@ -78,9 +82,9 @@ static bool layout_of_scalar(TypeKind kind, size_t *size, size_t *alignment) {
         *alignment = 1;
         return true;
 
-    // Never held: the characters a 'ref str' names, the bare 'Array' before an
-    // element is applied, and the type a failed resolution yields. Each is
-    // zero-width because no slot is ever reserved for one.
+    // Never held: the characters a 'ref str' names, and the type a failed
+    // resolution yields. Each is zero-width because no slot is ever reserved
+    // for one.
     case TYPE_STR:
     case TYPE_ERROR:
         *size = 0;
@@ -301,39 +305,25 @@ void type_registry_destroy(TypeRegistry *registry) {
     deref_key_destroy(registry->derefs);
 }
 
-Type *type_registry_open_struct(TypeRegistry *registry, String *name, size_t max_fields) {
-    return type_struct_create(registry->arena, name, max_fields);
-}
-
-void type_registry_complete(TypeRegistry *registry, Type *type) {
+void type_registry_complete(TypeRegistry *registry, const Type *type) {
     type_registry_layout_of(registry, type);
     type_registry_drop_of(registry, type);
 }
 
 const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl) {
-    assert(decl && decl->name && "a declared type is found by name");
-    assert(!(decl->fields && decl->generic) && "a type is a struct or a generic declaration, not both");
+    assert(decl && decl->def && decl->def->name && "a declared type is found by name");
     assert((decl->derefs_to != NULL) == (decl->lent_part_count > 0) &&
            "a deref and the parts naming it are one statement");
 
-    Type *type = decl->generic ? type_create(registry->arena, TYPE_STRUCT, decl->name)
-                               : type_registry_open_struct(registry, decl->name, decl->field_count);
+    // Instantiated with no arguments when it takes none, which is what a plain
+    // struct is: one path settles both, and a declaration that takes parameters
+    // is laid out only once some mention supplies them.
+    const Type *type = decl->def->param_count == 0 ? type_registry_apply(registry, decl->def, NULL, 0) : NULL;
 
-    for (size_t i = 0; i < decl->field_count; i++) {
-        type_add_field(type, decl->fields[i].name, decl->fields[i].type);
-    }
-
-    type->generic = decl->generic;
-
-    // Settled here rather than on first demand, so the type the provider gets
-    // back is finished: what it owns follows from the fields just added.
-    //
-    // A generic declaration is not laid out -- a width follows from an
-    // instantiation's fields, and a parameter has none -- so only what it owns
-    // is settled.
-    if (decl->generic) {
-        type_registry_drop_of(registry, type);
-    } else {
+    // Its fields were stated with it, so nothing is waiting: a provider names a
+    // type it already knows the shape of, where a unit's struct is interned
+    // first and laid out once its fields resolve.
+    if (type) {
         type_registry_complete(registry, type);
     }
 
@@ -344,7 +334,34 @@ const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl) 
     return type;
 }
 
+const Type *type_registry_declare_struct(TypeRegistry *registry, String *name, const TypeFieldSpec *fields,
+                                         size_t field_count) {
+    assert(name && "a declared type is found by name");
+    assert((field_count == 0 || fields) && "a struct with fields states them");
+
+    TypeField *owned = field_count ? arena_alloc(registry->arena, field_count * sizeof(TypeField)) : NULL;
+
+    for (size_t i = 0; i < field_count; i++) {
+        owned[i] = (TypeField){.name = fields[i].name, .type = fields[i].type};
+    }
+
+    // In the registry's arena rather than the caller's frame: the type interned
+    // below reads its fields through this declaration for as long as it lives.
+    TypeDef *def = arena_alloc(registry->arena, sizeof(TypeDef));
+
+    *def = (TypeDef){.name = name, .fields = owned, .field_count = field_count};
+
+    const TypeDecl decl = {.def = def};
+
+    return type_registry_declare(registry, &decl);
+}
+
 bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method) {
+    assert(type && name && method && "a method is a type, a name and a body");
+
+    // The type's set is asked through the walk that also reaches its
+    // declaration's, so a name either already holds is a collision rather than
+    // an entry the walk would never reach past the first.
     if (type_registry_find_method(registry, type, name)) {
         return false;
     }
@@ -360,14 +377,7 @@ Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, cons
 
     Symbol **found = method_key_lookup(registry->methods, (MethodKey){.type = type, .name = name});
 
-    if (found) {
-        return *found;
-    }
-
-    // An instantiation answers what its declaration declares: every
-    // '[T; N]' reaches the bare 'Array's set. Its own is consulted first,
-    // since what the two do not share is what tells them apart.
-    return type_registry_find_method(registry, type->decl, name);
+    return found ? *found : NULL;
 }
 
 // Looks an application up, and interns the argument list if it is new. The
@@ -386,39 +396,41 @@ static void application_insert(TypeRegistry *registry, TypeApp app, Type *type) 
     type_app_map_insert(registry->applications, app, type);
 }
 
+const Type *type_registry_apply(TypeRegistry *registry, const TypeDef *def, const Type *const *args,
+                                size_t arg_count) {
+    TypeArg type_args[GAB_MAX_TYPE_PARAMS];
+
+    assert(arg_count <= GAB_MAX_TYPE_PARAMS && "a declaration takes no more parameters than this");
+
+    for (size_t i = 0; i < arg_count; i++) {
+        type_args[i] = (TypeArg){.kind = TYPE_ARG_TYPE, .type = args[i]};
+    }
+
+    return type_registry_instantiate(registry, def, type_args, arg_count);
+}
+
 const Type *type_registry_array_of(TypeRegistry *registry, const Type *element, int32_t length) {
-    TypeArg args[] = {
+    const TypeArg args[] = {
         {.kind = TYPE_ARG_TYPE, .type = element},
         {.kind = TYPE_ARG_CONST, .value = length},
     };
 
-    TypeApp app = {
-        .ctor = TYPE_CTOR_NOMINAL,
-        .decl = registry->primitives.array_type,
-        .args = args,
-        .arg_count = 2,
-    };
+    TypeApp app = {.ctor = TYPE_CTOR_ARRAY, .args = args, .arg_count = 2};
 
     Type **existing = application_lookup(registry, app);
     if (existing) {
         return *existing;
     }
 
-    // The elements live in the array itself, so its width is the run of them
-    // and its alignment is one element's. No header, no block: an '[T; N]'
-    // is laid out exactly as a C '[T; N]' is, which is what lets a host lay one
-    // out with sizeof.
-    Type *type = type_create(registry->arena, TYPE_ARRAY, registry->primitives.array_type->name);
+    // Structural, so it has no name: what an array is, is its element and how
+    // many of them, and both are read off the application it was interned on.
+    Type *type = type_create(registry->arena, TYPE_ARRAY, NULL);
 
     type->array.element = element;
     type->array.length = length;
     type->has_param = type_has_param(element);
 
-    // The declaration this instantiates, which is where its methods are
-    // declared while none of them reads the element.
-    type->decl = registry->primitives.array_type;
-
-    // Interned before the drop is selected, so a recursive element -- an array
+    // Interned before the drop is derived, so a recursive element -- an array
     // of a struct holding one -- finds this entry rather than building a
     // second.
     application_insert(registry, app, type);
@@ -434,7 +446,7 @@ const Type *type_registry_array_of(TypeRegistry *registry, const Type *element, 
 static const Type *indirect_to(TypeRegistry *registry, TypeCtor ctor, TypeKind kind, const Type *inner) {
     TypeArg args[] = {{.kind = TYPE_ARG_TYPE, .type = inner}};
 
-    TypeApp app = {.ctor = ctor, .decl = NULL, .args = args, .arg_count = 1};
+    TypeApp app = {.ctor = ctor, .def = NULL, .args = args, .arg_count = 1};
 
     Type **existing = application_lookup(registry, app);
     if (existing) {
@@ -538,10 +550,11 @@ static const Type *substitute(TypeRegistry *registry, const Type *type, const Ty
     // receiver is: 'Vec<T>' under these arguments is the 'Vec<int>' being
     // built. Instantiating it again finds the entry inserted before any of
     // this ran rather than building a second.
-    case TYPE_STRUCT:
+    case TYPE_STRUCT: {
         assert(type_decl(type) && "a struct mentioning a parameter is an instantiation");
 
-        return type_registry_instantiate(registry, type_decl(type), args, arg_count);
+        return type_registry_apply(registry, type_decl(type), args, arg_count);
+    }
 
     default:
         break;
@@ -558,7 +571,7 @@ static const Type *substitute(TypeRegistry *registry, const Type *type, const Ty
 // signature, and the arena types already live in. What it does not get is a
 // body index -- that is a table a unit owns and linking rebases, so it stays
 // SYMBOL_FUNC_NO_BODY until codegen reserves a slot for it.
-static void declare_generic_methods(TypeRegistry *registry, Type *type, const GenericDecl *generic,
+static void declare_generic_methods(TypeRegistry *registry, Type *type, const TypeDef *generic,
                                     const Type *const *args, size_t arg_count) {
     for (size_t i = 0; i < generic->method_count; i++) {
         const GenericMethod *method = &generic->methods[i];
@@ -593,21 +606,15 @@ static void declare_generic_methods(TypeRegistry *registry, Type *type, const Ge
     }
 }
 
-const Type *type_registry_instantiate(TypeRegistry *registry, const Type *decl, const Type *const *args,
+const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDef *def, const TypeArg *args,
                                       size_t arg_count) {
-    assert(decl && decl->generic && "only a generic declaration is instantiated");
-    assert(arg_count == decl->generic->param_count && "an instantiation was given the wrong argument count");
-
-    TypeArg key_args[GAB_MAX_TYPE_PARAMS];
-
-    for (size_t i = 0; i < arg_count; i++) {
-        key_args[i] = (TypeArg){.kind = TYPE_ARG_TYPE, .type = args[i]};
-    }
+    assert(def && "an instantiation names a declaration");
+    assert(arg_count == def->param_count && "an instantiation was given the wrong argument count");
 
     TypeApp app = {
         .ctor = TYPE_CTOR_NOMINAL,
-        .decl = decl,
-        .args = key_args,
+        .def = def,
+        .args = args,
         .arg_count = arg_count,
     };
 
@@ -616,49 +623,73 @@ const Type *type_registry_instantiate(TypeRegistry *registry, const Type *decl, 
         return *existing;
     }
 
+    // An instantiation mentions a parameter exactly when an argument brought
+    // one: what it is built of is the declaration read under these arguments,
+    // so nothing can appear in it that they did not supply.
+    bool has_param = false;
+
+    for (size_t i = 0; i < arg_count; i++) {
+        has_param |= args[i].kind == TYPE_ARG_TYPE && type_has_param(args[i].type);
+    }
+
     // A struct in every way that is laid out: the fields are where its width,
     // its alignment and what it owns all come from. What the declaration adds
-    // is that they were written in terms of a parameter.
-    Type *type = type_create(registry->arena, TYPE_STRUCT, decl->name);
+    // is that they may have been written in terms of a parameter.
+    Type *type = type_create(registry->arena, TYPE_STRUCT, def->name);
 
-    const GenericDecl *generic = decl->generic;
-
-    // The declaration this instantiates, which is where its methods are
-    // declared and where a substituted signature is read from.
-    type->decl = decl;
-
-    // An instantiation mentions a parameter exactly when it was given one: its
-    // fields are the declaration's substituted with these arguments, so nothing
-    // can appear in them that an argument did not bring.
-    for (size_t i = 0; i < arg_count; i++) {
-        type->has_param |= type_has_param(args[i]);
-    }
+    // The declaration this instantiates, which is where its fields are read
+    // from and where its shared methods hang.
+    type->decl = def;
+    type->has_param = has_param;
 
     // Interned before anything is substituted, so a field or a receiver naming
     // this same instantiation -- which every method's receiver does -- finds
     // this entry rather than building a second and recursing forever.
     application_insert(registry, app, type);
 
-    TypeField *fields = arena_alloc(registry->arena, generic->field_count * sizeof(TypeField));
+    // Applied to nothing, so substituting is the identity: this type's fields
+    // are the declaration's, read through it rather than derived. What lets the
+    // type exist before they do -- a struct's name is interned when it is
+    // declared, and its fields arrive when they resolve.
+    //
+    // That is the whole of why a forward reference works. 'struct A { b: box B
+    // }' interns B here to build the 'box B', and B's own fields land on the
+    // declaration this points at, whenever they are settled.
+    if (arg_count == 0) {
+        return type;
+    }
+
+    const Type *type_args[GAB_MAX_TYPE_PARAMS];
+
+    for (size_t i = 0; i < arg_count; i++) {
+        assert(args[i].kind == TYPE_ARG_TYPE && "a record's parameters are types");
+
+        type_args[i] = args[i].type;
+    }
+
+    TypeFields *substituted = arena_alloc(registry->arena, sizeof(TypeFields));
+    TypeField *fields = arena_alloc(registry->arena, def->field_count * sizeof(TypeField));
 
     // Published before any of them is substituted, and counted as they are
     // filled: substituting a field may reach this same instantiation, and what
     // it finds must be a struct of the fields settled so far rather than a
     // count standing over memory nothing has written.
-    type->record.fields = fields;
-    type->record.field_count = 0;
+    *substituted = (TypeFields){.fields = fields, .count = 0};
 
-    for (size_t i = 0; i < generic->field_count; i++) {
-        const Type *field_type = substitute(registry, generic->fields[i].type, args, arg_count);
+    type->record.substituted = substituted;
 
-        fields[i] = (TypeField){.name = generic->fields[i].name, .type = field_type};
+    for (size_t i = 0; i < def->field_count; i++) {
+        fields[i] = (TypeField){
+            .name = def->fields[i].name,
+            .type = substitute(registry, def->fields[i].type, type_args, arg_count),
+        };
 
-        type->record.field_count++;
+        substituted->count++;
     }
 
     type_registry_drop_of(registry, type);
 
-    declare_generic_methods(registry, type, generic, args, arg_count);
+    declare_generic_methods(registry, type, def, type_args, arg_count);
 
     return type;
 }
@@ -690,10 +721,6 @@ const Type *type_registry_get_primitive(TypeRegistry *registry, TypeKind kind) {
     case TYPE_STR:
         return registry->primitives.str_type;
 
-    // The bare name every '[T; N]' is an application of, which is what a spec
-    // resolves before its element is applied.
-    case TYPE_ARRAY:
-        return registry->primitives.array_type;
     case TYPE_ERROR:
         return registry->primitives.error_type;
     default:
@@ -715,7 +742,6 @@ TypePrimitiveNames type_primitive_names(StringPool *strings) {
         // can print it.
         .byte_name = string_from_cstr(strings, "byte"),
         .str_name = string_from_cstr(strings, "str"),
-        .array_name = string_from_cstr(strings, "Array"),
 
         // The poison type, never bound in any scope: no script can name it.
         .error_name = string_from_cstr(strings, "<error>"),

@@ -31,25 +31,25 @@ typedef struct StructDecl {
     Scope *scope;
     String *name;
 
-    // The interned identity, which the declaration has from the start. Const
-    // once laid out, but built through here, so it is the mutable pointer.
-    Type *type;
+    // What the name declares, and the only identity a declaration has: the type
+    // it stands for is that declaration applied to no arguments, which the
+    // registry interns rather than this holding a second pointer to.
+    TypeDef *def;
 
-    enum {
-        // Bound, with no layout asked for yet.
-        STRUCT_DECLARED,
+    // Whether this declaration's fields have been asked for, so that a unit's
+    // structs each resolve once however many of them name this one.
+    //
+    // Not whether it is resolving *now*: that is membership of the resolution
+    // stack, which knows the order besides -- see ResolverState::resolving. And
+    // not what a width costs, which is not tracked at all, since the registry
+    // memoizes a layout and a drop plan against the type.
+    bool fields_demanded;
 
-        // Being laid out. A field reaching a declaration in this state by value
-        // is a containment cycle: its width is waiting on itself.
-        STRUCT_LAYING_OUT,
-
-        STRUCT_LAID_OUT,
-
-        // Laid out as far as it goes: a field failed, so the type is poisoned
-        // rather than half-built. Distinct from LAID_OUT so a second demand
-        // reports nothing a second time.
-        STRUCT_POISONED,
-    } state;
+    // Whether a field of it failed to resolve, so that a field naming this
+    // struct carries the failure up rather than being laid out at a width it
+    // does not have. Its name is withdrawn besides, so nothing that resolves
+    // later can reach it at all.
+    bool poisoned;
 } StructDecl;
 
 #define struct_decl_list_item_free(item) ((void)(item))
@@ -89,6 +89,15 @@ typedef struct {
     // must leave this unit laid out, since the AST its fields were written in
     // does not outlive the unit.
     StructDeclList struct_decls;
+
+    // The declarations whose fields are resolving, innermost last.
+    //
+    // Being on this is what "currently resolving" means -- there is no flag
+    // saying so beside it, because two records of one fact drift. A field
+    // naming a declaration already here closes a containment ring, and the
+    // entries from that one to the top are the ring: the order they were
+    // reached in is the path, which a flag could not give.
+    StructDeclList resolving;
 
     Diagnostics *diagnostics;
 } ResolverState;
@@ -195,7 +204,19 @@ static const char *type_name(ResolverState *state, const Type *type) {
         return type_name_of(type)->data;
     }
 
-    const char *inner = type_name_of(type) ? type_name_of(type)->data : type_name(state, type_pointee(type));
+    // Structural, so its printable form is built from what it is made of rather
+    // than stored: an array is a run of its element, as many as its length.
+    if (type_kind(type) == TYPE_ARRAY) {
+        const char *element = type_name(state, type_array_element(type));
+        size_t length = strlen(element) + 32;
+        char *out = arena_alloc(state->compile_arena, length);
+
+        snprintf(out, length, "[%s; %d]", element, type_array_length(type));
+
+        return out;
+    }
+
+    const char *inner = type_name(state, type_pointee(type));
     const char *prefix = type_kind(type) == TYPE_REF ? "ref " : "box ";
     size_t length = strlen(prefix) + strlen(inner) + 1;
     char *out = arena_alloc(state->compile_arena, length);
@@ -603,15 +624,6 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
             return true;
         }
 
-        // A method declared on the declaration this level instantiates: the
-        // bare 'Array' every '[T; N]' hangs its set on. What such a method
-        // reads is the header, which every array has the same shape of, so the
-        // element it was written over does not enter into it.
-        if (declared == type_decl(at)) {
-            *out = (ReceiverAdjustment){.derefs = derefs, .address_of = false};
-            return true;
-        }
-
         if (!type_is_indirect(at)) {
             break;
         }
@@ -664,6 +676,33 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     // borrowed view finds what it borrows by lending, which the walk follows.
     String *method_name = resolver_intern(state, name);
 
+    // How far an array runs is in its type, so 'xs.len()' is answered here and
+    // becomes the literal it stands for. Not a method: the elements carry no
+    // count beside them, so there is nothing at run time for a body to read,
+    // and registering one would be registering a name over an empty body.
+    //
+    // Ahead of the lookup for that reason -- nothing declares this, so a lookup
+    // would report that an array has no such method.
+    if (type_kind(receiver_base_type(receiver_type)) == TYPE_ARRAY &&
+        method_name == string_from_cstr(state->current_scope->strings, "len")) {
+        const Type *array = receiver_base_type(receiver_type);
+
+        if (expr->call.args.size != 0) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected 0 argument(s), found %zu",
+                       expr->call.args.size);
+            expr->type = resolver_error_type(state);
+            return;
+        }
+
+        ast_expr_free(expr->call.target);
+        ast_expr_list_free(&expr->call.args);
+
+        expr->kind = EXPR_LITERAL;
+        expr->lit = (Literal){.kind = TYPE_INT, .as_int = type_array_length(array)};
+        expr->type = type_registry_get_primitive(state->current_scope->type_registry, TYPE_INT);
+        return;
+    }
+
     const Type *base = NULL;
     Symbol *method =
         find_method_on_chain(state->current_scope->type_registry, receiver_type, method_name, &base);
@@ -677,10 +716,16 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         return;
     }
 
+    // What the call has to reach: parameter zero, which is the receiver for
+    // every method. A function declaring none is refused below, and 'base' -- the
+    // type whose set answered -- stands in until then so that nothing here reads
+    // past an empty parameter list.
+    const Type *declared_receiver = method->func.param_count > 0 ? method->func.params[0] : base;
+
     // The sugar borrows, and never moves: a function consuming parameter zero
     // is reached where the transfer can be written, so that no call site gives
     // up ownership without saying so.
-    if (method->func.param_count > 0 && type_kind(method->func.params[0]) == TYPE_BOX) {
+    if (method->func.param_count > 0 && type_kind(declared_receiver) == TYPE_BOX) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                    "'%s' consumes what it takes, so it is called as '%s::%s(move ...)' rather than on a "
                    "value",
@@ -703,7 +748,6 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 
     // Parameter zero is the receiver, so the declared parameters — the ones the
     // caller actually writes — are everything after it.
-    const Type *declared_receiver = method->func.params[0];
     size_t declared_params = method->func.param_count - 1;
 
     ReceiverAdjustment adjustment;
@@ -719,23 +763,6 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %zu argument(s), found %zu",
                    declared_params, expr->call.args.size);
         expr->type = resolver_error_type(state);
-        return;
-    }
-
-    // An array's length is part of its type, so 'xs.len()' is known here and
-    // becomes the literal it answers. Folded rather than called because there
-    // is nothing at run time to read: the elements carry no count beside them.
-    //
-    // Ahead of the lowering below, which would otherwise build a call this
-    // discards.
-    if (type_kind(base) == TYPE_ARRAY &&
-        method_name == string_from_cstr(state->current_scope->strings, "len")) {
-        ast_expr_free(expr->call.target);
-        ast_expr_list_free(&expr->call.args);
-
-        expr->kind = EXPR_LITERAL;
-        expr->lit = (Literal){.kind = TYPE_INT, .as_int = type_array_length(base)};
-        expr->type = method->func.return_type;
         return;
     }
 
@@ -953,6 +980,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
 // how far an array strides. An indirection asks none of them, which is why it
 // is not one of these and why a ring through a 'box' stays finite.
 static StructDecl *element_completes_a_cycle(ResolverState *state, const Type *type);
+static void report_containment_cycle(ResolverState *state, StructDecl *closes_on, Span span);
 
 // Rejects a type nothing can hold. How far an unsized value runs is not in its
 // type, so a slot, a field or a parameter has no width to reserve for one: a
@@ -1065,8 +1093,14 @@ static bool bin_op_yields_bool(BinOp op) {
 // same union, so the operand is lifted out and the argument list freed before
 // anything is written back over them.
 static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
-    const Type *target =
-        scope_type_lookup(state->current_scope, resolver_intern(state, expr->call.target->var.name));
+    Resolution resolution =
+        scope_resolve(state->current_scope, resolver_intern(state, expr->call.target->var.name));
+
+    // A name means one thing, and which namespace it was found in is what
+    // decides between a conversion and a call: only a type converts, so
+    // anything else leaves the node for the call path rather than being read
+    // as a type that happens to be missing.
+    const Type *target = resolution_type(state->current_scope->type_registry, resolution);
 
     if (!target) {
         return false;
@@ -1681,16 +1715,21 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
     }
 
     case TYPE_EXPR_APPLY: {
-        // Looked up rather than resolved: 'Array' names no type on its own, so
-        // resolving the base as an expression of its own would report that
-        // before this ever saw it.
+        // Looked up rather than resolved as a type expression of its own: a
+        // declaration owed arguments names no type until this supplies them, so
+        // resolving it that way would report the arity error before this could.
         Scope *base_scope = resolver_expr_scope(state, expr->apply.base->name);
 
-        const Type *base =
-            base_scope ? scope_type_lookup(base_scope, resolver_expr_member(state, expr->apply.base->name))
-                       : NULL;
+        String *base_name = base_scope ? resolver_expr_member(state, expr->apply.base->name) : NULL;
 
-        if (!base) {
+        // What the name declares rather than what it names: a declaration
+        // taking parameters stands for no type until this supplies them.
+        Resolution base_resolution = base_name ? scope_resolve(base_scope, base_name) : (Resolution){0};
+
+        const TypeDef *base_def = base_resolution.kind == RESOLUTION_TYPE_DECL ? base_resolution.def : NULL;
+        const Type *base = resolution_type(registry, base_resolution);
+
+        if (base_resolution.kind == RESOLUTION_NONE) {
             char *name = string_ref_to_cstr(expr->apply.base->name);
             diag_error(state->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", name);
             free(name);
@@ -1698,14 +1737,14 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
             return resolver_error_type(state);
         }
 
-        // A generic declaration is instantiated by what it was applied to.
-        // Nothing here is 'Vec': what the constructor takes and how its
+        // Every nominal declaration is instantiated by what it was applied to.
+        // Nothing here is 'Vec': what a constructor takes and how its
         // instantiations are laid out are read off the declaration, so a second
         // generic name resolves through this same arm.
-        if (type_generic(base)) {
-            if (expr->apply.args.size != type_generic(base)->param_count) {
+        if (base_def) {
+            if (expr->apply.args.size != base_def->param_count) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' takes %zu type argument(s), not %zu",
-                           type_name_of(base)->data, type_generic(base)->param_count, expr->apply.args.size);
+                           base_def->name->data, base_def->param_count, expr->apply.args.size);
                 return resolver_error_type(state);
             }
 
@@ -1716,6 +1755,16 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
 
                 if (is_error_type(args[i])) {
                     return resolver_error_type(state);
+                }
+
+                // A parameter is not a width and is not owed one: an argument
+                // written over one is passed through to the instantiation the
+                // mention that supplies it will build, and every question about
+                // a width is asked there. That is what lets a declaration name
+                // itself -- 'Node<T>' inside 'Node' -- without its own
+                // parameter having to stand for something laid out.
+                if (type_has_param(args[i])) {
+                    continue;
                 }
 
                 if (reject_unsized(state, args[i], span, "a type argument")) {
@@ -1729,8 +1778,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
                 StructDecl *cycle = element_completes_a_cycle(state, args[i]);
 
                 if (cycle) {
-                    diag_error(state->diagnostics, GAB_ERR_TYPE, span, "struct '%s' cannot contain itself",
-                               cycle->name->data);
+                    report_containment_cycle(state, cycle, span);
                     return resolver_error_type(state);
                 }
 
@@ -1742,27 +1790,30 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
                 }
             }
 
-            return type_registry_instantiate(registry, base, args, expr->apply.args.size);
+            return type_registry_apply(registry, base_def, args, expr->apply.args.size);
         }
 
-        if (base != type_registry_get_primitive(registry, TYPE_ARRAY)) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "%s does not take an element type",
-                       type_name(state, base));
-            return resolver_error_type(state);
-        }
+        // Resolved to something that is not a declaration -- a primitive, or a
+        // parameter -- so there is nothing for the arguments to be applied to.
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "%s does not take a type argument",
+                   type_name(state, base));
 
-        // One element type is all 'Array' takes. The list holds however many
-        // were written, so a count that does not match is this constructor's
-        // own complaint rather than something the shape prevented.
-        if (expr->apply.args.size != 1) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'Array' takes one element type");
-            return resolver_error_type(state);
-        }
+        return resolver_error_type(state);
+    }
 
-        const Type *element = resolve_type_expr(state, expr->apply.args.data[0], span);
+    case TYPE_EXPR_ARRAY: {
+        const Type *element = resolve_type_expr(state, expr->array.element, span);
 
         if (is_error_type(element)) {
             return resolver_error_type(state);
+        }
+
+        // A parameter is not a width and is not owed one: a declaration may
+        // write '[T; 3]' over its own parameter, and every question about the
+        // run -- what it strides by, how far it reaches -- is asked where a
+        // mention supplies an argument.
+        if (type_has_param(element)) {
+            return type_registry_array_of(registry, element, expr->array.length);
         }
 
         if (reject_unsized(state, element, span, "an array's element")) {
@@ -1777,8 +1828,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
         StructDecl *cycle = element_completes_a_cycle(state, element);
 
         if (cycle) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "struct '%s' cannot contain itself",
-                       cycle->name->data);
+            report_containment_cycle(state, cycle, span);
             return resolver_error_type(state);
         }
 
@@ -1791,7 +1841,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
             return resolver_error_type(state);
         }
 
-        int32_t length = expr->apply.length;
+        int32_t length = expr->array.length;
 
         // An array of nothing has no element to index and no width to lay out.
         if (length <= 0) {
@@ -1807,7 +1857,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
 
         if (bytes > GAB_MAX_TYPE_BYTES) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, span,
-                       "'Array' of %d needs %zu bytes, over the %d a frame addresses", length, bytes,
+                       "an array of %d needs %zu bytes, over the %d a frame addresses", length, bytes,
                        GAB_MAX_TYPE_BYTES);
             return resolver_error_type(state);
         }
@@ -1825,31 +1875,30 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
     // root-namespace one and 'int' resolves with no import. A 'Module::Type'
     // expression resolved to that module's scope above, and its bare member
     // name is what that scope holds.
-    const Type *type = scope ? scope_type_lookup(scope, resolver_expr_member(state, expr->name)) : NULL;
+    Resolution resolution =
+        scope ? scope_resolve(scope, resolver_expr_member(state, expr->name)) : (Resolution){0};
 
-    if (!type) {
-        char *name = string_ref_to_cstr(expr->name);
-        diag_error(state->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", name);
-        free(name);
+    const Type *type = resolution_type(registry, resolution);
+
+    if (type) {
+        return type;
+    }
+
+    // A declaration taking parameters names no type until they are given, so a
+    // bare mention of one is the arity error a wrong count is: what it takes is
+    // what makes it a type.
+    if (resolution.kind == RESOLUTION_TYPE_DECL) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' takes %zu type argument(s), not 0",
+                   resolution.def->name->data, resolution.def->param_count);
 
         return resolver_error_type(state);
     }
 
-    // 'Array' alone names no type: every array is '[T; N]'.
-    if (type == type_registry_get_primitive(registry, TYPE_ARRAY)) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, span,
-                   "'Array' needs an element type and a length, as '[int; 3]'");
-        return resolver_error_type(state);
-    }
+    char *name_text = string_ref_to_cstr(expr->name);
+    diag_error(state->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", name_text);
+    free(name_text);
 
-    // Nor does a generic declaration: what it takes is what makes it a type.
-    if (type_generic(type)) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' needs a type argument, as '%s<int>'",
-                   type_name_of(type)->data, type_name_of(type)->data);
-        return resolver_error_type(state);
-    }
-
-    return type;
+    return resolver_error_type(state);
 }
 
 static void resolve_stmt(ResolverState *state, ASTStmt *stmt);
@@ -1871,7 +1920,7 @@ static StructDecl *decl_held_by_value(ResolverState *state, const Type *type) {
     }
 
     for (size_t i = 0; i < state->struct_decls.size; i++) {
-        if (state->struct_decls.data[i]->type == type) {
+        if (type_decl(type) && state->struct_decls.data[i]->def == type_decl(type)) {
             return state->struct_decls.data[i];
         }
     }
@@ -1893,16 +1942,27 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
 
     // Shadowing an outer type is allowed; redeclaring one this module already
     // has is not, whether this unit declared it or an earlier one did.
-    if (scope_type_lookup_declaring(state->current_scope, struct_name)) {
+    if (scope_declares_type(state->current_scope, struct_name)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "type '%s' is already declared",
                    struct_name->data);
         return NULL;
     }
 
-    Type *type = type_registry_open_struct(state->current_scope->type_registry, struct_name,
-                                           stmt->struct_decl.fields.size);
+    size_t param_count = stmt->struct_decl.param_count;
 
-    scope_decl_type(state->current_scope, struct_name, type);
+    TypeDef *def = arena_alloc(resolver_owner_arena(state), sizeof(TypeDef));
+
+    *def = (TypeDef){
+        .name = struct_name,
+        .param_count = param_count,
+    };
+
+    // The name binds to the declaration, and nothing is interned: the type it
+    // stands for is that declaration applied to no arguments, which the first
+    // mention asks the registry for. A field naming this struct before its own
+    // fields resolve therefore reaches a type that reads them through here --
+    // which is what lets two structs name each other.
+    scope_decl_type_def(state->current_scope, struct_name, def);
 
     StructDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(StructDecl));
 
@@ -1910,8 +1970,9 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
         .stmt = stmt,
         .scope = state->current_scope,
         .name = struct_name,
-        .type = type,
-        .state = STRUCT_DECLARED,
+        .def = def,
+        .fields_demanded = false,
+        .poisoned = false,
     };
 
     struct_decl_list_add(&state->struct_decls, decl);
@@ -1919,7 +1980,21 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
     return decl;
 }
 
+static void resolve_struct_fields(ResolverState *state, StructDecl *decl);
 static void layout_struct(ResolverState *state, StructDecl *decl);
+
+// Where this declaration sits on the resolution stack, or the stack's size when
+// it is not on it. An index rather than a bool, because the entries from it to
+// the top are the ring a field naming it closes.
+static size_t resolving_index_of(ResolverState *state, const StructDecl *decl) {
+    size_t i = 0;
+
+    while (i < state->resolving.size && state->resolving.data[i] != decl) {
+        i++;
+    }
+
+    return i;
+}
 
 // The declaration a by-value use of this type closes a containment cycle on, or
 // NULL when the use is finite. Forces the layout of whatever declaration it reaches, so
@@ -1937,13 +2012,54 @@ static StructDecl *element_completes_a_cycle(ResolverState *state, const Type *t
         return NULL;
     }
 
-    if (decl->state == STRUCT_LAYING_OUT) {
+    // On the stack: the walk that is resolving it is below this one, so
+    // following it again is the ring closing.
+    if (resolving_index_of(state, decl) < state->resolving.size) {
         return decl;
     }
 
-    layout_struct(state, decl);
+    resolve_struct_fields(state, decl);
 
     return NULL;
+}
+
+/*
+    Reports a containment ring, naming every declaration it passes through.
+
+    'closes_on' is the declaration the ring closed on, which is somewhere on the
+    resolution stack; every entry from there to the top is a hop, in the order
+    the fields were followed. So 'A' holding 'B' holding 'C' holding 'A' reads
+    as 'A' contains 'B' contains 'C' contains 'A', whichever of the three the
+    unit happened to resolve first.
+
+    The span is the field that closed the ring rather than any declaration's,
+    which is the one edge a reader can remove to break it.
+*/
+static void report_containment_cycle(ResolverState *state, StructDecl *closes_on, Span span) {
+    // Every hop, then the declaration the ring closes back on. One message for
+    // a ring of any length: a struct holding itself directly is a ring of one
+    // hop, and saying so the same way costs a repeated name rather than a
+    // second phrasing to keep in step with this one.
+    char path[256];
+    size_t written = 0;
+
+    for (size_t i = resolving_index_of(state, closes_on); i < state->resolving.size; i++) {
+        int n = snprintf(path + written, sizeof(path) - written, "'%s' contains ",
+                         state->resolving.data[i]->name->data);
+
+        // Would not fit: a ring this long is past what naming every hop helps
+        // with. Stops at the last hop written whole rather than at the byte the
+        // buffer ran out on, so the message never ends mid-name.
+        if (n < 0 || (size_t)n >= sizeof(path) - written) {
+            written += (size_t)snprintf(path + written, sizeof(path) - written, "... ");
+            break;
+        }
+
+        written += (size_t)n;
+    }
+
+    diag_error(state->diagnostics, GAB_ERR_TYPE, span, "struct '%s' cannot contain itself: %.*s'%s'",
+               closes_on->name->data, (int)written, path, closes_on->name->data);
 }
 
 // Whether the field's type is a declaration whose own layout failed. Asked
@@ -1951,39 +2067,83 @@ static StructDecl *element_completes_a_cycle(ResolverState *state, const Type *t
 static bool field_type_failed(ResolverState *state, const Type *type) {
     StructDecl *decl = decl_held_by_value(state, type);
 
-    return decl && decl->state == STRUCT_POISONED;
+    return decl && decl->poisoned;
 }
 
-// Derives the struct's layout from its declaration, once: resolves the fields,
-// rejects what no slot may hold, and computes the offsets and the width.
-//
-// Memoized rather than run where the declaration was bound, because a field may
-// name a struct declared further down the file: forcing that field's layout
-// from here is what orders the computation by dependency rather than by the
-// order the declarations were written in.
-static void layout_struct(ResolverState *state, StructDecl *decl) {
-    if (decl->state != STRUCT_DECLARED) {
+/*
+    Resolves a declaration's fields, once, and asks for the width they give.
+
+    One walk for every declaration, generic or not: a field is resolved, checked
+    for a duplicate and refused a width it cannot have, and lands in the
+    declaration -- which is where a nominal type's fields live, so nothing is
+    written into any type here.
+
+    What genericity changes is only which of those checks a field can be asked.
+    One written over a parameter has no width until a mention supplies an
+    argument, so a containment cycle, a failed layout and an unsized field are
+    asked of exactly the fields naming no parameter, and of the rest where the
+    instantiation is interned.
+
+    Run on demand rather than where the declaration was bound, because a field
+    may name a struct declared further down the file: forcing that one's fields
+    from here is what orders the work by dependency rather than by the order the
+    declarations were written in.
+
+    The parameters are bound in a scope of their own, so that 'T' names the
+    parameter while the fields resolve and nothing outside the declaration. A
+    declaration taking none gets that scope too and puts nothing in it, which is
+    what keeps this one path.
+*/
+static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
+    if (decl->fields_demanded) {
         return;
     }
 
-    decl->state = STRUCT_LAYING_OUT;
+    decl->fields_demanded = true;
+
+    struct_decl_list_add(&state->resolving, decl);
 
     ASTStmt *stmt = decl->stmt;
-    Type *type = decl->type;
+    TypeDef *def = decl->def;
 
     // The fields resolve in the scope the struct was declared in, which is not
     // where the layout was demanded from: a struct declared in one module is
     // laid out when another names it.
     Scope *enclosing = state->current_scope;
-    state->current_scope = decl->scope;
+    Scope *params = scope_create(resolver_owner_arena(state), decl->scope->strings, decl->scope);
+
+    for (size_t i = 0; i < stmt->struct_decl.param_count; i++) {
+        String *param_name = resolver_intern(state, stmt->struct_decl.params[i]);
+
+        if (!scope_decl_type(params, param_name, type_registry_param(decl->scope->type_registry, i))) {
+            diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "duplicate type parameter '%s' on '%s'",
+                       param_name->data, decl->name->data);
+        }
+    }
+
+    state->current_scope = params;
+
+    size_t field_count = stmt->struct_decl.fields.size;
+    TypeField *fields =
+        field_count ? arena_alloc(resolver_owner_arena(state), field_count * sizeof(TypeField)) : NULL;
 
     bool poisoned = false;
+    size_t resolved = 0;
 
-    for (size_t i = 0; i < stmt->struct_decl.fields.size; i++) {
+    for (size_t i = 0; i < field_count; i++) {
         ASTField *field = stmt->struct_decl.fields.data[i];
         String *field_name = resolver_intern(state, field->name);
 
-        if (type_find_field(type, field_name)) {
+        bool duplicate = false;
+
+        for (size_t seen = 0; seen < resolved; seen++) {
+            if (fields[seen].name == field_name) {
+                duplicate = true;
+                break;
+            }
+        }
+
+        if (duplicate) {
             diag_error(state->diagnostics, GAB_ERR_NAME, field->span, "duplicate field '%s' in struct '%s'",
                        field_name->data, decl->name->data);
             poisoned = true;
@@ -1997,50 +2157,73 @@ static void layout_struct(ResolverState *state, StructDecl *decl) {
             continue;
         }
 
-        // Asked before the field is added, since a struct waiting on its own
-        // width has no width to add.
-        StructDecl *cycle = element_completes_a_cycle(state, field_type);
+        // A field naming a parameter is sized by whatever the argument turns
+        // out to be, so nothing below can be asked of it here.
+        if (!type_has_param(field_type)) {
+            // Asked before the field is kept, since a struct waiting on its own
+            // width has no width to give.
+            StructDecl *cycle = element_completes_a_cycle(state, field_type);
 
-        if (cycle) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, field->span, "struct '%s' cannot contain itself",
-                       cycle->name->data);
-            poisoned = true;
-            continue;
+            if (cycle) {
+                report_containment_cycle(state, cycle, field->span);
+                poisoned = true;
+                continue;
+            }
+
+            // A field whose own layout failed carries the failure up rather
+            // than being laid out at the width it does not have. Silent,
+            // because the field's declaration already reported why: this struct
+            // is unusable as a consequence, not as a second fault.
+            if (field_type_failed(state, field_type)) {
+                poisoned = true;
+                continue;
+            }
+
+            if (reject_unsized(state, field_type, field->span, "a field")) {
+                poisoned = true;
+                continue;
+            }
         }
 
-        // A field whose own layout failed carries the failure up rather than
-        // being laid out at the width it does not have. Silent, because the
-        // field's declaration already reported why: this struct is unusable as
-        // a consequence, not as a second fault.
-        if (field_type_failed(state, field_type)) {
-            poisoned = true;
-            continue;
-        }
-
-        if (reject_unsized(state, field_type, field->span, "a field")) {
-            poisoned = true;
-            continue;
-        }
-
-        type_add_field(type, field_name, field_type);
+        fields[resolved++] = (TypeField){.name = field_name, .type = field_type};
     }
 
     state->current_scope = enclosing;
 
-    // A struct with a bad field has no layout worth computing: its name stays
-    // bound so that the rest of the unit resolves against something, and the
-    // fields that did resolve are dropped rather than laid out into a width
-    // that would be wrong.
+    // A struct with a bad field has no layout worth computing: its name is
+    // withdrawn rather than left standing over a width that would be wrong.
+    state->resolving.size--;
+
     if (poisoned) {
-        decl->state = STRUCT_POISONED;
+        decl->poisoned = true;
         scope_withdraw_type(decl->scope, decl->name);
         return;
     }
 
-    type_registry_complete(state->current_scope->type_registry, type);
+    def->fields = fields;
+    def->field_count = resolved;
 
-    decl->state = STRUCT_LAID_OUT;
-    stmt->struct_decl.type = type;
+    layout_struct(state, decl);
+}
+
+// Asks for the width a declaration's fields give it, once they have resolved.
+//
+// Nothing is tracked and nothing is written into the type: it reads its fields
+// through the declaration, so this is only the layout and the drop plan being
+// demanded, and the registry memoizes both against the type. Asking twice
+// computes once.
+//
+// Only a declaration owed no arguments has a width at all. What 'Vec' is laid
+// out as is not a question until a mention says 'Vec<int>', and that
+// instantiation is laid out where it is interned.
+static void layout_struct(ResolverState *state, StructDecl *decl) {
+    if (decl->def->param_count > 0) {
+        return;
+    }
+
+    TypeRegistry *registry = state->current_scope->type_registry;
+
+    type_registry_complete(registry, type_registry_apply(registry, decl->def, NULL, 0));
 }
 
 // Declares the function's name, return type, and parameter types — everything a
@@ -2094,7 +2277,13 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
         return;
     }
 
-    if (!type_name_of(owner) || !scope_type_lookup_local(state->current_scope, type_name_of(owner))) {
+    // Compared by declaration rather than by name: two modules may each declare
+    // a 'Config', and what this one may hang a function on is the declaration it
+    // wrote, not whichever type the name reaches from here.
+    TypeBinding *bound =
+        type_name_of(owner) ? scope_binding_lookup_local(state->current_scope, type_name_of(owner)) : NULL;
+
+    if (!bound || bound->def != type_decl(owner)) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                    "cannot declare a function on '%s', which this module does not declare",
                    type_name(state, owner));
@@ -2176,7 +2365,18 @@ static Symbol *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
         return NULL;
     }
 
-    const Type *owner = scope_type_lookup(state->current_scope, resolver_intern(state, owner_ref));
+    Resolution resolution = scope_resolve(state->current_scope, resolver_intern(state, owner_ref));
+
+    // A declaration still owed arguments owns no function set of its own: which
+    // instantiation the name meant is what a mention supplies, so it is named
+    // as the arity it is short rather than reported as holding no such member.
+    if (resolution.kind == RESOLUTION_TYPE_DECL && resolution.def->param_count > 0) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "'%s' takes %zu type argument(s), not 0",
+                   resolution.def->name->data, resolution.def->param_count);
+        return NULL;
+    }
+
+    const Type *owner = resolution_type(state->current_scope->type_registry, resolution);
 
     if (!owner) {
         return NULL;
@@ -2405,12 +2605,12 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
     }
     case STMT_STRUCT_DECL: {
         // A struct nested in a body has nothing above it that could have
-        // declared it, so its name is bound and its layout forced together.
+        // declared it, so all three phases run together here.
         if (!stmt->struct_decl.declared) {
             StructDecl *decl = declare_struct(state, stmt);
 
             if (decl) {
-                layout_struct(state, decl);
+                resolve_struct_fields(state, decl);
             }
         }
         break;
@@ -2616,6 +2816,7 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
                 .return_type = NULL,
             },
         .struct_decls = struct_decl_list_create(),
+        .resolving = struct_decl_list_create(),
         .diagnostics = diagnostics,
     };
 
@@ -2637,16 +2838,17 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
         }
     }
 
-    // Layouts second, once every name in the unit is bound. A field may name a
-    // struct declared further down, and one may name the other through a 'box'
-    // in both directions -- neither resolves while the layouts are computed in
-    // the order the declarations were written.
+    // Fields second, once every name in the unit is bound, and the width each
+    // gives follows from them. A field may name a struct declared further down,
+    // and one may name the other through a 'box' in both directions -- neither
+    // resolves while the fields are read in the order the declarations were
+    // written, so resolving one forces whichever it reaches.
     //
     // Forced here rather than left to whoever first needs a width, because the
     // fields are read off this unit's AST, which does not outlive it: a struct
     // leaves this unit laid out or poisoned, never merely declared.
     for (size_t i = 0; i < state.struct_decls.size; i++) {
-        layout_struct(&state, state.struct_decls.data[i]);
+        resolve_struct_fields(&state, state.struct_decls.data[i]);
     }
 
     for (size_t i = 0; i < unit->statements.size; i++) {
@@ -2662,6 +2864,7 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
     }
 
     struct_decl_list_free(&state.struct_decls);
+    struct_decl_list_free(&state.resolving);
 
     return diagnostics_count(diagnostics) == errors_before;
 }

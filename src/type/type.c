@@ -13,7 +13,6 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->kind = kind;
     type->name = name;
     type->decl = NULL;
-    type->generic = NULL;
 
     // A parameter is the one kind that carries it of itself. Every other type
     // is given it by whatever it is built from, as that part is attached.
@@ -26,31 +25,13 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     return type;
 }
 
-Type *type_struct_create(Arena *arena, String *name, size_t max_fields) {
-    Type *type = type_create(arena, TYPE_STRUCT, name);
-
-    if (max_fields > 0) {
-        type->record.fields = arena_alloc(arena, max_fields * sizeof(TypeField));
-    }
-
-    return type;
-}
-
-void type_add_field(Type *type, String *name, const Type *field_type) {
-    assert(type->record.fields && "struct was created without room for fields");
-
-    type->record.fields[type->record.field_count++] = (TypeField){
-        .name = name,
-        .type = field_type,
-    };
-}
-
 const TypeField *type_find_field(const Type *type, const String *name) {
-    for (size_t i = 0; i < type->record.field_count; i++) {
-        const TypeField *field = &type->record.fields[i];
+    const TypeField *fields = type_fields(type);
+    size_t count = type_field_count(type);
 
-        if (field->name == name) {
-            return field;
+    for (size_t i = 0; i < count; i++) {
+        if (fields[i].name == name) {
+            return &fields[i];
         }
     }
 
@@ -136,7 +117,7 @@ const TypeField *type_fields(const Type *type) {
 
     switch (type->kind) {
     case TYPE_STRUCT:
-        return type->record.fields;
+        return type->record.substituted ? type->record.substituted->fields : type->decl->fields;
 
     default:
         return NULL;
@@ -150,7 +131,7 @@ size_t type_field_count(const Type *type) {
 
     switch (type->kind) {
     case TYPE_STRUCT:
-        return type->record.field_count;
+        return type->record.substituted ? type->record.substituted->count : type->decl->field_count;
 
     default:
         return 0;
@@ -223,8 +204,8 @@ bool type_is_owned(const Type *type) {
 
     // A struct is not itself an owner: it owns through whichever fields do, and
     // is freed field by field rather than as one value.
-    for (size_t i = 0; i < type->record.field_count; i++) {
-        if (type_is_owned(type->record.fields[i].type)) {
+    for (size_t i = 0; i < type_field_count(type); i++) {
+        if (type_is_owned(type_fields(type)[i].type)) {
             return true;
         }
     }
@@ -275,8 +256,8 @@ bool type_is_copyable(const Type *type) {
         break;
     }
 
-    for (size_t i = 0; i < type->record.field_count; i++) {
-        if (!type_is_copyable(type->record.fields[i].type)) {
+    for (size_t i = 0; i < type_field_count(type); i++) {
+        if (!type_is_copyable(type_fields(type)[i].type)) {
             return false;
         }
     }
@@ -288,7 +269,24 @@ TypeKind type_kind(const Type *type) { return type->kind; }
 
 String *type_name_of(const Type *type) { return type->name; }
 
-const Type *type_decl(const Type *type) { return type->decl; }
+const TypeDef *type_decl(const Type *type) { return type->decl; }
+
+bool type_names_itself(const Type *type) {
+    switch (type->kind) {
+    case TYPE_INT:
+    case TYPE_FLOAT:
+    case TYPE_BOOL:
+    case TYPE_BYTE:
+    case TYPE_STR:
+    case TYPE_ERROR:
+
+    // A declaration's parameter, bound while that declaration's fields resolve.
+    case TYPE_PARAM:
+        return true;
+    default:
+        return false;
+    }
+}
 
 size_t type_param_index(const Type *type) {
     assert(type && type->kind == TYPE_PARAM && "only a parameter has an index");
@@ -301,5 +299,3 @@ size_t type_param_index(const Type *type) {
 // type, so following the parts is a cycle with no base case. Settled instead as
 // each constructor attaches what it was given.
 bool type_has_param(const Type *type) { return type && type->has_param; }
-
-const GenericDecl *type_generic(const Type *type) { return type->generic; }

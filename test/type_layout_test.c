@@ -433,7 +433,8 @@ static void test_rejects_an_array_of_the_struct_declaring_it() {
     resolve_unit(ctx.arena, unit, &global_scope, NULL, &ctx.diagnostics);
 
     assert(diagnostics_count(&ctx.diagnostics) == 1);
-    assert(strcmp(diagnostics_get(&ctx.diagnostics, 0)->message, "struct 'A' cannot contain itself") == 0);
+    assert(strcmp(diagnostics_get(&ctx.diagnostics, 0)->message,
+                  "struct 'A' cannot contain itself: 'A' contains 'A'") == 0);
     assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "A")) == NULL);
 
     ast_unit_destroy(unit);

@@ -410,7 +410,7 @@ static void test_reports_self_referential_struct() {
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_TYPE);
-    assert(strcmp(diagnostic->message, "struct 'Node' cannot contain itself") == 0);
+    assert(strcmp(diagnostic->message, "struct 'Node' cannot contain itself: 'Node' contains 'Node'") == 0);
 
     test_context_free(&ctx);
 }
@@ -430,7 +430,174 @@ static void test_reports_mutual_containment_cycle() {
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_TYPE);
-    assert(strcmp(diagnostic->message, "struct 'A' cannot contain itself") == 0);
+    assert(strcmp(diagnostic->message, "struct 'A' cannot contain itself: 'A' contains 'B' contains 'A'") ==
+           0);
+
+    test_context_free(&ctx);
+}
+
+// A ring names every declaration it passes through, in the order the fields
+// were followed, so that the one field a reader could remove to break it is
+// visible without opening each declaration in turn.
+static void test_reports_the_path_a_containment_ring_takes() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    compile(&ctx, "struct A { b: B }\n"
+                  "struct B { c: C }\n"
+                  "struct C { a: A }\n");
+
+    assert(diagnostics_count(&ctx.diagnostics) == 1);
+
+    const Diagnostic *diagnostic = diagnostics_get(&ctx.diagnostics, 0);
+
+    assert(strcmp(diagnostic->message,
+                  "struct 'A' cannot contain itself: 'A' contains 'B' contains 'C' contains 'A'") == 0);
+
+    // The field that closes the ring, which is the edge that breaks it.
+    assert(diagnostic->span.line == 4);
+
+    test_context_free(&ctx);
+}
+
+// Two rings in one unit are two independent paths: what the first traced must
+// not appear in the second, so the stack the path is read off has to unwind as
+// each declaration finishes rather than only growing.
+static void test_a_second_ring_traces_only_its_own_path() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    compile(&ctx, "struct A { b: B }\n"
+                  "struct B { a: A }\n"
+                  "struct C { d: D }\n"
+                  "struct D { c: C }\n");
+
+    assert(diagnostics_count(&ctx.diagnostics) == 2);
+
+    assert(strcmp(diagnostics_get(&ctx.diagnostics, 0)->message,
+                  "struct 'A' cannot contain itself: 'A' contains 'B' contains 'A'") == 0);
+
+    assert(strcmp(diagnostics_get(&ctx.diagnostics, 1)->message,
+                  "struct 'C' cannot contain itself: 'C' contains 'D' contains 'C'") == 0);
+
+    test_context_free(&ctx);
+}
+
+// The ring is what the path names, not the walk that reached it. 'X' holds the
+// first of three that hold each other, and is no part of the cycle -- so it is
+// absent from the message even though resolving it is what found one.
+static void test_a_ring_reached_from_outside_names_only_the_ring() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    compile(&ctx, "struct X { a: A }\n"
+                  "struct A { b: B }\n"
+                  "struct B { a: A }\n");
+
+    assert(diagnostics_count(&ctx.diagnostics) == 1);
+
+    assert(strcmp(diagnostics_get(&ctx.diagnostics, 0)->message,
+                  "struct 'A' cannot contain itself: 'A' contains 'B' contains 'A'") == 0);
+
+    test_context_free(&ctx);
+}
+
+// A ring longer than the message can name ends at the last hop written whole,
+// so what is reported is never a half-written name.
+static void test_a_ring_too_long_to_name_is_elided_at_a_hop() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    compile(&ctx, "struct S0 { f: S1 }\n"
+                  "struct S1 { f: S2 }\n"
+                  "struct S2 { f: S3 }\n"
+                  "struct S3 { f: S4 }\n"
+                  "struct S4 { f: S5 }\n"
+                  "struct S5 { f: S6 }\n"
+                  "struct S6 { f: S7 }\n"
+                  "struct S7 { f: S8 }\n"
+                  "struct S8 { f: S9 }\n"
+                  "struct S9 { f: S10 }\n"
+                  "struct S10 { f: S11 }\n"
+                  "struct S11 { f: S12 }\n"
+                  "struct S12 { f: S13 }\n"
+                  "struct S13 { f: S14 }\n"
+                  "struct S14 { f: S15 }\n"
+                  "struct S15 { f: S16 }\n"
+                  "struct S16 { f: S17 }\n"
+                  "struct S17 { f: S18 }\n"
+                  "struct S18 { f: S19 }\n"
+                  "struct S19 { f: S20 }\n"
+                  "struct S20 { f: S21 }\n"
+                  "struct S21 { f: S22 }\n"
+                  "struct S22 { f: S23 }\n"
+                  "struct S23 { f: S24 }\n"
+                  "struct S24 { f: S25 }\n"
+                  "struct S25 { f: S26 }\n"
+                  "struct S26 { f: S27 }\n"
+                  "struct S27 { f: S28 }\n"
+                  "struct S28 { f: S29 }\n"
+                  "struct S29 { f: S30 }\n"
+                  "struct S30 { f: S31 }\n"
+                  "struct S31 { f: S32 }\n"
+                  "struct S32 { f: S33 }\n"
+                  "struct S33 { f: S34 }\n"
+                  "struct S34 { f: S35 }\n"
+                  "struct S35 { f: S36 }\n"
+                  "struct S36 { f: S37 }\n"
+                  "struct S37 { f: S38 }\n"
+                  "struct S38 { f: S39 }\n"
+                  "struct S39 { f: S0 }\n");
+
+    assert(diagnostics_count(&ctx.diagnostics) == 1);
+
+    const char *message = diagnostics_get(&ctx.diagnostics, 0)->message;
+
+    assert(strstr(message, "contains ... 'S0'") != NULL);
+
+    test_context_free(&ctx);
+}
+
+// '[T; N]' is a shape the language spells, not a name it looks up, so nothing
+// called 'Array' is in scope for it to collide with: a unit may declare that
+// name for itself.
+static void test_a_unit_may_declare_a_struct_called_array() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    compile(&ctx, "struct Array { n: int }\n"
+                  "struct Holder { a: Array, xs: [int; 2] }\n");
+
+    assert(diagnostics_count(&ctx.diagnostics) == 0);
+
+    test_context_free(&ctx);
+}
+
+// Arguments apply to a declaration. A primitive is declared by nothing, so
+// there is nothing for them to be applied to.
+static void test_rejects_type_arguments_on_a_primitive() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    compile(&ctx, "struct V { a: int<bool> }\n");
+
+    assert(diagnostics_count(&ctx.diagnostics) == 1);
+    assert(strcmp(diagnostics_get(&ctx.diagnostics, 0)->message, "int does not take a type argument") == 0);
+
+    test_context_free(&ctx);
+}
+
+// An array has no name, so a diagnostic builds one from what it is: the element
+// and how many, spelled the way the source spells the type.
+static void test_an_array_is_named_by_its_shape() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    compile(&ctx, "func f(): int { let xs: [int; 3]; let y: int = xs; return y; }\n");
+
+    assert(diagnostics_count(&ctx.diagnostics) == 1);
+    assert(strcmp(diagnostics_get(&ctx.diagnostics, 0)->message,
+                  "cannot initialize a variable of type int with a value of type [int; 3]") == 0);
 
     test_context_free(&ctx);
 }
@@ -802,6 +969,13 @@ int main(void) {
     test_rejects_shadowing_a_builtin();
     test_reports_self_referential_struct();
     test_reports_mutual_containment_cycle();
+    test_an_array_is_named_by_its_shape();
+    test_a_unit_may_declare_a_struct_called_array();
+    test_rejects_type_arguments_on_a_primitive();
+    test_reports_the_path_a_containment_ring_takes();
+    test_a_second_ring_traces_only_its_own_path();
+    test_a_ring_reached_from_outside_names_only_the_ring();
+    test_a_ring_too_long_to_name_is_elided_at_a_hop();
     test_reports_every_bad_field();
 
     test_reports_wrong_argument_count();
