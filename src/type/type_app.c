@@ -11,7 +11,7 @@ size_t type_app_hash_of(TypeApp app) {
     size_t hash = 5381;
 
     hash = ((hash << 5) + hash) + (size_t)app.ctor;
-    hash = ((hash << 5) + hash) + (size_t)(uintptr_t)app.decl;
+    hash = ((hash << 5) + hash) + (size_t)(uintptr_t)app.def;
 
     for (size_t i = 0; i < app.arg_count; i++) {
         const TypeArg *arg = &app.args[i];
@@ -28,7 +28,7 @@ size_t type_app_hash_of(TypeApp app) {
 }
 
 bool type_app_equals(TypeApp app, TypeApp other) {
-    if (app.ctor != other.ctor || app.decl != other.decl || app.arg_count != other.arg_count) {
+    if (app.ctor != other.ctor || app.def != other.def || app.arg_count != other.arg_count) {
         return false;
     }
 

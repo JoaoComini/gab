@@ -203,9 +203,17 @@ void builtin_register_string(VM *vm) {
     // The block owns the characters and carries the capacity it was taken at,
     // so freeing it asks nothing else -- and the room past the live ones is
     // what lets a string grow without reallocating on every push.
-    const TypeFieldDecl fields[] = {
+    const TypeField fields[] = {
         {.name = string_from_cstr(&vm->env.strings, "data"),
          .type = type_registry_block_of(registry, type_registry_get_primitive(registry, TYPE_BYTE))},
+    };
+
+    // A declaration taking no parameters, which is what a plain struct is: it
+    // is its own instantiation, and supplying nothing is what declares it.
+    const TypeDef def = {
+        .name = string_from_cstr(&vm->env.strings, "String"),
+        .fields = fields,
+        .field_count = sizeof(fields) / sizeof(*fields),
     };
 
     // Which of its bytes name the characters it stands for: the address its
@@ -218,9 +226,7 @@ void builtin_register_string(VM *vm) {
     };
 
     const TypeDecl decl = {
-        .name = string_from_cstr(&vm->env.strings, "String"),
-        .fields = fields,
-        .field_count = sizeof(fields) / sizeof(*fields),
+        .def = &def,
         .derefs_to = type_registry_get_primitive(registry, TYPE_STR),
         .lent_parts = characters_named_by,
         .lent_part_count = sizeof(characters_named_by) / sizeof(*characters_named_by),

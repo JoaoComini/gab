@@ -15,14 +15,20 @@ const Type *builtin_declare_type(VM *vm, const TypeDecl *decl) {
 
     const Type *type = type_registry_declare(scope->type_registry, decl);
 
-    scope_decl_type(scope, type_name_of(type), type);
+    // A declaration taking parameters names no type, so the name binds to what
+    // it declares and a mention supplying arguments is what produces one.
+    if (type) {
+        scope_decl_type(scope, decl->def->name, type);
+    } else {
+        scope_decl_type_def(scope, decl->def->name, decl->def);
+    }
 
     return type;
 }
 
-void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiver, const char *name,
-                             GabExternFn body, const Type *return_type, const Type *const *params,
-                             size_t param_count) {
+// The Symbol a method is, whichever of the two it is registered against.
+static Symbol *method_symbol(VM *vm, const Type *receiver, const char *name, GabExternFn body,
+                             const Type *return_type, const Type *const *params, size_t param_count) {
     Arena *arena = vm->env.arena;
 
     Symbol *symbol = arena_alloc(arena, sizeof(Symbol));
@@ -46,8 +52,25 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
 
     extern_proto_list_add(&vm->program.extern_protos, (ExternProto){.body = body, .symbol = symbol});
 
+    return symbol;
+}
+
+void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiver, const char *name,
+                             GabExternFn body, const Type *return_type, const Type *const *params,
+                             size_t param_count) {
+    Symbol *symbol = method_symbol(vm, receiver, name, body, return_type, params, param_count);
+
     type_registry_add_method(vm->env.global_scope.type_registry, declared_on,
                              string_from_cstr(&vm->env.strings, name), symbol);
+}
+
+void builtin_register_def_method(VM *vm, const TypeDef *declared_on, const Type *receiver, const char *name,
+                                 GabExternFn body, const Type *return_type, const Type *const *params,
+                                 size_t param_count) {
+    Symbol *symbol = method_symbol(vm, receiver, name, body, return_type, params, param_count);
+
+    type_registry_add_def_method(vm->env.global_scope.type_registry, declared_on,
+                                 string_from_cstr(&vm->env.strings, name), symbol);
 }
 
 // As builtin_register_method, for a function the type owns rather than one a

@@ -13,7 +13,6 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->kind = kind;
     type->name = name;
     type->decl = NULL;
-    type->generic = NULL;
 
     // A parameter is the one kind that carries it of itself. Every other type
     // is given it by whatever it is built from, as that part is attached.
@@ -288,7 +287,7 @@ TypeKind type_kind(const Type *type) { return type->kind; }
 
 String *type_name_of(const Type *type) { return type->name; }
 
-const Type *type_decl(const Type *type) { return type->decl; }
+const TypeDef *type_decl(const Type *type) { return type->decl; }
 
 size_t type_param_index(const Type *type) {
     assert(type && type->kind == TYPE_PARAM && "only a parameter has an index");
@@ -301,5 +300,3 @@ size_t type_param_index(const Type *type) {
 // type, so following the parts is a cycle with no base case. Settled instead as
 // each constructor attaches what it was given.
 bool type_has_param(const Type *type) { return type && type->has_param; }
-
-const GenericDecl *type_generic(const Type *type) { return type->generic; }

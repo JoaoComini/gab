@@ -37,12 +37,7 @@ struct Type {
     // Distinct from the relation a borrowed view has to what it borrows: 'str'
     // is reached from 'String' by lending, which is a step down the chain a
     // receiver already walks, not a set held somewhere else.
-    const Type *decl;
-
-    // What this name declares, for a generic one: the fields an instantiation
-    // is built from, in terms of the parameters. NULL for every type that is
-    // not a generic declaration, which is all but the bare names.
-    const GenericDecl *generic;
+    const TypeDef *decl;
 
     // Whether a parameter is reachable from here, settled as this type is
     // built rather than walked on demand. A walk cannot answer it: a struct

@@ -203,19 +203,27 @@ typedef struct GenericMethod {
 } GenericMethod;
 
 /*
-    A generic declaration: the fields its instantiations are laid out from and
-    the methods they answer, in terms of the parameters it takes.
+    What a nominal name declares: the fields its instantiations are laid out
+    from and the methods they answer, in terms of the parameters it takes.
 
-    What makes it a declaration rather than a type is that a field may mention a
-    parameter. 'Vec' says its block holds T without saying what T is, and
-    interning 'Vec<int>' is that said with int -- which is the whole of what
-    instantiating one does.
+    One shape for every nominal type, generic or not. A plain struct takes no
+    parameters and is its own instantiation; 'Vec' takes one and is laid out
+    only once given it. Genericity is how many parameters there are rather than
+    a different kind of declaration, which is what keeps one path for both.
 
-    Held beside the type the name binds to, so that 'Vec' resolves to something
-    a diagnostic can print while naming no value. Nothing is laid out here: a
-    width follows from an instantiation's fields, and a parameter has none.
+    A field may mention a parameter, which is what makes this a declaration
+    rather than a type: 'Vec' says its block holds T without saying what T is,
+    and interning 'Vec<int>' is that said with int. Nothing is laid out here --
+    a width follows from an instantiation's fields, and a parameter has none.
 */
-typedef struct GenericDecl {
+typedef struct TypeDef {
+    // Interned by whoever declares it, as every name the registry is given is.
+    // Carried here rather than read off a type, since a declaration is what a
+    // name resolves to and no type stands for one.
+    String *name;
+
+    // How many arguments an instantiation supplies. Zero for a plain struct,
+    // which is therefore instantiated by supplying none.
     size_t param_count;
 
     // The fields an instantiation is laid out from, as ordinary types written
@@ -229,7 +237,7 @@ typedef struct GenericDecl {
     // known -- which is what separates these from an array's shared set.
     const GenericMethod *methods;
     size_t method_count;
-} GenericDecl;
+} TypeDef;
 
 // What an indirection names, or NULL for a kind that names nothing. The walks
 // asking how many levels deep something is read it that way, so "not an
@@ -242,11 +250,7 @@ String *type_name_of(const Type *type);
 
 // The declaration an instantiation was built from -- the bare 'Array' behind
 // every '[T; N]' -- or NULL for a type that is not one.
-const Type *type_decl(const Type *type);
-
-// The generic declaration a name introduces, or NULL for every type that is not
-// one. What tells 'Vec' apart from 'Vec<int>'.
-const GenericDecl *type_generic(const Type *type);
+const TypeDef *type_decl(const Type *type);
 
 // A list of types nothing in it owns: they belong to the scope arena and outlive
 // every compile, so this holds borrowed pointers and frees none.

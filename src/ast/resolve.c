@@ -557,6 +557,24 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
     const Type *at = actual;
 
     for (size_t derefs = 0;; derefs++) {
+        // A method declared on a declaration rather than on a type: every
+        // instantiation of that declaration answers it, so what it takes is
+        // named by which declaration this level instantiates. The bare 'Array'
+        // every '[T; N]' hangs its set on is the one such today.
+        if (!declared) {
+            if (type_decl(at)) {
+                *out = (ReceiverAdjustment){.derefs = derefs, .address_of = false};
+                return true;
+            }
+
+            if (!type_is_indirect(at)) {
+                return false;
+            }
+
+            at = type_pointee(at);
+            continue;
+        }
+
         // Already what the method takes, at this level.
         if (declared == at) {
             *out = (ReceiverAdjustment){.derefs = derefs, .address_of = false};
@@ -599,15 +617,6 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
         // where the receiver still has levels to go.
         if (lends_by_value(state->current_scope->type_registry, declared, at) ||
             lends_by_pointer(declared, at)) {
-            *out = (ReceiverAdjustment){.derefs = derefs, .address_of = false};
-            return true;
-        }
-
-        // A method declared on the declaration this level instantiates: the
-        // bare 'Array' every '[T; N]' hangs its set on. What such a method
-        // reads is the header, which every array has the same shape of, so the
-        // element it was written over does not enter into it.
-        if (declared == type_decl(at)) {
             *out = (ReceiverAdjustment){.derefs = derefs, .address_of = false};
             return true;
         }
@@ -680,7 +689,10 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     // The sugar borrows, and never moves: a function consuming parameter zero
     // is reached where the transfer can be written, so that no call site gives
     // up ownership without saying so.
-    if (method->func.param_count > 0 && type_kind(method->func.params[0]) == TYPE_BOX) {
+    // A method declared on a declaration has no one receiver type -- every
+    // instantiation answers it -- so there is no box for it to consume.
+    if (method->func.param_count > 0 && method->func.params[0] &&
+        type_kind(method->func.params[0]) == TYPE_BOX) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                    "'%s' consumes what it takes, so it is called as '%s::%s(move ...)' rather than on a "
                    "value",
@@ -1686,11 +1698,14 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
         // before this ever saw it.
         Scope *base_scope = resolver_expr_scope(state, expr->apply.base->name);
 
-        const Type *base =
-            base_scope ? scope_type_lookup(base_scope, resolver_expr_member(state, expr->apply.base->name))
-                       : NULL;
+        String *base_name = base_scope ? resolver_expr_member(state, expr->apply.base->name) : NULL;
 
-        if (!base) {
+        // What the name declares rather than what it names: a declaration
+        // taking parameters stands for no type until this supplies them.
+        const TypeDef *base_def = base_name ? scope_type_def_lookup(base_scope, base_name) : NULL;
+        const Type *base = base_name ? scope_type_lookup(base_scope, base_name) : NULL;
+
+        if (!base && !base_def) {
             char *name = string_ref_to_cstr(expr->apply.base->name);
             diag_error(state->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", name);
             free(name);
@@ -1702,10 +1717,14 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
         // Nothing here is 'Vec': what the constructor takes and how its
         // instantiations are laid out are read off the declaration, so a second
         // generic name resolves through this same arm.
-        if (type_generic(base)) {
-            if (expr->apply.args.size != type_generic(base)->param_count) {
+        // Every nominal declaration is instantiated by what it was applied to.
+        // Nothing here is 'Vec': what a constructor takes and how its
+        // instantiations are laid out are read off the declaration, so a second
+        // generic name resolves through this same arm.
+        if (base_def && base_def != type_registry_array_def(registry)) {
+            if (expr->apply.args.size != base_def->param_count) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' takes %zu type argument(s), not %zu",
-                           type_name_of(base)->data, type_generic(base)->param_count, expr->apply.args.size);
+                           base_def->name->data, base_def->param_count, expr->apply.args.size);
                 return resolver_error_type(state);
             }
 
@@ -1742,12 +1761,12 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
                 }
             }
 
-            return type_registry_instantiate(registry, base, args, expr->apply.args.size);
+            return type_registry_instantiate(registry, base_def, args, expr->apply.args.size);
         }
 
-        if (base != type_registry_get_primitive(registry, TYPE_ARRAY)) {
+        if (base_def != type_registry_array_def(registry)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, span, "%s does not take an element type",
-                       type_name(state, base));
+                       base ? type_name(state, base) : base_def->name->data);
             return resolver_error_type(state);
         }
 
@@ -1828,24 +1847,28 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
     const Type *type = scope ? scope_type_lookup(scope, resolver_expr_member(state, expr->name)) : NULL;
 
     if (!type) {
-        char *name = string_ref_to_cstr(expr->name);
-        diag_error(state->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", name);
-        free(name);
+        // A declaration taking parameters names no type until they are given,
+        // so a bare mention of one is the arity error a wrong count is: what it
+        // takes is what makes it a type.
+        const TypeDef *def =
+            scope ? scope_type_def_lookup(scope, resolver_expr_member(state, expr->name)) : NULL;
 
-        return resolver_error_type(state);
-    }
+        if (def) {
+            if (def == type_registry_array_def(registry)) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, span,
+                           "'Array' needs an element type and a length, as '[int; 3]'");
+            } else {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' takes %zu type argument(s), not 0",
+                           def->name->data, def->param_count);
+            }
 
-    // 'Array' alone names no type: every array is '[T; N]'.
-    if (type == type_registry_get_primitive(registry, TYPE_ARRAY)) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, span,
-                   "'Array' needs an element type and a length, as '[int; 3]'");
-        return resolver_error_type(state);
-    }
+            return resolver_error_type(state);
+        }
 
-    // Nor does a generic declaration: what it takes is what makes it a type.
-    if (type_generic(type)) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' needs a type argument, as '%s<int>'",
-                   type_name_of(type)->data, type_name_of(type)->data);
+        char *name_text = string_ref_to_cstr(expr->name);
+        diag_error(state->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", name_text);
+        free(name_text);
+
         return resolver_error_type(state);
     }
 

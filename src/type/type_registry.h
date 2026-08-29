@@ -33,7 +33,14 @@ typedef struct Symbol Symbol;
 // The named types of one scope. Scope owns these and chains them, the same way
 // it chains symbol tables.
 typedef struct {
+    // What the name stands for, when it stands for a type at all. NULL for a
+    // declaration that takes parameters: 'Vec' names no type until one mention
+    // supplies them, so there is nothing here for it to be.
     const Type *type;
+
+    // What the name declares. Every nominal name has one; a name taking no
+    // parameters has a type beside it, and one taking parameters has only this.
+    const TypeDef *def;
 } TypeBinding;
 
 #define type_map_hash(key) (size_t)key
@@ -53,28 +60,15 @@ GAB_HASH_MAP(TypeMap, type_map, String *, TypeBinding)
     nothing, so nothing in the resolver names a 'String'.
 */
 
-// One field of a declared struct.
-typedef struct TypeFieldDecl {
-    String *name;
-    const Type *type;
-} TypeFieldDecl;
-
-// What a standard library says a type is.
+// What a standard library says a type is: the declaration itself, and what a
+// value of it stands for.
 //
-// Either a struct with fields, or a generic declaration whose instantiations
-// have them -- 'generic' decides which, and the two are never both given.
+// One shape for a plain struct and a generic alike -- the declaration says how
+// many parameters it takes, and a struct takes none.
 typedef struct TypeDecl {
-    // Interned by the provider, as every name the registry is given is: what
-    // interns them is the pool the provider already holds, so the registry needs
-    // none of its own.
-    String *name;
-
-    // A struct's fields, laid out in the order given.
-    const TypeFieldDecl *fields;
-    size_t field_count;
-
-    // Or the declaration every instantiation is built from, for a generic.
-    const GenericDecl *generic;
+    // What the name declares. Its own name is carried here, so nothing has to
+    // pair a declaration with a type to know what it is called.
+    const TypeDef *def;
 
     // What a value of this type stands for, and which of its bytes name that
     // view. Both or neither: a deref with no parts could not be lent, and parts
@@ -126,6 +120,15 @@ typedef struct Deref {
 // by following 'owner' when the type itself does not answer, so that a type
 // sharing another's identity reaches its set.
 bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method);
+
+// Declares a method every instantiation of a declaration answers, rather than
+// one a single type does. What an array's shared set is: no '[T; N]' declares
+// it, and every one of them finds it.
+// 'Array', the declaration every '[T; N]' applies. What a spec resolves to
+// before its element and length are given.
+const TypeDef *type_registry_array_def(TypeRegistry *registry);
+
+bool type_registry_add_def_method(TypeRegistry *registry, const TypeDef *def, String *name, Symbol *method);
 Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name);
 
 /*
@@ -255,7 +258,7 @@ const Type *type_registry_ptr_to(TypeRegistry *registry, const Type *pointee);
 */
 const Type *type_registry_param(TypeRegistry *registry, size_t index);
 
-const Type *type_registry_instantiate(TypeRegistry *registry, const Type *decl, const Type *const *args,
+const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDef *def, const Type *const *args,
                                       size_t arg_count);
 
 // The interned 'block element': an owning address and the capacity it was

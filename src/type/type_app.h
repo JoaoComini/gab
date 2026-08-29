@@ -35,9 +35,10 @@ typedef struct TypeArg {
 typedef struct TypeApp {
     TypeCtor ctor;
 
-    // The declaration a nominal constructor came from -- the bare 'Array'.
-    // NULL for the built-in constructors, which their tag already tells apart.
-    const Type *decl;
+    // The declaration a nominal constructor came from -- what 'Vec' or 'Array'
+    // names. NULL for the built-in constructors, which their tag already tells
+    // apart.
+    const TypeDef *def;
 
     const TypeArg *args;
     size_t arg_count;

@@ -16,8 +16,8 @@ void builtin_register_array(VM *vm) {
     // Declared on the bare 'Array', which no slot ever holds: what reaches this
     // set is each '[T; N]' through its 'owner'. The receiver is that same bare
     // type, so the method is written once however many element types exist.
-    const Type *array_type = type_registry_get_primitive(registry, TYPE_ARRAY);
+    const TypeDef *array_def = type_registry_array_def(registry);
 
-    builtin_register_method(vm, array_type, array_type, "len", array_len,
-                            type_registry_get_primitive(registry, TYPE_INT), NULL, 0);
+    builtin_register_def_method(vm, array_def, NULL, "len", array_len,
+                                type_registry_get_primitive(registry, TYPE_INT), NULL, 0);
 }

@@ -45,6 +45,13 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
 // As builtin_register_method, for a function reached on the type rather than on
 // a value: 'Type::name(args)'. Every parameter is in 'params', since nothing is
 // the receiver.
+// As builtin_register_method, for a set every instantiation of a declaration
+// answers rather than one a single type does: an array's 'len' is written once
+// however many element types exist.
+void builtin_register_def_method(VM *vm, const TypeDef *declared_on, const Type *receiver, const char *name,
+                                 GabExternFn body, const Type *return_type, const Type *const *params,
+                                 size_t param_count);
+
 void builtin_register_static(VM *vm, const Type *declared_on, const char *name, GabExternFn body,
                              const Type *return_type, const Type *const *params, size_t param_count);
 

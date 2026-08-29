@@ -97,6 +97,15 @@ void scope_withdraw_type(Scope *scope, String *name);
 // collision rather than a replacement.
 bool scope_decl_type(Scope *scope, String *name, const Type *type);
 
+// Binds a name to what it declares, for a declaration taking parameters: it
+// names no type until a mention supplies them.
+bool scope_decl_type_def(Scope *scope, String *name, const TypeDef *def);
+
+// What a name declares, or NULL when it names no nominal type. Answers for a
+// name taking parameters, which scope_type_lookup cannot: that one asks for a
+// type, and a declaration awaiting arguments is not one.
+const TypeDef *scope_type_def_lookup(Scope *scope, String *name);
+
 // A scope a compile declares into instead of its real target, so a compile that
 // fails declares nothing. Parented to the target, so lookups still reach what is
 // already declared.

@@ -22,16 +22,20 @@ void scope_init(Scope *scope, Arena *arena, StringPool *strings, Scope *parent) 
 static void scope_declare_primitives(Scope *scope) {
     TypeRegistry *registry = scope->type_registry;
 
-    // The bare 'Array' is among them. Never a usable type on its own --
-    // resolving a spec turns it into the '[T; N]' its element names -- but it
-    // must be found here for that spec to get as far as applying one.
-    static const TypeKind PRIMITIVES[] = {TYPE_INT, TYPE_FLOAT, TYPE_BOOL, TYPE_STR, TYPE_ARRAY};
+    static const TypeKind PRIMITIVES[] = {TYPE_INT, TYPE_FLOAT, TYPE_BOOL, TYPE_STR};
 
     for (size_t i = 0; i < sizeof(PRIMITIVES) / sizeof(PRIMITIVES[0]); i++) {
         const Type *type = type_registry_get_primitive(registry, PRIMITIVES[i]);
 
         scope_decl_type(scope, type_name_of(type), type);
     }
+
+    // 'Array' is a declaration rather than a type: resolving a spec turns it
+    // into the '[T; N]' its arguments name, and it must be found here for that
+    // spec to get as far as applying one.
+    const TypeDef *array_def = type_registry_array_def(registry);
+
+    scope_decl_type_def(scope, array_def->name, array_def);
 
     // And nothing else. What a standard library provides is named where it is
     // declared -- see builtin_declare_type -- which is what keeps 'String' out
@@ -148,6 +152,19 @@ const Type *scope_type_lookup(Scope *scope, String *name) {
     return NULL;
 }
 
+const TypeDef *scope_type_def_lookup(Scope *scope, String *name) {
+    while (scope) {
+        TypeBinding *entry = type_map_lookup(scope->types, name);
+        if (entry) {
+            return entry->def;
+        }
+
+        scope = scope->parent;
+    }
+
+    return NULL;
+}
+
 const Type *scope_type_lookup_local(Scope *scope, String *name) {
     TypeBinding *entry = type_map_lookup(scope->types, name);
 
@@ -159,7 +176,20 @@ const Type *scope_type_lookup_local(Scope *scope, String *name) {
 // 'int'. A builtin is reachable from every module and there is no qualified
 // syntax to reach past a shadow, so shadowing one would put it out of reach for
 // the rest of the module, including in a signature a host resolves through.
-const Type *scope_type_lookup_declaring(Scope *scope, String *name) { return scope_type_lookup(scope, name); }
+// Answers for a name bound to a declaration alone as well as one bound to a
+// type: 'Vec' names no type, and a unit redeclaring it would still be a clash.
+const Type *scope_type_lookup_declaring(Scope *scope, String *name) {
+    while (scope) {
+        TypeBinding *entry = type_map_lookup(scope->types, name);
+        if (entry) {
+            return entry->type ? entry->type : (const Type *)entry->def;
+        }
+
+        scope = scope->parent;
+    }
+
+    return NULL;
+}
 
 Symbol *scope_symbol_lookup_declaring(Scope *scope, String *name) {
     for (Scope *s = scope;; s = s->parent) {
@@ -182,7 +212,17 @@ bool scope_decl_type(Scope *scope, String *name, const Type *type) {
         return false;
     }
 
-    type_map_insert(scope->types, name, (TypeBinding){.type = type});
+    type_map_insert(scope->types, name, (TypeBinding){.type = type, .def = type ? type_decl(type) : NULL});
+
+    return true;
+}
+
+bool scope_decl_type_def(Scope *scope, String *name, const TypeDef *def) {
+    if (type_map_lookup(scope->types, name)) {
+        return false;
+    }
+
+    type_map_insert(scope->types, name, (TypeBinding){.def = def});
 
     return true;
 }

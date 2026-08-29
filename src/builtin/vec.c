@@ -15,7 +15,7 @@
 //
 // A declaration, so no width is settled here -- what a vector is laid out as
 // follows from the element, and that is not known until one is applied.
-static const Type *vec_declare_type(VM *vm) {
+static const TypeDef *vec_declare_type(VM *vm) {
     Arena *arena = vm->env.arena;
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
@@ -31,17 +31,20 @@ static const Type *vec_declare_type(VM *vm) {
 
     // Arena-allocated rather than local: every instantiation reads this, and
     // the declaration outlives the call that made it.
-    GenericDecl *generic = arena_alloc(arena, sizeof(GenericDecl));
+    TypeDef *def = arena_alloc(arena, sizeof(TypeDef));
 
-    *generic = (GenericDecl){
+    *def = (TypeDef){
+        .name = string_from_cstr(&vm->env.strings, "Vec"),
         .param_count = 1,
         .fields = fields,
         .field_count = 1,
     };
 
-    const TypeDecl decl = {.name = string_from_cstr(&vm->env.strings, "Vec"), .generic = generic};
+    const TypeDecl decl = {.def = def};
 
-    return builtin_declare_type(vm, &decl);
+    builtin_declare_type(vm, &decl);
+
+    return def;
 }
 
 // A vector's header: the block it owns, which carries how far into it anything
@@ -127,7 +130,7 @@ static void vec_len(Args *args) { args_return_int(args, vec_load(args).block.len
 void builtin_register_vec(VM *vm) {
     // Declared here and held as a local: what a provider gets back is its
     // handle to the declaration, and one VM's types are not another's.
-    const Type *vec_decl = vec_declare_type(vm);
+    const TypeDef *vec_def = vec_declare_type(vm);
 
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
@@ -142,7 +145,7 @@ void builtin_register_vec(VM *vm) {
     // finds the instantiation being built, so no receiver needs naming a self
     // the declaration could not otherwise say.
     const Type *element = type_registry_param(registry, 0);
-    const Type *self = type_registry_instantiate(registry, vec_decl, &element, 1);
+    const Type *self = type_registry_instantiate(registry, vec_def, &element, 1);
     const Type *receiver = type_registry_ref_to(registry, self);
 
     const Type *an_int = type_registry_get_primitive(registry, TYPE_INT);
@@ -189,8 +192,8 @@ void builtin_register_vec(VM *vm) {
 
     // Written into the declaration rather than registered against a type: what
     // answers these is every 'Vec<T>', and none of them exists yet.
-    GenericDecl *generic = (GenericDecl *)type_generic(vec_decl);
+    TypeDef *def = (TypeDef *)vec_def;
 
-    generic->methods = methods;
-    generic->method_count = 3;
+    def->methods = methods;
+    def->method_count = 3;
 }

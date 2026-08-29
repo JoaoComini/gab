@@ -37,12 +37,20 @@ GAB_HASH_MAP(TypeAppMap, type_app_map, TypeApp, Type *)
 // what a type is was settled when it was interned. Keeping them apart is what
 // lets a type be finished when the registry hands it over.
 typedef struct MethodKey {
+    // The type a method was registered against, or NULL when it was registered
+    // against a declaration instead -- what every instantiation of one shares.
     const Type *type;
+
+    // The declaration, for a set every instantiation answers. Set exactly when
+    // 'type' is not, so one table holds both without the two colliding.
+    const TypeDef *def;
+
     const String *name;
 } MethodKey;
 
-#define method_key_hash(key) (((size_t)(key).type * 31) ^ (size_t)(key).name)
-#define method_key_key_equals(key, other) ((key).type == (other).type && (key).name == (other).name)
+#define method_key_hash(key) ((((size_t)(key).type ^ (size_t)(key).def) * 31) ^ (size_t)(key).name)
+#define method_key_key_equals(key, other)                                                                    \
+    ((key).type == (other).type && (key).def == (other).def && (key).name == (other).name)
 #define method_key_key_dup(key) key
 #define method_key_entry_free(key, value)
 
@@ -121,10 +129,11 @@ typedef struct {
     // header, which is what 'ref' builds for every type in the language.
     const Type *str_type;
 
-    // 'Array', the bare name. Not a usable type on its own -- every array is
-    // '[T; N]' for some element -- but the name a spec resolves to before its
-    // element is applied, and what a diagnostic prints when one is missing.
-    const Type *array_type;
+    // 'Array', the bare name. A declaration rather than a type: every array is
+    // '[T; N]' for some element, so nothing names one without applying it. What
+    // a spec resolves to before its arguments are given, and where the set every
+    // array answers is registered.
+    const TypeDef *array_def;
 
     const Type *error_type;
 } TypePrimitives;

@@ -237,6 +237,16 @@ static void test_the_brackets_say_what_the_length_counts() {
                         "let r: int = f();") == 5);
 }
 
+// 'Array' names a declaration rather than a type: what it takes is what makes
+// it one, so a mention supplying nothing has no type to be.
+static void test_the_bare_array_names_no_type() {
+    assert(!test_compiles("func f(): int {\n"
+                          "    let xs: Array;\n"
+                          "    return 0;\n"
+                          "}\n"
+                          "let r: int = f();"));
+}
+
 int main(void) {
     test_a_fixed_array_holds_its_length_in_its_type();
     test_elements_are_distinct();
@@ -257,6 +267,7 @@ int main(void) {
     test_an_array_lends_to_a_borrow();
     test_what_may_be_indexed_and_by_what();
     test_the_brackets_say_what_the_length_counts();
+    test_the_bare_array_names_no_type();
 
     return 0;
 }
