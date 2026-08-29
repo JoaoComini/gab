@@ -1259,14 +1259,18 @@ static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast) {
 // The index is the unit's own. What the call finally encodes is this plus the
 // base linking assigns to that table, which is why every call emitted against
 // it is recorded for relocation.
-static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast) {
-    if (!ast->symbol || proto_map_lookup(state->local_protos, ast->symbol)) {
-        return;
-    }
-
+// Reserves this unit's slot for a function and records the binding that link
+// stamps with the absolute index. Keyed by the symbol rather than by a
+// declaration, because not every function has one: a generic instantiation's
+// method comes into being when its type is interned, with no AST node behind it.
+//
+// An extern's prototype is left empty here. Which body fills it is a separate
+// question -- a host registration for a declared 'extern', the declaration
+// itself for an instantiated method -- and both are answered after this.
+static size_t codegen_reserve_symbol(CodegenState *state, Symbol *symbol) {
     size_t local;
 
-    if (ast->symbol->func.is_extern) {
+    if (symbol->func.is_extern) {
         extern_proto_list_add(&state->unit->extern_protos, (ExternProto){0});
 
         local = state->unit->extern_protos.size - 1;
@@ -1279,26 +1283,37 @@ static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast) {
         local = state->unit->prototypes.size - 1;
     }
 
-    proto_map_insert(state->local_protos, ast->symbol, local);
-    proto_binding_list_add(&state->unit->bindings,
-                           (ProtoBinding){.symbol = ast->symbol, .local_index = local});
-}
-
-// Reserves an extern slot for a method a generic instantiation declared. Unlike
-// a declaration's, this symbol has no AST node and no pre-pass: it comes into
-// being when a type is interned, which may be in the middle of resolving the
-// call that first names it.
-//
-// The body is already known, so no ExternRequest is recorded -- there is no host
-// name to look up, and linking has nothing to answer.
-static const size_t *codegen_reserve_instantiated(CodegenState *state, Symbol *symbol) {
-    extern_proto_list_add(&state->unit->extern_protos,
-                          (ExternProto){.body = (GabExternFn)symbol->func.body, .symbol = symbol});
-
-    size_t local = state->unit->extern_protos.size - 1;
-
     proto_map_insert(state->local_protos, symbol, local);
     proto_binding_list_add(&state->unit->bindings, (ProtoBinding){.symbol = symbol, .local_index = local});
+
+    return local;
+}
+
+static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast) {
+    if (!ast->symbol || proto_map_lookup(state->local_protos, ast->symbol)) {
+        return;
+    }
+
+    codegen_reserve_symbol(state, ast->symbol);
+}
+
+// Reserves a slot for a method a generic instantiation declared, and fills it.
+//
+// This symbol has no AST node and no pre-pass behind it: it comes into being
+// when a type is interned, which may be in the middle of resolving the call that
+// first names it. So the first call reserves the slot, and linking rebases it
+// with every other extern.
+//
+// No ExternRequest is recorded. That asks linking to find a body by name, and
+// exists so a unit naming one nothing registered fails rather than leaving a
+// prototype a call could reach unbound. This body came from the declaration the
+// type was instantiated from: there is nothing to look up, and nothing that
+// could be missing.
+static const size_t *codegen_reserve_instantiated(CodegenState *state, Symbol *symbol) {
+    size_t local = codegen_reserve_symbol(state, symbol);
+
+    state->unit->extern_protos.data[local] =
+        (ExternProto){.body = (GabExternFn)symbol->func.body, .symbol = symbol};
 
     return proto_map_lookup(state->local_protos, symbol);
 }
