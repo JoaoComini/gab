@@ -558,24 +558,6 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
     const Type *at = actual;
 
     for (size_t derefs = 0;; derefs++) {
-        // A method declared on a declaration rather than on a type: every
-        // instantiation of that declaration answers it, so what it takes is
-        // named by which declaration this level instantiates. The bare 'Array'
-        // every '[T; N]' hangs its set on is the one such today.
-        if (!declared) {
-            if (type_decl(at)) {
-                *out = (ReceiverAdjustment){.derefs = derefs, .address_of = false};
-                return true;
-            }
-
-            if (!type_is_indirect(at)) {
-                return false;
-            }
-
-            at = type_pointee(at);
-            continue;
-        }
-
         // Already what the method takes, at this level.
         if (declared == at) {
             *out = (ReceiverAdjustment){.derefs = derefs, .address_of = false};
@@ -687,13 +669,19 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         return;
     }
 
+    // What the call has to reach. A set hung on a declaration names no one
+    // receiver, since every instantiation of it answers the same method, so
+    // what such a call takes is the type whose set answered -- the level the
+    // walk stopped at.
+    const Type *declared_receiver =
+        method->func.param_count > 0 && method->func.params[0] ? method->func.params[0] : base;
+
     // The sugar borrows, and never moves: a function consuming parameter zero
     // is reached where the transfer can be written, so that no call site gives
     // up ownership without saying so.
     // A method declared on a declaration has no one receiver type -- every
     // instantiation answers it -- so there is no box for it to consume.
-    if (method->func.param_count > 0 && method->func.params[0] &&
-        type_kind(method->func.params[0]) == TYPE_BOX) {
+    if (method->func.param_count > 0 && type_kind(declared_receiver) == TYPE_BOX) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                    "'%s' consumes what it takes, so it is called as '%s::%s(move ...)' rather than on a "
                    "value",
@@ -716,7 +704,6 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 
     // Parameter zero is the receiver, so the declared parameters — the ones the
     // caller actually writes — are everything after it.
-    const Type *declared_receiver = method->func.params[0];
     size_t declared_params = method->func.param_count - 1;
 
     ReceiverAdjustment adjustment;
