@@ -246,6 +246,15 @@ const Type *type_registry_ptr_to(TypeRegistry *registry, const Type *pointee);
     The arguments are interned into the application key, so two mentions of
     'Vec<int>' find one Type.
 */
+/*
+    The parameter at an index, as a declaration writes it.
+
+    Interned like every other type, so a declaration's field is an ordinary type
+    that happens to mention one -- which is what lets 'block box T' be said at
+    all, and what makes substituting it a walk rather than a case analysis.
+*/
+const Type *type_registry_param(TypeRegistry *registry, size_t index);
+
 const Type *type_registry_instantiate(TypeRegistry *registry, const Type *decl, const Type *const *args,
                                       size_t arg_count);
 
