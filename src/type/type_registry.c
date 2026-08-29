@@ -463,9 +463,9 @@ static const Type *indirect_to(TypeRegistry *registry, TypeCtor ctor, TypeKind k
 
     // A shape written over a parameter is not a type a value ever has: it is
     // what a declaration says, and what substituting it produces is laid out
-    // instead. Selecting a drop here would be asking what freeing 'box T'
-    // does, which has no answer until T is known.
-    if (!type_has_param(type)) {
+    // instead. Asking what freeing 'box T' does has no answer until T is known,
+    // and a parameter can only be here because a declaration put it there.
+    if (!type->has_param) {
         type_registry_drop_of(registry, type);
     }
 
@@ -627,6 +627,13 @@ const Type *type_registry_instantiate(TypeRegistry *registry, const Type *decl, 
     // declared and where a substituted signature is read from.
     type->decl = decl;
 
+    // An instantiation mentions a parameter exactly when it was given one: its
+    // fields are the declaration's substituted with these arguments, so nothing
+    // can appear in them that an argument did not bring.
+    for (size_t i = 0; i < arg_count; i++) {
+        type->has_param |= type_has_param(args[i]);
+    }
+
     // Interned before anything is substituted, so a field or a receiver naming
     // this same instantiation -- which every method's receiver does -- finds
     // this entry rather than building a second and recursing forever.
@@ -647,10 +654,6 @@ const Type *type_registry_instantiate(TypeRegistry *registry, const Type *decl, 
         fields[i] = (TypeField){.name = generic->fields[i].name, .type = field_type};
 
         type->record.field_count++;
-
-        // True only of a declaration instantiated over its own parameters,
-        // which is what a method's receiver names before an argument is known.
-        type->has_param |= type_has_param(field_type);
     }
 
     type_registry_drop_of(registry, type);

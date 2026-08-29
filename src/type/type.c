@@ -43,8 +43,6 @@ void type_add_field(Type *type, String *name, const Type *field_type) {
         .name = name,
         .type = field_type,
     };
-
-    type->has_param |= type_has_param(field_type);
 }
 
 const TypeField *type_find_field(const Type *type, const String *name) {
