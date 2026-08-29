@@ -3,7 +3,8 @@
 
 #include "allocator.h"
 #include "arena.h"
-#include "type.h"
+#include "type/type.h"
+#include "type/type_layout.h"
 
 typedef struct TypeRegistry TypeRegistry;
 

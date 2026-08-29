@@ -2,9 +2,10 @@
 #define GAB_AST_STMT_H
 
 #include "ast/expr.h"
+#include "ast/type_expr.h"
 #include "string/string_ref.h"
 #include "symbol_table.h"
-#include "type.h"
+#include "type/type.h"
 #include "util/list.h"
 
 typedef struct ASTField {

@@ -3,7 +3,7 @@
 #include "allocator.h"
 #include "arena.h"
 #include "object.h"
-#include "type_registry.h"
+#include "type/type_registry.h"
 #include "vm/args.h"
 #include "vm/interp.h"
 #include "vm/vm.h"
@@ -16,15 +16,15 @@
 // A declaration, so no width is settled here -- what a vector is laid out as
 // follows from the element, and that is not known until one is applied.
 static const Type *vec_declare_type(VM *vm) {
-    TypeRegistry *registry = vm->env.global_scope.type_registry;
+    Arena *arena = vm->env.arena;
 
     // The block owns the memory and carries both the capacity it was taken at
     // and how far into it anything was written, so freeing it asks nothing
     // else -- which is the whole of what a vector is.
-    GenericField *fields = arena_alloc(registry->arena, sizeof(GenericField));
+    GenericField *fields = arena_alloc(arena, sizeof(GenericField));
 
     fields[0] = (GenericField){
-        .name = string_from_cstr(registry->strings, "data"),
+        .name = string_from_cstr(&vm->env.strings, "data"),
         .from = GENERIC_FROM_PARAM,
         .param = 0,
         .ctor = TYPE_CTOR_BLOCK,
@@ -32,7 +32,7 @@ static const Type *vec_declare_type(VM *vm) {
 
     // Arena-allocated rather than local: every instantiation reads this, and
     // the declaration outlives the call that made it.
-    GenericDecl *generic = arena_alloc(registry->arena, sizeof(GenericDecl));
+    GenericDecl *generic = arena_alloc(arena, sizeof(GenericDecl));
 
     *generic = (GenericDecl){
         .param_count = 1,
@@ -40,7 +40,7 @@ static const Type *vec_declare_type(VM *vm) {
         .field_count = 1,
     };
 
-    const TypeDecl decl = {.name = "Vec", .generic = generic};
+    const TypeDecl decl = {.name = string_from_cstr(&vm->env.strings, "Vec"), .generic = generic};
 
     return builtin_declare_type(vm, &decl);
 }
@@ -125,17 +125,6 @@ static void vec_at(Args *args) {
 // 'v.len()'. How many elements have been pushed, which the block carries.
 static void vec_len(Args *args) { args_return_int(args, vec_load(args).block.length); }
 
-// Declares one substituted method on one instantiation. The registry calls this
-// where a 'Vec<T>' is interned, having filled the parameter in.
-//
-// The signature arrives receiver-first, which is how a method's parameters are
-// numbered everywhere: what the caller writes is everything after it.
-static void vec_install_method(void *ctx, const Type *on, const char *name, void *body,
-                               const Type *return_type, const Type *const *signature, size_t count) {
-    builtin_register_method(ctx, on, signature[0], name, (GabExternFn)body, return_type, signature + 1,
-                            count - 1);
-}
-
 void builtin_register_vec(VM *vm) {
     // Declared here and held as a local: what a provider gets back is its
     // handle to the declaration, and one VM's types are not another's.
@@ -154,7 +143,7 @@ void builtin_register_vec(VM *vm) {
     // what 'at' hands back are the same type, filled in per instantiation.
     const GenericField element = {.from = GENERIC_FROM_PARAM, .param = 0, .ctor = TYPE_CTOR_NOMINAL};
 
-    const GenericField an_int = {.fixed = registry->primitives.int_type};
+    const GenericField an_int = {.fixed = type_registry_get_primitive(registry, TYPE_INT)};
 
     // Arena-allocated rather than local: the declaration holds these for as
     // long as the VM lives, since an instantiation reads them whenever one is
@@ -167,7 +156,7 @@ void builtin_register_vec(VM *vm) {
     at_params[0] = an_int;
 
     methods[0] = (GenericMethod){
-        .name = "push",
+        .name = string_from_cstr(&vm->env.strings, "push"),
         .body = (void *)vec_push,
         .receiver = receiver,
 
@@ -179,7 +168,7 @@ void builtin_register_vec(VM *vm) {
     };
 
     methods[1] = (GenericMethod){
-        .name = "at",
+        .name = string_from_cstr(&vm->env.strings, "at"),
         .body = (void *)vec_at,
         .receiver = receiver,
         .result = element,
@@ -188,7 +177,7 @@ void builtin_register_vec(VM *vm) {
     };
 
     methods[2] = (GenericMethod){
-        .name = "len",
+        .name = string_from_cstr(&vm->env.strings, "len"),
         .body = (void *)vec_len,
         .receiver = receiver,
         .result = an_int,
@@ -198,13 +187,8 @@ void builtin_register_vec(VM *vm) {
 
     // Written into the declaration rather than registered against a type: what
     // answers these is every 'Vec<T>', and none of them exists yet.
-    GenericDecl *generic = (GenericDecl *)vec_decl->generic;
+    GenericDecl *generic = (GenericDecl *)type_generic(vec_decl);
 
     generic->methods = methods;
     generic->method_count = 3;
-
-    // How an instantiation's methods become Symbols. Registered once, so that a
-    // 'Vec<T>' first named by a later compile is declared the same way.
-    registry->install_method = vec_install_method;
-    registry->install_ctx = vm;
 }

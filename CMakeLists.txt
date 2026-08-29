@@ -40,8 +40,9 @@ add_library(gab
     src/lexer.c
     src/parser.c
     src/object.c
-    src/type.c
-    src/type_registry.c
+    src/type/type.c
+    src/type/type_app.c
+    src/type/type_registry.c
     src/scope.c
     src/ast/ast.c
     src/ast/resolve.c
@@ -49,6 +50,7 @@ add_library(gab
     src/ast/cfg.c
     src/ast/flow_pass.c
     src/ast/expr.c
+    src/ast/type_expr.c
     src/ast/stmt.c
     src/string/string_ref.c
     src/string/string.c

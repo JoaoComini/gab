@@ -6,8 +6,9 @@
 #include "scope.h"
 #include "string/string.h"
 #include "symbol_table.h"
-#include "type.h"
-#include "type_registry.h"
+#include "type/type.h"
+#include "type/type_layout.h"
+#include "type/type_registry.h"
 #include "vm/args.h"
 #include "vm/interp.h"
 #include "vm/vm.h"
@@ -645,7 +646,7 @@ static bool accepts_indirect(const Type *type, TypeKind expected) {
     return type_is_indirect(type);
 }
 
-static bool accepts_kind(const Type *type, TypeKind expected) { return type->kind == expected; }
+static bool accepts_kind(const Type *type, TypeKind expected) { return type_kind(type) == expected; }
 
 static uint8_t *gab_arg_slot(GabCall *call, int index, TypeKind expected) {
     return gab_arg_slot_where(call, index, accepts_kind, expected);
@@ -694,7 +695,7 @@ bool gab_arg_struct(GabCall *call, int index, const void *data, size_t size) {
     if (call && index >= 0 && (size_t)index < call->fn->sig_param_count) {
         const Type *param = call->fn->sig_params[index];
 
-        if (param && param->kind == TYPE_STRUCT &&
+        if (param && type_kind(param) == TYPE_STRUCT &&
             (!data || size != type_registry_size_of(call->fn->registry, param))) {
             return false;
         }

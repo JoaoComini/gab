@@ -3,8 +3,8 @@
 #include "arena.h"
 #include "string/string.h"
 #include "symbol_table.h"
-#include "type.h"
-#include "type_registry.h"
+#include "type/type.h"
+#include "type/type_registry.h"
 #include "vm/link.h"
 #include "vm/vm.h"
 
@@ -15,7 +15,7 @@ const Type *builtin_declare_type(VM *vm, const TypeDecl *decl) {
 
     const Type *type = type_registry_declare(scope->type_registry, decl);
 
-    scope_decl_type(scope, type->name, type);
+    scope_decl_type(scope, type_name_of(type), type);
 
     return type;
 }

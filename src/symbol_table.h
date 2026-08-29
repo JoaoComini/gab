@@ -3,7 +3,7 @@
 
 #include "scope.h"
 #include "string/string.h"
-#include "type.h"
+#include "type/type.h"
 #include "util/hash_map.h"
 
 #include <stdbool.h>
@@ -62,6 +62,13 @@ typedef struct Symbol {
             // nothing needs to ask a symbol what it is called.
             String *name;
             String *module;
+
+            // The C body, for an extern whose body is known where it is
+            // declared rather than looked up by name at link -- which is what a
+            // generic instantiation's methods are. A void pointer because what
+            // a C body is belongs to the VM's header, which this one is reached
+            // from rather than reaching. NULL for an extern a host supplies.
+            void *body;
         } func;
     };
 } Symbol;

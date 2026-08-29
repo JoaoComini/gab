@@ -1,0 +1,81 @@
+#ifndef GAB_TYPE_INTERNAL_H
+#define GAB_TYPE_INTERNAL_H
+
+// The representation itself, for the type module alone.
+//
+// Everything outside holds a 'const Type *' and asks through the accessors in
+// type.h: a type is finished when the registry hands it over, and a reader that
+// could reach into one could disagree with what the registry settled. Kept out
+// of type.h for that reason rather than for compile time.
+
+#include "type.h"
+
+struct Type {
+    TypeKind kind;
+
+    // NULL for a type whose identity is structural: a pointer is '*' plus its
+    // inner and nothing more, so its printable form is derived on demand
+    // rather than stored. Non-NULL only for nominal types — builtins and
+    // structs — where the name is the identity.
+    String *name;
+
+    // The same layout question asked of a reference rather than of a value:
+    // whether a slot may hold one at all, and what naming it takes besides the
+    // address. Beside the width for that reason -- a type that has no width of
+    // its own is exactly one whose reference carries what it lacks.
+    //
+    // The declaration an application instantiates: every '[T; N]' names the
+    // bare 'Array'. NULL for a type that is not an instantiation.
+    //
+    // Only the constructor, never the arguments -- those are the application
+    // this type was interned on. What it buys today is the method set, which
+    // every instantiation of a declaration shares because the one method there
+    // is does not read its element. A method that did could not be shared, and
+    // this becomes the key an instantiated set is built from rather than a link
+    // followed to another type's.
+    //
+    // Distinct from the relation a borrowed view has to what it borrows: 'str'
+    // is reached from 'String' by lending, which is a step down the chain a
+    // receiver already walks, not a set held somewhere else.
+    const Type *decl;
+
+    // What this name declares, for a generic one: the fields an instantiation
+    // is built from, in terms of the parameters. NULL for every type that is
+    // not a generic declaration, which is all but the bare names.
+    const GenericDecl *generic;
+
+    /*
+        What the kind gives it, and nothing another kind would give.
+
+        A struct has no pointee to be wrong about and an indirection has no
+        field list, rather than every reader having to know which of thirteen
+        fields its kind licenses. The same shape TypeExpr and ASTExpr already
+        use, for the same reason: a kind with a payload is a sum, and a struct
+        of every payload at once holds combinations that mean nothing.
+    */
+    union {
+        // TYPE_BOX, TYPE_REF, TYPE_PTR: what the indirection names.
+        struct {
+            const Type *pointee;
+        } indirect;
+
+        // TYPE_STRUCT: the fields the layout came from. A string's two are the
+        // block holding its characters and how many of them are live.
+        //
+        // Not TYPE_STR: those characters are what a 'str' is, so it holds no
+        // fields naming them. What does is a reference to one, and that is the
+        // reference's own shape rather than anything read off the pointee.
+        struct {
+            TypeField *fields;
+            size_t field_count;
+        } record;
+
+        // TYPE_ARRAY: a run of one element, as many as the length says.
+        struct {
+            const Type *element;
+            int32_t length;
+        } array;
+    };
+};
+
+#endif

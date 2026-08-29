@@ -2,7 +2,7 @@
 
 #include "object.h"
 #include "symbol_table.h"
-#include "type_registry.h"
+#include "type/type_registry.h"
 #include "vm/interp.h"
 #include "vm/opcode.h"
 
@@ -58,7 +58,7 @@ static uint8_t *args_address_of_kind(Args *args, int index, TypeKind kind) {
     const Type *type = NULL;
     uint8_t *at = args_address(args, index, &type);
 
-    assert(type && type->kind == kind && "a C body read a parameter as a type it was not declared");
+    assert(type && type_kind(type) == kind && "a C body read a parameter as a type it was not declared");
     (void)kind;
 
     return at;

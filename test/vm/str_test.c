@@ -3,7 +3,7 @@
 // there are; 'String' owns them.
 
 #include "support/run.h"
-#include "type_registry.h"
+#include "type/type_registry.h"
 
 #include <assert.h>
 
@@ -190,11 +190,11 @@ static void test_a_lend_fits_the_reference_it_builds() {
     TypeRegistry *registry = scope_ptr->type_registry;
 
     const Type *string_type = scope_type_lookup(scope_ptr, string_from_cstr(&vm->env.strings, "String"));
-    const Type *reference = type_registry_ref_to(registry, registry->primitives.str_type);
+    const Type *reference = type_registry_ref_to(registry, type_registry_get_primitive(registry, TYPE_STR));
 
     const Deref *deref = type_registry_deref(registry, string_type);
 
-    assert(deref && deref->to == registry->primitives.str_type);
+    assert(deref && deref->to == type_registry_get_primitive(registry, TYPE_STR));
 
     // An address and the count naming the run, which is what a 'ref str' is.
     assert(deref->part_count == 2);

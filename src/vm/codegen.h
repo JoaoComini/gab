@@ -5,7 +5,7 @@
 #include "ast/ast.h"
 #include "diagnostics.h"
 #include "string/string_pool.h"
-#include "type_registry.h"
+#include "type/type_registry.h"
 #include "vm/chunk.h"
 #include "vm/link.h"
 #include "vm/opcode.h"

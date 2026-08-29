@@ -4,7 +4,8 @@
 #include "ast/expr.h"
 #include "ast/stmt.h"
 #include "scope.h"
-#include "type.h"
+#include "type/type.h"
+#include "type/type_layout.h"
 #include "vm/chunk.h"
 #include "vm/constant_pool.h"
 #include "vm/opcode.h"
@@ -557,7 +558,7 @@ static void codegen_walk_owning_slots(CodegenState *state, const Type *type, uns
     // naming it frees them all -- the way one release naming a struct frees
     // every field that owns. Its elements are not separately addressable slots,
     // which is what keeps it from being walked like a struct.
-    if (type && type->kind == TYPE_ARRAY) {
+    if (type && type_kind(type) == TYPE_ARRAY) {
         if (!type_is_owned(type)) {
             return;
         }
@@ -600,7 +601,7 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
     // A 'ref T' local borrows: nothing frees it, so its slot is never owned and
     // never listed on the frame. It needs no null-init either — nothing will
     // read it as an owner.
-    bool is_ref = ast->symbol->var.type && ast->symbol->var.type->kind == TYPE_REF;
+    bool is_ref = ast->symbol->var.type && type_kind(ast->symbol->var.type) == TYPE_REF;
 
     if (!ast->initializer) {
         // An owning slot holds nothing until something is stored, so the store
@@ -793,7 +794,7 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
 
     unsigned int r1 = codegen_expr(state, ast->value);
 
-    bool target_is_ref = ast->target->type && ast->target->type->kind == TYPE_REF;
+    bool target_is_ref = ast->target->type && type_kind(ast->target->type) == TYPE_REF;
 
     // Reassigning a variable that owns an object: it frees the old one and takes
     // over the new. Freeing after the store, for the same reason a field store
@@ -1040,7 +1041,8 @@ static bool for_is_countable(const ASTForStmt *ast, const Symbol **counter, cons
         return false;
     }
 
-    if (!left->type || left->type->kind != TYPE_INT || !right->type || right->type->kind != TYPE_INT) {
+    if (!left->type || type_kind(left->type) != TYPE_INT || !right->type ||
+        type_kind(right->type) != TYPE_INT) {
         return false;
     }
 
@@ -1257,14 +1259,18 @@ static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast) {
 // The index is the unit's own. What the call finally encodes is this plus the
 // base linking assigns to that table, which is why every call emitted against
 // it is recorded for relocation.
-static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast) {
-    if (!ast->symbol || proto_map_lookup(state->local_protos, ast->symbol)) {
-        return;
-    }
-
+// Reserves this unit's slot for a function and records the binding that link
+// stamps with the absolute index. Keyed by the symbol rather than by a
+// declaration, because not every function has one: a generic instantiation's
+// method comes into being when its type is interned, with no AST node behind it.
+//
+// An extern's prototype is left empty here. Which body fills it is a separate
+// question -- a host registration for a declared 'extern', the declaration
+// itself for an instantiated method -- and both are answered after this.
+static size_t codegen_reserve_symbol(CodegenState *state, Symbol *symbol) {
     size_t local;
 
-    if (ast->symbol->func.is_extern) {
+    if (symbol->func.is_extern) {
         extern_proto_list_add(&state->unit->extern_protos, (ExternProto){0});
 
         local = state->unit->extern_protos.size - 1;
@@ -1277,9 +1283,39 @@ static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast) {
         local = state->unit->prototypes.size - 1;
     }
 
-    proto_map_insert(state->local_protos, ast->symbol, local);
-    proto_binding_list_add(&state->unit->bindings,
-                           (ProtoBinding){.symbol = ast->symbol, .local_index = local});
+    proto_map_insert(state->local_protos, symbol, local);
+    proto_binding_list_add(&state->unit->bindings, (ProtoBinding){.symbol = symbol, .local_index = local});
+
+    return local;
+}
+
+static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast) {
+    if (!ast->symbol || proto_map_lookup(state->local_protos, ast->symbol)) {
+        return;
+    }
+
+    codegen_reserve_symbol(state, ast->symbol);
+}
+
+// Reserves a slot for a method a generic instantiation declared, and fills it.
+//
+// This symbol has no AST node and no pre-pass behind it: it comes into being
+// when a type is interned, which may be in the middle of resolving the call that
+// first names it. So the first call reserves the slot, and linking rebases it
+// with every other extern.
+//
+// No ExternRequest is recorded. That asks linking to find a body by name, and
+// exists so a unit naming one nothing registered fails rather than leaving a
+// prototype a call could reach unbound. This body came from the declaration the
+// type was instantiated from: there is nothing to look up, and nothing that
+// could be missing.
+static const size_t *codegen_reserve_instantiated(CodegenState *state, Symbol *symbol) {
+    size_t local = codegen_reserve_symbol(state, symbol);
+
+    state->unit->extern_protos.data[local] =
+        (ExternProto){.body = (GabExternFn)symbol->func.body, .symbol = symbol};
+
+    return proto_map_lookup(state->local_protos, symbol);
 }
 
 static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
@@ -1585,6 +1621,15 @@ static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symb
     // one an earlier unit declared already has its final index and must be left
     // alone. Which it is, is which of the two knows the answer.
     const size_t *local = proto_map_lookup(state->local_protos, (Symbol *)callee);
+
+    // A generic instantiation's method carries its body but no index: nothing
+    // declared it in a unit, so no pre-pass reserved a slot for it. The first
+    // call from this unit reserves one, and linking rebases it with every other
+    // extern.
+    if (!local && callee->func.func_index == SYMBOL_FUNC_NO_BODY && callee->func.body) {
+        local = codegen_reserve_instantiated(state, (Symbol *)callee);
+    }
+
     size_t index = local ? *local : callee->func.func_index;
 
     if (index == SYMBOL_FUNC_NO_BODY) {
@@ -2009,7 +2054,7 @@ static unsigned int codegen_neg_expr(CodegenState *state, ASTExpr *node) {
         return rd;
     }
 
-    bool is_float = node->type->kind == TYPE_FLOAT;
+    bool is_float = type_kind(node->type) == TYPE_FLOAT;
 
     unsigned int operand = codegen_expr(state, inner);
     unsigned int rd = codegen_alloc_register(state, node->span);
@@ -2063,12 +2108,12 @@ static unsigned int codegen_cast_expr(CodegenState *state, ASTExpr *node) {
 
     unsigned int src = codegen_expr(state, operand);
 
-    if (node->type->kind == operand->type->kind) {
+    if (type_kind(node->type) == type_kind(operand->type)) {
         return src;
     }
 
     unsigned int rd = codegen_alloc_register(state, node->span);
-    OpCode op = node->type->kind == TYPE_FLOAT ? OP_ITOF : OP_FTOI;
+    OpCode op = type_kind(node->type) == TYPE_FLOAT ? OP_ITOF : OP_FTOI;
 
     chunk_add_instruction(state->chunk, VM_ENCODE_R(op, rd, src, 0));
 
@@ -2473,7 +2518,7 @@ static unsigned int codegen_rhs(CodegenState *state, BinOp op, ASTExpr *rhs, con
                                 RhsKind *kind) {
     unsigned int value = 0;
 
-    if (left_type->kind == TYPE_FLOAT) {
+    if (type_kind(left_type) == TYPE_FLOAT) {
         // A float literal is reached by index rather than by value: the operand
         // field is eight bits, and no float fits those.
         //
@@ -2520,7 +2565,7 @@ static OpCode bin_op_opcode_for(BinOp op, const Type *left_type, RhsKind kind) {
     }
 
     if (kind != RHS_CONSTANT) {
-        return left_type->kind == TYPE_FLOAT ? bin_op_to_float_op(op) : bin_op_to_int_op(op);
+        return type_kind(left_type) == TYPE_FLOAT ? bin_op_to_float_op(op) : bin_op_to_int_op(op);
     }
 
     switch (op) {
@@ -2771,7 +2816,7 @@ static void codegen_own_slot_at(CodegenState *state, unsigned int slot, const Ty
     // A 'ref T' slot borrows, so it never owns and is never freed. Callers
     // check this too, but a stray own here would be a use-after-free rather
     // than a leak, so it is refused at the one place ownership is recorded.
-    assert(!(type && type->kind == TYPE_REF) && "a 'ref T' slot never owns what it names");
+    assert(!(type && type_kind(type) == TYPE_REF) && "a 'ref T' slot never owns what it names");
 
     owned_list_add(&state->owned, (OwnedSlot){.slot = slot, .depth = depth, .type = type});
 
@@ -2981,7 +3026,7 @@ static unsigned int type_align_slots(TypeRegistry *registry, const Type *type) {
     return (unsigned int)(type_registry_align_of(registry, type) / VM_SLOT_SIZE);
 }
 
-static bool type_is_struct(const Type *type) { return type && type->kind == TYPE_STRUCT; }
+static bool type_is_struct(const Type *type) { return type && type_kind(type) == TYPE_STRUCT; }
 
 // A struct is written through its fields and an array through its elements: the
 // slot goes on holding the same value while what it owns changes underneath, so

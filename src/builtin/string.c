@@ -1,7 +1,7 @@
 #include "builtin/builtin.h"
 
 #include "object.h"
-#include "type_registry.h"
+#include "type/type_registry.h"
 #include "vm/args.h"
 #include "vm/interp.h"
 #include "vm/vm.h"
@@ -12,7 +12,6 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-
 
 // Where 'needle' first occurs in 'haystack' at or after 'from', or -1. The
 // empty needle occurs at the position asked for, which is what makes
@@ -205,7 +204,8 @@ void builtin_register_string(VM *vm) {
     // so freeing it asks nothing else -- and the room past the live ones is
     // what lets a string grow without reallocating on every push.
     const TypeFieldDecl fields[] = {
-        {.name = "data", .type = type_registry_block_of(registry, registry->primitives.byte_type)},
+        {.name = string_from_cstr(&vm->env.strings, "data"),
+         .type = type_registry_block_of(registry, type_registry_get_primitive(registry, TYPE_BYTE))},
     };
 
     // Which of its bytes name the characters it stands for: the address its
@@ -218,10 +218,10 @@ void builtin_register_string(VM *vm) {
     };
 
     const TypeDecl decl = {
-        .name = "String",
+        .name = string_from_cstr(&vm->env.strings, "String"),
         .fields = fields,
         .field_count = sizeof(fields) / sizeof(*fields),
-        .derefs_to = registry->primitives.str_type,
+        .derefs_to = type_registry_get_primitive(registry, TYPE_STR),
         .lent_parts = characters_named_by,
         .lent_part_count = sizeof(characters_named_by) / sizeof(*characters_named_by),
     };
@@ -237,38 +237,38 @@ void builtin_register_string(VM *vm) {
     // 'String' receiver lends where the parameter says 'str'.
     // What every method takes and what a literal is: characters named by a
     // reference that carries how many. The owning string lends one.
-    const Type *str_type = type_registry_ref_to(registry, registry->primitives.str_type);
+    const Type *str_type = type_registry_ref_to(registry, type_registry_get_primitive(registry, TYPE_STR));
 
     const Type *ref_string = type_registry_ref_to(registry, string_type);
 
-    const Type *int_type = registry->primitives.int_type;
-    const Type *bool_type = registry->primitives.bool_type;
+    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *bool_type = type_registry_get_primitive(registry, TYPE_BOOL);
 
     const Type *const int_param[] = {int_type};
     const Type *const string_param[] = {str_type};
 
-    builtin_register_method(vm, registry->primitives.str_type, str_type, "len", string_len, int_type, NULL,
-                            0);
-    builtin_register_method(vm, registry->primitives.str_type, str_type, "is_empty", string_is_empty,
-                            bool_type, NULL, 0);
-    builtin_register_method(vm, registry->primitives.str_type, str_type, "at", string_at, int_type, int_param,
-                            1);
-    builtin_register_method(vm, registry->primitives.str_type, str_type, "starts_with", string_starts_with,
-                            bool_type, string_param, 1);
-    builtin_register_method(vm, registry->primitives.str_type, str_type, "ends_with", string_ends_with,
-                            bool_type, string_param, 1);
-    builtin_register_method(vm, registry->primitives.str_type, str_type, "contains", string_contains,
-                            bool_type, string_param, 1);
-    builtin_register_method(vm, registry->primitives.str_type, str_type, "index_of", string_index_of,
-                            int_type, string_param, 1);
-    builtin_register_method(vm, registry->primitives.str_type, str_type, "count", string_count, int_type,
-                            string_param, 1);
+    builtin_register_method(vm, type_registry_get_primitive(registry, TYPE_STR), str_type, "len", string_len,
+                            int_type, NULL, 0);
+    builtin_register_method(vm, type_registry_get_primitive(registry, TYPE_STR), str_type, "is_empty",
+                            string_is_empty, bool_type, NULL, 0);
+    builtin_register_method(vm, type_registry_get_primitive(registry, TYPE_STR), str_type, "at", string_at,
+                            int_type, int_param, 1);
+    builtin_register_method(vm, type_registry_get_primitive(registry, TYPE_STR), str_type, "starts_with",
+                            string_starts_with, bool_type, string_param, 1);
+    builtin_register_method(vm, type_registry_get_primitive(registry, TYPE_STR), str_type, "ends_with",
+                            string_ends_with, bool_type, string_param, 1);
+    builtin_register_method(vm, type_registry_get_primitive(registry, TYPE_STR), str_type, "contains",
+                            string_contains, bool_type, string_param, 1);
+    builtin_register_method(vm, type_registry_get_primitive(registry, TYPE_STR), str_type, "index_of",
+                            string_index_of, int_type, string_param, 1);
+    builtin_register_method(vm, type_registry_get_primitive(registry, TYPE_STR), str_type, "count",
+                            string_count, int_type, string_param, 1);
 
     // Declared on the characters like every other reader, and returning the
     // owning string rather than the borrowed one: what it hands back is a fresh
     // allocation the caller frees.
-    builtin_register_method(vm, registry->primitives.str_type, str_type, "to_owned", string_to_owned,
-                            string_type, NULL, 0);
+    builtin_register_method(vm, type_registry_get_primitive(registry, TYPE_STR), str_type, "to_owned",
+                            string_to_owned, string_type, NULL, 0);
 
     // Reached on the owning type, since that is what it yields: 'String::from'
     // hands back an allocation, where every method above reads a borrow.

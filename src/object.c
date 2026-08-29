@@ -1,7 +1,7 @@
 #include "object.h"
 
 #include "arena.h"
-#include "type_registry.h"
+#include "type/type_registry.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -199,7 +199,7 @@ const DropPlan *object_build_drop(Arena *arena, TypeRegistry *registry, const Ty
 
     *plan = (DropPlan){.kind = DROP_FIELDS};
 
-    switch (type->kind) {
+    switch (type_kind(type)) {
     case TYPE_BOX:
         plan->kind = DROP_BOX;
 

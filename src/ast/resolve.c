@@ -6,8 +6,8 @@
 #include "string/string.h"
 #include "string/string_ref.h"
 #include "symbol_table.h"
-#include "type.h"
-#include "type_registry.h"
+#include "type/type.h"
+#include "type/type_registry.h"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -180,7 +180,7 @@ static String *resolver_expr_member(ResolverState *state, StringRef name) {
 
 // A type that is already poisoned had its error reported at the origin, so any
 // further check involving it silently succeeds rather than cascading.
-static bool is_error_type(const Type *type) { return !type || type->kind == TYPE_ERROR; }
+static bool is_error_type(const Type *type) { return !type || type_kind(type) == TYPE_ERROR; }
 
 // The printable form of a type. A pointer's name is derived from its inner
 // rather than stored, so 'box box Player' formats without interning two
@@ -191,12 +191,12 @@ static const char *type_name(ResolverState *state, const Type *type) {
         return "none";
     }
 
-    if (type->name) {
-        return type->name->data;
+    if (type_name_of(type)) {
+        return type_name_of(type)->data;
     }
 
-    const char *inner = type->name ? type->name->data : type_name(state, type_pointee(type));
-    const char *prefix = type->kind == TYPE_REF ? "ref " : "box ";
+    const char *inner = type_name_of(type) ? type_name_of(type)->data : type_name(state, type_pointee(type));
+    const char *prefix = type_kind(type) == TYPE_REF ? "ref " : "box ";
     size_t length = strlen(prefix) + strlen(inner) + 1;
     char *out = arena_alloc(state->compile_arena, length);
 
@@ -607,7 +607,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
         // bare 'Array' every '[T; N]' hangs its set on. What such a method
         // reads is the header, which every array has the same shape of, so the
         // element it was written over does not enter into it.
-        if (declared == at->decl) {
+        if (declared == type_decl(at)) {
             *out = (ReceiverAdjustment){.derefs = derefs, .address_of = false};
             return true;
         }
@@ -680,7 +680,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     // The sugar borrows, and never moves: a function consuming parameter zero
     // is reached where the transfer can be written, so that no call site gives
     // up ownership without saying so.
-    if (method->func.param_count > 0 && method->func.params[0]->kind == TYPE_BOX) {
+    if (method->func.param_count > 0 && type_kind(method->func.params[0]) == TYPE_BOX) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                    "'%s' consumes what it takes, so it is called as '%s::%s(move ...)' rather than on a "
                    "value",
@@ -728,8 +728,8 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     //
     // Ahead of the lowering below, which would otherwise build a call this
     // discards.
-    if (base->kind == TYPE_ARRAY &&
-        method_name == string_from_cstr(state->current_scope->type_registry->strings, "len")) {
+    if (type_kind(base) == TYPE_ARRAY &&
+        method_name == string_from_cstr(state->current_scope->strings, "len")) {
         ast_expr_free(expr->call.target);
         ast_expr_list_free(&expr->call.args);
 
@@ -774,7 +774,7 @@ static bool lends_by_value(TypeRegistry *registry, const Type *to, const Type *f
 
     // A type that stands for nothing lends nothing. Checked rather than left to
     // the comparison, which two absent answers would otherwise satisfy.
-    return view && to->kind == TYPE_REF && view == type_pointee(to);
+    return view && type_kind(to) == TYPE_REF && view == type_pointee(to);
 }
 
 // What a value derefs to, or NULL for a type that derefs to nothing. Registered
@@ -797,11 +797,11 @@ static const Type *derefs_to(TypeRegistry *registry, const Type *type) {
 // that must know which level answered can ask one level at a time -- which the
 // walk cannot tell it, since it reports only that some level did.
 static bool lends_by_pointer(const Type *to, const Type *from) {
-    return to->kind == TYPE_REF && type_is_indirect(from) && type_pointee(to) == type_pointee(from);
+    return type_kind(to) == TYPE_REF && type_is_indirect(from) && type_pointee(to) == type_pointee(from);
 }
 
 static bool accepts_by_borrowing(const Type *to, const Type *from) {
-    return to != from && to->kind == TYPE_REF && type_pointee(to) == from;
+    return to != from && type_kind(to) == TYPE_REF && type_pointee(to) == from;
 }
 
 static bool type_accepts(TypeRegistry *registry, const Type *to, const Type *from) {
@@ -919,11 +919,11 @@ static bool borrow_into(ResolverState *state, ASTExpr **slot, const Type *destin
     return true;
 }
 
-bool is_numeric_type(const Type *t) { return t->kind == TYPE_INT || t->kind == TYPE_FLOAT; }
+bool is_numeric_type(const Type *t) { return type_kind(t) == TYPE_INT || type_kind(t) == TYPE_FLOAT; }
 
-bool is_integer_type(const Type *t) { return t->kind == TYPE_INT; }
+bool is_integer_type(const Type *t) { return type_kind(t) == TYPE_INT; }
 
-bool is_boolean_type(const Type *t) { return t->kind == TYPE_BOOL; }
+bool is_boolean_type(const Type *t) { return type_kind(t) == TYPE_BOOL; }
 
 bool is_ordered_type(const Type *t) { return is_numeric_type(t) || is_boolean_type(t); }
 
@@ -931,7 +931,8 @@ bool is_ordered_type(const Type *t) { return is_numeric_type(t) || is_boolean_ty
 // a reference to someone else's. Comparison reads the same two words from
 // either, so what may be compared is the pair rather than one of them.
 static bool is_string_type(TypeRegistry *registry, const Type *t) {
-    return type_registry_deref_of(registry, t) == registry->primitives.str_type || type_is_str_ref(t);
+    return type_registry_deref_of(registry, t) == type_registry_get_primitive(registry, TYPE_STR) ||
+           type_is_str_ref(t);
 }
 
 // Ordering is left out: '<' on text asks which comes first, and no order is
@@ -1166,16 +1167,16 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         // the count, and reading it as a reference would compare that capacity
         // as though it were the length.
         if (both_strings) {
-            const Type *characters =
-                type_registry_ref_to(state->current_scope->type_registry,
-                                     state->current_scope->type_registry->primitives.str_type);
+            const Type *characters = type_registry_ref_to(
+                state->current_scope->type_registry,
+                type_registry_get_primitive(state->current_scope->type_registry, TYPE_STR));
 
             borrow_into(state, &expr->bin_op.left, characters, expr->span);
             borrow_into(state, &expr->bin_op.right, characters, expr->span);
         }
 
         expr->type = bin_op_yields_bool(expr->bin_op.op)
-                         ? type_registry_get_builtin(state->current_scope->type_registry, TYPE_BOOL)
+                         ? type_registry_get_primitive(state->current_scope->type_registry, TYPE_BOOL)
                          : left_type;
 
         fold_bin_op(expr);
@@ -1281,14 +1282,15 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             target_type = type_pointee(target_type);
         }
 
-        if (target_type->kind != TYPE_ARRAY) {
+        if (type_kind(target_type) != TYPE_ARRAY) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot index %s",
                        type_name(state, expr->index.target->type));
             expr->type = resolver_error_type(state);
             break;
         }
 
-        if (expr->index.index->type != state->current_scope->type_registry->primitives.int_type) {
+        if (expr->index.index->type !=
+            type_registry_get_primitive(state->current_scope->type_registry, TYPE_INT)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "an index must be an int, not %s",
                        type_name(state, expr->index.index->type));
             expr->type = resolver_error_type(state);
@@ -1317,7 +1319,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             target_type = type_pointee(target_type);
         }
 
-        if (target_type->kind != TYPE_STRUCT) {
+        if (type_kind(target_type) != TYPE_STRUCT) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "%s is not a struct, so it has no fields", type_name(state, expr->field.target->type));
             expr->type = resolver_error_type(state);
@@ -1399,7 +1401,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         // through one would free the caller's old object from inside the callee,
         // an owning slot changing owner mid-call. Returning ownership says the
         // same thing with the transfer visible at the call site.
-        if (target_type->kind == TYPE_BOX) {
+        if (type_kind(target_type) == TYPE_BOX) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "cannot take the address of an owning pointer; return ownership instead of "
                        "repointing it through a borrow");
@@ -1520,7 +1522,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
 
         // A borrow has no owner to name, so a heap slot holding one would
         // outlive whatever it borrows with nothing tracking that.
-        if (type->kind == TYPE_REF) {
+        if (type_kind(type) == TYPE_REF) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "cannot allocate %s; a heap slot cannot hold a borrow", type_name(state, type));
             expr->type = resolver_error_type(state);
@@ -1536,7 +1538,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             resolve_expr(state, expr->array_lit.elements.data[i], NULL);
         }
 
-        if (!expected || expected->kind != TYPE_ARRAY) {
+        if (!expected || type_kind(expected) != TYPE_ARRAY) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "an array's elements need the array's type to be written, as "
                        "'let xs: [int; 3] = [1, 2, 3];'");
@@ -1597,8 +1599,8 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         // value that reads them. What names them is a reference: no slot holds
         // the characters themselves, so the count rides with the address.
         expr->type = expr->lit.kind == TYPE_STR
-                         ? type_registry_ref_to(registry, registry->primitives.str_type)
-                         : type_registry_get_builtin(registry, expr->lit.kind);
+                         ? type_registry_ref_to(registry, type_registry_get_primitive(registry, TYPE_STR))
+                         : type_registry_get_primitive(registry, expr->lit.kind);
         break;
     }
     default:
@@ -1700,10 +1702,10 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
         // Nothing here is 'Vec': what the constructor takes and how its
         // instantiations are laid out are read off the declaration, so a second
         // generic name resolves through this same arm.
-        if (base->generic) {
-            if (expr->apply.args.size != base->generic->param_count) {
+        if (type_generic(base)) {
+            if (expr->apply.args.size != type_generic(base)->param_count) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' takes %zu type argument(s), not %zu",
-                           base->name->data, base->generic->param_count, expr->apply.args.size);
+                           type_name_of(base)->data, type_generic(base)->param_count, expr->apply.args.size);
                 return resolver_error_type(state);
             }
 
@@ -1743,7 +1745,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
             return type_registry_instantiate(registry, base, args, expr->apply.args.size);
         }
 
-        if (base != registry->primitives.array_type) {
+        if (base != type_registry_get_primitive(registry, TYPE_ARRAY)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, span, "%s does not take an element type",
                        type_name(state, base));
             return resolver_error_type(state);
@@ -1834,16 +1836,16 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
     }
 
     // 'Array' alone names no type: every array is '[T; N]'.
-    if (type == registry->primitives.array_type) {
+    if (type == type_registry_get_primitive(registry, TYPE_ARRAY)) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, span,
                    "'Array' needs an element type and a length, as '[int; 3]'");
         return resolver_error_type(state);
     }
 
     // Nor does a generic declaration: what it takes is what makes it a type.
-    if (type->generic) {
+    if (type_generic(type)) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' needs a type argument, as '%s<int>'",
-                   type->name->data, type->name->data);
+                   type_name_of(type)->data, type_name_of(type)->data);
         return resolver_error_type(state);
     }
 
@@ -1864,7 +1866,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt);
 // A linear scan because the list is one unit's structs and the question is
 // asked once per field of each.
 static StructDecl *decl_held_by_value(ResolverState *state, const Type *type) {
-    while (type && type->kind == TYPE_ARRAY) {
+    while (type && type_kind(type) == TYPE_ARRAY) {
         type = type_array_element(type);
     }
 
@@ -1897,8 +1899,8 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
         return NULL;
     }
 
-    Type *type = type_registry_declare_struct(state->current_scope->type_registry, struct_name,
-                                              stmt->struct_decl.fields.size);
+    Type *type = type_registry_open_struct(state->current_scope->type_registry, struct_name,
+                                           stmt->struct_decl.fields.size);
 
     scope_decl_type(state->current_scope, struct_name, type);
 
@@ -2035,8 +2037,7 @@ static void layout_struct(ResolverState *state, StructDecl *decl) {
         return;
     }
 
-    type_registry_layout_of(state->current_scope->type_registry, type);
-    type_registry_drop_of(state->current_scope->type_registry, type);
+    type_registry_complete(state->current_scope->type_registry, type);
 
     decl->state = STRUCT_LAID_OUT;
     stmt->struct_decl.type = type;
@@ -2087,13 +2088,13 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
     // A unit declares functions on its own structs only. A builtin carries the
     // ones the VM registered, and a second set declared over them would have no
     // module to belong to and no way to be told apart from the first.
-    if (owner->kind != TYPE_STRUCT) {
+    if (type_kind(owner) != TYPE_STRUCT) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                    "a function belongs to a struct this module declares, not to %s", type_name(state, owner));
         return;
     }
 
-    if (!owner->name || !scope_type_lookup_local(state->current_scope, owner->name)) {
+    if (!type_name_of(owner) || !scope_type_lookup_local(state->current_scope, type_name_of(owner))) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                    "cannot declare a function on '%s', which this module does not declare",
                    type_name(state, owner));
@@ -2144,8 +2145,8 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
     if (name == resolver_intern(state, string_ref_create("clone"))) {
         if (return_type != owner) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
-                       "'clone' duplicates what it takes, so it must return %s, not %s", owner->name->data,
-                       type_name(state, return_type));
+                       "'clone' duplicates what it takes, so it must return %s, not %s",
+                       type_name_of(owner)->data, type_name(state, return_type));
             return;
         }
 
@@ -2158,7 +2159,7 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
 
     if (!type_registry_add_method(state->current_scope->type_registry, owner, name, func)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' already has a function '%s'",
-                   owner->name->data, name->data);
+                   type_name_of(owner)->data, name->data);
         return;
     }
 
@@ -2186,7 +2187,7 @@ static Symbol *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
 
     if (!found) {
         diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "'%s' has no function '%s'",
-                   owner->name->data, member->data);
+                   type_name_of(owner)->data, member->data);
 
         return NULL;
     }
@@ -2572,7 +2573,8 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
 
         // A NULL type here means "no value", which is a distinct case from a
         // poisoned one: it must still be checked against the declared type.
-        bool poisoned = (expected && expected->kind == TYPE_ERROR) || (actual && actual->kind == TYPE_ERROR);
+        bool poisoned =
+            (expected && type_kind(expected) == TYPE_ERROR) || (actual && type_kind(actual) == TYPE_ERROR);
 
         // type_accepts once both are present, so a function declaring 'ref T'
         // may return an owned 'box T' — it lends what it was given rather than

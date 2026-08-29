@@ -1,7 +1,7 @@
 #include "vm/interp.h"
 
 #include "object.h"
-#include "type.h"
+#include "type/type.h"
 #include "vm/chunk.h"
 #include "vm/constant_pool.h"
 #include "vm/opcode.h"

@@ -1,4 +1,4 @@
-#include "type.h"
+#include "type_internal.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -274,99 +274,10 @@ bool type_is_copyable(const Type *type) {
     return true;
 }
 
-static TypeExpr *type_expr_create(TypeExprKind kind) {
-    TypeExpr *expr = calloc(1, sizeof(TypeExpr));
-    expr->kind = kind;
+TypeKind type_kind(const Type *type) { return type->kind; }
 
-    return expr;
-}
+String *type_name_of(const Type *type) { return type->name; }
 
-TypeExpr *type_expr_name(StringRef name) {
-    TypeExpr *expr = type_expr_create(TYPE_EXPR_NAME);
-    expr->name = name;
+const Type *type_decl(const Type *type) { return type->decl; }
 
-    return expr;
-}
-
-TypeExpr *type_expr_indirect(TypeExprKind kind, TypeExpr *inner) {
-    TypeExpr *expr = type_expr_create(kind);
-    expr->indirect.inner = inner;
-
-    return expr;
-}
-
-TypeExpr *type_expr_apply(TypeExpr *base) {
-    TypeExpr *expr = type_expr_create(TYPE_EXPR_APPLY);
-    expr->apply.base = base;
-    expr->apply.args = type_expr_list_create();
-
-    return expr;
-}
-
-void type_expr_destroy(TypeExpr *expr) {
-    if (!expr) {
-        return;
-    }
-
-    switch (expr->kind) {
-    case TYPE_EXPR_BOX:
-    case TYPE_EXPR_REF:
-        type_expr_destroy(expr->indirect.inner);
-        break;
-    case TYPE_EXPR_APPLY:
-        type_expr_destroy(expr->apply.base);
-        type_expr_list_free(&expr->apply.args);
-        break;
-    case TYPE_EXPR_NAME:
-        break;
-    }
-
-    free(expr);
-}
-
-// Mixed rather than summed, so that '[int; 3]' and '[int; 4]' -- and an
-// application whose arguments were given in the other order -- land in
-// different buckets. dj2b's shift-and-add over each argument's bytes, which is
-// what the string hash beside it does over characters.
-size_t type_app_hash_of(TypeApp app) {
-    size_t hash = 5381;
-
-    hash = ((hash << 5) + hash) + (size_t)app.ctor;
-    hash = ((hash << 5) + hash) + (size_t)(uintptr_t)app.decl;
-
-    for (size_t i = 0; i < app.arg_count; i++) {
-        const TypeArg *arg = &app.args[i];
-
-        hash = ((hash << 5) + hash) + (size_t)arg->kind;
-
-        // A type argument is compared by identity, so its address is what
-        // distinguishes it; a const argument is its value.
-        hash = ((hash << 5) + hash) +
-               (arg->kind == TYPE_ARG_TYPE ? (size_t)(uintptr_t)arg->type : (size_t)(uint32_t)arg->value);
-    }
-
-    return hash;
-}
-
-bool type_app_equals(TypeApp app, TypeApp other) {
-    if (app.ctor != other.ctor || app.decl != other.decl || app.arg_count != other.arg_count) {
-        return false;
-    }
-
-    for (size_t i = 0; i < app.arg_count; i++) {
-        if (app.args[i].kind != other.args[i].kind) {
-            return false;
-        }
-
-        // An interned type is one Type, so identity is the whole comparison.
-        if (app.args[i].kind == TYPE_ARG_TYPE) {
-            if (app.args[i].type != other.args[i].type) {
-                return false;
-            }
-        } else if (app.args[i].value != other.args[i].value) {
-            return false;
-        }
-    }
-
-    return true;
-}
+const GenericDecl *type_generic(const Type *type) { return type->generic; }

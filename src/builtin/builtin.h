@@ -1,7 +1,7 @@
 #ifndef GAB_BUILTIN_H
 #define GAB_BUILTIN_H
 
-#include "type.h"
+#include "type/type.h"
 #include "vm/link.h"
 #include "vm/vm.h"
 

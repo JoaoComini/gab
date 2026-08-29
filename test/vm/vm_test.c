@@ -9,7 +9,7 @@
 #include "parser.h"
 #include "string/string.h"
 #include "symbol_table.h"
-#include "type_registry.h"
+#include "type/type_registry.h"
 #include "vm/opcode.h"
 
 #include <assert.h>
@@ -57,16 +57,16 @@ static void test_two_vms_are_independent() {
 
     assert(&first->env.strings != &second->env.strings);
 
-    const Type *first_int = type_registry_get_builtin(first->env.global_scope.type_registry, TYPE_INT);
-    const Type *second_int = type_registry_get_builtin(second->env.global_scope.type_registry, TYPE_INT);
+    const Type *first_int = type_registry_get_primitive(first->env.global_scope.type_registry, TYPE_INT);
+    const Type *second_int = type_registry_get_primitive(second->env.global_scope.type_registry, TYPE_INT);
 
     // Same name, different pools: distinct objects that must not be shared.
-    assert(first_int->name != second_int->name);
+    assert(type_name_of(first_int) != type_name_of(second_int));
 
     // Freeing one VM must leave the other's strings intact.
     vm_free(first);
 
-    assert(strcmp(second_int->name->data, "int") == 0);
+    assert(strcmp(type_name_of(second_int)->data, "int") == 0);
 
     compile_and_run(second, "module test;\n"
                             "func again(): int { return 3; }");
@@ -146,7 +146,7 @@ static void test_types_survive_a_later_compile() {
                     "func a(x: int, y: int): int { let q: int = x + y; let w: int = q * q; return w; }\n"
                     "func b(x: int, y: int): int { let q: int = x - y; let w: int = q * q; return w; }\n");
 
-    assert(strcmp(player->name->data, "Player") == 0);
+    assert(strcmp(type_name_of(player)->data, "Player") == 0);
     assert(type_registry_size_of(vm->env.global_scope.type_registry, player) == size);
     assert(type_field_count(player) == field_count);
 
@@ -175,9 +175,9 @@ static void test_function_signatures_survive_a_later_compile() {
                     "func b(x: int, y: int): int { let q: int = x - y; let w: int = q * q; return w; }\n");
 
     assert(on_update->func.param_count == 2);
-    assert(strcmp(on_update->func.params[0]->name->data, "Player") == 0);
-    assert(strcmp(on_update->func.params[1]->name->data, "float") == 0);
-    assert(strcmp(on_update->func.return_type->name->data, "int") == 0);
+    assert(strcmp(type_name_of(on_update->func.params[0])->data, "Player") == 0);
+    assert(strcmp(type_name_of(on_update->func.params[1])->data, "float") == 0);
+    assert(strcmp(type_name_of(on_update->func.return_type)->data, "int") == 0);
 
     vm_free(vm);
 }

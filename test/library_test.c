@@ -50,9 +50,9 @@ static void test_each_vm_declares_its_own() {
     assert(here != there);
 
     assert(type_registry_deref_of(first->env.global_scope.type_registry, here) ==
-           first->env.global_scope.type_registry->primitives.str_type);
+           type_registry_get_primitive(first->env.global_scope.type_registry, TYPE_STR));
     assert(type_registry_deref_of(second->env.global_scope.type_registry, there) ==
-           second->env.global_scope.type_registry->primitives.str_type);
+           type_registry_get_primitive(second->env.global_scope.type_registry, TYPE_STR));
 
     vm_free(first);
     vm_free(second);

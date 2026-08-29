@@ -3,7 +3,7 @@
 #include "string/string.h"
 #include "support/test_context.h"
 #include "symbol_table.h"
-#include "type.h"
+#include "type/type.h"
 #include <assert.h>
 
 static TestContext ctx;
@@ -25,7 +25,7 @@ static void test_nested_scopes() {
 static void test_var_declaration() {
     Scope *scope = scope_create(arena, &ctx.strings, NULL);
     String *name = string_from_cstr(&ctx.strings, "x");
-    const Type *type = type_registry_get_builtin(scope->type_registry, TYPE_INT);
+    const Type *type = type_registry_get_primitive(scope->type_registry, TYPE_INT);
 
     Symbol *sym = scope_decl_var(scope, name, type);
     assert(sym != NULL);
@@ -39,8 +39,8 @@ static void test_shadowing() {
     Scope *parent = scope_create(arena, &ctx.strings, NULL);
 
     String *name = string_from_cstr(&ctx.strings, "x");
-    const Type *int_type = type_registry_get_builtin(parent->type_registry, TYPE_INT);
-    const Type *float_type = type_registry_get_builtin(parent->type_registry, TYPE_FLOAT);
+    const Type *int_type = type_registry_get_primitive(parent->type_registry, TYPE_INT);
+    const Type *float_type = type_registry_get_primitive(parent->type_registry, TYPE_FLOAT);
 
     // Declare in parent
     Symbol *parent_sym = scope_decl_var(parent, name, int_type);
