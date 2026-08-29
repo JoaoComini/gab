@@ -36,27 +36,20 @@ typedef struct StructDecl {
     // registry interns rather than this holding a second pointer to.
     TypeDef *def;
 
-    // How far this declaration's fields have got, which is the only thing a
-    // second demand for them has to know. What a width costs is not tracked
-    // here: the registry memoizes a layout and a drop plan against the type, so
-    // asking twice computes once whatever this says.
-    enum {
-        // Bound, with its fields not resolved yet.
-        STRUCT_DECLARED,
+    // Whether this declaration's fields have been asked for, so that a unit's
+    // structs each resolve once however many of them name this one.
+    //
+    // Not whether it is resolving *now*: that is membership of the resolution
+    // stack, which knows the order besides -- see ResolverState::resolving. And
+    // not what a width costs, which is not tracked at all, since the registry
+    // memoizes a layout and a drop plan against the type.
+    bool fields_demanded;
 
-        // Resolving. A field reaching a declaration in this state by value is a
-        // containment cycle: its width is waiting on itself.
-        STRUCT_RESOLVING,
-
-        // Resolved, whether or not a width has been asked for since.
-        STRUCT_RESOLVED,
-
-        // As far as it goes: a field failed, so the type is poisoned rather
-        // than half-built. Distinct from RESOLVED so that a field naming this
-        // one carries the failure up instead of being laid out at a width it
-        // does not have.
-        STRUCT_POISONED,
-    } state;
+    // Whether a field of it failed to resolve, so that a field naming this
+    // struct carries the failure up rather than being laid out at a width it
+    // does not have. Its name is withdrawn besides, so nothing that resolves
+    // later can reach it at all.
+    bool poisoned;
 } StructDecl;
 
 #define struct_decl_list_item_free(item) ((void)(item))
@@ -96,6 +89,15 @@ typedef struct {
     // must leave this unit laid out, since the AST its fields were written in
     // does not outlive the unit.
     StructDeclList struct_decls;
+
+    // The declarations whose fields are resolving, innermost last.
+    //
+    // Being on this is what "currently resolving" means -- there is no flag
+    // saying so beside it, because two records of one fact drift. A field
+    // naming a declaration already here closes a containment ring, and the
+    // entries from that one to the top are the ring: the order they were
+    // reached in is the path, which a flag could not give.
+    StructDeclList resolving;
 
     Diagnostics *diagnostics;
 } ResolverState;
@@ -959,6 +961,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
 // how far an array strides. An indirection asks none of them, which is why it
 // is not one of these and why a ring through a 'box' stays finite.
 static StructDecl *element_completes_a_cycle(ResolverState *state, const Type *type);
+static void report_containment_cycle(ResolverState *state, StructDecl *closes_on, Span span);
 
 // Rejects a type nothing can hold. How far an unsized value runs is not in its
 // type, so a slot, a field or a parameter has no width to reserve for one: a
@@ -1756,8 +1759,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
                 StructDecl *cycle = element_completes_a_cycle(state, args[i]);
 
                 if (cycle) {
-                    diag_error(state->diagnostics, GAB_ERR_TYPE, span, "struct '%s' cannot contain itself",
-                               cycle->name->data);
+                    report_containment_cycle(state, cycle, span);
                     return resolver_error_type(state);
                 }
 
@@ -1804,8 +1806,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
         StructDecl *cycle = element_completes_a_cycle(state, element);
 
         if (cycle) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "struct '%s' cannot contain itself",
-                       cycle->name->data);
+            report_containment_cycle(state, cycle, span);
             return resolver_error_type(state);
         }
 
@@ -1957,7 +1958,8 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
         .scope = state->current_scope,
         .name = struct_name,
         .def = def,
-        .state = STRUCT_DECLARED,
+        .fields_demanded = false,
+        .poisoned = false,
     };
 
     struct_decl_list_add(&state->struct_decls, decl);
@@ -1967,6 +1969,19 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
 
 static void resolve_struct_fields(ResolverState *state, StructDecl *decl);
 static void layout_struct(ResolverState *state, StructDecl *decl);
+
+// Where this declaration sits on the resolution stack, or the stack's size when
+// it is not on it. An index rather than a bool, because the entries from it to
+// the top are the ring a field naming it closes.
+static size_t resolving_index_of(ResolverState *state, const StructDecl *decl) {
+    size_t i = 0;
+
+    while (i < state->resolving.size && state->resolving.data[i] != decl) {
+        i++;
+    }
+
+    return i;
+}
 
 // The declaration a by-value use of this type closes a containment cycle on, or
 // NULL when the use is finite. Forces the layout of whatever declaration it reaches, so
@@ -1984,7 +1999,9 @@ static StructDecl *element_completes_a_cycle(ResolverState *state, const Type *t
         return NULL;
     }
 
-    if (decl->state == STRUCT_RESOLVING) {
+    // On the stack: the walk that is resolving it is below this one, so
+    // following it again is the ring closing.
+    if (resolving_index_of(state, decl) < state->resolving.size) {
         return decl;
     }
 
@@ -1993,12 +2010,51 @@ static StructDecl *element_completes_a_cycle(ResolverState *state, const Type *t
     return NULL;
 }
 
+/*
+    Reports a containment ring, naming every declaration it passes through.
+
+    'closes_on' is the declaration the ring closed on, which is somewhere on the
+    resolution stack; every entry from there to the top is a hop, in the order
+    the fields were followed. So 'A' holding 'B' holding 'C' holding 'A' reads
+    as 'A' contains 'B' contains 'C' contains 'A', whichever of the three the
+    unit happened to resolve first.
+
+    The span is the field that closed the ring rather than any declaration's,
+    which is the one edge a reader can remove to break it.
+*/
+static void report_containment_cycle(ResolverState *state, StructDecl *closes_on, Span span) {
+    // Every hop, then the declaration the ring closes back on. One message for
+    // a ring of any length: a struct holding itself directly is a ring of one
+    // hop, and saying so the same way costs a repeated name rather than a
+    // second phrasing to keep in step with this one.
+    char path[256];
+    size_t written = 0;
+
+    for (size_t i = resolving_index_of(state, closes_on); i < state->resolving.size; i++) {
+        int n = snprintf(path + written, sizeof(path) - written, "'%s' contains ",
+                         state->resolving.data[i]->name->data);
+
+        // Would not fit: a ring this long is past what naming every hop helps
+        // with. Stops at the last hop written whole rather than at the byte the
+        // buffer ran out on, so the message never ends mid-name.
+        if (n < 0 || (size_t)n >= sizeof(path) - written) {
+            written += (size_t)snprintf(path + written, sizeof(path) - written, "... ");
+            break;
+        }
+
+        written += (size_t)n;
+    }
+
+    diag_error(state->diagnostics, GAB_ERR_TYPE, span, "struct '%s' cannot contain itself: %.*s'%s'",
+               closes_on->name->data, (int)written, path, closes_on->name->data);
+}
+
 // Whether the field's type is a declaration whose own layout failed. Asked
 // after the cycle walk, which is what forced that layout.
 static bool field_type_failed(ResolverState *state, const Type *type) {
     StructDecl *decl = decl_held_by_value(state, type);
 
-    return decl && decl->state == STRUCT_POISONED;
+    return decl && decl->poisoned;
 }
 
 /*
@@ -2026,11 +2082,13 @@ static bool field_type_failed(ResolverState *state, const Type *type) {
     what keeps this one path.
 */
 static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
-    if (decl->state != STRUCT_DECLARED) {
+    if (decl->fields_demanded) {
         return;
     }
 
-    decl->state = STRUCT_RESOLVING;
+    decl->fields_demanded = true;
+
+    struct_decl_list_add(&state->resolving, decl);
 
     ASTStmt *stmt = decl->stmt;
     TypeDef *def = decl->def;
@@ -2094,8 +2152,7 @@ static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
             StructDecl *cycle = element_completes_a_cycle(state, field_type);
 
             if (cycle) {
-                diag_error(state->diagnostics, GAB_ERR_TYPE, field->span, "struct '%s' cannot contain itself",
-                           cycle->name->data);
+                report_containment_cycle(state, cycle, field->span);
                 poisoned = true;
                 continue;
             }
@@ -2122,16 +2179,16 @@ static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
 
     // A struct with a bad field has no layout worth computing: its name is
     // withdrawn rather than left standing over a width that would be wrong.
+    state->resolving.size--;
+
     if (poisoned) {
-        decl->state = STRUCT_POISONED;
+        decl->poisoned = true;
         scope_withdraw_type(decl->scope, decl->name);
         return;
     }
 
     def->fields = fields;
     def->field_count = resolved;
-
-    decl->state = STRUCT_RESOLVED;
 
     layout_struct(state, decl);
 }
@@ -2747,6 +2804,7 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
                 .return_type = NULL,
             },
         .struct_decls = struct_decl_list_create(),
+        .resolving = struct_decl_list_create(),
         .diagnostics = diagnostics,
     };
 
@@ -2794,6 +2852,7 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
     }
 
     struct_decl_list_free(&state.struct_decls);
+    struct_decl_list_free(&state.resolving);
 
     return diagnostics_count(diagnostics) == errors_before;
 }
