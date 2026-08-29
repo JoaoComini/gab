@@ -136,33 +136,21 @@ typedef struct Type Type;
     of naming a reference carries is what grows here, not the fact that it
     carries one.
 */
-/*
-    A type constructor, and what it was applied to.
+// One argument of an application. A type or a compile-time value: '[T; N]'
+// is one of each. Tagged rather than promoting a value into a Type, because a
+// length has no size and no alignment to answer for, and every question asked
+// of a Type would have to special-case one that is really a number.
+typedef struct TypeArg {
+    enum {
+        TYPE_ARG_TYPE,
+        TYPE_ARG_CONST,
+    } kind;
 
-    Every parameterized type in the language is one of these: 'box T', 'ref T',
-    'ptr T' and '[T; N]' differ in which constructor and how many arguments,
-    not in kind. One interning table keyed by an application therefore serves
-    all of them, and serves a generic 'List T' or 'Map K,V' with no new table --
-    which is why this is a key rather than one map per constructor.
-*/
-typedef enum {
-    // The built-in constructors, named directly by the compiler. Nothing
-    // declares them: the language spells each, so none has a declaration behind
-    // it and none can be named or shadowed.
-    TYPE_CTOR_BOX,
-    TYPE_CTOR_REF,
-    TYPE_CTOR_PTR,
-    TYPE_CTOR_BLOCK,
-
-    // '[T; N]', which takes a type and a length rather than a type alone. A
-    // constructor like the four above rather than a declaration applied to
-    // arguments -- as rustc separates ty::Array from ty::Adt.
-    TYPE_CTOR_ARRAY,
-
-    // A constructor with a declaration behind it: what a struct or a generic
-    // declaration introduces.
-    TYPE_CTOR_NOMINAL,
-} TypeCtor;
+    union {
+        const Type *type;
+        int32_t value;
+    };
+} TypeArg;
 
 typedef enum {
     // Nothing: the pointee's type says how wide it is.
@@ -266,9 +254,11 @@ typedef struct TypeDef {
     const TypeField *fields;
     size_t field_count;
 
-    // What every instantiation answers, in terms of the parameters. Substituted
-    // and registered where an instantiation is interned, since only there is
-    // the argument known: each instantiation ends up owning its own set.
+    // What every instantiation answers, in terms of the parameters. The one
+    // place such a method lives: what a given instantiation answers is this
+    // read under its arguments, substituted when a call asks rather than copied
+    // to each instantiation as it is interned. So a method declared after an
+    // instantiation exists still reaches it.
     const GenericMethod *methods;
     size_t method_count;
 } TypeDef;
@@ -286,6 +276,17 @@ String *type_name_of(const Type *type);
 // 'Vec<T>' -- or NULL for a type nothing declares: a primitive, or one of the
 // built-in constructors.
 const TypeDef *type_decl(const Type *type);
+
+// What that declaration was applied to -- the '<int>' behind 'Vec<int>'. Empty
+// for a type nothing declares and for a plain struct, which is a declaration
+// applied to nothing.
+const TypeArg *type_args(const Type *type);
+size_t type_arg_count(const Type *type);
+
+// What a type is built of, as an interning key. Two mentions of 'box T' find
+// one Type because these answer alike for both.
+size_t type_structural_hash(const Type *type);
+bool type_structurally_equals(const Type *type, const Type *other);
 
 // A list of types nothing in it owns: they belong to the scope arena and outlive
 // every compile, so this holds borrowed pointers and frees none.
@@ -323,6 +324,11 @@ size_t type_field_count(const Type *type);
     reaching for one outside the registry is building a type nothing interned.
 */
 Type *type_create(Arena *arena, TypeKind kind, String *name);
+
+// The same, owned by the caller rather than by an arena. What a lookup is built
+// with: a type is interned on itself, so finding whether one already exists
+// means holding the shape of it before anything owns it.
+Type type_init(TypeKind kind, String *name);
 
 // What a reference to this type carries besides the address.
 TypeMetadata type_metadata_of(const Type *type);

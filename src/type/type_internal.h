@@ -28,21 +28,33 @@ struct Type {
     // 'Vec<T>'. NULL for a type nothing declares -- a primitive, or one of the
     // built-in constructors, which the language spells rather than naming.
     //
-    // Only the constructor, never the arguments -- those are the application
-    // this type was interned on. What it buys is the fields: an instantiation
-    // applied to none reads them straight through this.
+    // What it buys is the fields: an instantiation applied to none reads them
+    // straight through this, and one applied to arguments reads them through
+    // this substituted with 'args' below.
     //
     // Distinct from the relation a borrowed view has to what it borrows: 'str'
     // is reached from 'String' by lending, which is a step down the chain a
     // receiver already walks, not a set held somewhere else.
     //
-    // With the application this type was interned on, this is the whole of what
-    // a nominal type is: a declaration applied to arguments, which is rustc's
-    // Adt(AdtDef, GenericArgs). Its fields are that declaration's with those
-    // arguments substituted in, and are held by the registry rather than here
-    // -- so a name may be interned before its fields resolve, and no copy of
-    // them can disagree with the declaration.
+    // With 'args' below, this is the whole of what a nominal type is: a
+    // declaration applied to arguments, which is rustc's Adt(AdtDef,
+    // GenericArgs). Its fields are that declaration's with those arguments
+    // substituted in, and are held by the registry rather than here -- so a
+    // name may be interned before its fields resolve, and no copy of them can
+    // disagree with the declaration.
     const TypeDef *decl;
+
+    // What that declaration was applied to: the '<int>' behind 'Vec<int>'. The
+    // other half of Adt(AdtDef, GenericArgs), and load-bearing rather than
+    // decorative -- a method hangs on the declaration and its signature is that
+    // declaration's substituted with these, so every call needs them from the
+    // type alone. Part of what the type is interned on, too: 'Vec<int>' and
+    // 'Vec<bool>' are one declaration and differ only here.
+    //
+    // Empty for a type no declaration built and for a plain struct, which is a
+    // declaration applied to nothing.
+    const TypeArg *args;
+    size_t arg_count;
 
     // Whether a parameter is reachable from here, settled as this type is
     // built rather than walked on demand. A walk cannot answer it: a struct
@@ -76,9 +88,7 @@ struct Type {
         // NULL for one applied to no arguments, whose fields are its
         // declaration's unsubstituted and are read through 'decl' -- so a
         // struct interned before its fields resolve needs nothing written here
-        // once they do. What the type was applied to is not held either: that
-        // is the application it was interned on, which is where its identity
-        // was settled.
+        // once they do.
         struct {
             const TypeFields *substituted;
         } record;

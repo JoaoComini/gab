@@ -41,7 +41,6 @@ add_library(gab
     src/parser.c
     src/object.c
     src/type/type.c
-    src/type/type_app.c
     src/type/type_registry.c
     src/scope.c
     src/ast/ast.c

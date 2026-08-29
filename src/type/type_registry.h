@@ -4,7 +4,6 @@
 #include "arena.h"
 #include "string/string.h"
 #include "type.h"
-#include "type_app.h"
 #include "type_layout.h"
 #include "util/hash_map.h"
 
@@ -144,13 +143,17 @@ typedef struct Deref {
 /*
     Declaring a method on one type.
 
-    Every method hangs on a type, including those a generic declaration states:
-    those are substituted where each instantiation is interned, so 'Vec<int>'
-    and 'Vec<bool>' own their own rather than sharing one whose signature could
-    not name either element.
+    For a method whose receiver is one type and no other. What a declaration
+    states over its parameters is written on the declaration instead, and read
+    back through whichever instantiation is asked -- so 'Vec<int>' and
+    'Vec<bool>' answer one statement of 'push' rather than owning a copy each.
 */
 bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method);
 
+// What this type answers to this name, or NULL if nothing does. A method its
+// declaration states is substituted here, under the arguments this type was
+// applied to, and memoized -- so two calls on one type get one Symbol, and two
+// instantiations get signatures naming their own arguments.
 Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name);
 
 // Lays the type out and settles how it frees, which is what finishes it. A

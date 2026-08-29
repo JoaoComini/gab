@@ -11,46 +11,86 @@
 #include "type_internal.h"
 #include "type_registry.h"
 
-// Every constructed type is interned on the application that built it, so that
-// two mentions of 'box T' or of '[int; 3]' yield the same Type *: the whole
-// type system compares by pointer identity, and a fresh Type per mention would
+// Every constructed type is interned on what it is built of, so that two
+// mentions of 'box T' or of '[int; 3]' yield the same Type *: the whole type
+// system compares by pointer identity, and a fresh Type per mention would
 // silently break every comparison.
 //
-// One table for every constructor rather than one table each. The key carries
-// which constructor and how many arguments, so 'box T' and 'ref T' cannot
-// collide, and a generic 'List T' or 'Map K,V' needs no table of its own.
+// One table for every constructor rather than one table each. A type's kind is
+// part of what is hashed, so 'box T' and 'ref T' cannot collide, and a generic
+// 'List T' or 'Map K,V' needs no table of its own.
 //
-// The key's argument array is copied into the registry's arena on insert: a
-// caller builds one on its stack to look up with, and an entry has to outlive
-// that.
-#define type_app_map_hash(key) type_app_hash_of(key)
-#define type_app_map_key_equals(key, other) type_app_equals(key, other)
-#define type_app_map_key_dup(key) key
+// Keyed by the type itself, which is also the value: a caller builds one on its
+// stack to look up with, and a miss copies it into the registry's arena, since
+// an entry has to outlive that stack.
+#define type_intern_hash(key) type_structural_hash(key)
+#define type_intern_key_equals(key, other) type_structurally_equals(key, other)
+#define type_intern_key_dup(key) key
+#define type_intern_entry_free(key, value)
 
-GAB_HASH_MAP(TypeAppMap, type_app_map, TypeApp, Type *)
+GAB_HASH_MAP(TypeInternTable, type_intern, const Type *, Type *)
 
-// What may be called on a type, keyed by the type it was declared on and the
+// What may be called on a type, by the declaration it was declared on and the
 // name it answers to.
+//
+// Keyed by the declaration rather than by a type, so one statement of a method
+// serves every instantiation of it: 'Vec<int>' and 'Vec<bool>' reach the same
+// entry, and what tells their signatures apart is the arguments each was
+// applied to, supplied where the entry is read. A plain struct is a declaration
+// applied to no arguments and needs no special case.
 //
 // Beside the types rather than on them: a method set grows as a program is read
 // -- a later statement, a later unit, or the host before any of them -- while
 // what a type is was settled when it was interned. Keeping them apart is what
 // lets a type be finished when the registry hands it over.
 typedef struct MethodKey {
-    // The type a method was registered against. Every method hangs on one: a
-    // generic declaration's are substituted per instantiation, so each of them
-    // owns its own, and nothing is shared across them.
+    // The declaration a method was declared on. NULL for a type nothing
+    // declares -- a primitive, or one of the built-in constructors -- which
+    // owns its methods against the type itself, since it has no declaration to
+    // hang them on. That is rustc's shape too: an inherent impl on a primitive
+    // is keyed by the type rather than by an AdtDef.
+    const TypeDef *def;
+
+    // Set only when there is no declaration, and NULL whenever there is: one of
+    // the two names the owner, never both, so a method cannot be reachable
+    // under two keys.
     const Type *type;
 
     const String *name;
 } MethodKey;
 
-#define method_key_hash(key) (((size_t)(key).type * 31) ^ (size_t)(key).name)
-#define method_key_key_equals(key, other) ((key).type == (other).type && (key).name == (other).name)
+#define method_key_hash(key) ((((size_t)(key).def * 31) ^ ((size_t)(key).type * 17)) ^ (size_t)(key).name)
+#define method_key_key_equals(key, other)                                                                    \
+    ((key).def == (other).def && (key).type == (other).type && (key).name == (other).name)
 #define method_key_key_dup(key) key
 #define method_key_entry_free(key, value)
 
 GAB_HASH_MAP(MethodTable, method_key, MethodKey, Symbol *)
+
+/*
+    A signature read under one instantiation's arguments, by the type asked.
+
+    The cache rather than the storage: what a declaration states lives in the
+    table above, over its parameters, and substituting it for a given
+    instantiation is derived from that. Kept so that two calls on one type get
+    the one Symbol the first built rather than an equal second one -- which is
+    what lets a caller compare what it was handed by identity.
+
+    Nothing invalidates it: a declaration's methods are stated before any call
+    reads one. A later statement adding to a declaration already read would need
+    this dropped for that declaration's instantiations.
+*/
+#define signature_key_hash(key) (((size_t)(key).type * 31) ^ (size_t)(key).name)
+#define signature_key_key_equals(key, other) ((key).type == (other).type && (key).name == (other).name)
+#define signature_key_key_dup(key) key
+#define signature_key_entry_free(key, value)
+
+typedef struct SignatureKey {
+    const Type *type;
+    const String *name;
+} SignatureKey;
+
+GAB_HASH_MAP(SignatureTable, signature_key, SignatureKey, Symbol *)
 
 /*
     What freeing a value of each type does, by the type it was derived from.
@@ -132,14 +172,18 @@ typedef struct TypeRegistry {
     Arena *arena;
 
     // Every type built by applying a constructor: 'box T', 'ref T', 'ptr T',
-    // '[T; N]', and whatever a generic declaration adds. Keyed by the
-    // application, so the constructor is part of what is looked up and two
+    // '[T; N]', and whatever a generic declaration adds. Keyed by what the type
+    // is built of, so the kind is part of what is looked up and two
     // constructors given the same argument never collide.
-    TypeAppMap *applications;
+    TypeInternTable *applications;
 
-    // Every method declared on every type, however far apart the declarations
-    // were.
+    // Every method declared on every declaration, however far apart the
+    // statements were.
     MethodTable *methods;
+
+    // What each instantiation reads those as, substituted under its own
+    // arguments.
+    SignatureTable *signatures;
 
     // What freeing a value of each type does.
     DropTable *drops;
