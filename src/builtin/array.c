@@ -18,6 +18,6 @@ void builtin_register_array(VM *vm) {
     // type, so the method is written once however many element types exist.
     const TypeDef *array_def = type_registry_array_def(registry);
 
-    builtin_register_def_method(vm, array_def, NULL, "len", array_len,
-                                type_registry_get_primitive(registry, TYPE_INT), NULL, 0);
+    builtin_register_method(vm, method_owner_def(array_def), NULL, "len", array_len,
+                            type_registry_get_primitive(registry, TYPE_INT), NULL, 0);
 }

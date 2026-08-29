@@ -31,15 +31,9 @@ typedef struct StructDecl {
     Scope *scope;
     String *name;
 
-    // The interned identity, which the declaration has from the start. Const
-    // once laid out, but built through here, so it is the mutable pointer.
-    // NULL for a declaration taking parameters: it names no type until a
-    // mention supplies them, so there is nothing to open or lay out.
-    Type *type;
-
-    // What the name declares. A declaration taking no parameters gets one too,
-    // so that every nominal name resolves the same way; its fields are filled
-    // when the layout is, and an instantiation of it is what the name binds to.
+    // What the name declares, and the only identity a declaration has: the type
+    // it stands for is that declaration applied to no arguments, which the
+    // registry interns rather than this holding a second pointer to.
     TypeDef *def;
 
     enum {
@@ -1919,7 +1913,7 @@ static StructDecl *decl_held_by_value(ResolverState *state, const Type *type) {
     }
 
     for (size_t i = 0; i < state->struct_decls.size; i++) {
-        if (state->struct_decls.data[i]->type == type) {
+        if (type_decl(type) && state->struct_decls.data[i]->def == type_decl(type)) {
             return state->struct_decls.data[i];
         }
     }
@@ -1956,21 +1950,15 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
         .param_count = param_count,
     };
 
-    // A declaration taking parameters is bound as a declaration and nothing
-    // else: its fields are written over parameters, so it has no width and
-    // nothing to open. One taking none is opened here as before, because its
-    // name must stand for a type before its own fields resolve -- which is what
-    // lets two structs name each other.
-    Type *type = NULL;
-
+    // A declaration taking no parameters is opened here, because its name must
+    // stand for a type before its own fields resolve -- which is what lets two
+    // structs name each other. One taking them is written over parameters, so
+    // it has no width and nothing to open until a mention supplies arguments.
     if (param_count == 0) {
-        type = type_registry_open_struct(state->current_scope->type_registry, struct_name, def,
-                                         stmt->struct_decl.fields.size);
-
-        scope_decl_type(state->current_scope, struct_name, type);
-    } else {
-        scope_decl_type_def(state->current_scope, struct_name, def);
+        type_registry_open_struct(state->current_scope->type_registry, def, stmt->struct_decl.fields.size);
     }
+
+    scope_decl_type_def(state->current_scope, struct_name, def);
 
     StructDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(StructDecl));
 
@@ -1978,7 +1966,6 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
         .stmt = stmt,
         .scope = state->current_scope,
         .name = struct_name,
-        .type = type,
         .def = def,
         .state = STRUCT_DECLARED,
     };
@@ -2126,7 +2113,7 @@ static void layout_struct(ResolverState *state, StructDecl *decl) {
     decl->state = STRUCT_LAYING_OUT;
 
     ASTStmt *stmt = decl->stmt;
-    Type *type = decl->type;
+    Type *type = (Type *)type_registry_instantiate(state->current_scope->type_registry, decl->def, NULL, 0);
 
     // The fields resolve in the scope the struct was declared in, which is not
     // where the layout was demanded from: a struct declared in one module is
@@ -2320,7 +2307,8 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
         }
     }
 
-    if (!type_registry_add_method(state->current_scope->type_registry, owner, name, func)) {
+    if (!type_registry_add_method(state->current_scope->type_registry, method_owner_type(owner), name,
+                                  func)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' already has a function '%s'",
                    type_name_of(owner)->data, name->data);
         return;

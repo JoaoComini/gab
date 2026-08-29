@@ -140,16 +140,7 @@ Symbol *scope_symbol_lookup(Scope *scope, String *name) {
 }
 
 const Type *scope_type_lookup(Scope *scope, String *name) {
-    while (scope) {
-        TypeBinding *entry = type_map_lookup(scope->types, name);
-        if (entry) {
-            return entry->type;
-        }
-
-        scope = scope->parent;
-    }
-
-    return NULL;
+    return scope ? resolution_type(scope->type_registry, scope_resolve(scope, name)) : NULL;
 }
 
 Resolution scope_resolve(Scope *scope, String *name) {
@@ -157,11 +148,20 @@ Resolution scope_resolve(Scope *scope, String *name) {
         TypeBinding *bound = type_map_lookup(s->types, name);
 
         if (bound) {
-            // A primitive is bound to a type nothing declared; everything else
-            // nominal is bound to its declaration, whose arity is what a
+            // A primitive is the type it names and nothing is laid out for it,
+            // so the name answers with that type rather than with an
+            // instantiation of the declaration it carries. Everything else
+            // nominal answers with its declaration, whose arity is what a
             // mention of it owes.
-            return bound->def ? (Resolution){.kind = RESOLUTION_TYPE_DECL, .def = bound->def}
-                              : (Resolution){.kind = RESOLUTION_PRIMITIVE, .primitive = bound->type};
+            //
+            // Told apart by the binding rather than by the declaration: a
+            // primitive is bound to a type directly, while a declaration
+            // awaiting arguments is bound to no type at all.
+            if (bound->type && type_names_itself(bound->type)) {
+                return (Resolution){.kind = RESOLUTION_PRIMITIVE, .primitive = bound->type};
+            }
+
+            return (Resolution){.kind = RESOLUTION_TYPE_DECL, .def = bound->def};
         }
 
         Symbol **symbol = symbol_table_lookup(s->symbol_table, name);
@@ -234,6 +234,8 @@ bool scope_decl_type(Scope *scope, String *name, const Type *type) {
     if (type_map_lookup(scope->types, name)) {
         return false;
     }
+
+    assert(type_names_itself(type) && "a nominal name binds to what it declares");
 
     type_map_insert(scope->types, name, (TypeBinding){.type = type, .def = type_decl(type)});
 

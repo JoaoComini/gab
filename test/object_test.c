@@ -34,7 +34,11 @@ static Allocator counting_allocator(AllocCounts *counts) {
 // out — freeing walks offsets, so the layout has to be real.
 static const Type *make_struct(TestContext *ctx, TypeRegistry *registry, const char *name,
                                const char **fields, const Type **field_types, size_t count) {
-    Type *type = type_registry_open_struct(registry, string_from_cstr(&ctx->strings, name), NULL, count);
+    TypeDef *def = arena_alloc(ctx->arena, sizeof(TypeDef));
+
+    *def = (TypeDef){.name = string_from_cstr(&ctx->strings, name)};
+
+    Type *type = type_registry_open_struct(registry, def, count);
 
     for (size_t i = 0; i < count; i++) {
         type_add_field(type, string_from_cstr(&ctx->strings, fields[i]), field_types[i]);
@@ -476,7 +480,11 @@ static void test_a_type_carries_only_what_its_kind_has() {
     assert(type_field_count(box) == 0);
     assert(type_fields(box) == NULL);
 
-    Type *player = type_registry_open_struct(registry, string_from_cstr(&ctx.strings, "Player"), NULL, 1);
+    TypeDef *player_def = arena_alloc(ctx.arena, sizeof(TypeDef));
+
+    *player_def = (TypeDef){.name = string_from_cstr(&ctx.strings, "Player")};
+
+    Type *player = type_registry_open_struct(registry, player_def, 1);
     type_add_field(player, string_from_cstr(&ctx.strings, "health"), int_type);
 
     assert(type_field_count(player) == 1);
@@ -517,12 +525,12 @@ static void test_methods_live_beside_the_type_not_in_it() {
 
     Symbol method = {0};
 
-    assert(type_registry_add_method(registry, int_type, name, &method));
+    assert(type_registry_add_method(registry, method_owner_type(int_type), name, &method));
     assert(type_registry_find_method(registry, int_type, name) == &method);
 
     // Declared once: a second of the same name on the same type is refused
     // rather than replacing what is there.
-    assert(!type_registry_add_method(registry, int_type, name, &method));
+    assert(!type_registry_add_method(registry, method_owner_type(int_type), name, &method));
 
     // Another type is unaffected, since the set is keyed by which type it is
     // declared on.

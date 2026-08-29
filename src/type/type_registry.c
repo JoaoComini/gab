@@ -17,8 +17,22 @@
 // type nothing is laid out for is.
 static const TypeLayout empty_layout = {.size = 0, .alignment = 1};
 
+// A primitive is declared by the language rather than by a unit, but it is
+// declared: what it answers to hangs on its declaration exactly as a struct's
+// does, so a method set has one kind of owner rather than two.
+//
+// Taking no parameters, which is what makes the bare name a type: 'int' is its
+// own instantiation, as every declaration applying none is.
 static Type *register_builtin(TypeRegistry *registry, TypeKind kind, String *name) {
-    return type_create(registry->arena, kind, name);
+    Type *type = type_create(registry->arena, kind, name);
+
+    TypeDef *def = arena_alloc(registry->arena, sizeof(TypeDef));
+
+    *def = (TypeDef){.name = name};
+
+    type->decl = def;
+
+    return type;
 }
 
 // The types the language is written in terms of, interned before anything else
@@ -308,24 +322,17 @@ void type_registry_destroy(TypeRegistry *registry) {
     deref_key_destroy(registry->derefs);
 }
 
-static void application_insert(TypeRegistry *registry, TypeApp app, Type *type);
+Type *type_registry_open_struct(TypeRegistry *registry, TypeDef *def, size_t max_fields) {
+    assert(def && "an opened struct is a declaration whose fields are not resolved yet");
+    assert(def->param_count == 0 && "a declaration taking arguments is not opened by name");
 
-Type *type_registry_open_struct(TypeRegistry *registry, String *name, const TypeDef *def, size_t max_fields) {
-    Type *type = type_struct_create(registry->arena, name, max_fields);
+    def->fields_pending = true;
+    def->max_fields = max_fields;
 
-    type->decl = def;
-
-    // Interned as its declaration applied to nothing, which is what it is: a
-    // mention of the bare name asks the registry for that application, and what
-    // it must find is this type rather than a second one built from a
-    // declaration whose fields are never filled.
-    if (def) {
-        assert(def->param_count == 0 && "a type opened by name takes no arguments");
-
-        application_insert(registry, (TypeApp){.ctor = TYPE_CTOR_NOMINAL, .def = def, .arg_count = 0}, type);
-    }
-
-    return type;
+    // The same path a mention takes: a declaration applied to no arguments,
+    // which is what a plain struct is. What the two-step form adds is only that
+    // the fields arrive after the name does.
+    return (Type *)type_registry_instantiate(registry, def, NULL, 0);
 }
 
 void type_registry_complete(TypeRegistry *registry, Type *type) {
@@ -351,23 +358,21 @@ const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl) 
     return type;
 }
 
-bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method) {
-    if (type_registry_find_method(registry, type, name)) {
+bool type_registry_add_method(TypeRegistry *registry, MethodOwner owner, String *name, Symbol *method) {
+    assert((owner.type != NULL) != (owner.def != NULL) && "a method hangs on a type or on a declaration");
+    assert(name && method && "a method is a name and a body");
+
+    MethodKey key = {.type = owner.type, .def = owner.def, .name = name};
+
+    // A type's set is asked through the walk that also reaches its
+    // declaration's, so a name either already holds is a collision rather than
+    // an entry the walk would never reach past the first.
+    if (owner.type ? type_registry_find_method(registry, owner.type, name) != NULL
+                   : method_key_lookup(registry->methods, key) != NULL) {
         return false;
     }
 
-    method_key_insert(registry->methods, (MethodKey){.type = type, .name = name}, method);
-    return true;
-}
-
-bool type_registry_add_def_method(TypeRegistry *registry, const TypeDef *def, String *name, Symbol *method) {
-    assert(def && name && method && "a declaration's method is a name and a body on a declaration");
-
-    if (method_key_lookup(registry->methods, (MethodKey){.def = def, .name = name})) {
-        return false;
-    }
-
-    method_key_insert(registry->methods, (MethodKey){.def = def, .name = name}, method);
+    method_key_insert(registry->methods, key, method);
     return true;
 }
 
@@ -615,7 +620,7 @@ static void declare_generic_methods(TypeRegistry *registry, Type *type, const Ty
                 },
         };
 
-        type_registry_add_method(registry, type, method->name, symbol);
+        type_registry_add_method(registry, method_owner_type(type), method->name, symbol);
     }
 }
 
@@ -664,6 +669,22 @@ const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDef *def
     // this same instantiation -- which every method's receiver does -- finds
     // this entry rather than building a second and recursing forever.
     application_insert(registry, app, type);
+
+    // A declaration whose fields are not resolved yet: the name is interned so
+    // that anything naming it -- its own fields included -- reaches this type,
+    // and the fields are added as each resolves. What finishes it is
+    // type_registry_complete, which is what the two-step form is for.
+    //
+    // Only a declaration taking no arguments can be in this state: one taking
+    // them is written over parameters, and those are resolved before any
+    // mention can supply an argument.
+    if (def->fields_pending) {
+        type->record.fields =
+            def->max_fields ? arena_alloc(registry->arena, def->max_fields * sizeof(TypeField)) : NULL;
+        type->record.field_count = 0;
+
+        return type;
+    }
 
     TypeField *fields = arena_alloc(registry->arena, generic->field_count * sizeof(TypeField));
 

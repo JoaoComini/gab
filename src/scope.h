@@ -138,13 +138,18 @@ Symbol *scope_symbol_lookup_declaring(Scope *scope, String *name);
 // so nothing may use it as a type.
 void scope_withdraw_type(Scope *scope, String *name);
 
+// Binds a name to a type that names itself -- a primitive, or a declaration's
+// own parameter -- which is instantiated from no declaration and so has none to
+// be bound to.
+//
 // Returns false if this scope already declares the name. Declaring a name is a
 // one-time act: a second declaration of it, in this unit or a later one, is a
 // collision rather than a replacement.
 bool scope_decl_type(Scope *scope, String *name, const Type *type);
 
-// Binds a name to what it declares, for a declaration taking parameters: it
-// names no type until a mention supplies them.
+// Binds a name to what it declares, which every nominal name is bound to
+// whatever its arity: the type one taking no parameters stands for is that
+// declaration applied to none, and the registry is what holds it.
 bool scope_decl_type_def(Scope *scope, String *name, const TypeDef *def);
 
 // A scope a compile declares into instead of its real target, so a compile that

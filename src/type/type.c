@@ -289,6 +289,23 @@ String *type_name_of(const Type *type) { return type->name; }
 
 const TypeDef *type_decl(const Type *type) { return type->decl; }
 
+bool type_names_itself(const Type *type) {
+    switch (type->kind) {
+    case TYPE_INT:
+    case TYPE_FLOAT:
+    case TYPE_BOOL:
+    case TYPE_BYTE:
+    case TYPE_STR:
+    case TYPE_ERROR:
+
+    // A declaration's parameter, bound while that declaration's fields resolve.
+    case TYPE_PARAM:
+        return true;
+    default:
+        return false;
+    }
+}
+
 size_t type_param_index(const Type *type) {
     assert(type && type->kind == TYPE_PARAM && "only a parameter has an index");
     return type->param.index;

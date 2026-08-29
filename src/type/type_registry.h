@@ -116,10 +116,20 @@ typedef struct Deref {
     size_t part_count;
 } Deref;
 
-// Declares a method, or fails if the type already answers that name. Finds one
-// by following 'owner' when the type itself does not answer, so that a type
-// sharing another's identity reaches its set.
-bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method);
+/*
+    Declaring a method, on the declaration every instantiation shares or on one
+    instantiation alone.
+
+    Which of the two is not a property of the owner but of the signature. A set
+    written once for every element type -- an array's 'len' -- reads nothing an
+    argument brought, so the declaration owns it and each instantiation finds
+    it. One whose signature mentions a parameter has been substituted, so it
+    differs per instantiation and is owned by the type.
+
+    Both land in one table, keyed by whichever owns the name, and a lookup
+    consults the type before the declaration it came from.
+*/
+bool type_registry_add_method(TypeRegistry *registry, MethodOwner owner, String *name, Symbol *method);
 
 // Declares a method every instantiation of a declaration answers, rather than
 // one a single type does. What an array's shared set is: no '[T; N]' declares
@@ -128,7 +138,6 @@ bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *
 // before its element and length are given.
 const TypeDef *type_registry_array_def(TypeRegistry *registry);
 
-bool type_registry_add_def_method(TypeRegistry *registry, const TypeDef *def, String *name, Symbol *method);
 Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name);
 
 /*
@@ -151,7 +160,7 @@ Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, cons
 // what it declares the same way one instantiated from a TypeDef does. Its
 // fields are filled as the struct's are; nothing reads them until it is
 // complete.
-Type *type_registry_open_struct(TypeRegistry *registry, String *name, const TypeDef *def, size_t max_fields);
+Type *type_registry_open_struct(TypeRegistry *registry, TypeDef *def, size_t max_fields);
 
 // Lays the type out and settles how it frees, which is what finishes it. Called
 // once every field is added; a type whose fields did not resolve is withdrawn

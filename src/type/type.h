@@ -232,12 +232,34 @@ typedef struct TypeDef {
     const TypeField *fields;
     size_t field_count;
 
+    // Set while the declaration's own fields are still resolving, which only a
+    // unit's struct is: its name must be interned before its fields can name it
+    // or each other, so instantiating it yields a type with room for them and
+    // nothing in it yet. Cleared by whoever fills them.
+    bool fields_pending;
+
+    // How many the pending fields will be, which is the room an instantiation
+    // reserves for them.
+    size_t max_fields;
+
     // What every instantiation answers, in terms of the parameters. Registered
     // where an instantiation is interned, since only there is the parameter
     // known -- which is what separates these from an array's shared set.
     const GenericMethod *methods;
     size_t method_count;
 } TypeDef;
+
+// What owns a method name: one instantiation, or the declaration every
+// instantiation of it shares. Exactly one is set, which the constructors are
+// what guarantee.
+typedef struct MethodOwner {
+    const Type *type;
+    const TypeDef *def;
+} MethodOwner;
+
+static inline MethodOwner method_owner_type(const Type *type) { return (MethodOwner){.type = type}; }
+
+static inline MethodOwner method_owner_def(const TypeDef *def) { return (MethodOwner){.def = def}; }
 
 // What an indirection names, or NULL for a kind that names nothing. The walks
 // asking how many levels deep something is read it that way, so "not an
@@ -299,6 +321,12 @@ bool type_is_str_ref(const Type *type);
 // something no slot, field or parameter may contain, and is reached only
 // through a reference.
 bool type_is_sized(const Type *type);
+
+// Whether a name bound to this type reaches the type itself, rather than a
+// declaration an instantiation of it comes from. True of what the language
+// declares -- the primitives -- and of a declaration's own parameter, neither
+// of which is laid out from a field list.
+bool type_names_itself(const Type *type);
 
 // Whether reaching the value means going through an indirection -- what a
 // deref, an auto-deref, and a field access all ask. Says nothing about

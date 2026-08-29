@@ -261,28 +261,28 @@ void builtin_register_string(VM *vm) {
     const Type *const int_param[] = {int_type};
     const Type *const string_param[] = {str_type};
 
-    builtin_register_method(vm, type_registry_get_primitive(registry, TYPE_STR), str_type, "len", string_len,
-                            int_type, NULL, 0);
-    builtin_register_method(vm, type_registry_get_primitive(registry, TYPE_STR), str_type, "is_empty",
-                            string_is_empty, bool_type, NULL, 0);
-    builtin_register_method(vm, type_registry_get_primitive(registry, TYPE_STR), str_type, "at", string_at,
-                            int_type, int_param, 1);
-    builtin_register_method(vm, type_registry_get_primitive(registry, TYPE_STR), str_type, "starts_with",
-                            string_starts_with, bool_type, string_param, 1);
-    builtin_register_method(vm, type_registry_get_primitive(registry, TYPE_STR), str_type, "ends_with",
-                            string_ends_with, bool_type, string_param, 1);
-    builtin_register_method(vm, type_registry_get_primitive(registry, TYPE_STR), str_type, "contains",
-                            string_contains, bool_type, string_param, 1);
-    builtin_register_method(vm, type_registry_get_primitive(registry, TYPE_STR), str_type, "index_of",
-                            string_index_of, int_type, string_param, 1);
-    builtin_register_method(vm, type_registry_get_primitive(registry, TYPE_STR), str_type, "count",
-                            string_count, int_type, string_param, 1);
+    builtin_register_method(vm, method_owner_type(type_registry_get_primitive(registry, TYPE_STR)), str_type,
+                            "len", string_len, int_type, NULL, 0);
+    builtin_register_method(vm, method_owner_type(type_registry_get_primitive(registry, TYPE_STR)), str_type,
+                            "is_empty", string_is_empty, bool_type, NULL, 0);
+    builtin_register_method(vm, method_owner_type(type_registry_get_primitive(registry, TYPE_STR)), str_type,
+                            "at", string_at, int_type, int_param, 1);
+    builtin_register_method(vm, method_owner_type(type_registry_get_primitive(registry, TYPE_STR)), str_type,
+                            "starts_with", string_starts_with, bool_type, string_param, 1);
+    builtin_register_method(vm, method_owner_type(type_registry_get_primitive(registry, TYPE_STR)), str_type,
+                            "ends_with", string_ends_with, bool_type, string_param, 1);
+    builtin_register_method(vm, method_owner_type(type_registry_get_primitive(registry, TYPE_STR)), str_type,
+                            "contains", string_contains, bool_type, string_param, 1);
+    builtin_register_method(vm, method_owner_type(type_registry_get_primitive(registry, TYPE_STR)), str_type,
+                            "index_of", string_index_of, int_type, string_param, 1);
+    builtin_register_method(vm, method_owner_type(type_registry_get_primitive(registry, TYPE_STR)), str_type,
+                            "count", string_count, int_type, string_param, 1);
 
     // Declared on the characters like every other reader, and returning the
     // owning string rather than the borrowed one: what it hands back is a fresh
     // allocation the caller frees.
-    builtin_register_method(vm, type_registry_get_primitive(registry, TYPE_STR), str_type, "to_owned",
-                            string_to_owned, string_type, NULL, 0);
+    builtin_register_method(vm, method_owner_type(type_registry_get_primitive(registry, TYPE_STR)), str_type,
+                            "to_owned", string_to_owned, string_type, NULL, 0);
 
     // Reached on the owning type, since that is what it yields: 'String::from'
     // hands back an allocation, where every method above reads a borrow.
@@ -293,8 +293,10 @@ void builtin_register_string(VM *vm) {
     // 'clone' does, and writes the grown header back through it.
     const Type *const char_param[] = {int_type};
 
-    builtin_register_method(vm, string_type, ref_string, "push", string_push, NULL, char_param, 1);
-    builtin_register_method(vm, string_type, ref_string, "append", string_append, NULL, string_param, 1);
+    builtin_register_method(vm, method_owner_type(string_type), ref_string, "push", string_push, NULL,
+                            char_param, 1);
+    builtin_register_method(vm, method_owner_type(string_type), ref_string, "append", string_append, NULL,
+                            string_param, 1);
 
     // The one method belonging to the owner rather than to the characters: what
     // it duplicates is the allocation, which only a 'String' has.
@@ -302,5 +304,6 @@ void builtin_register_string(VM *vm) {
     // Its receiver is a pointer to the header. A receiver by value would have to
     // copy it, which an owning string cannot do; and 'ref String' is the address
     // of a slot holding one, which is not what a 'ref str' is.
-    builtin_register_method(vm, string_type, ref_string, "clone", string_clone, string_type, NULL, 0);
+    builtin_register_method(vm, method_owner_type(string_type), ref_string, "clone", string_clone,
+                            string_type, NULL, 0);
 }
