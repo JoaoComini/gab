@@ -22,7 +22,6 @@ typedef struct TypePrimitiveNames {
     String *bool_name;
     String *byte_name;
     String *str_name;
-    String *array_name;
     String *error_name;
 } TypePrimitiveNames;
 
@@ -152,10 +151,6 @@ typedef struct Deref {
 */
 bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method);
 
-// 'Array', the declaration every '[T; N]' is interned against. Reached from the
-// syntax rather than from a scope: no name resolves to it.
-const TypeDef *type_registry_array_def(TypeRegistry *registry);
-
 Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name);
 
 // Lays the type out and settles how it frees, which is what finishes it. A
@@ -276,9 +271,9 @@ const Type *type_registry_param(TypeRegistry *registry, size_t index);
 const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDef *def, const TypeArg *args,
                                       size_t arg_count);
 
-// As type_registry_instantiate, where every argument is a type. What all but
-// 'Array' takes: a length is the one argument that is a number rather than a
-// type, so only type_registry_array_of builds the TypeArgs itself.
+// As type_registry_instantiate, where every argument is a type. What every
+// declaration takes: a length is the one argument that is a number rather than
+// a type, and nothing declares the constructor that takes one.
 const Type *type_registry_apply(TypeRegistry *registry, const TypeDef *def, const Type *const *args,
                                 size_t arg_count);
 

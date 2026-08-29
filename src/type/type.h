@@ -146,14 +146,21 @@ typedef struct Type Type;
     which is why this is a key rather than one map per constructor.
 */
 typedef enum {
-    // The built-in constructors, named directly by the compiler.
+    // The built-in constructors, named directly by the compiler. Nothing
+    // declares them: the language spells each, so none has a declaration behind
+    // it and none can be named or shadowed.
     TYPE_CTOR_BOX,
     TYPE_CTOR_REF,
     TYPE_CTOR_PTR,
     TYPE_CTOR_BLOCK,
 
-    // A constructor with a declaration behind it: 'Array' today, and whatever
-    // a generic declaration introduces later.
+    // '[T; N]', which takes a type and a length rather than a type alone. A
+    // constructor like the four above rather than a declaration applied to
+    // arguments -- as rustc separates ty::Array from ty::Adt.
+    TYPE_CTOR_ARRAY,
+
+    // A constructor with a declaration behind it: what a struct or a generic
+    // declaration introduces.
     TYPE_CTOR_NOMINAL,
 } TypeCtor;
 
@@ -237,15 +244,6 @@ typedef struct GenericMethod {
     and interning 'Vec<int>' is that said with int. Nothing is laid out here --
     a width follows from an instantiation's fields, and a parameter has none.
 */
-// How a declaration's instantiations are laid out. Nearly every nominal type is
-// a record of the fields its declaration states; 'Array' is the one whose
-// instantiations are a run of one argument, counted by another, so what it is
-// built of comes from the arguments rather than from a field list.
-typedef enum {
-    TYPE_SHAPE_RECORD,
-    TYPE_SHAPE_ARRAY,
-} TypeShape;
-
 typedef struct TypeDef {
     // Interned by whoever declares it, as every name the registry is given is.
     // Carried here rather than read off a type, since a declaration is what a
@@ -255,10 +253,6 @@ typedef struct TypeDef {
     // How many arguments an instantiation supplies. Zero for a plain struct,
     // which is therefore instantiated by supplying none.
     size_t param_count;
-
-    // What an instantiation of it is. Record unless this is 'Array', whose
-    // instantiations are laid out from their arguments and declare no fields.
-    TypeShape shape;
 
     // The fields an instantiation is laid out from, as ordinary types written
     // over the parameters. A field naming no parameter is already its own
@@ -288,8 +282,9 @@ typedef struct TypeDef {
 TypeKind type_kind(const Type *type);
 String *type_name_of(const Type *type);
 
-// The declaration an instantiation was built from -- the bare 'Array' behind
-// every '[T; N]' -- or NULL for a type that is not one.
+// The declaration an instantiation was built from -- the 'Vec' behind every
+// 'Vec<T>' -- or NULL for a type nothing declares: a primitive, or one of the
+// built-in constructors.
 const TypeDef *type_decl(const Type *type);
 
 // A list of types nothing in it owns: they belong to the scope arena and outlive

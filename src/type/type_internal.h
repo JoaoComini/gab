@@ -24,15 +24,13 @@ struct Type {
     // address. Beside the width for that reason -- a type that has no width of
     // its own is exactly one whose reference carries what it lacks.
     //
-    // The declaration an application instantiates: every '[T; N]' names the
-    // bare 'Array'. NULL for a type that is not an instantiation.
+    // The declaration an application instantiates: the 'Vec' behind every
+    // 'Vec<T>'. NULL for a type nothing declares -- a primitive, or one of the
+    // built-in constructors, which the language spells rather than naming.
     //
     // Only the constructor, never the arguments -- those are the application
-    // this type was interned on. What it buys today is the method set, which
-    // every instantiation of a declaration shares because the one method there
-    // is does not read its element. A method that did could not be shared, and
-    // this becomes the key an instantiated set is built from rather than a link
-    // followed to another type's.
+    // this type was interned on. What it buys is the fields: an instantiation
+    // applied to none reads them straight through this.
     //
     // Distinct from the relation a borrowed view has to what it borrows: 'str'
     // is reached from 'String' by lending, which is a step down the chain a

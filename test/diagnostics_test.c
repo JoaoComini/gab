@@ -587,6 +587,21 @@ static void test_rejects_type_arguments_on_a_primitive() {
     test_context_free(&ctx);
 }
 
+// An array has no name, so a diagnostic builds one from what it is: the element
+// and how many, spelled the way the source spells the type.
+static void test_an_array_is_named_by_its_shape() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    compile(&ctx, "func f(): int { let xs: [int; 3]; let y: int = xs; return y; }\n");
+
+    assert(diagnostics_count(&ctx.diagnostics) == 1);
+    assert(strcmp(diagnostics_get(&ctx.diagnostics, 0)->message,
+                  "cannot initialize a variable of type int with a value of type [int; 3]") == 0);
+
+    test_context_free(&ctx);
+}
+
 static void test_reports_every_bad_field() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -954,6 +969,7 @@ int main(void) {
     test_rejects_shadowing_a_builtin();
     test_reports_self_referential_struct();
     test_reports_mutual_containment_cycle();
+    test_an_array_is_named_by_its_shape();
     test_a_unit_may_declare_a_struct_called_array();
     test_rejects_type_arguments_on_a_primitive();
     test_reports_the_path_a_containment_ring_takes();

@@ -35,9 +35,9 @@ typedef struct TypeArg {
 typedef struct TypeApp {
     TypeCtor ctor;
 
-    // The declaration a nominal constructor came from -- what 'Vec' or 'Array'
-    // names. NULL for the built-in constructors, which their tag already tells
-    // apart.
+    // The declaration a nominal constructor came from -- what 'Vec' names. NULL
+    // for the built-in constructors, which nothing declares and whose tag
+    // already tells them apart.
     const TypeDef *def;
 
     const TypeArg *args;

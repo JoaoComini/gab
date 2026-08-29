@@ -49,18 +49,6 @@ static void register_primitives(TypeRegistry *registry, const TypePrimitiveNames
     // part of saying what it is.
     registry->primitives.str_type = register_builtin(registry, TYPE_STR, names->str_name);
 
-    // The bare name every '[T; N]' is interned under. Sized as the header the
-    // elements make it, so that a diagnostic naming it says something true even
-    // though no slot ever holds this type itself.
-    // An array takes an element and a length, so its declaration takes two
-    // arguments. It declares no fields: what an array holds is a run of its
-    // element, which the type carries rather than a field list.
-    TypeDef *array_def = arena_alloc(registry->arena, sizeof(TypeDef));
-
-    *array_def = (TypeDef){.name = names->array_name, .param_count = 2, .shape = TYPE_SHAPE_ARRAY};
-
-    registry->primitives.array_def = array_def;
-
     // Poison type. Deliberately never given a name in any scope: no script can
     // name it, it only arises from a failed resolution.
     registry->primitives.error_type = register_builtin(registry, TYPE_ERROR, names->error_name);
@@ -94,9 +82,9 @@ static bool layout_of_scalar(TypeKind kind, size_t *size, size_t *alignment) {
         *alignment = 1;
         return true;
 
-    // Never held: the characters a 'ref str' names, the bare 'Array' before an
-    // element is applied, and the type a failed resolution yields. Each is
-    // zero-width because no slot is ever reserved for one.
+    // Never held: the characters a 'ref str' names, and the type a failed
+    // resolution yields. Each is zero-width because no slot is ever reserved
+    // for one.
     case TYPE_STR:
     case TYPE_ERROR:
         *size = 0;
@@ -382,8 +370,6 @@ bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *
     return true;
 }
 
-const TypeDef *type_registry_array_def(TypeRegistry *registry) { return registry->primitives.array_def; }
-
 Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name) {
     if (!type) {
         return NULL;
@@ -429,7 +415,29 @@ const Type *type_registry_array_of(TypeRegistry *registry, const Type *element, 
         {.kind = TYPE_ARG_CONST, .value = length},
     };
 
-    return type_registry_instantiate(registry, registry->primitives.array_def, args, 2);
+    TypeApp app = {.ctor = TYPE_CTOR_ARRAY, .args = args, .arg_count = 2};
+
+    Type **existing = application_lookup(registry, app);
+    if (existing) {
+        return *existing;
+    }
+
+    // Structural, so it has no name: what an array is, is its element and how
+    // many of them, and both are read off the application it was interned on.
+    Type *type = type_create(registry->arena, TYPE_ARRAY, NULL);
+
+    type->array.element = element;
+    type->array.length = length;
+    type->has_param = type_has_param(element);
+
+    // Interned before the drop is derived, so a recursive element -- an array
+    // of a struct holding one -- finds this entry rather than building a
+    // second.
+    application_insert(registry, app, type);
+
+    type_registry_drop_of(registry, type);
+
+    return type;
 }
 
 // The three built-in one-argument constructors, which differ only in the kind
@@ -624,29 +632,6 @@ const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDef *def
         has_param |= args[i].kind == TYPE_ARG_TYPE && type_has_param(args[i].type);
     }
 
-    // A run of one argument, as many as another says. Laid out from the
-    // arguments rather than from a field list, which is what the shape says.
-    if (def->shape == TYPE_SHAPE_ARRAY) {
-        assert(arg_count == 2 && args[0].kind == TYPE_ARG_TYPE && args[1].kind == TYPE_ARG_CONST &&
-               "an array is an element and a length");
-
-        Type *type = type_create(registry->arena, TYPE_ARRAY, def->name);
-
-        type->array.element = args[0].type;
-        type->array.length = args[1].value;
-        type->has_param = has_param;
-        type->decl = def;
-
-        // Interned before the drop is derived, so a recursive element -- an
-        // array of a struct holding one -- finds this entry rather than
-        // building a second.
-        application_insert(registry, app, type);
-
-        type_registry_drop_of(registry, type);
-
-        return type;
-    }
-
     // A struct in every way that is laid out: the fields are where its width,
     // its alignment and what it owns all come from. What the declaration adds
     // is that they may have been written in terms of a parameter.
@@ -757,7 +742,6 @@ TypePrimitiveNames type_primitive_names(StringPool *strings) {
         // can print it.
         .byte_name = string_from_cstr(strings, "byte"),
         .str_name = string_from_cstr(strings, "str"),
-        .array_name = string_from_cstr(strings, "Array"),
 
         // The poison type, never bound in any scope: no script can name it.
         .error_name = string_from_cstr(strings, "<error>"),

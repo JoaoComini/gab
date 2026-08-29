@@ -204,7 +204,19 @@ static const char *type_name(ResolverState *state, const Type *type) {
         return type_name_of(type)->data;
     }
 
-    const char *inner = type_name_of(type) ? type_name_of(type)->data : type_name(state, type_pointee(type));
+    // Structural, so its printable form is built from what it is made of rather
+    // than stored: an array is a run of its element, as many as its length.
+    if (type_kind(type) == TYPE_ARRAY) {
+        const char *element = type_name(state, type_array_element(type));
+        size_t length = strlen(element) + 32;
+        char *out = arena_alloc(state->compile_arena, length);
+
+        snprintf(out, length, "[%s; %d]", element, type_array_length(type));
+
+        return out;
+    }
+
+    const char *inner = type_name(state, type_pointee(type));
     const char *prefix = type_kind(type) == TYPE_REF ? "ref " : "box ";
     size_t length = strlen(prefix) + strlen(inner) + 1;
     char *out = arena_alloc(state->compile_arena, length);

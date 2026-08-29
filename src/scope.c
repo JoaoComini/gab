@@ -30,10 +30,9 @@ static void scope_declare_primitives(Scope *scope) {
         scope_decl_type(scope, type_name_of(type), type);
     }
 
-    // 'Array' is not among them. Every array is written '[T; N]', which is a
-    // shape the language spells rather than a name it looks up -- so the
-    // declaration behind one is reached from the syntax and never from a scope,
-    // and a unit may declare its own 'Array' without shadowing anything.
+    // No 'Array' among them. Every array is written '[T; N]', a shape the
+    // language spells rather than a name it looks up -- so nothing declares one
+    // and no scope names one, and a unit may call a struct of its own 'Array'.
     //
     // And nothing else. What a standard library provides is named where it is
     // declared -- see builtin_declare -- which is what keeps 'String' out

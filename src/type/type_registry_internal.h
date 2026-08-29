@@ -125,12 +125,6 @@ typedef struct {
     // header, which is what 'ref' builds for every type in the language.
     const Type *str_type;
 
-    // 'Array', the bare name. A declaration rather than a type: every array is
-    // '[T; N]' for some element, so nothing names one without applying it. What
-    // a spec resolves to before its arguments are given, and where the set every
-    // array answers is registered.
-    const TypeDef *array_def;
-
     const Type *error_type;
 } TypePrimitives;
 
