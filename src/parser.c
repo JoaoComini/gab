@@ -659,16 +659,9 @@ static TypeExpr *parse_type_expr(Parser *parser) {
 
         parser_next_token(parser); // eat ']'
 
-        // Named rather than given a constructor of its own: 'Array' is the
-        // declaration a run of elements is interned under, and the resolver
-        // looks it up as it does any other name. The literal outlives the
-        // parse, so the ref over it stays good.
-        TypeExpr *array = type_expr_apply(type_expr_name(string_ref_create("Array")));
-
-        type_expr_list_add(&array->apply.args, element);
-        array->apply.length = length;
-
-        return array;
+        // Its own node rather than a synthesized name: the language spells this
+        // shape, so nothing has to be in scope for it to mean what it means.
+        return type_expr_array(element, length);
     }
 
     // 'ref T' is a borrow: a pointer that does not own what it names. It stands

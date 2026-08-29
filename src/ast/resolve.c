@@ -1696,9 +1696,9 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
     }
 
     case TYPE_EXPR_APPLY: {
-        // Looked up rather than resolved: 'Array' names no type on its own, so
-        // resolving the base as an expression of its own would report that
-        // before this ever saw it.
+        // Looked up rather than resolved as a type expression of its own: a
+        // declaration owed arguments names no type until this supplies them, so
+        // resolving it that way would report the arity error before this could.
         Scope *base_scope = resolver_expr_scope(state, expr->apply.base->name);
 
         String *base_name = base_scope ? resolver_expr_member(state, expr->apply.base->name) : NULL;
@@ -1722,7 +1722,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
         // Nothing here is 'Vec': what a constructor takes and how its
         // instantiations are laid out are read off the declaration, so a second
         // generic name resolves through this same arm.
-        if (base_def && base_def != type_registry_array_def(registry)) {
+        if (base_def) {
             if (expr->apply.args.size != base_def->param_count) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' takes %zu type argument(s), not %zu",
                            base_def->name->data, base_def->param_count, expr->apply.args.size);
@@ -1774,24 +1774,27 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
             return type_registry_apply(registry, base_def, args, expr->apply.args.size);
         }
 
-        if (base_def != type_registry_array_def(registry)) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "%s does not take an element type",
-                       base ? type_name(state, base) : base_def->name->data);
-            return resolver_error_type(state);
-        }
+        // Resolved to something that is not a declaration -- a primitive, or a
+        // parameter -- so there is nothing for the arguments to be applied to.
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "%s does not take a type argument",
+                   type_name(state, base));
 
-        // One element type is all 'Array' takes. The list holds however many
-        // were written, so a count that does not match is this constructor's
-        // own complaint rather than something the shape prevented.
-        if (expr->apply.args.size != 1) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'Array' takes one element type");
-            return resolver_error_type(state);
-        }
+        return resolver_error_type(state);
+    }
 
-        const Type *element = resolve_type_expr(state, expr->apply.args.data[0], span);
+    case TYPE_EXPR_ARRAY: {
+        const Type *element = resolve_type_expr(state, expr->array.element, span);
 
         if (is_error_type(element)) {
             return resolver_error_type(state);
+        }
+
+        // A parameter is not a width and is not owed one: a declaration may
+        // write '[T; 3]' over its own parameter, and every question about the
+        // run -- what it strides by, how far it reaches -- is asked where a
+        // mention supplies an argument.
+        if (type_has_param(element)) {
+            return type_registry_array_of(registry, element, expr->array.length);
         }
 
         if (reject_unsized(state, element, span, "an array's element")) {
@@ -1819,7 +1822,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
             return resolver_error_type(state);
         }
 
-        int32_t length = expr->apply.length;
+        int32_t length = expr->array.length;
 
         // An array of nothing has no element to index and no width to lay out.
         if (length <= 0) {
@@ -1835,7 +1838,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
 
         if (bytes > GAB_MAX_TYPE_BYTES) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, span,
-                       "'Array' of %d needs %zu bytes, over the %d a frame addresses", length, bytes,
+                       "an array of %d needs %zu bytes, over the %d a frame addresses", length, bytes,
                        GAB_MAX_TYPE_BYTES);
             return resolver_error_type(state);
         }
@@ -1866,13 +1869,8 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
     // bare mention of one is the arity error a wrong count is: what it takes is
     // what makes it a type.
     if (resolution.kind == RESOLUTION_TYPE_DECL) {
-        if (resolution.def == type_registry_array_def(registry)) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, span,
-                       "'Array' needs an element type and a length, as '[int; 3]'");
-        } else {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' takes %zu type argument(s), not 0",
-                       resolution.def->name->data, resolution.def->param_count);
-        }
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' takes %zu type argument(s), not 0",
+                   resolution.def->name->data, resolution.def->param_count);
 
         return resolver_error_type(state);
     }

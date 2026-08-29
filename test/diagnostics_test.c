@@ -558,6 +558,35 @@ static void test_a_ring_too_long_to_name_is_elided_at_a_hop() {
     test_context_free(&ctx);
 }
 
+// '[T; N]' is a shape the language spells, not a name it looks up, so nothing
+// called 'Array' is in scope for it to collide with: a unit may declare that
+// name for itself.
+static void test_a_unit_may_declare_a_struct_called_array() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    compile(&ctx, "struct Array { n: int }\n"
+                  "struct Holder { a: Array, xs: [int; 2] }\n");
+
+    assert(diagnostics_count(&ctx.diagnostics) == 0);
+
+    test_context_free(&ctx);
+}
+
+// Arguments apply to a declaration. A primitive is declared by nothing, so
+// there is nothing for them to be applied to.
+static void test_rejects_type_arguments_on_a_primitive() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    compile(&ctx, "struct V { a: int<bool> }\n");
+
+    assert(diagnostics_count(&ctx.diagnostics) == 1);
+    assert(strcmp(diagnostics_get(&ctx.diagnostics, 0)->message, "int does not take a type argument") == 0);
+
+    test_context_free(&ctx);
+}
+
 static void test_reports_every_bad_field() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -925,6 +954,8 @@ int main(void) {
     test_rejects_shadowing_a_builtin();
     test_reports_self_referential_struct();
     test_reports_mutual_containment_cycle();
+    test_a_unit_may_declare_a_struct_called_array();
+    test_rejects_type_arguments_on_a_primitive();
     test_reports_the_path_a_containment_ring_takes();
     test_a_second_ring_traces_only_its_own_path();
     test_a_ring_reached_from_outside_names_only_the_ring();

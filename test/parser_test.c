@@ -649,17 +649,14 @@ static void test_a_type_is_a_tree() {
     TypeExpr *box = ref->indirect.inner;
     assert(box->kind == TYPE_EXPR_BOX);
 
+    // A shape the language spells, so it is its own node rather than a name
+    // that would have to be in scope. The length rides beside the element: it
+    // is not a type, so nothing resolves it.
     TypeExpr *array = box->indirect.inner;
-    assert(array->kind == TYPE_EXPR_APPLY);
-    assert(string_ref_equals_cstr(array->apply.base->name, "Array"));
-
-    // The arguments are a list, so a constructor taking more than one needs no
-    // second field to hold them. A length is not one of them: it is not a type,
-    // and it rides beside them.
-    assert(array->apply.args.size == 1);
-    assert(array->apply.args.data[0]->kind == TYPE_EXPR_NAME);
-    assert(string_ref_equals_cstr(array->apply.args.data[0]->name, "int"));
-    assert(array->apply.length == 3);
+    assert(array->kind == TYPE_EXPR_ARRAY);
+    assert(array->array.element->kind == TYPE_EXPR_NAME);
+    assert(string_ref_equals_cstr(array->array.element->name, "int"));
+    assert(array->array.length == 3);
 
     ast_unit_destroy(unit);
 }

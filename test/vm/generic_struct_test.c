@@ -109,6 +109,15 @@ static void test_a_declaration_owed_arguments_converts_nothing() {
                           "let r: int = f();"));
 }
 
+// An array of a parameter has no width where it is written, only where a
+// mention supplies one: the run is laid out from whatever the argument turns
+// out to be.
+static void test_a_parameter_is_the_element_of_an_array() {
+    assert(test_run_int("struct Buf<T> { xs: [T; 3] }\n"
+                        "func f(): int { let b: Buf<int>; b.xs[1] = 9; return b.xs[1]; }\n"
+                        "let r: int = f();") == 9);
+}
+
 int main() {
     test_a_generic_field_holds_its_argument();
     test_two_instantiations_are_two_types();
@@ -116,6 +125,7 @@ int main() {
     test_a_mention_owes_every_argument();
     test_a_parameter_names_nothing_outside_its_declaration();
     test_a_parameter_nests_under_a_constructor();
+    test_a_parameter_is_the_element_of_an_array();
     test_each_argument_reaches_its_own_parameter();
     test_a_declaration_reaches_itself_through_an_indirection();
     test_a_declaration_reaches_one_declared_below_it();

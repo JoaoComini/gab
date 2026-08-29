@@ -30,13 +30,11 @@ static void scope_declare_primitives(Scope *scope) {
         scope_decl_type(scope, type_name_of(type), type);
     }
 
-    // 'Array' is a declaration rather than a type: resolving a spec turns it
-    // into the '[T; N]' its arguments name, and it must be found here for that
-    // spec to get as far as applying one.
-    const TypeDef *array_def = type_registry_array_def(registry);
-
-    scope_decl_type_def(scope, array_def->name, array_def);
-
+    // 'Array' is not among them. Every array is written '[T; N]', which is a
+    // shape the language spells rather than a name it looks up -- so the
+    // declaration behind one is reached from the syntax and never from a scope,
+    // and a unit may declare its own 'Array' without shadowing anything.
+    //
     // And nothing else. What a standard library provides is named where it is
     // declared -- see builtin_declare -- which is what keeps 'String' out
     // of the language and in the library that provides it.
