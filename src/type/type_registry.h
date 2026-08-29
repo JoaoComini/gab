@@ -82,6 +82,29 @@ typedef struct TypeDecl {
     size_t lent_part_count;
 } TypeDecl;
 
+/*
+    Stating a struct type in one call, for a provider that knows its fields.
+
+    What a host and a standard library declare with. The declaration and its
+    field array are allocated in the registry's arena, so the caller states what
+    the type is and holds nothing: a TypeDef outlives the call that names it,
+    and getting that wrong is a use-after-free the type system cannot see.
+
+    A plain struct only. A generic declaration is stated with a TypeDecl
+    directly, since its fields are written over parameters the caller has to
+    name.
+*/
+typedef struct TypeFieldSpec {
+    String *name;
+    const Type *type;
+} TypeFieldSpec;
+
+// Interns the struct, lays it out and settles how it frees. The returned type
+// is finished: unlike a unit's struct, whose name is interned before its fields
+// resolve, everything about this one is known at the call.
+const Type *type_registry_declare_struct(TypeRegistry *registry, String *name, const TypeFieldSpec *fields,
+                                         size_t field_count);
+
 // Interning, not naming. One registry per VM holds the primitives and every
 // pointer type, because the type system compares types by pointer identity: a
 // second 'int' or a second 'box Player' would silently break every comparison.
@@ -143,39 +166,16 @@ const TypeDef *type_registry_array_def(TypeRegistry *registry);
 
 Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name);
 
-/*
-    Declaring a type in two steps, for the one caller that cannot do it in one.
-
-    A struct's fields may name types not yet declared, so its name has to be
-    bound before they resolve: 'struct A { b: box B }' is legal, and B may come
-    later in the unit. The name is therefore opened here, and closed once the
-    fields are settled -- with type_registry_close_struct where they were
-    resolved onto the declaration, which is what a unit's struct does, or with
-    type_add_field and type_registry_complete where a caller fills the type
-    itself.
-
-    A provider that knows its fields up front -- the standard library, and a host
-    -- states them at once with type_registry_declare instead.
-
-    Between the two, the type has no layout: what may be done with it is what
-    needs no width, which is to name it and to point at it.
-*/
-// The declaration is carried from the start, so that a name opened here answers
-// what it declares the same way one instantiated from a TypeDef does. Its
-// fields are filled as the struct's are; nothing reads them until it is
-// complete.
-Type *type_registry_open_struct(TypeRegistry *registry, TypeDef *def, size_t max_fields);
-
-// Lays the type out and settles how it frees, which is what finishes it. Called
-// once every field is added; a type whose fields did not resolve is withdrawn
-// instead of completed.
-void type_registry_complete(TypeRegistry *registry, Type *type);
-
-// Gives an opened declaration's type the fields the declaration now holds, and
-// finishes it. What a resolver calls once a struct's fields have resolved: the
-// fields live on the declaration, and this is what puts them in the one type
-// that declaration applied to no arguments stands for.
-const Type *type_registry_close_struct(TypeRegistry *registry, TypeDef *def);
+// Lays the type out and settles how it frees, which is what finishes it. A
+// declaration's own fields are what it reads, so this is called once they have
+// resolved.
+//
+// Separate from interning because the two answer different questions and are
+// demanded at different times: a name is interned when it is declared, so that
+// a sibling's field may reach it, while a width cannot be settled until every
+// field it is composed of has one. That is the split rustc draws between
+// 'adt_def' and 'layout_of'.
+void type_registry_complete(TypeRegistry *registry, const Type *type);
 
 /*
     What freeing a value of this type does, or NULL when it owns nothing.

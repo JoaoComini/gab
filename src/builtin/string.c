@@ -203,25 +203,11 @@ void builtin_register_string(VM *vm) {
     // The block owns the characters and carries the capacity it was taken at,
     // so freeing it asks nothing else -- and the room past the live ones is
     // what lets a string grow without reallocating on every push.
-    TypeField *fields = arena_alloc(vm->env.arena, sizeof(TypeField));
-
-    fields[0] = (TypeField){
-        .name = string_from_cstr(&vm->env.strings, "data"),
-        .type = type_registry_block_of(registry, type_registry_get_primitive(registry, TYPE_BYTE)),
-    };
-
-    // A declaration taking no parameters, which is what a plain struct is: it
-    // is its own instantiation, and supplying nothing is what declares it.
-    //
-    // Arena-allocated because the type interned from it keeps the pointer: a
-    // declaration outlives the call that states it, and every instantiation
-    // reads its fields.
-    TypeDef *def = arena_alloc(vm->env.arena, sizeof(TypeDef));
-
-    *def = (TypeDef){
-        .name = string_from_cstr(&vm->env.strings, "String"),
-        .fields = fields,
-        .field_count = 1,
+    const TypeFieldSpec fields[] = {
+        {
+            .name = string_from_cstr(&vm->env.strings, "data"),
+            .type = type_registry_block_of(registry, type_registry_get_primitive(registry, TYPE_BYTE)),
+        },
     };
 
     // Which of its bytes name the characters it stands for: the address its
@@ -233,14 +219,20 @@ void builtin_register_string(VM *vm) {
          .size = sizeof(int32_t)},
     };
 
-    const TypeDecl decl = {
-        .def = def,
+    // A declaration taking no parameters, which is what a plain struct is: it
+    // is its own instantiation, and supplying nothing is what declares it.
+    const BuiltinTypeSpec spec = {
+        .name = "String",
+        .fields = fields,
+        .field_count = sizeof(fields) / sizeof(*fields),
         .derefs_to = type_registry_get_primitive(registry, TYPE_STR),
         .lent_parts = characters_named_by,
         .lent_part_count = sizeof(characters_named_by) / sizeof(*characters_named_by),
     };
 
-    const Type *string_type = builtin_declare_type(vm, &decl);
+    const Type *string_type = NULL;
+
+    builtin_declare(vm, &spec, &string_type);
 
     // Every method here reads its receiver and allocates nothing, so it takes a
     // borrow: an owning string lends to one, and a literal already is one.

@@ -68,6 +68,18 @@ struct Type {
         // fields naming them. What does is a reference to one, and that is the
         // reference's own shape rather than anything read off the pointee.
         struct {
+            // Set for an instantiation applied to no arguments, whose fields
+            // are its declaration's unsubstituted -- so they are read from
+            // 'decl' rather than held here, and the two cannot disagree.
+            //
+            // What lets the type be interned before its fields are known: a
+            // struct's name is bound when it is declared, and a sibling's field
+            // reaches this type while the declaration is still empty.
+            bool through_def;
+
+            // Only for an instantiation given arguments, whose fields are the
+            // declaration's with those substituted in. A real computation
+            // rather than a copy, which is why these are held.
             TypeField *fields;
             size_t field_count;
         } record;

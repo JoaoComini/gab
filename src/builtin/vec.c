@@ -16,35 +16,29 @@
 // A declaration, so no width is settled here -- what a vector is laid out as
 // follows from the element, and that is not known until one is applied.
 static const TypeDef *vec_declare_type(VM *vm) {
-    Arena *arena = vm->env.arena;
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
     // The block owns the memory and carries both the capacity it was taken at
     // and how far into it anything was written, so freeing it asks nothing
     // else -- which is the whole of what a vector is.
-    TypeField *fields = arena_alloc(arena, sizeof(TypeField));
-
-    fields[0] = (TypeField){
-        .name = string_from_cstr(&vm->env.strings, "data"),
-        .type = type_registry_block_of(registry, type_registry_param(registry, 0)),
+    //
+    // Written over parameter zero, which is what makes this a declaration: what
+    // a vector holds is not known until a mention supplies an element.
+    const TypeFieldSpec fields[] = {
+        {
+            .name = string_from_cstr(&vm->env.strings, "data"),
+            .type = type_registry_block_of(registry, type_registry_param(registry, 0)),
+        },
     };
 
-    // Arena-allocated rather than local: every instantiation reads this, and
-    // the declaration outlives the call that made it.
-    TypeDef *def = arena_alloc(arena, sizeof(TypeDef));
-
-    *def = (TypeDef){
-        .name = string_from_cstr(&vm->env.strings, "Vec"),
+    const BuiltinTypeSpec spec = {
+        .name = "Vec",
         .param_count = 1,
         .fields = fields,
-        .field_count = 1,
+        .field_count = sizeof(fields) / sizeof(*fields),
     };
 
-    const TypeDecl decl = {.def = def};
-
-    builtin_declare_type(vm, &decl);
-
-    return def;
+    return builtin_declare(vm, &spec, NULL);
 }
 
 // A vector's header: the block it owns, which carries how far into it anything

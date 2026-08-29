@@ -322,45 +322,9 @@ void type_registry_destroy(TypeRegistry *registry) {
     deref_key_destroy(registry->derefs);
 }
 
-Type *type_registry_open_struct(TypeRegistry *registry, TypeDef *def, size_t max_fields) {
-    assert(def && "an opened struct is a declaration whose fields are not resolved yet");
-    assert(def->param_count == 0 && "a declaration taking arguments is not opened by name");
-
-    def->fields_pending = true;
-    def->max_fields = max_fields;
-
-    // The same path a mention takes: a declaration applied to no arguments,
-    // which is what a plain struct is. What the two-step form adds is only that
-    // the fields arrive after the name does.
-    return (Type *)type_registry_instantiate(registry, def, NULL, 0);
-}
-
-void type_registry_complete(TypeRegistry *registry, Type *type) {
+void type_registry_complete(TypeRegistry *registry, const Type *type) {
     type_registry_layout_of(registry, type);
     type_registry_drop_of(registry, type);
-}
-
-const Type *type_registry_close_struct(TypeRegistry *registry, TypeDef *def) {
-    assert(def && def->fields_pending && "a closed struct is one whose fields were pending");
-    assert(def->param_count == 0 && "a declaration taking arguments stands for no one type");
-    assert(def->field_count <= def->max_fields && "a struct closed over more fields than it opened");
-
-    // The type interned when the name was opened, which is what a field naming
-    // it has been resolving to all along. Filled rather than rebuilt: every
-    // mention already holds this pointer.
-    Type *type = (Type *)type_registry_instantiate(registry, def, NULL, 0);
-
-    for (size_t i = 0; i < def->field_count; i++) {
-        type_add_field(type, def->fields[i].name, def->fields[i].type);
-    }
-
-    // Cleared last: until the fields are in, a second instantiation would hand
-    // back a type with room for them and nothing in it.
-    def->fields_pending = false;
-
-    type_registry_complete(registry, type);
-
-    return type;
 }
 
 const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl) {
@@ -374,11 +338,40 @@ const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl) 
     const Type *type =
         decl->def->param_count == 0 ? type_registry_instantiate(registry, decl->def, NULL, 0) : NULL;
 
+    // Its fields were stated with it, so nothing is waiting: a provider names a
+    // type it already knows the shape of, where a unit's struct is interned
+    // first and laid out once its fields resolve.
+    if (type) {
+        type_registry_complete(registry, type);
+    }
+
     if (decl->derefs_to) {
         type_registry_set_deref(registry, type, decl->derefs_to, decl->lent_parts, decl->lent_part_count);
     }
 
     return type;
+}
+
+const Type *type_registry_declare_struct(TypeRegistry *registry, String *name, const TypeFieldSpec *fields,
+                                         size_t field_count) {
+    assert(name && "a declared type is found by name");
+    assert((field_count == 0 || fields) && "a struct with fields states them");
+
+    TypeField *owned = field_count ? arena_alloc(registry->arena, field_count * sizeof(TypeField)) : NULL;
+
+    for (size_t i = 0; i < field_count; i++) {
+        owned[i] = (TypeField){.name = fields[i].name, .type = fields[i].type};
+    }
+
+    // In the registry's arena rather than the caller's frame: the type interned
+    // below reads its fields through this declaration for as long as it lives.
+    TypeDef *def = arena_alloc(registry->arena, sizeof(TypeDef));
+
+    *def = (TypeDef){.name = name, .fields = owned, .field_count = field_count};
+
+    const TypeDecl decl = {.def = def};
+
+    return type_registry_declare(registry, &decl);
 }
 
 bool type_registry_add_method(TypeRegistry *registry, MethodOwner owner, String *name, Symbol *method) {
@@ -693,18 +686,17 @@ const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDef *def
     // this entry rather than building a second and recursing forever.
     application_insert(registry, app, type);
 
-    // A declaration whose fields are not resolved yet: the name is interned so
-    // that anything naming it -- its own fields included -- reaches this type,
-    // and the fields are added as each resolves. What finishes it is
-    // type_registry_complete, which is what the two-step form is for.
+    // Applied to nothing, so substituting is the identity and the declaration's
+    // own fields are already this type's. Read through the declaration rather
+    // than copied out of it, which is what lets the type exist before they do:
+    // a struct's name is interned when it is declared, and its fields arrive
+    // when they resolve.
     //
-    // Only a declaration taking no arguments can be in this state: one taking
-    // them is written over parameters, and those are resolved before any
-    // mention can supply an argument.
-    if (def->fields_pending) {
-        type->record.fields =
-            def->max_fields ? arena_alloc(registry->arena, def->max_fields * sizeof(TypeField)) : NULL;
-        type->record.field_count = 0;
+    // That is the whole of why a forward reference works. 'struct A { b: box B
+    // }' interns B here to build the 'box B', and B's own fields land on the
+    // declaration this points at, whenever they are settled.
+    if (arg_count == 0) {
+        type->record.through_def = true;
 
         return type;
     }

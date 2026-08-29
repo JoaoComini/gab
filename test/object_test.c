@@ -34,19 +34,15 @@ static Allocator counting_allocator(AllocCounts *counts) {
 // out — freeing walks offsets, so the layout has to be real.
 static const Type *make_struct(TestContext *ctx, TypeRegistry *registry, const char *name,
                                const char **fields, const Type **field_types, size_t count) {
-    TypeDef *def = arena_alloc(ctx->arena, sizeof(TypeDef));
+    TypeFieldSpec spec[8];
 
-    *def = (TypeDef){.name = string_from_cstr(&ctx->strings, name)};
-
-    Type *type = type_registry_open_struct(registry, def, count);
+    assert(count <= sizeof(spec) / sizeof(*spec));
 
     for (size_t i = 0; i < count; i++) {
-        type_add_field(type, string_from_cstr(&ctx->strings, fields[i]), field_types[i]);
+        spec[i] = (TypeFieldSpec){.name = string_from_cstr(&ctx->strings, fields[i]), .type = field_types[i]};
     }
 
-    type_registry_drop_of(registry, type);
-
-    return type;
+    return type_registry_declare_struct(registry, string_from_cstr(&ctx->strings, name), spec, count);
 }
 
 // What a type owns decides its drop function, and a type that owns nothing has
@@ -480,12 +476,10 @@ static void test_a_type_carries_only_what_its_kind_has() {
     assert(type_field_count(box) == 0);
     assert(type_fields(box) == NULL);
 
-    TypeDef *player_def = arena_alloc(ctx.arena, sizeof(TypeDef));
+    const TypeFieldSpec health = {.name = string_from_cstr(&ctx.strings, "health"), .type = int_type};
 
-    *player_def = (TypeDef){.name = string_from_cstr(&ctx.strings, "Player")};
-
-    Type *player = type_registry_open_struct(registry, player_def, 1);
-    type_add_field(player, string_from_cstr(&ctx.strings, "health"), int_type);
+    const Type *player =
+        type_registry_declare_struct(registry, string_from_cstr(&ctx.strings, "Player"), &health, 1);
 
     assert(type_field_count(player) == 1);
     assert(type_pointee(player) == NULL);

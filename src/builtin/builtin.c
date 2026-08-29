@@ -10,17 +10,47 @@
 
 #include <stddef.h>
 
-const Type *builtin_declare_type(VM *vm, const TypeDecl *decl) {
+const TypeDef *builtin_declare(VM *vm, const BuiltinTypeSpec *spec, const Type **type) {
+    Arena *arena = vm->env.arena;
+
+    TypeField *fields = spec->field_count ? arena_alloc(arena, spec->field_count * sizeof(TypeField)) : NULL;
+
+    for (size_t i = 0; i < spec->field_count; i++) {
+        fields[i] = (TypeField){.name = spec->fields[i].name, .type = spec->fields[i].type};
+    }
+
+    // In the VM's arena, not the caller's frame: every instantiation reads
+    // these, and the declaration outlives the call that states it.
+    TypeDef *def = arena_alloc(arena, sizeof(TypeDef));
+
+    *def = (TypeDef){
+        .name = string_from_cstr(&vm->env.strings, spec->name),
+        .param_count = spec->param_count,
+        .fields = fields,
+        .field_count = spec->field_count,
+    };
+
+    const TypeDecl decl = {
+        .def = def,
+        .derefs_to = spec->derefs_to,
+        .lent_parts = spec->lent_parts,
+        .lent_part_count = spec->lent_part_count,
+    };
+
     Scope *scope = &vm->env.global_scope;
 
-    const Type *type = type_registry_declare(scope->type_registry, decl);
+    const Type *declared = type_registry_declare(scope->type_registry, &decl);
 
     // The name binds to what it declares, whatever its arity: one taking no
     // parameters is the type it was just instantiated into, and one taking them
     // becomes a type where a mention supplies them.
-    scope_decl_type_def(scope, decl->def->name, decl->def);
+    scope_decl_type_def(scope, def->name, def);
 
-    return type;
+    if (type) {
+        *type = declared;
+    }
+
+    return def;
 }
 
 // The Symbol a method is, whichever of the two it is registered against.

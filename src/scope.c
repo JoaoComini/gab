@@ -38,7 +38,7 @@ static void scope_declare_primitives(Scope *scope) {
     scope_decl_type_def(scope, array_def->name, array_def);
 
     // And nothing else. What a standard library provides is named where it is
-    // declared -- see builtin_declare_type -- which is what keeps 'String' out
+    // declared -- see builtin_declare -- which is what keeps 'String' out
     // of the language and in the library that provides it.
 }
 

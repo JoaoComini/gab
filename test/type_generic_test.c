@@ -117,9 +117,46 @@ static void test_two_declarations_alike_are_two_types() {
     arena_destroy(ctx.arena);
 }
 
+// A declaration applied to no arguments keeps no fields of its own: it reads
+// its declaration's. So the type may be interned while the declaration is still
+// empty, and the fields it answers with are whatever the declaration holds when
+// it is asked -- which is what a struct naming one declared below it needs.
+static void test_an_instantiation_reads_fields_declared_after_it() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    TypeRegistry *registry = type_registry_create(ctx.arena, &names);
+
+    TypeDef def = {.name = string_from_cstr(&ctx.strings, "Config")};
+
+    const Type *type = type_registry_instantiate(registry, &def, NULL, 0);
+
+    assert(type_field_count(type) == 0);
+
+    TypeField field = {
+        .name = string_from_cstr(&ctx.strings, "width"),
+        .type = type_registry_get_primitive(registry, TYPE_INT),
+    };
+
+    def.fields = &field;
+    def.field_count = 1;
+
+    assert(type_field_count(type) == 1);
+    assert(type_fields(type)[0].type == type_registry_get_primitive(registry, TYPE_INT));
+
+    // The same type, not a second interned once the fields arrived.
+    assert(type_registry_instantiate(registry, &def, NULL, 0) == type);
+
+    type_registry_destroy(registry);
+    string_pool_free(&ctx.strings);
+    arena_destroy(ctx.arena);
+}
+
 int main(void) {
     test_a_declared_field_nests_constructors();
     test_a_declaration_taking_no_parameters_is_its_own_instantiation();
     test_two_declarations_alike_are_two_types();
+    test_an_instantiation_reads_fields_declared_after_it();
     return 0;
 }

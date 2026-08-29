@@ -229,18 +229,14 @@ typedef struct TypeDef {
     // The fields an instantiation is laid out from, as ordinary types written
     // over the parameters. A field naming no parameter is already its own
     // answer; one that does is rebuilt when the arguments are known.
+    //
+    // The one place a nominal type's fields live. An instantiation applied to
+    // no arguments reads these directly rather than copying them, which is what
+    // lets its type be interned before they are resolved -- so these may be
+    // empty while a unit's structs are still being read, and filling them is
+    // what gives that type its fields.
     const TypeField *fields;
     size_t field_count;
-
-    // Set while the declaration's own fields are still resolving, which only a
-    // unit's struct is: its name must be interned before its fields can name it
-    // or each other, so instantiating it yields a type with room for them and
-    // nothing in it yet. Cleared by whoever fills them.
-    bool fields_pending;
-
-    // How many the pending fields will be, which is the room an instantiation
-    // reserves for them.
-    size_t max_fields;
 
     // What every instantiation answers, in terms of the parameters. Registered
     // where an instantiation is interned, since only there is the parameter
@@ -304,9 +300,6 @@ size_t type_field_count(const Type *type);
     reaching for one outside the registry is building a type nothing interned.
 */
 Type *type_create(Arena *arena, TypeKind kind, String *name);
-Type *type_struct_create(Arena *arena, String *name, size_t max_fields);
-
-void type_add_field(Type *type, String *name, const Type *field_type);
 
 // What a reference to this type carries besides the address.
 TypeMetadata type_metadata_of(const Type *type);

@@ -1933,12 +1933,13 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
         .param_count = param_count,
     };
 
-    // A declaration taking no parameters is opened here, because its name must
-    // stand for a type before its own fields resolve -- which is what lets two
-    // structs name each other. One taking them is written over parameters, so
-    // it has no width and nothing to open until a mention supplies arguments.
+    // Interned here, because the name must stand for a type before its own
+    // fields resolve -- which is what lets two structs name each other. The
+    // type reads its fields through this declaration, so it needs none of them
+    // yet. One taking parameters stands for no type until a mention supplies
+    // them.
     if (param_count == 0) {
-        type_registry_open_struct(state->current_scope->type_registry, def, stmt->struct_decl.fields.size);
+        type_registry_instantiate(state->current_scope->type_registry, def, NULL, 0);
     }
 
     scope_decl_type_def(state->current_scope, struct_name, def);
@@ -2130,10 +2131,11 @@ static void layout_struct(ResolverState *state, StructDecl *decl) {
     }
 
     // The declaration applied to no arguments, which is the type this name
-    // stands for. Interned when the name was bound so that a sibling's field
-    // could reach it, and given the fields resolved above -- which is the room
-    // the pending state was holding.
-    type_registry_close_struct(state->current_scope->type_registry, def);
+    // stands for: interned when the name was bound, and reading the fields
+    // settled just above. Nothing is written into it -- what is left is to
+    // settle the width they give it.
+    type_registry_complete(state->current_scope->type_registry,
+                           type_registry_instantiate(state->current_scope->type_registry, def, NULL, 0));
 }
 
 // Declares the function's name, return type, and parameter types — everything a

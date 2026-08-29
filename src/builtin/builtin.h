@@ -13,6 +13,26 @@
 // would do; nothing yet makes that worth a second mechanism.
 void builtin_register_all(VM *vm);
 
+// What a library says one of its types is: the name, the fields, and how many
+// parameters those fields are written over. Zero for a plain struct.
+//
+// The declaration itself is built in the VM's arena rather than by the caller,
+// because the type interned from it reads its fields for as long as it lives --
+// a TypeDef on a stack frame is a use-after-free the type system cannot see.
+typedef struct BuiltinTypeSpec {
+    const char *name;
+    size_t param_count;
+
+    const TypeFieldSpec *fields;
+    size_t field_count;
+
+    // What a value of this type stands for, and which of its bytes name that
+    // view. Both or neither, as in TypeDecl.
+    const Type *derefs_to;
+    const LentPart *lent_parts;
+    size_t lent_part_count;
+} BuiltinTypeSpec;
+
 // Declares a type the standard library provides: interned on the VM's registry
 // and named in its global scope, which is where every other type name lives.
 //
@@ -22,7 +42,12 @@ void builtin_register_all(VM *vm);
 //
 // Absent from a compile that never had a VM, which is what keeps 'String' out
 // of the language and in the library that provides it.
-const Type *builtin_declare_type(VM *vm, const TypeDecl *decl);
+//
+// Returns the declaration rather than the type, since one taking parameters
+// stands for no type until a mention supplies them. 'type' is filled in with
+// the instantiation for a declaration taking none, and left NULL otherwise;
+// pass NULL where it is not wanted.
+const TypeDef *builtin_declare(VM *vm, const BuiltinTypeSpec *spec, const Type **type);
 
 // Declares one method on a builtin type: a Symbol in the type's method map, and
 // an entry in the table OP_CALL_EXTERN indexes. The body is a GabExternFn

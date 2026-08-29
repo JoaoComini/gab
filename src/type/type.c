@@ -25,31 +25,13 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     return type;
 }
 
-Type *type_struct_create(Arena *arena, String *name, size_t max_fields) {
-    Type *type = type_create(arena, TYPE_STRUCT, name);
-
-    if (max_fields > 0) {
-        type->record.fields = arena_alloc(arena, max_fields * sizeof(TypeField));
-    }
-
-    return type;
-}
-
-void type_add_field(Type *type, String *name, const Type *field_type) {
-    assert(type->record.fields && "struct was created without room for fields");
-
-    type->record.fields[type->record.field_count++] = (TypeField){
-        .name = name,
-        .type = field_type,
-    };
-}
-
 const TypeField *type_find_field(const Type *type, const String *name) {
-    for (size_t i = 0; i < type->record.field_count; i++) {
-        const TypeField *field = &type->record.fields[i];
+    const TypeField *fields = type_fields(type);
+    size_t count = type_field_count(type);
 
-        if (field->name == name) {
-            return field;
+    for (size_t i = 0; i < count; i++) {
+        if (fields[i].name == name) {
+            return &fields[i];
         }
     }
 
@@ -134,8 +116,12 @@ const TypeField *type_fields(const Type *type) {
     }
 
     switch (type->kind) {
+    // An instantiation applied to nothing keeps no fields of its own: they are
+    // its declaration's, unsubstituted. Read through rather than copied, so a
+    // struct whose fields resolve after its name was interned needs nothing
+    // written back into the type.
     case TYPE_STRUCT:
-        return type->record.fields;
+        return type->record.through_def ? type->decl->fields : type->record.fields;
 
     default:
         return NULL;
@@ -149,7 +135,7 @@ size_t type_field_count(const Type *type) {
 
     switch (type->kind) {
     case TYPE_STRUCT:
-        return type->record.field_count;
+        return type->record.through_def ? type->decl->field_count : type->record.field_count;
 
     default:
         return 0;
@@ -222,8 +208,8 @@ bool type_is_owned(const Type *type) {
 
     // A struct is not itself an owner: it owns through whichever fields do, and
     // is freed field by field rather than as one value.
-    for (size_t i = 0; i < type->record.field_count; i++) {
-        if (type_is_owned(type->record.fields[i].type)) {
+    for (size_t i = 0; i < type_field_count(type); i++) {
+        if (type_is_owned(type_fields(type)[i].type)) {
             return true;
         }
     }
@@ -274,8 +260,8 @@ bool type_is_copyable(const Type *type) {
         break;
     }
 
-    for (size_t i = 0; i < type->record.field_count; i++) {
-        if (!type_is_copyable(type->record.fields[i].type)) {
+    for (size_t i = 0; i < type_field_count(type); i++) {
+        if (!type_is_copyable(type_fields(type)[i].type)) {
             return false;
         }
     }
