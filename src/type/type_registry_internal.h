@@ -151,6 +151,11 @@ typedef struct TypeRegistry {
     // How wide a value of each type is, and where its fields begin.
     LayoutTable *layouts;
 
+    // The parameters, interned by index. One set for every declaration: a
+    // parameter is a position rather than an identity, so 'Vec's element and
+    // whatever a second declaration writes at index zero are one type.
+    const Type *params[GAB_MAX_TYPE_PARAMS];
+
     TypePrimitives primitives;
 
 } TypeRegistry;

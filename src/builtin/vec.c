@@ -17,17 +17,16 @@
 // follows from the element, and that is not known until one is applied.
 static const Type *vec_declare_type(VM *vm) {
     Arena *arena = vm->env.arena;
+    TypeRegistry *registry = vm->env.global_scope.type_registry;
 
     // The block owns the memory and carries both the capacity it was taken at
     // and how far into it anything was written, so freeing it asks nothing
     // else -- which is the whole of what a vector is.
-    GenericField *fields = arena_alloc(arena, sizeof(GenericField));
+    TypeField *fields = arena_alloc(arena, sizeof(TypeField));
 
-    fields[0] = (GenericField){
+    fields[0] = (TypeField){
         .name = string_from_cstr(&vm->env.strings, "data"),
-        .from = GENERIC_FROM_PARAM,
-        .param = 0,
-        .ctor = TYPE_CTOR_BLOCK,
+        .type = type_registry_block_of(registry, type_registry_param(registry, 0)),
     };
 
     // Arena-allocated rather than local: every instantiation reads this, and
@@ -137,19 +136,22 @@ void builtin_register_vec(VM *vm) {
     // Every method reaches the header in place, so each takes a pointer to it:
     // a receiver by value would copy a vector, which owns its block and so
     // cannot be copied at all.
-    const GenericField receiver = {.from = GENERIC_FROM_SELF, .ctor = TYPE_CTOR_REF};
+    //
+    // Written as a reference to the declaration applied to its own parameter,
+    // which is what 'Vec<T>' is from inside the declaration. Substituting it
+    // finds the instantiation being built, so no receiver needs naming a self
+    // the declaration could not otherwise say.
+    const Type *element = type_registry_param(registry, 0);
+    const Type *self = type_registry_instantiate(registry, vec_decl, &element, 1);
+    const Type *receiver = type_registry_ref_to(registry, self);
 
-    // The element, as the parameter it was declared over. What 'push' takes and
-    // what 'at' hands back are the same type, filled in per instantiation.
-    const GenericField element = {.from = GENERIC_FROM_PARAM, .param = 0, .ctor = TYPE_CTOR_NOMINAL};
-
-    const GenericField an_int = {.fixed = type_registry_get_primitive(registry, TYPE_INT)};
+    const Type *an_int = type_registry_get_primitive(registry, TYPE_INT);
 
     // Arena-allocated rather than local: the declaration holds these for as
     // long as the VM lives, since an instantiation reads them whenever one is
     // first named.
-    GenericField *push_params = arena_alloc(arena, sizeof(GenericField));
-    GenericField *at_params = arena_alloc(arena, sizeof(GenericField));
+    const Type **push_params = arena_alloc(arena, sizeof(const Type *));
+    const Type **at_params = arena_alloc(arena, sizeof(const Type *));
     GenericMethod *methods = arena_alloc(arena, 3 * sizeof(GenericMethod));
 
     push_params[0] = element;
@@ -162,7 +164,7 @@ void builtin_register_vec(VM *vm) {
 
         // Nothing: a push is done for what it leaves in the vector, and a type
         // returning nothing is what a NULL return type is everywhere.
-        .result = (GenericField){.from = GENERIC_FROM_NOTHING},
+        .result = NULL,
         .params = push_params,
         .param_count = 1,
     };

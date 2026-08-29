@@ -70,6 +70,17 @@ typedef enum {
     // How many of those elements are live is not its business: a block is
     // capacity, and whatever holds one counts what has been written into it.
     TYPE_BLOCK,
+    // A generic declaration's parameter, as an index into the arguments an
+    // instantiation supplies. What lets a declaration's field be an ordinary
+    // type: 'Vec' holds a block of parameter zero, written with the same
+    // constructors any other type is, and instantiating one is a walk that
+    // replaces the parameter and rebuilds what stood over it.
+    //
+    // Never a value. It has no width and no drop, and every question a laid-out
+    // type answers is refused here rather than answered wrongly -- a parameter
+    // reaching a slot is a resolver error, which is what type_is_sized keeps.
+    TYPE_PARAM,
+
     TYPE_UNKNOWN,
     TYPE_ERROR,
 } TypeKind;
@@ -166,68 +177,12 @@ typedef struct TypeField {
 } TypeField;
 
 /*
-    A generic declaration: the fields its instantiations are laid out from, in
-    terms of the parameters it takes.
-
-    What makes it a declaration rather than a type is that a field may name a
-    parameter rather than a type. 'Vec' says its block holds T without saying
-    what T is, and interning 'Vec<int>' is that said with int -- which is the
-    whole of what instantiating one does.
-
-    Held beside the type the name binds to, so that 'Vec' resolves to something
-    a diagnostic can print while naming no value. Nothing is laid out here: a
-    width follows from an instantiation's fields, and a parameter has none.
-*/
-typedef struct TypeParamRef TypeParamRef;
-
-// One field of a declaration, whose type is either fixed or built from the
-// parameters. A constructor plus an argument rather than a tree, because what
-// a declaration's field may say is exactly this today: 'int', or one of the
-// built-in constructors applied to a parameter.
-typedef struct GenericField {
-    String *name;
-
-    // The type, when it does not mention a parameter.
-    const Type *fixed;
-
-    // What the type is built from, when it is not fixed.
-    enum {
-        // No type at all: what a method returning nothing returns. First, so
-        // that a field left zeroed says the thing that cannot be mistaken for
-        // an element.
-        GENERIC_FROM_NOTHING,
-
-        // One of the declaration's parameters, named by 'param'.
-        GENERIC_FROM_PARAM,
-
-        // The instantiation itself, which is what a method's receiver is: a
-        // 'Vec<T>' method takes the 'Vec<T>' it was instantiated for, and that
-        // type does not exist until the instantiation does.
-        GENERIC_FROM_SELF,
-    } from;
-
-    // Which parameter, counting from zero. Read only for GENERIC_FROM_PARAM.
-    size_t param;
-
-    // What is applied to it, or TYPE_CTOR_NOMINAL to take it as it is.
-    TypeCtor ctor;
-} GenericField;
-
-/*
-    What a generic name declares: how many parameters it takes and what its
-    instantiations hold.
-
-    One of these per generic type, built where the builtins are and read where
-    an application is interned. A user's own generic declaration would be
-    another, which is why this is a shape rather than a special case for 'Vec'.
-*/
-/*
     One method a generic declaration answers, in terms of its parameters.
 
-    The same shape a field is: a type is either fixed or built from a parameter,
-    so what 'push' takes and what 'at' returns are written once and substituted
-    per instantiation. A body stays C, since growing a block is what a C body is
-    for.
+    Every type here is an ordinary type that may mention a parameter, so what
+    'push' takes and what 'at' hands back are written the way any signature is
+    and substituted per instantiation. A body stays C, since growing a block is
+    what a C body is for.
 */
 typedef struct GenericMethod {
     // Interned by the provider, as every name the registry is given is.
@@ -238,19 +193,35 @@ typedef struct GenericMethod {
     // reaching.
     void *body;
 
-    // The receiver and the return, each either fixed or from a parameter, and
-    // what the caller writes. See GenericField for how one is read.
-    GenericField receiver;
-    GenericField result;
+    // The receiver, what the caller writes, and what comes back. NULL for a
+    // method returning nothing, which is what a NULL return type is everywhere.
+    const Type *receiver;
+    const Type *result;
 
-    const GenericField *params;
+    const Type *const *params;
     size_t param_count;
 } GenericMethod;
 
+/*
+    A generic declaration: the fields its instantiations are laid out from and
+    the methods they answer, in terms of the parameters it takes.
+
+    What makes it a declaration rather than a type is that a field may mention a
+    parameter. 'Vec' says its block holds T without saying what T is, and
+    interning 'Vec<int>' is that said with int -- which is the whole of what
+    instantiating one does.
+
+    Held beside the type the name binds to, so that 'Vec' resolves to something
+    a diagnostic can print while naming no value. Nothing is laid out here: a
+    width follows from an instantiation's fields, and a parameter has none.
+*/
 typedef struct GenericDecl {
     size_t param_count;
 
-    const GenericField *fields;
+    // The fields an instantiation is laid out from, as ordinary types written
+    // over the parameters. A field naming no parameter is already its own
+    // answer; one that does is rebuilt when the arguments are known.
+    const TypeField *fields;
     size_t field_count;
 
     // What every instantiation answers, in terms of the parameters. Registered
@@ -283,6 +254,15 @@ const GenericDecl *type_generic(const Type *type);
 GAB_LIST(TypeList, type_list, const Type *)
 
 const Type *type_pointee(const Type *type);
+
+// Which parameter this is, for a TYPE_PARAM. Asked only under a declaration,
+// where an index is what an argument is supplied by.
+size_t type_param_index(const Type *type);
+
+// Whether this type mentions a parameter anywhere inside it, so that
+// substituting over it has anything to do. A type that mentions none is its own
+// substitution, which is what keeps the walk to the declarations that need it.
+bool type_has_param(const Type *type);
 
 // The fields a layout was computed from. Empty for a kind laid out some other
 // way, so a walk over them is the right no-op there.

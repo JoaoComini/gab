@@ -283,6 +283,12 @@ TypeRegistry *type_registry_create(Arena *arena, const TypePrimitiveNames *names
     registry->applications =
         type_app_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
+
+    // Interned on demand, so nothing stands here until a declaration asks for
+    // one. The arena hands back whatever it held, and this is what a lookup
+    // tests against.
+    memset(registry->params, 0, sizeof(registry->params));
+
     register_primitives(registry, names);
 
     return registry;
@@ -406,6 +412,7 @@ const Type *type_registry_array_of(TypeRegistry *registry, const Type *element, 
 
     type->array.element = element;
     type->array.length = length;
+    type->has_param = type_has_param(element);
 
     // The declaration this instantiates, which is where its methods are
     // declared while none of them reads the element.
@@ -447,13 +454,20 @@ static const Type *indirect_to(TypeRegistry *registry, TypeCtor ctor, TypeKind k
     // to one is an address and that count. The pointee decides, which is what
     // keeps a reference's width from disagreeing with what it names.
     type->indirect.pointee = inner;
+    type->has_param = type_has_param(inner);
 
     // Interned before the drop is selected, so a pointee reaching back here --
     // a struct holding a pointer to its own type -- finds this entry rather
     // than building a second.
     application_insert(registry, app, type);
 
-    type_registry_drop_of(registry, type);
+    // A shape written over a parameter is not a type a value ever has: it is
+    // what a declaration says, and what substituting it produces is laid out
+    // instead. Selecting a drop here would be asking what freeing 'box T'
+    // does, which has no answer until T is known.
+    if (!type_has_param(type)) {
+        type_registry_drop_of(registry, type);
+    }
 
     return type;
 }
@@ -462,39 +476,80 @@ const Type *type_registry_box_to(TypeRegistry *registry, const Type *inner) {
     return indirect_to(registry, TYPE_CTOR_BOX, TYPE_BOX, inner);
 }
 
-// What one field of a declaration comes to, once the parameters are known. A
-// field naming no parameter is already its own answer; one that does is that
-// parameter with the field's constructor applied.
-static const Type *generic_field_type(TypeRegistry *registry, const GenericField *field,
-                                      const Type *const *args, const Type *self) {
-    if (field->fixed) {
-        return field->fixed;
+const Type *type_registry_param(TypeRegistry *registry, size_t index) {
+    assert(index < GAB_MAX_TYPE_PARAMS && "a declaration takes at most GAB_MAX_TYPE_PARAMS parameters");
+
+    if (!registry->params[index]) {
+        Type *type = type_create(registry->arena, TYPE_PARAM, NULL);
+
+        type->param.index = index;
+
+        registry->params[index] = type;
     }
 
-    // A method that returns nothing, which is what a NULL type is everywhere.
-    if (field->from == GENERIC_FROM_NOTHING) {
-        return NULL;
+    return registry->params[index];
+}
+
+/*
+    A type written over a declaration's parameters, with the arguments filled in.
+
+    A fold over the ordinary type tree: a parameter becomes the argument at its
+    index, a constructor is rebuilt over its substituted inner, and everything
+    else is already its own answer. That last case is what keeps this cheap --
+    a type mentioning no parameter is returned untouched rather than rebuilt.
+
+    Rebuilding through the same constructors any other type is built by is the
+    point: 'block box T' substitutes because a block of a box is what it is,
+    not because a field was allowed to name two constructors.
+*/
+static const Type *substitute(TypeRegistry *registry, const Type *type, const Type *const *args,
+                              size_t arg_count) {
+    if (!type_has_param(type)) {
+        return type;
     }
 
-    const Type *argument = field->from == GENERIC_FROM_SELF ? self : args[field->param];
+    switch (type_kind(type)) {
+    case TYPE_PARAM: {
+        size_t index = type_param_index(type);
 
-    switch (field->ctor) {
-    case TYPE_CTOR_BOX:
-        return type_registry_box_to(registry, argument);
-    case TYPE_CTOR_REF:
-        return type_registry_ref_to(registry, argument);
-    case TYPE_CTOR_PTR:
-        return type_registry_ptr_to(registry, argument);
-    case TYPE_CTOR_BLOCK:
-        return type_registry_block_of(registry, argument);
+        assert(index < arg_count && "a parameter was substituted with no argument at its index");
 
-    // The parameter itself, held by value. A nominal constructor is what a
-    // declaration naming another generic would be, which nothing declares yet.
-    case TYPE_CTOR_NOMINAL:
+        return args[index];
+    }
+
+    case TYPE_BOX:
+        return type_registry_box_to(registry, substitute(registry, type_pointee(type), args, arg_count));
+
+    case TYPE_REF:
+        return type_registry_ref_to(registry, substitute(registry, type_pointee(type), args, arg_count));
+
+    case TYPE_PTR:
+        return type_registry_ptr_to(registry, substitute(registry, type_pointee(type), args, arg_count));
+
+    case TYPE_BLOCK:
+        return type_registry_block_of(registry, substitute(registry, type_pointee(type), args, arg_count));
+
+    case TYPE_ARRAY:
+        return type_registry_array_of(registry,
+                                      substitute(registry, type_array_element(type), args, arg_count),
+                                      type_array_length(type));
+
+    // An instantiation written over the parameters, which is what a method's
+    // receiver is: 'Vec<T>' under these arguments is the 'Vec<int>' being
+    // built. Instantiating it again finds the entry inserted before any of
+    // this ran rather than building a second.
+    case TYPE_STRUCT:
+        assert(type_decl(type) && "a struct mentioning a parameter is an instantiation");
+
+        return type_registry_instantiate(registry, type_decl(type), args, arg_count);
+
+    default:
         break;
     }
 
-    return argument;
+    assert(false && "a type mentioning a parameter is one substitution rebuilds");
+
+    return type;
 }
 
 // Declares what this instantiation answers to, with the parameters filled in.
@@ -504,7 +559,7 @@ static const Type *generic_field_type(TypeRegistry *registry, const GenericField
 // body index -- that is a table a unit owns and linking rebases, so it stays
 // SYMBOL_FUNC_NO_BODY until codegen reserves a slot for it.
 static void declare_generic_methods(TypeRegistry *registry, Type *type, const GenericDecl *generic,
-                                    const Type *const *args) {
+                                    const Type *const *args, size_t arg_count) {
     for (size_t i = 0; i < generic->method_count; i++) {
         const GenericMethod *method = &generic->methods[i];
 
@@ -514,10 +569,10 @@ static void declare_generic_methods(TypeRegistry *registry, Type *type, const Ge
         // call writes follows it.
         const Type **params = arena_alloc(registry->arena, (method->param_count + 1) * sizeof(const Type *));
 
-        params[0] = generic_field_type(registry, &method->receiver, args, type);
+        params[0] = substitute(registry, method->receiver, args, arg_count);
 
         for (size_t p = 0; p < method->param_count; p++) {
-            params[p + 1] = generic_field_type(registry, &method->params[p], args, type);
+            params[p + 1] = substitute(registry, method->params[p], args, arg_count);
         }
 
         *symbol = (Symbol){
@@ -525,7 +580,7 @@ static void declare_generic_methods(TypeRegistry *registry, Type *type, const Ge
             .func =
                 {
                     .name = method->name,
-                    .return_type = generic_field_type(registry, &method->result, args, type),
+                    .return_type = substitute(registry, method->result, args, arg_count),
                     .params = params,
                     .param_count = method->param_count + 1,
                     .is_extern = true,
@@ -568,29 +623,39 @@ const Type *type_registry_instantiate(TypeRegistry *registry, const Type *decl, 
 
     const GenericDecl *generic = decl->generic;
 
-    TypeField *fields = arena_alloc(registry->arena, generic->field_count * sizeof(TypeField));
-
-    for (size_t i = 0; i < generic->field_count; i++) {
-        fields[i] = (TypeField){
-            .name = generic->fields[i].name,
-            .type = generic_field_type(registry, &generic->fields[i], args, type),
-        };
-    }
-
-    type->record.fields = fields;
-    type->record.field_count = generic->field_count;
-
     // The declaration this instantiates, which is where its methods are
     // declared and where a substituted signature is read from.
     type->decl = decl;
 
-    // Interned before the drop is selected, so a field reaching back here finds
-    // this entry rather than building a second.
+    // Interned before anything is substituted, so a field or a receiver naming
+    // this same instantiation -- which every method's receiver does -- finds
+    // this entry rather than building a second and recursing forever.
     application_insert(registry, app, type);
+
+    TypeField *fields = arena_alloc(registry->arena, generic->field_count * sizeof(TypeField));
+
+    // Published before any of them is substituted, and counted as they are
+    // filled: substituting a field may reach this same instantiation, and what
+    // it finds must be a struct of the fields settled so far rather than a
+    // count standing over memory nothing has written.
+    type->record.fields = fields;
+    type->record.field_count = 0;
+
+    for (size_t i = 0; i < generic->field_count; i++) {
+        const Type *field_type = substitute(registry, generic->fields[i].type, args, arg_count);
+
+        fields[i] = (TypeField){.name = generic->fields[i].name, .type = field_type};
+
+        type->record.field_count++;
+
+        // True only of a declaration instantiated over its own parameters,
+        // which is what a method's receiver names before an argument is known.
+        type->has_param |= type_has_param(field_type);
+    }
 
     type_registry_drop_of(registry, type);
 
-    declare_generic_methods(registry, type, generic, args);
+    declare_generic_methods(registry, type, generic, args, arg_count);
 
     return type;
 }

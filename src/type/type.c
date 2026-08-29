@@ -15,6 +15,10 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     type->decl = NULL;
     type->generic = NULL;
 
+    // A parameter is the one kind that carries it of itself. Every other type
+    // is given it by whatever it is built from, as that part is attached.
+    type->has_param = kind == TYPE_PARAM;
+
     // One arm zeroed is every arm zeroed: whichever the kind reads, it reads
     // nothing rather than whatever the arena held.
     memset(&type->record, 0, sizeof(type->record));
@@ -39,6 +43,8 @@ void type_add_field(Type *type, String *name, const Type *field_type) {
         .name = name,
         .type = field_type,
     };
+
+    type->has_param |= type_has_param(field_type);
 }
 
 const TypeField *type_find_field(const Type *type, const String *name) {
@@ -95,6 +101,12 @@ bool type_is_sized(const Type *type) {
     // The characters themselves, however many there are. Reached only through a
     // reference, which carries the count the type does not.
     case TYPE_STR:
+        return false;
+
+    // A stand-in for a type rather than a type, so nothing may hold one. What
+    // makes a parameter reaching a slot a diagnostic rather than a width of
+    // zero computed from a kind that has none.
+    case TYPE_PARAM:
         return false;
 
     default:
@@ -279,5 +291,17 @@ TypeKind type_kind(const Type *type) { return type->kind; }
 String *type_name_of(const Type *type) { return type->name; }
 
 const Type *type_decl(const Type *type) { return type->decl; }
+
+size_t type_param_index(const Type *type) {
+    assert(type && type->kind == TYPE_PARAM && "only a parameter has an index");
+    return type->param.index;
+}
+
+// Whether a parameter is reachable from here.
+//
+// Read off the type rather than walked: a struct may hold a pointer to its own
+// type, so following the parts is a cycle with no base case. Settled instead as
+// each constructor attaches what it was given.
+bool type_has_param(const Type *type) { return type && type->has_param; }
 
 const GenericDecl *type_generic(const Type *type) { return type->generic; }

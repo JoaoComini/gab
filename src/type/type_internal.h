@@ -44,6 +44,13 @@ struct Type {
     // not a generic declaration, which is all but the bare names.
     const GenericDecl *generic;
 
+    // Whether a parameter is reachable from here, settled as this type is
+    // built rather than walked on demand. A walk cannot answer it: a struct
+    // may hold a pointer to its own type, and following that is a cycle with
+    // no base case. Every constructor sets it from what it was given, so a
+    // parameter can only ever arrive through a part that already carries it.
+    bool has_param;
+
     /*
         What the kind gives it, and nothing another kind would give.
 
@@ -75,6 +82,14 @@ struct Type {
             const Type *element;
             int32_t length;
         } array;
+
+        // TYPE_PARAM: which of its declaration's parameters this is. An index
+        // rather than an identity, so the parameter a declaration writes and
+        // the argument an instantiation supplies meet by position -- which is
+        // what lets one interned parameter serve every declaration.
+        struct {
+            size_t index;
+        } param;
     };
 };
 
