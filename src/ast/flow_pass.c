@@ -3,7 +3,7 @@
 #include "ast/cfg.h"
 #include "ast/expr.h"
 #include "ast/flow.h"
-#include "type.h"
+#include "type/type.h"
 
 #include <string.h>
 
@@ -84,7 +84,7 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
         // to borrow from the shortest-lived of them. Conservative in one
         // direction only -- it can refuse a borrow of something longer-lived,
         // never accept one that dangles.
-        if (!expr->type || expr->type->kind != TYPE_REF) {
+        if (!expr->type || type_kind(expr->type) != TYPE_REF) {
             return 0;
         }
 
@@ -115,7 +115,7 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
         //
         // An owning pointer is the exception -- what it names is a heap object,
         // which outlives every frame however the pointer was reached.
-        if (expr->unary.target->type && expr->unary.target->type->kind == TYPE_BOX) {
+        if (expr->unary.target->type && type_kind(expr->unary.target->type) == TYPE_BOX) {
             return 0;
         }
 
@@ -136,13 +136,13 @@ static bool owning_field_of_local(const ASTExpr *expr, Symbol **out_symbol, unsi
     Symbol *symbol = expr->field.target->symbol;
     const Type *struct_type = expr->field.target->type;
 
-    if (!symbol || symbol->kind != SYMBOL_VAR || !struct_type || struct_type->kind != TYPE_STRUCT) {
+    if (!symbol || symbol->kind != SYMBOL_VAR || !struct_type || type_kind(struct_type) != TYPE_STRUCT) {
         return false;
     }
 
     const TypeField *field = ast_field_of(expr);
 
-    if (!field || field->type->kind != TYPE_BOX) {
+    if (!field || type_kind(field->type) != TYPE_BOX) {
         return false;
     }
 
@@ -160,7 +160,7 @@ static bool owning_field_of_local(const ASTExpr *expr, Symbol **out_symbol, unsi
             break;
         }
 
-        if (other->type->kind == TYPE_BOX) {
+        if (type_kind(other->type) == TYPE_BOX) {
             index++;
         }
     }
@@ -427,10 +427,10 @@ static void flow_pass_stmt(FlowPass *pass, ASTStmt *stmt) {
             flow_set(pass->flow, target,
                      (FlowSlot){.init = FLOW_INIT,
                                 .inner_depth = inner_depth(pass, stmt->assign.value),
-                                .written_fields =
-                                    stmt->assign.value->type && stmt->assign.value->type->kind == TYPE_STRUCT
-                                        ? initialized_fields(pass, stmt->assign.value)
-                                        : slot.written_fields});
+                                .written_fields = stmt->assign.value->type &&
+                                                          type_kind(stmt->assign.value->type) == TYPE_STRUCT
+                                                      ? initialized_fields(pass, stmt->assign.value)
+                                                      : slot.written_fields});
         }
         break;
     }

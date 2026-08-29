@@ -1,9 +1,9 @@
-#include "type_registry.h"
+#include "type_registry_internal.h"
 
 #include "arena.h"
 #include "object.h"
 #include "string/string.h"
-#include "type.h"
+#include "type_internal.h"
 #include "util/align.h"
 
 #include <assert.h>
@@ -15,16 +15,19 @@
 // type nothing is laid out for is.
 static const TypeLayout empty_layout = {.size = 0, .alignment = 1};
 
-static Type *register_builtin(TypeRegistry *registry, TypeKind kind, const char *name) {
-    return type_create(registry->arena, kind, string_from_cstr(registry->strings, name));
+static Type *register_builtin(TypeRegistry *registry, TypeKind kind, String *name) {
+    return type_create(registry->arena, kind, name);
 }
 
-void type_registry_register_primitives(TypeRegistry *registry) {
-    registry->primitives.int_type = register_builtin(registry, TYPE_INT, "int");
-    registry->primitives.float_type = register_builtin(registry, TYPE_FLOAT, "float");
-    registry->primitives.bool_type = register_builtin(registry, TYPE_BOOL, "bool");
+// The types the language is written in terms of, interned before anything else
+// can name one. Called by type_registry_create alone: a registry without them is
+// one where 'let n: int = 1 + 2' has no int to answer with.
+static void register_primitives(TypeRegistry *registry, const TypePrimitiveNames *names) {
+    registry->primitives.int_type = register_builtin(registry, TYPE_INT, names->int_name);
+    registry->primitives.float_type = register_builtin(registry, TYPE_FLOAT, names->float_name);
+    registry->primitives.bool_type = register_builtin(registry, TYPE_BOOL, names->bool_name);
 
-    registry->primitives.byte_type = register_builtin(registry, TYPE_BYTE, "byte");
+    registry->primitives.byte_type = register_builtin(registry, TYPE_BYTE, names->byte_name);
 
     // The characters, which no slot holds: a 'ref str' is what names them, and
     // that reference is what carries how many there are. Zero-width because
@@ -33,16 +36,16 @@ void type_registry_register_primitives(TypeRegistry *registry) {
     //
     // Before the string that lends it, which registers what it derefs to as
     // part of saying what it is.
-    registry->primitives.str_type = register_builtin(registry, TYPE_STR, "str");
+    registry->primitives.str_type = register_builtin(registry, TYPE_STR, names->str_name);
 
     // The bare name every '[T; N]' is interned under. Sized as the header the
     // elements make it, so that a diagnostic naming it says something true even
     // though no slot ever holds this type itself.
-    registry->primitives.array_type = register_builtin(registry, TYPE_ARRAY, "Array");
+    registry->primitives.array_type = register_builtin(registry, TYPE_ARRAY, names->array_name);
 
     // Poison type. Deliberately never given a name in any scope: no script can
     // name it, it only arises from a failed resolution.
-    registry->primitives.error_type = register_builtin(registry, TYPE_ERROR, "<error>");
+    registry->primitives.error_type = register_builtin(registry, TYPE_ERROR, names->error_name);
 }
 
 // The width and alignment of a kind whose layout is a fact about the machine
@@ -269,7 +272,7 @@ const DropPlan *type_registry_drop_of(TypeRegistry *registry, const Type *type) 
     return plan;
 }
 
-TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
+TypeRegistry *type_registry_create(Arena *arena, const TypePrimitiveNames *names) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
     registry->drops = drop_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->derefs = deref_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
@@ -278,10 +281,9 @@ TypeRegistry *type_registry_create(Arena *arena, StringPool *strings) {
     registry->applications =
         type_app_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
-    registry->strings = strings;
     registry->install_method = NULL;
     registry->install_ctx = NULL;
-    type_registry_register_primitives(registry);
+    register_primitives(registry, names);
 
     return registry;
 }
@@ -293,8 +295,13 @@ void type_registry_destroy(TypeRegistry *registry) {
     deref_key_destroy(registry->derefs);
 }
 
-Type *type_registry_declare_struct(TypeRegistry *registry, String *name, size_t max_fields) {
+Type *type_registry_open_struct(TypeRegistry *registry, String *name, size_t max_fields) {
     return type_struct_create(registry->arena, name, max_fields);
+}
+
+void type_registry_complete(TypeRegistry *registry, Type *type) {
+    type_registry_layout_of(registry, type);
+    type_registry_drop_of(registry, type);
 }
 
 const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl) {
@@ -303,20 +310,26 @@ const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl) 
     assert((decl->derefs_to != NULL) == (decl->lent_part_count > 0) &&
            "a deref and the parts naming it are one statement");
 
-    String *name = string_from_cstr(registry->strings, decl->name);
-
-    Type *type = decl->generic ? type_create(registry->arena, TYPE_STRUCT, name)
-                               : type_struct_create(registry->arena, name, decl->field_count);
+    Type *type = decl->generic ? type_create(registry->arena, TYPE_STRUCT, decl->name)
+                               : type_registry_open_struct(registry, decl->name, decl->field_count);
 
     for (size_t i = 0; i < decl->field_count; i++) {
-        type_add_field(type, string_from_cstr(registry->strings, decl->fields[i].name), decl->fields[i].type);
+        type_add_field(type, decl->fields[i].name, decl->fields[i].type);
     }
 
     type->generic = decl->generic;
 
     // Settled here rather than on first demand, so the type the provider gets
     // back is finished: what it owns follows from the fields just added.
-    type_registry_drop_of(registry, type);
+    //
+    // A generic declaration is not laid out -- a width follows from an
+    // instantiation's fields, and a parameter has none -- so only what it owns
+    // is settled.
+    if (decl->generic) {
+        type_registry_drop_of(registry, type);
+    } else {
+        type_registry_complete(registry, type);
+    }
 
     if (decl->derefs_to) {
         type_registry_set_deref(registry, type, decl->derefs_to, decl->lent_parts, decl->lent_part_count);
@@ -496,19 +509,23 @@ static void install_generic_methods(TypeRegistry *registry, const Type *type, co
     for (size_t i = 0; i < generic->method_count; i++) {
         const GenericMethod *method = &generic->methods[i];
 
-        // The receiver is parameter zero, as it is for every method: what a
-        // call writes follows it.
-        const Type *signature[GAB_MAX_METHOD_PARAMS];
-
-        signature[0] = generic_field_type(registry, &method->receiver, args, type);
+        const Type *params[GAB_MAX_METHOD_PARAMS];
 
         for (size_t p = 0; p < method->param_count; p++) {
-            signature[p + 1] = generic_field_type(registry, &method->params[p], args, type);
+            params[p] = generic_field_type(registry, &method->params[p], args, type);
         }
 
-        registry->install_method(registry->install_ctx, type, method->name, method->body,
-                                 generic_field_type(registry, &method->result, args, type), signature,
-                                 method->param_count + 1);
+        const InstalledMethod installed = {
+            .on = type,
+            .name = method->name,
+            .body = method->body,
+            .receiver = generic_field_type(registry, &method->receiver, args, type),
+            .result = generic_field_type(registry, &method->result, args, type),
+            .params = params,
+            .param_count = method->param_count,
+        };
+
+        registry->install_method(registry->install_ctx, &installed);
     }
 }
 
@@ -583,7 +600,7 @@ const Type *type_registry_ptr_to(TypeRegistry *registry, const Type *pointee) {
 
 const Type *type_registry_error_type(TypeRegistry *registry) { return registry->primitives.error_type; }
 
-const Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind kind) {
+const Type *type_registry_get_primitive(TypeRegistry *registry, TypeKind kind) {
     switch (kind) {
     case TYPE_INT:
         return registry->primitives.int_type;
@@ -593,10 +610,42 @@ const Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind kind) {
         return registry->primitives.bool_type;
     case TYPE_BYTE:
         return registry->primitives.byte_type;
+    case TYPE_STR:
+        return registry->primitives.str_type;
+
+    // The bare name every '[T; N]' is an application of, which is what a spec
+    // resolves before its element is applied.
+    case TYPE_ARRAY:
+        return registry->primitives.array_type;
+    case TYPE_ERROR:
+        return registry->primitives.error_type;
     default:
         break;
     }
 
     assert(0 && "type is not a builtin type");
     abort();
+}
+
+void type_registry_set_method_installer(TypeRegistry *registry, MethodInstaller install, void *ctx) {
+    registry->install_method = install;
+    registry->install_ctx = ctx;
+}
+
+TypePrimitiveNames type_primitive_names(StringPool *strings) {
+    return (TypePrimitiveNames){
+        .int_name = string_from_cstr(strings, "int"),
+        .float_name = string_from_cstr(strings, "float"),
+        .bool_name = string_from_cstr(strings, "bool"),
+
+        // Not spellable in the language: it exists so that a pointer to
+        // characters carries a stride. Named all the same, so that a diagnostic
+        // can print it.
+        .byte_name = string_from_cstr(strings, "byte"),
+        .str_name = string_from_cstr(strings, "str"),
+        .array_name = string_from_cstr(strings, "Array"),
+
+        // The poison type, never bound in any scope: no script can name it.
+        .error_name = string_from_cstr(strings, "<error>"),
+    };
 }

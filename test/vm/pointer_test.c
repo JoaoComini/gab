@@ -5,8 +5,8 @@
 #include "string/string.h"
 #include "support/run.h"
 #include "support/test_context.h"
-#include "type.h"
-#include "type_registry.h"
+#include "type/type.h"
+#include "type/type_registry.h"
 #include "vm/vm.h"
 
 #include <assert.h>
@@ -123,8 +123,8 @@ static void test_ref_is_a_distinct_type() {
 
     assert(owning && borrow);
     assert(owning != borrow);
-    assert(owning->kind == TYPE_BOX);
-    assert(borrow->kind == TYPE_REF);
+    assert(type_kind(owning) == TYPE_BOX);
+    assert(type_kind(borrow) == TYPE_REF);
 
     // Same inner, and both are still ordinary addresses: a borrow is the same
     // address, differing only in who frees the inner.

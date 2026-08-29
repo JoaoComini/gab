@@ -2,8 +2,8 @@
 #define GAB_ARGS_H
 
 #include "object.h"
-#include "type.h"
-#include "type_registry.h"
+#include "type/type.h"
+#include "type/type_registry.h"
 #include "vm/vm.h"
 
 #include <stdbool.h>

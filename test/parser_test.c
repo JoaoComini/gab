@@ -5,7 +5,7 @@
 #include "lexer.h"
 #include "parser.h"
 #include "support/test_context.h"
-#include "type.h"
+#include "type/type.h"
 
 #include <assert.h>
 #include <stdbool.h>

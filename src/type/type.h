@@ -125,15 +125,6 @@ typedef struct Type Type;
     of naming a reference carries is what grows here, not the fact that it
     carries one.
 */
-typedef enum {
-    // Nothing: the pointee's type says how wide it is.
-    TYPE_META_NONE,
-
-    // How many elements the pointee runs to, for a type whose length is not in
-    // its type: 'str' today, and a slice when one exists.
-    TYPE_META_LENGTH,
-} TypeMetadata;
-
 /*
     A type constructor, and what it was applied to.
 
@@ -155,109 +146,14 @@ typedef enum {
     TYPE_CTOR_NOMINAL,
 } TypeCtor;
 
-// One argument of an application. A type or a compile-time value: '[T; N]'
-// is one of each. Tagged rather than promoting a value into a Type, because a
-// length has no size and no alignment to answer for, and every question asked
-// of a Type would have to special-case one that is really a number.
-typedef struct TypeArg {
-    enum {
-        TYPE_ARG_TYPE,
-        TYPE_ARG_CONST,
-    } kind;
-
-    union {
-        const Type *type;
-        int32_t value;
-    };
-} TypeArg;
-
-// The interning key. Types compare by pointer identity, so two mentions of
-// '[int; 3]' must find one Type: that is what this is looked up by.
-//
-// A key and only a key. What a type is built of lives in the type itself, so
-// that an array's element is one fact rather than two that could disagree.
-typedef struct TypeApp {
-    TypeCtor ctor;
-
-    // The declaration a nominal constructor came from -- the bare 'Array'.
-    // NULL for the built-in constructors, which their tag already tells apart.
-    const Type *decl;
-
-    const TypeArg *args;
-    size_t arg_count;
-} TypeApp;
-
-size_t type_app_hash_of(TypeApp app);
-bool type_app_equals(TypeApp app, TypeApp other);
-
-/*
-    What freeing one value of a type has to do, with every offset it needs
-    already in it.
-
-    Built once, where the layout is computed, and read by the free path alone.
-    Baking the offsets in is what keeps a laid-out Type out of the free path: a
-    walk that read them back off the type would make layout something the VM
-    consults on every free, rather than a fact the compiler settles and spends.
-
-    The shape a plan takes is the shape of what owns, not the shape of the type:
-    a struct of forty fields of which one owns is a plan of one step. A type
-    that owns nothing has no plan at all, and the free path tests for that
-    rather than walking a plan to learn there is nothing to do.
-*/
-typedef struct DropPlan DropPlan;
-
 typedef enum {
-    // Free what the address at this offset names, then the plan of the pointee.
-    // What 'new box T' allocates and what every owning pointer field holds.
-    DROP_BOX,
+    // Nothing: the pointee's type says how wide it is.
+    TYPE_META_NONE,
 
-    // Free the block an owning address names, at the capacity beside it. What
-    // a string's characters are, for an element of any width.
-    //
-    // What the live elements own is freed first, then the memory: a block
-    // carries both numbers, so one step does the whole of it.
-    DROP_BLOCK,
-
-    // Walk a run of elements, freeing what each owns. Strides by a width the
-    // plan carries rather than by one read back off a type.
-    DROP_ARRAY,
-
-    // Run each step at its own offset. What a struct is, and the only kind
-    // whose offsets a plan has to carry.
-    DROP_FIELDS,
-} DropKind;
-
-// One thing a plan does, at a fixed offset into the value. The offset is
-// absolute within the value the plan describes, so a walk adds it and recurses
-// rather than accumulating a base.
-typedef struct DropStep {
-    size_t offset;
-    const DropPlan *plan;
-} DropStep;
-
-struct DropPlan {
-    DropKind kind;
-
-    // DROP_BOX: what the pointee owns, or NULL when it owns nothing and freeing
-    // the block is the whole of it.
-    // DROP_BLOCK: what one element owns, or NULL when the memory is all there
-    // is to free.
-    // DROP_ARRAY: what one element owns, which is why the run is walked at all.
-    // DROP_FIELDS: unused; the steps carry the plans.
-    const DropPlan *inner;
-
-    // DROP_ARRAY, DROP_BLOCK: how far apart the elements are.
-    size_t stride;
-
-    // DROP_ARRAY: how many there are, which its type says. The other two count
-    // at run time -- a block by the capacity it carries, a prefix by the field
-    // named below.
-    int32_t length;
-
-    // DROP_FIELDS: what owns, and where. Only the fields that own appear.
-    const DropStep *steps;
-    size_t step_count;
-};
+    // How many elements the pointee runs to, for a type whose length is not in
+    // its type: 'str' today, and a slice when one exists.
+    TYPE_META_LENGTH,
+} TypeMetadata;
 
 // A method is an ordinary function Symbol — same prototype index, same call
 // path — so the map holds one. Declared rather than included: Symbol's own
@@ -363,105 +259,28 @@ typedef struct GenericDecl {
     size_t method_count;
 } GenericDecl;
 
-/*
-    Where a value of a type sits in memory: how wide it is, what it must be
-    aligned to, and where each of its fields begins.
-
-    Beside the types rather than on them, for the reason a method set and a drop
-    plan are: what a type is was settled when it was interned, while how wide it
-    is follows from what its parts are laid out as. Keeping them apart is what
-    lets a generic answer its layout per instantiation without the type itself
-    being rebuilt -- and what lets a type be finished when the registry hands it
-    over.
-
-    Read through the registry, which is what owns one. See
-    type_registry_layout_of.
-*/
-typedef struct TypeLayout {
-    size_t size;
-    size_t alignment;
-
-    // Where each field begins, in the order the type declares them. Indexed by
-    // the same i that indexes type_fields, so a walk over the two reads one
-    // field's name and its offset from the same position.
-    //
-    // NULL for a kind with no fields, which is the right no-op for a walk that
-    // has no fields to make.
-    const size_t *offsets;
-    size_t offset_count;
-} TypeLayout;
-
-struct Type {
-    TypeKind kind;
-
-    // NULL for a type whose identity is structural: a pointer is '*' plus its
-    // inner and nothing more, so its printable form is derived on demand
-    // rather than stored. Non-NULL only for nominal types — builtins and
-    // structs — where the name is the identity.
-    String *name;
-
-    // The same layout question asked of a reference rather than of a value:
-    // whether a slot may hold one at all, and what naming it takes besides the
-    // address. Beside the width for that reason -- a type that has no width of
-    // its own is exactly one whose reference carries what it lacks.
-    //
-    // The declaration an application instantiates: every '[T; N]' names the
-    // bare 'Array'. NULL for a type that is not an instantiation.
-    //
-    // Only the constructor, never the arguments -- those are the application
-    // this type was interned on. What it buys today is the method set, which
-    // every instantiation of a declaration shares because the one method there
-    // is does not read its element. A method that did could not be shared, and
-    // this becomes the key an instantiated set is built from rather than a link
-    // followed to another type's.
-    //
-    // Distinct from the relation a borrowed view has to what it borrows: 'str'
-    // is reached from 'String' by lending, which is a step down the chain a
-    // receiver already walks, not a set held somewhere else.
-    const Type *decl;
-
-    // What this name declares, for a generic one: the fields an instantiation
-    // is built from, in terms of the parameters. NULL for every type that is
-    // not a generic declaration, which is all but the bare names.
-    const GenericDecl *generic;
-
-    /*
-        What the kind gives it, and nothing another kind would give.
-
-        A struct has no pointee to be wrong about and an indirection has no
-        field list, rather than every reader having to know which of thirteen
-        fields its kind licenses. The same shape TypeExpr and ASTExpr already
-        use, for the same reason: a kind with a payload is a sum, and a struct
-        of every payload at once holds combinations that mean nothing.
-    */
-    union {
-        // TYPE_BOX, TYPE_REF, TYPE_PTR: what the indirection names.
-        struct {
-            const Type *pointee;
-        } indirect;
-
-        // TYPE_STRUCT: the fields the layout came from. A string's two are the
-        // block holding its characters and how many of them are live.
-        //
-        // Not TYPE_STR: those characters are what a 'str' is, so it holds no
-        // fields naming them. What does is a reference to one, and that is the
-        // reference's own shape rather than anything read off the pointee.
-        struct {
-            TypeField *fields;
-            size_t field_count;
-        } record;
-
-        // TYPE_ARRAY: a run of one element, as many as the length says.
-        struct {
-            const Type *element;
-            int32_t length;
-        } array;
-    };
-};
-
 // What an indirection names, or NULL for a kind that names nothing. The walks
 // asking how many levels deep something is read it that way, so "not an
 // indirection" is the answer that stops them rather than a mistake.
+// What a type is, and what it is called. A kind is what every reader switches
+// on; a name is NULL for a structural type, whose printable form is derived
+// rather than stored.
+TypeKind type_kind(const Type *type);
+String *type_name_of(const Type *type);
+
+// The declaration an instantiation was built from -- the bare 'Array' behind
+// every '[T; N]' -- or NULL for a type that is not one.
+const Type *type_decl(const Type *type);
+
+// The generic declaration a name introduces, or NULL for every type that is not
+// one. What tells 'Vec' apart from 'Vec<int>'.
+const GenericDecl *type_generic(const Type *type);
+
+// A list of types nothing in it owns: they belong to the scope arena and outlive
+// every compile, so this holds borrowed pointers and frees none.
+#define type_list_item_free(item) ((void)(item))
+GAB_LIST(TypeList, type_list, const Type *)
+
 const Type *type_pointee(const Type *type);
 
 // The fields a layout was computed from. Empty for a kind laid out some other
@@ -566,65 +385,5 @@ typedef struct LentPart {
 // The most parts a reference is built from: an address and whatever naming its
 // pointee requires beside it.
 #define GAB_MAX_LENT_PARTS 4
-
-// A type as the source wrote it, before any name is looked up. The syntactic
-// counterpart of Type: this is what a type position parses into, and the
-// resolver evaluates it to the interned Type it names.
-//
-// A tree rather than a name plus a count of indirections, because the
-// constructors nest freely and one of them takes arguments. Anything flatter
-// needs a field per constructor that does not fit -- which is what an array's
-// element was -- and a width to bound the nesting, which is a limit on what a
-// program may say rather than on anything real.
-typedef struct TypeExpr TypeExpr;
-
-void type_expr_destroy(TypeExpr *expr);
-
-#define type_expr_list_item_free(item) type_expr_destroy(item)
-GAB_LIST(TypeExprList, type_expr_list, TypeExpr *)
-
-typedef enum {
-    // A name, possibly qualified: 'int', 'Player', 'Module::Type'. The leaf
-    // every other kind bottoms out in.
-    TYPE_EXPR_NAME,
-
-    // 'box T' and 'ref T', each wrapping the one level it spells.
-    TYPE_EXPR_BOX,
-    TYPE_EXPR_REF,
-
-    // A constructor applied to arguments: 'Vec<int>' today, and whatever takes
-    // more than one later. A list rather than a single argument, so that a
-    // second one needs no second field.
-    TYPE_EXPR_APPLY,
-} TypeExprKind;
-
-struct TypeExpr {
-    TypeExprKind kind;
-
-    // The name, for TYPE_EXPR_NAME. A qualified name is kept as one ref over
-    // the source, so the resolver sees it exactly as the registry stores it.
-    StringRef name;
-
-    union {
-        // What a 'box' or a 'ref' wraps.
-        struct {
-            TypeExpr *inner;
-        } indirect;
-
-        struct {
-            TypeExpr *base;
-            TypeExprList args;
-
-            // How many elements, for '[T; N]'. An integer literal rather
-            // than an argument of its own: a length is not a type, and the one
-            // constructor that takes one always takes exactly one.
-            int32_t length;
-        } apply;
-    };
-};
-
-TypeExpr *type_expr_name(StringRef name);
-TypeExpr *type_expr_indirect(TypeExprKind kind, TypeExpr *inner);
-TypeExpr *type_expr_apply(TypeExpr *base);
 
 #endif

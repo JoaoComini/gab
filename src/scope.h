@@ -3,7 +3,7 @@
 
 #include "arena.h"
 #include "string/string.h"
-#include "type_registry.h"
+#include "type/type_registry.h"
 
 #include <stdbool.h>
 

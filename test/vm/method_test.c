@@ -5,7 +5,7 @@
 #include "string/string.h"
 #include "support/run.h"
 #include "support/test_context.h"
-#include "type.h"
+#include "type/type.h"
 #include "vm/vm.h"
 
 #include <assert.h>

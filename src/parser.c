@@ -3,7 +3,7 @@
 #include "ast/stmt.h"
 #include "lexer.h"
 #include "string/string_ref.h"
-#include "type.h"
+#include "type/type.h"
 
 #include <assert.h>
 #include <stdbool.h>

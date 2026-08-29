@@ -2,8 +2,8 @@
 #include "lexer.h"
 #include "parser.h"
 #include "support/test_context.h"
-#include "type.h"
-#include "type_registry.h"
+#include "type/type.h"
+#include "type/type_registry.h"
 
 #include <assert.h>
 #include <stddef.h>
@@ -86,7 +86,7 @@ static void test_homogeneous_struct() {
         resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float }", "Vec3", &registry);
 
     assert(type != NULL);
-    assert(type->kind == TYPE_STRUCT);
+    assert(type_kind(type) == TYPE_STRUCT);
     assert(type_field_count(type) == 3);
 
     assert(type_registry_size_of(registry, type) == sizeof(Vec3C));
@@ -150,7 +150,7 @@ static void test_nested_struct() {
     assert(offset_of(&ctx, registry, type, "position") == offsetof(NestedC, position));
 
     const TypeField *position = type_find_field(type, string_from_cstr(&ctx.strings, "position"));
-    assert(position->type->kind == TYPE_STRUCT);
+    assert(type_kind(position->type) == TYPE_STRUCT);
     assert(type_registry_size_of(registry, position->type) == sizeof(Vec3C));
 
     test_context_free(&ctx);
@@ -244,9 +244,9 @@ static void test_builtin_widths() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
     TypeRegistry *registry = global_scope.type_registry;
 
-    const Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
-    const Type *float_type = type_registry_get_builtin(registry, TYPE_FLOAT);
-    const Type *bool_type = type_registry_get_builtin(registry, TYPE_BOOL);
+    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *float_type = type_registry_get_primitive(registry, TYPE_FLOAT);
+    const Type *bool_type = type_registry_get_primitive(registry, TYPE_BOOL);
 
     assert(type_registry_size_of(registry, int_type) == sizeof(int32_t));
     assert(type_registry_align_of(registry, int_type) == _Alignof(int32_t));
@@ -271,11 +271,11 @@ static void test_raw_pointer_owns_nothing() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
     TypeRegistry *registry = global_scope.type_registry;
 
-    const Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
 
     const Type *ptr = type_registry_ptr_to(registry, int_type);
 
-    assert(ptr->kind == TYPE_PTR);
+    assert(type_kind(ptr) == TYPE_PTR);
     assert(type_pointee(ptr) == int_type);
 
     assert(type_registry_ptr_to(registry, int_type) == ptr);
@@ -305,13 +305,13 @@ static void test_a_borrow_and_a_box_are_distinct_constructors() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
     TypeRegistry *registry = global_scope.type_registry;
 
-    const Type *int_type = type_registry_get_builtin(registry, TYPE_INT);
+    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
 
     const Type *box = type_registry_box_to(registry, int_type);
     const Type *ref = type_registry_ref_to(registry, int_type);
 
-    assert(box->kind == TYPE_BOX);
-    assert(ref->kind == TYPE_REF);
+    assert(type_kind(box) == TYPE_BOX);
+    assert(type_kind(ref) == TYPE_REF);
 
     assert(type_pointee(box) == int_type);
     assert(type_pointee(ref) == int_type);
@@ -348,7 +348,7 @@ static void test_mutually_recursive_structs() {
     const TypeField *field = type_find_field(a, string_from_cstr(&ctx.strings, "b"));
 
     assert(field);
-    assert(type_pointee(field->type)->name == string_from_cstr(&ctx.strings, "B"));
+    assert(type_name_of(type_pointee(field->type)) == string_from_cstr(&ctx.strings, "B"));
 
     test_context_free(&ctx);
 }

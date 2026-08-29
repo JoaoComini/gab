@@ -270,7 +270,7 @@ static inline void test_compile_next(TestProgram *program, const char *source) {
 // VM has never been asked to allocate it.
 static inline long test_heap_type_index(TestProgram *program, const char *name) {
     for (size_t i = 0; i < program->vm->program.shape_types.size; i++) {
-        const String *type_name = program->vm->program.shape_types.data[i]->name;
+        const String *type_name = type_name_of(program->vm->program.shape_types.data[i]);
 
         // A release interns the type of whatever a slot held, and a pointer
         // type is structural: it has no name to compare.

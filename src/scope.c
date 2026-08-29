@@ -2,7 +2,7 @@
 #include "arena.h"
 #include "string/string.h"
 #include "symbol_table.h"
-#include "type_registry.h"
+#include "type/type_registry.h"
 #include <assert.h>
 
 Scope *scope_create(Arena *arena, StringPool *strings, Scope *parent) {
@@ -20,17 +20,18 @@ void scope_init(Scope *scope, Arena *arena, StringPool *strings, Scope *parent) 
 // in the resolver. The registry still owns the Types themselves; this only
 // gives them names to be found by.
 static void scope_declare_primitives(Scope *scope) {
-    const TypePrimitives *primitives = &scope->type_registry->primitives;
+    TypeRegistry *registry = scope->type_registry;
 
-    scope_decl_type(scope, primitives->int_type->name, primitives->int_type);
-    scope_decl_type(scope, primitives->float_type->name, primitives->float_type);
-    scope_decl_type(scope, primitives->bool_type->name, primitives->bool_type);
-    scope_decl_type(scope, primitives->str_type->name, primitives->str_type);
+    // The bare 'Array' is among them. Never a usable type on its own --
+    // resolving a spec turns it into the '[T; N]' its element names -- but it
+    // must be found here for that spec to get as far as applying one.
+    static const TypeKind PRIMITIVES[] = {TYPE_INT, TYPE_FLOAT, TYPE_BOOL, TYPE_STR, TYPE_ARRAY};
 
-    // The bare name. Never a usable type on its own -- resolving a spec turns
-    // it into the '[T; N]' its element names -- but it must be found here for
-    // that spec to get as far as applying one.
-    scope_decl_type(scope, primitives->array_type->name, primitives->array_type);
+    for (size_t i = 0; i < sizeof(PRIMITIVES) / sizeof(PRIMITIVES[0]); i++) {
+        const Type *type = type_registry_get_primitive(registry, PRIMITIVES[i]);
+
+        scope_decl_type(scope, type_name_of(type), type);
+    }
 
     // And nothing else. What a standard library provides is named where it is
     // declared -- see builtin_declare_type -- which is what keeps 'String' out
@@ -53,7 +54,11 @@ void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope 
         return;
     }
 
-    scope->type_registry = type_registry_create(arena, strings);
+    // Interned here rather than by the registry, which holds no pool: what
+    // names a type is the same pool that names everything else in this scope.
+    const TypePrimitiveNames names = type_primitive_names(strings);
+
+    scope->type_registry = type_registry_create(arena, &names);
     scope_declare_primitives(scope);
 }
 

@@ -383,8 +383,9 @@ static void test_a_function_compiles_into_its_own_chunk() {
 // A method takes its receiver as parameter zero, so its arity is one more than
 // the parameters it declares.
 static void test_a_method_counts_its_receiver() {
-    TestProgram program = test_compile("struct Point { x: int }\n"
-                                       "func Point::scaled(v: ref Point, by: int): int { return v.x * by; }\n");
+    TestProgram program =
+        test_compile("struct Point { x: int }\n"
+                     "func Point::scaled(v: ref Point, by: int): int { return v.x * by; }\n");
 
     assert(test_func_count(&program) == 1);
     assert(test_func_proto(&program, 0)->arity == 2);
@@ -548,8 +549,8 @@ static void test_a_release_names_what_it_frees() {
     // follows the pointer, which is what 'box Node's drop does.
     const Type *type = program.vm->program.shape_types.data[released];
 
-    assert(type->kind == TYPE_BOX);
-    assert(type_pointee(type)->name && strcmp(type_pointee(type)->name->data, "Node") == 0);
+    assert(type_kind(type) == TYPE_BOX);
+    assert(type_name_of(type_pointee(type)) && strcmp(type_name_of(type_pointee(type))->data, "Node") == 0);
 
     test_program_free(&program);
 }

@@ -1,10 +1,11 @@
 #ifndef GAB_AST_EXPR_H
 #define GAB_AST_EXPR_H
 
+#include "ast/type_expr.h"
 #include "diagnostics.h"
 #include "string/string.h"
 #include "symbol_table.h"
-#include "type.h"
+#include "type/type.h"
 #include "util/list.h"
 
 #include <stdint.h>

@@ -8,7 +8,7 @@
 #include "parser.h"
 #include "scope.h"
 #include "string/string.h"
-#include "type.h"
+#include "type/type.h"
 #include "vm/chunk.h"
 #include "vm/codegen.h"
 #include "vm/constant_pool.h"

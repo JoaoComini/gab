@@ -4,11 +4,27 @@
 #include "arena.h"
 #include "string/string.h"
 #include "type.h"
+#include "type_app.h"
+#include "type_layout.h"
 #include "util/hash_map.h"
 
 #include <stdbool.h>
 
 #define TYPE_REGISTRY_INITIAL_CAPACITY 8
+
+typedef struct TypeRegistry TypeRegistry;
+
+// What the built-in types are called. Supplied at creation because the registry
+// interns no name of its own.
+typedef struct TypePrimitiveNames {
+    String *int_name;
+    String *float_name;
+    String *bool_name;
+    String *byte_name;
+    String *str_name;
+    String *array_name;
+    String *error_name;
+} TypePrimitiveNames;
 
 // Declared rather than included: a method is an ordinary function Symbol, and
 // Symbol's own header reaches back here.
@@ -26,61 +42,6 @@ typedef struct {
 
 GAB_HASH_MAP(TypeMap, type_map, String *, TypeBinding)
 
-// Every constructed type is interned on the application that built it, so that
-// two mentions of 'box T' or of '[int; 3]' yield the same Type *: the whole
-// type system compares by pointer identity, and a fresh Type per mention would
-// silently break every comparison.
-//
-// One table for every constructor rather than one table each. The key carries
-// which constructor and how many arguments, so 'box T' and 'ref T' cannot
-// collide, and a generic 'List T' or 'Map K,V' needs no table of its own.
-//
-// The key's argument array is copied into the registry's arena on insert: a
-// caller builds one on its stack to look up with, and an entry has to outlive
-// that.
-#define type_app_map_hash(key) type_app_hash_of(key)
-#define type_app_map_key_equals(key, other) type_app_equals(key, other)
-#define type_app_map_key_dup(key) key
-
-GAB_HASH_MAP(TypeAppMap, type_app_map, TypeApp, Type *)
-
-/*
-    The types the language itself is written in terms of: what a literal
-    produces, what an operator answers, what a spec spells without anything
-    having been registered.
-
-    Primitives rather than a standard library. A resolver holds these with no VM
-    in sight, because nothing about 'let n: int = 1 + 2' asks for a runtime. What
-    a VM provides -- 'String', 'Vec<T>', and whatever a host adds beside them --
-    is registered instead, and is absent from a compile that never had one.
-*/
-typedef struct {
-    const Type *int_type;
-
-    // One byte, which is what a string's characters are. Not spellable in the
-    // language: it exists so that the pointer naming those characters carries a
-    // stride, the way every other 'ptr T' does.
-    const Type *byte_type;
-    const Type *float_type;
-    const Type *bool_type;
-
-    // 'str'. The characters of a string, borrowed: where they are and how many
-    // there are, owning nothing. A distinct interned Type from the owning one
-    // because ownership is read off the type, and a literal and an owned copy
-    // must not answer it the same way.
-    //
-    // Not what 'ref String' names. That is an indirection to a slot holding a
-    // header, which is what 'ref' builds for every type in the language.
-    const Type *str_type;
-
-    // 'Array', the bare name. Not a usable type on its own -- every array is
-    // '[T; N]' for some element -- but the name a spec resolves to before its
-    // element is applied, and what a diagnostic prints when one is missing.
-    const Type *array_type;
-
-    const Type *error_type;
-} TypePrimitives;
-
 /*
     Declaring a type a standard library provides, which a scope then finds by
     name the way it finds a primitive.
@@ -94,7 +55,7 @@ typedef struct {
 
 // One field of a declared struct.
 typedef struct TypeFieldDecl {
-    const char *name;
+    String *name;
     const Type *type;
 } TypeFieldDecl;
 
@@ -103,7 +64,10 @@ typedef struct TypeFieldDecl {
 // Either a struct with fields, or a generic declaration whose instantiations
 // have them -- 'generic' decides which, and the two are never both given.
 typedef struct TypeDecl {
-    const char *name;
+    // Interned by the provider, as every name the registry is given is: what
+    // interns them is the pool the provider already holds, so the registry needs
+    // none of its own.
+    String *name;
 
     // A struct's fields, laid out in the order given.
     const TypeFieldDecl *fields;
@@ -127,43 +91,6 @@ typedef struct TypeDecl {
 //
 // Which type names are visible where is a scoping question, so the name map
 // belongs to Scope, which already owns the parent chain that answers it.
-// What may be called on a type, keyed by the type it was declared on and the
-// name it answers to.
-//
-// Beside the types rather than on them: a method set grows as a program is read
-// -- a later statement, a later unit, or the host before any of them -- while
-// what a type is was settled when it was interned. Keeping them apart is what
-// lets a type be finished when the registry hands it over.
-typedef struct MethodKey {
-    const Type *type;
-    const String *name;
-} MethodKey;
-
-#define method_key_hash(key) (((size_t)(key).type * 31) ^ (size_t)(key).name)
-#define method_key_key_equals(key, other) ((key).type == (other).type && (key).name == (other).name)
-#define method_key_key_dup(key) key
-#define method_key_entry_free(key, value)
-
-GAB_HASH_MAP(MethodTable, method_key, MethodKey, Symbol *)
-
-/*
-    What freeing a value of each type does, by the type it was derived from.
-
-    Beside the types rather than on them, for the reason a method set is: what a
-    type is was settled when it was interned, while what freeing one does is
-    derived from its layout and from what every field of it owns. Keeping them
-    apart is what lets a type be finished when the registry hands it over.
-
-    Interned because the derivation recurses: a struct of two fields of one type
-    asks that type once, and a ring through a 'box' terminates because the
-    second demand finds the first.
-*/
-#define drop_key_hash(key) (size_t)key
-#define drop_key_key_equals(key, other) key == other
-#define drop_key_key_dup(key) key
-#define drop_key_entry_free(key, value)
-
-GAB_HASH_MAP(DropTable, drop_key, const Type *, const DropPlan *)
 
 /*
     What each type derefs to: the borrowed view an owner reaches its methods
@@ -179,11 +106,6 @@ GAB_HASH_MAP(DropTable, drop_key, const Type *, const DropPlan *)
     view, never the reverse. What belongs to the owner -- duplicating the
     allocation -- must not be reachable from a borrow of it.
 */
-#define deref_key_hash(key) (size_t)key
-#define deref_key_key_equals(key, other) key == other
-#define deref_key_key_dup(key) key
-#define deref_key_entry_free(key, value)
-
 /*
     What a type derefs to, and which of its bytes a reference to that view is
     built from.
@@ -200,26 +122,6 @@ typedef struct Deref {
     size_t part_count;
 } Deref;
 
-GAB_HASH_MAP(DerefTable, deref_key, const Type *, const Deref *)
-
-/*
-    Where a value of each type sits in memory, by the type it was derived from.
-
-    Beside the types for the reason a drop plan is, and computed the same way:
-    on first demand, from what the type is built of, and memoized so that two
-    mentions of a width agree. What a generic instantiation lays out will be
-    another entry here rather than another Type field to keep in step.
-
-    Owned by the registry's arena, so a layout outlives every compile that reads
-    it and is freed with the types it describes.
-*/
-#define layout_key_hash(key) (size_t)key
-#define layout_key_key_equals(key, other) key == other
-#define layout_key_key_dup(key) key
-#define layout_key_entry_free(key, value)
-
-GAB_HASH_MAP(LayoutTable, layout_key, const Type *, const TypeLayout *)
-
 /*
     What turns one of a declaration's methods into a Symbol an instantiation
     answers to.
@@ -229,45 +131,38 @@ GAB_HASH_MAP(LayoutTable, layout_key, const Type *, const TypeLayout *)
     with no VM at all. So the VM installs this when it builds, and an
     instantiation made without one simply declares no methods.
 
-    'signature' holds the receiver, then what the caller writes; 'count' is how
-    many that is in total.
+    Nor can it be deferred to the end of a resolve: 'xs.push(7)' is checked in
+    the same pass that interned 'Vec<int>', so what a type answers to must be
+    declared the moment it is interned rather than once the unit is done.
 */
-typedef void (*MethodInstaller)(void *ctx, const Type *on, const char *name, void *body,
-                                const Type *return_type, const Type *const *signature, size_t count);
 
-typedef struct TypeRegistry {
-    Arena *arena;
+// One instantiated method: what a declaration declares, with its parameters
+// filled in. A descriptor rather than an argument list, so that what a method is
+// stays one thing to read and gains a field rather than an argument.
+typedef struct InstalledMethod {
+    // The instantiation the method is declared on, and what it answers to.
+    const Type *on;
+    const char *name;
 
-    // How an instantiation's methods become Symbols, and what to call it with.
-    // NULL where nothing registered one, which is every compile that runs
-    // without a VM.
-    MethodInstaller install_method;
-    void *install_ctx;
+    // The body, as a GabExternFn. A void pointer because what a C body is
+    // belongs to the VM's header, which this one is reached from rather than
+    // reaching.
+    void *body;
 
-    StringPool *strings;
+    const Type *receiver;
+    const Type *result;
 
-    // Every type built by applying a constructor: 'box T', 'ref T', 'ptr T',
-    // '[T; N]', and whatever a generic declaration adds. Keyed by the
-    // application, so the constructor is part of what is looked up and two
-    // constructors given the same argument never collide.
-    TypeAppMap *applications;
+    // What the caller writes, the receiver excluded: it is parameter zero and is
+    // named above rather than being the first of these.
+    const Type *const *params;
+    size_t param_count;
+} InstalledMethod;
 
-    // Every method declared on every type, however far apart the declarations
-    // were.
-    MethodTable *methods;
+typedef void (*MethodInstaller)(void *ctx, const InstalledMethod *method);
 
-    // What freeing a value of each type does.
-    DropTable *drops;
-
-    // What each type derefs to, for the few that do.
-    DerefTable *derefs;
-
-    // How wide a value of each type is, and where its fields begin.
-    LayoutTable *layouts;
-
-    TypePrimitives primitives;
-
-} TypeRegistry;
+// Registered once by whatever provides the bodies, so that a 'Vec<T>' first
+// named by a later compile is declared the same way.
+void type_registry_set_method_installer(TypeRegistry *registry, MethodInstaller install, void *ctx);
 
 // Declares a method, or fails if the type already answers that name. Finds one
 // by following 'owner' when the type itself does not answer, so that a type
@@ -275,14 +170,28 @@ typedef struct TypeRegistry {
 bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method);
 Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name);
 
-// Declares a nominal type, and hands back the Type nothing else may build.
-//
-// The type comes back with no layout, because a declaration does not have one:
-// its name is bound here so that a field may name it, and its width follows
-// later from fields that may name types not yet declared. What may be done with
-// such a type is what needs no width -- name it, point at it -- which is what
-// makes 'struct A { b: box B }' resolve before B exists.
-Type *type_registry_declare_struct(TypeRegistry *registry, String *name, size_t max_fields);
+/*
+    Declaring a type in two steps, for the one caller that cannot do it in one.
+
+    A struct's fields may name types not yet declared, so its name has to be
+    bound before they resolve: 'struct A { b: box B }' is legal, and B may come
+    later in the unit. The name is therefore opened here and the fields added as
+    each resolves with type_add_field, and type_registry_complete settling the
+    layout once they all have.
+
+    A provider that knows its fields up front -- the standard library, and a host
+    -- states them at once with type_registry_declare instead, which is these
+    three calls in order.
+
+    Between the two, the type has no layout: what may be done with it is what
+    needs no width, which is to name it and to point at it.
+*/
+Type *type_registry_open_struct(TypeRegistry *registry, String *name, size_t max_fields);
+
+// Lays the type out and settles how it frees, which is what finishes it. Called
+// once every field is added; a type whose fields did not resolve is withdrawn
+// instead of completed.
+void type_registry_complete(TypeRegistry *registry, Type *type);
 
 /*
     What freeing a value of this type does, or NULL when it owns nothing.
@@ -310,11 +219,23 @@ const TypeLayout *type_registry_layout_of(TypeRegistry *registry, const Type *ty
 size_t type_registry_size_of(TypeRegistry *registry, const Type *type);
 size_t type_registry_align_of(TypeRegistry *registry, const Type *type);
 
-TypeRegistry *type_registry_create(Arena *arena, StringPool *strings);
+// 'primitive_names' are the names the built-in types are registered under, in
+// the order TypeKind declares them -- interned by the caller, which owns the
+// pool. The registry interns nothing itself: every name it is given is already a
+// String *, so it holds types and not the pool that named them.
+TypeRegistry *type_registry_create(Arena *arena, const TypePrimitiveNames *names);
+
+// The names the language gives its own primitives, interned in 'strings'. What
+// every registry over a Gab program is created with; a caller wanting other
+// names fills the struct itself.
+TypePrimitiveNames type_primitive_names(StringPool *strings);
 
 void type_registry_destroy(TypeRegistry *registry);
 
-const Type *type_registry_get_builtin(TypeRegistry *registry, TypeKind type);
+// One of the types the language is written in terms of, by its kind. Every
+// caller that needs 'int' or 'str' asks here rather than reaching for a field,
+// which is what lets the registry's own state stay private.
+const Type *type_registry_get_primitive(TypeRegistry *registry, TypeKind kind);
 
 // Interns what 'decl' describes, lays it out and settles how it frees. Returns
 // the finished type, which is the provider's handle to it.

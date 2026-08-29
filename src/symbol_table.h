@@ -3,7 +3,7 @@
 
 #include "scope.h"
 #include "string/string.h"
-#include "type.h"
+#include "type/type.h"
 #include "util/hash_map.h"
 
 #include <stdbool.h>
