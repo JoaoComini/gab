@@ -38,8 +38,11 @@ typedef struct {
     // supplies them, so there is nothing here for it to be.
     const Type *type;
 
-    // What the name declares. Every nominal name has one; a name taking no
-    // parameters has a type beside it, and one taking parameters has only this.
+    // What the name declares, or NULL for a type that stands for itself -- a
+    // primitive, or a declaration's own parameter -- which was interned from no
+    // declaration. Which of the two a binding is is read from this rather than
+    // from the type, so a lookup answers what the name means without asking
+    // what it names.
     const TypeDef *def;
 } TypeBinding;
 

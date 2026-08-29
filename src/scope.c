@@ -148,17 +148,13 @@ Resolution scope_resolve(Scope *scope, String *name) {
         TypeBinding *bound = type_map_lookup(s->types, name);
 
         if (bound) {
-            // A primitive is the type it names and nothing is laid out for it,
-            // so the name answers with that type rather than with an
-            // instantiation of the declaration it carries. Everything else
-            // nominal answers with its declaration, whose arity is what a
-            // mention of it owes.
-            //
-            // Told apart by the binding rather than by the declaration: a
-            // primitive is bound to a type directly, while a declaration
-            // awaiting arguments is bound to no type at all.
-            if (bound->type && type_names_itself(bound->type)) {
-                return (Resolution){.kind = RESOLUTION_PRIMITIVE, .primitive = bound->type};
+            // Told apart by which way the name was bound, never by asking what
+            // the type is: scope_decl_type binds a type that stands for itself
+            // and carries no declaration to apply, so the name answers with
+            // that type. Everything nominal answers with its declaration,
+            // whose arity is what a mention of it owes.
+            if (!bound->def) {
+                return (Resolution){.kind = RESOLUTION_SELF_NAMED, .self_named = bound->type};
             }
 
             return (Resolution){.kind = RESOLUTION_TYPE_DECL, .def = bound->def};
@@ -176,8 +172,8 @@ Resolution scope_resolve(Scope *scope, String *name) {
 
 const Type *resolution_type(TypeRegistry *registry, Resolution resolution) {
     switch (resolution.kind) {
-    case RESOLUTION_PRIMITIVE:
-        return resolution.primitive;
+    case RESOLUTION_SELF_NAMED:
+        return resolution.self_named;
 
     // A declaration taking none is its own instantiation, which the registry
     // interned the first time anything named it.
@@ -199,19 +195,17 @@ TypeBinding *scope_binding_lookup_local(Scope *scope, String *name) {
 // 'int'. A builtin is reachable from every module and there is no qualified
 // syntax to reach past a shadow, so shadowing one would put it out of reach for
 // the rest of the module, including in a signature a host resolves through.
-// Answers for a name bound to a declaration alone as well as one bound to a
-// type: 'Vec' names no type, and a unit redeclaring it would still be a clash.
-const Type *scope_type_lookup_declaring(Scope *scope, String *name) {
-    while (scope) {
-        TypeBinding *entry = type_map_lookup(scope->types, name);
-        if (entry) {
-            return entry->type ? entry->type : (const Type *)entry->def;
+// Whether the name is bound at all rather than what it is bound to: a
+// declaration still owed arguments names no type, and a unit redeclaring 'Vec'
+// is as much a clash as one redeclaring 'int'.
+bool scope_declares_type(Scope *scope, String *name) {
+    for (Scope *s = scope; s; s = s->parent) {
+        if (type_map_lookup(s->types, name)) {
+            return true;
         }
-
-        scope = scope->parent;
     }
 
-    return NULL;
+    return false;
 }
 
 Symbol *scope_symbol_lookup_declaring(Scope *scope, String *name) {
@@ -237,7 +231,10 @@ bool scope_decl_type(Scope *scope, String *name, const Type *type) {
 
     assert(type_names_itself(type) && "a nominal name binds to what it declares");
 
-    type_map_insert(scope->types, name, (TypeBinding){.type = type, .def = type_decl(type)});
+    // No declaration, which is what makes the binding the whole answer: a type
+    // standing for itself was interned from none, and a lookup reads the
+    // absence rather than asking the type what it is.
+    type_map_insert(scope->types, name, (TypeBinding){.type = type});
 
     return true;
 }

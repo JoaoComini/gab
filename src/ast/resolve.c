@@ -1709,10 +1709,6 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
             return resolver_error_type(state);
         }
 
-        // A generic declaration is instantiated by what it was applied to.
-        // Nothing here is 'Vec': what the constructor takes and how its
-        // instantiations are laid out are read off the declaration, so a second
-        // generic name resolves through this same arm.
         // Every nominal declaration is instantiated by what it was applied to.
         // Nothing here is 'Vec': what a constructor takes and how its
         // instantiations are laid out are read off the declaration, so a second
@@ -1922,7 +1918,7 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
 
     // Shadowing an outer type is allowed; redeclaring one this module already
     // has is not, whether this unit declared it or an earlier one did.
-    if (scope_type_lookup_declaring(state->current_scope, struct_name)) {
+    if (scope_declares_type(state->current_scope, struct_name)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "type '%s' is already declared",
                    struct_name->data);
         return NULL;
@@ -2171,7 +2167,6 @@ static void layout_struct(ResolverState *state, StructDecl *decl) {
     type_registry_complete(state->current_scope->type_registry, type);
 
     decl->state = STRUCT_LAID_OUT;
-    stmt->struct_decl.type = type;
 }
 
 // Declares the function's name, return type, and parameter types — everything a

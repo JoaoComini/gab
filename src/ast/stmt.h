@@ -92,10 +92,6 @@ typedef struct {
     StringRef params[GAB_MAX_TYPE_PARAMS];
     size_t param_count;
 
-    // What the name stands for once laid out. NULL for a declaration taking
-    // parameters: it names no type until a mention supplies them.
-    const Type *type;
-
     // As ASTFuncDecl::declared.
     bool declared;
 } ASTStructDecl;

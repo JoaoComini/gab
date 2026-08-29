@@ -51,7 +51,6 @@ ASTStmt *ast_struct_decl_stmt_create(Span span, StringRef name, const StringRef 
         stmt->struct_decl.params[i] = params[i];
     }
 
-    stmt->struct_decl.type = NULL;
     stmt->struct_decl.declared = false;
     return stmt;
 }

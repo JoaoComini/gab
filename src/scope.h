@@ -71,15 +71,16 @@ void scope_init_module(Scope *scope, Arena *arena, StringPool *strings, Scope *p
 // function -- decides on the kind rather than by asking each namespace in turn
 // and reading a NULL as the answer.
 //
-// Rust's Res, and split the same way it is: a primitive was declared by
-// nothing, so it carries a type and no declaration.
+// Rust's Res, and split the same way it is: a name bound to a type directly was
+// declared by nothing, so it carries that type and no declaration.
 typedef enum {
     RESOLUTION_NONE,
 
-    // 'int', 'float', 'bool', 'str'. Named by the root scope and declared by
-    // nothing, so there is no declaration to instantiate -- the type is what
-    // the name means.
-    RESOLUTION_PRIMITIVE,
+    // A name bound to a type that stands for itself: a primitive, or a
+    // declaration's own parameter while its fields resolve. Instantiated from
+    // no declaration, so there is none to apply -- the type is what the name
+    // means.
+    RESOLUTION_SELF_NAMED,
 
     // Every nominal name, whatever arity: 'Config', 'Vec', 'Array'. What it
     // takes is the declaration's business rather than the resolution's, so a
@@ -95,7 +96,7 @@ typedef struct {
     ResolutionKind kind;
 
     union {
-        const Type *primitive;
+        const Type *self_named;
         const TypeDef *def;
         Symbol *symbol;
     };
@@ -122,14 +123,16 @@ const Type *scope_type_lookup(Scope *scope, String *name);
 // asking which declaration a name reaches rather than what type it names.
 TypeBinding *scope_binding_lookup_local(Scope *scope, String *name);
 
-// What a declaration of this name would clash with. Both search this scope and,
+// Whether a declaration of this name would clash. Both search this scope and,
 // through a staging scope, the module scope it stands in for -- so a name an
 // earlier unit declared is an error where this unit writes it, rather than one
 // reported without a span after the whole unit has compiled.
 //
 // They differ at the root. A type also clashes with a builtin, which no syntax
 // can name past a shadow; a symbol does not, so a local may be called 'int'.
-const Type *scope_type_lookup_declaring(Scope *scope, String *name);
+// A type answers whether rather than with what, since a declaration still owed
+// arguments names no type and is a clash all the same.
+bool scope_declares_type(Scope *scope, String *name);
 Symbol *scope_symbol_lookup_declaring(Scope *scope, String *name);
 
 // Removes a name this scope declared. Exists for one case: a struct's name is
