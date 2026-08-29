@@ -519,12 +519,12 @@ static void test_methods_live_beside_the_type_not_in_it() {
 
     Symbol method = {0};
 
-    assert(type_registry_add_method(registry, method_owner_type(int_type), name, &method));
+    assert(type_registry_add_method(registry, int_type, name, &method));
     assert(type_registry_find_method(registry, int_type, name) == &method);
 
     // Declared once: a second of the same name on the same type is refused
     // rather than replacing what is there.
-    assert(!type_registry_add_method(registry, method_owner_type(int_type), name, &method));
+    assert(!type_registry_add_method(registry, int_type, name, &method));
 
     // Another type is unaffected, since the set is keyed by which type it is
     // declared on.

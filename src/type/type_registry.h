@@ -143,19 +143,23 @@ typedef struct Deref {
 } Deref;
 
 /*
-    Declaring a method, on the declaration every instantiation shares or on one
-    instantiation alone.
+    Declaring a method on one type.
 
-    Which of the two is not a property of the owner but of the signature. A set
-    written once for every element type -- an array's 'len' -- reads nothing an
-    argument brought, so the declaration owns it and each instantiation finds
-    it. One whose signature mentions a parameter has been substituted, so it
-    differs per instantiation and is owned by the type.
+    Where nearly every method goes, because nearly every signature mentions the
+    type it hangs on. One whose signature does not -- an array's 'len', the same
+    for every element -- is declared on the declaration instead, so that one
+    entry serves every instantiation. See type_registry_add_shared_method.
 
-    Both land in one table, keyed by whichever owns the name, and a lookup
-    consults the type before the declaration it came from.
+    Both land in one table, and a lookup consults the type before the
+    declaration it came from.
 */
-bool type_registry_add_method(TypeRegistry *registry, MethodOwner owner, String *name, Symbol *method);
+bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method);
+
+// Declares a method every instantiation of a declaration answers, rather than
+// one a single type does. Its signature mentions no parameter -- otherwise it
+// would have to be substituted, and could not be shared.
+bool type_registry_add_shared_method(TypeRegistry *registry, const TypeDef *def, String *name,
+                                     Symbol *method);
 
 // Declares a method every instantiation of a declaration answers, rather than
 // one a single type does. What an array's shared set is: no '[T; N]' declares
@@ -281,8 +285,14 @@ const Type *type_registry_ptr_to(TypeRegistry *registry, const Type *pointee);
 */
 const Type *type_registry_param(TypeRegistry *registry, size_t index);
 
-const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDef *def, const Type *const *args,
+const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDef *def, const TypeArg *args,
                                       size_t arg_count);
+
+// As type_registry_instantiate, where every argument is a type. What all but
+// 'Array' takes: a length is the one argument that is a number rather than a
+// type, so only an array's spec builds the TypeArgs itself.
+const Type *type_registry_apply(TypeRegistry *registry, const TypeDef *def, const Type *const *args,
+                                size_t arg_count);
 
 // The interned 'block element': an owning address and the capacity it was
 // allocated at. What a collection holds its elements in, and the one owning

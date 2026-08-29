@@ -1771,7 +1771,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
                 }
             }
 
-            return type_registry_instantiate(registry, base_def, args, expr->apply.args.size);
+            return type_registry_apply(registry, base_def, args, expr->apply.args.size);
         }
 
         if (base_def != type_registry_array_def(registry)) {
@@ -1940,15 +1940,11 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
         .param_count = param_count,
     };
 
-    // Interned here, because the name must stand for a type before its own
-    // fields resolve -- which is what lets two structs name each other. The
-    // type reads its fields through this declaration, so it needs none of them
-    // yet. One taking parameters stands for no type until a mention supplies
-    // them.
-    if (param_count == 0) {
-        type_registry_instantiate(state->current_scope->type_registry, def, NULL, 0);
-    }
-
+    // The name binds to the declaration, and nothing is interned: the type it
+    // stands for is that declaration applied to no arguments, which the first
+    // mention asks the registry for. A field naming this struct before its own
+    // fields resolve therefore reaches a type that reads them through here --
+    // which is what lets two structs name each other.
     scope_decl_type_def(state->current_scope, struct_name, def);
 
     StructDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(StructDecl));
@@ -2210,7 +2206,7 @@ static void layout_struct(ResolverState *state, StructDecl *decl) {
 
     TypeRegistry *registry = state->current_scope->type_registry;
 
-    type_registry_complete(registry, type_registry_instantiate(registry, decl->def, NULL, 0));
+    type_registry_complete(registry, type_registry_apply(registry, decl->def, NULL, 0));
 }
 
 // Declares the function's name, return type, and parameter types — everything a
@@ -2333,8 +2329,7 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
         }
     }
 
-    if (!type_registry_add_method(state->current_scope->type_registry, method_owner_type(owner), name,
-                                  func)) {
+    if (!type_registry_add_method(state->current_scope->type_registry, owner, name, func)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' already has a function '%s'",
                    type_name_of(owner)->data, name->data);
         return;

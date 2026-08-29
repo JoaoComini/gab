@@ -178,7 +178,7 @@ const Type *resolution_type(TypeRegistry *registry, Resolution resolution) {
     // A declaration taking none is its own instantiation, which the registry
     // interned the first time anything named it.
     case RESOLUTION_TYPE_DECL:
-        return resolution.def->param_count == 0 ? type_registry_instantiate(registry, resolution.def, NULL, 0)
+        return resolution.def->param_count == 0 ? type_registry_apply(registry, resolution.def, NULL, 0)
                                                 : NULL;
 
     default:

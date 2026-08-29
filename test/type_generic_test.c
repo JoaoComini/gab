@@ -30,7 +30,7 @@ static void test_a_declared_field_nests_constructors() {
         .field_count = 1,
     };
 
-    const Type *instance = type_registry_instantiate(registry, &def, &int_type, 1);
+    const Type *instance = type_registry_apply(registry, &def, &int_type, 1);
 
     assert(type_field_count(instance) == 1);
 
@@ -69,7 +69,7 @@ static void test_a_declaration_taking_no_parameters_is_its_own_instantiation() {
         .field_count = 1,
     };
 
-    const Type *type = type_registry_instantiate(registry, &def, NULL, 0);
+    const Type *type = type_registry_apply(registry, &def, NULL, 0);
 
     assert(type_kind(type) == TYPE_STRUCT);
     assert(type_field_count(type) == 1);
@@ -77,7 +77,7 @@ static void test_a_declaration_taking_no_parameters_is_its_own_instantiation() {
 
     // Interned like any other application, so a second mention is the same type
     // rather than a second one laid out alike.
-    assert(type_registry_instantiate(registry, &def, NULL, 0) == type);
+    assert(type_registry_apply(registry, &def, NULL, 0) == type);
 
     type_registry_destroy(registry);
     string_pool_free(&ctx.strings);
@@ -109,8 +109,7 @@ static void test_two_declarations_alike_are_two_types() {
         .field_count = 1,
     };
 
-    assert(type_registry_instantiate(registry, &first, NULL, 0) !=
-           type_registry_instantiate(registry, &second, NULL, 0));
+    assert(type_registry_apply(registry, &first, NULL, 0) != type_registry_apply(registry, &second, NULL, 0));
 
     type_registry_destroy(registry);
     string_pool_free(&ctx.strings);
@@ -130,7 +129,7 @@ static void test_an_instantiation_reads_fields_declared_after_it() {
 
     TypeDef def = {.name = string_from_cstr(&ctx.strings, "Config")};
 
-    const Type *type = type_registry_instantiate(registry, &def, NULL, 0);
+    const Type *type = type_registry_apply(registry, &def, NULL, 0);
 
     assert(type_field_count(type) == 0);
 
@@ -146,7 +145,7 @@ static void test_an_instantiation_reads_fields_declared_after_it() {
     assert(type_fields(type)[0].type == type_registry_get_primitive(registry, TYPE_INT));
 
     // The same type, not a second interned once the fields arrived.
-    assert(type_registry_instantiate(registry, &def, NULL, 0) == type);
+    assert(type_registry_apply(registry, &def, NULL, 0) == type);
 
     type_registry_destroy(registry);
     string_pool_free(&ctx.strings);
@@ -179,8 +178,8 @@ static void test_an_instantiation_does_not_share_the_declarations_fields() {
         .field_count = 1,
     };
 
-    const Type *of_int = type_registry_instantiate(registry, &def, &int_type, 1);
-    const Type *of_bool = type_registry_instantiate(registry, &def, &bool_type, 1);
+    const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
+    const Type *of_bool = type_registry_apply(registry, &def, &bool_type, 1);
 
     assert(type_fields(of_int)[0].type == type_registry_block_of(registry, int_type));
     assert(type_fields(of_bool)[0].type == type_registry_block_of(registry, bool_type));

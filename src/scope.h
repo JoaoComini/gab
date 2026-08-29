@@ -108,8 +108,11 @@ typedef struct {
 Resolution scope_resolve(Scope *scope, String *name);
 
 // The type a resolution stands for, or NULL where it stands for none: a
-// declaration still owed arguments, a value, or nothing at all. The registry is
-// what turns a declaration taking none into its one instantiation.
+// declaration still owed arguments, a value, or nothing at all.
+//
+// The registry is what turns a declaration taking none into its one
+// instantiation, which is interned on first demand -- so this is where a plain
+// struct's type comes into being, rather than where its name was bound.
 const Type *resolution_type(TypeRegistry *registry, Resolution resolution);
 
 Symbol *scope_symbol_lookup(Scope *scope, String *name);

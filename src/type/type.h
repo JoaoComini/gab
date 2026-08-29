@@ -237,6 +237,15 @@ typedef struct GenericMethod {
     and interning 'Vec<int>' is that said with int. Nothing is laid out here --
     a width follows from an instantiation's fields, and a parameter has none.
 */
+// How a declaration's instantiations are laid out. Nearly every nominal type is
+// a record of the fields its declaration states; 'Array' is the one whose
+// instantiations are a run of one argument, counted by another, so what it is
+// built of comes from the arguments rather than from a field list.
+typedef enum {
+    TYPE_SHAPE_RECORD,
+    TYPE_SHAPE_ARRAY,
+} TypeShape;
+
 typedef struct TypeDef {
     // Interned by whoever declares it, as every name the registry is given is.
     // Carried here rather than read off a type, since a declaration is what a
@@ -246,6 +255,10 @@ typedef struct TypeDef {
     // How many arguments an instantiation supplies. Zero for a plain struct,
     // which is therefore instantiated by supplying none.
     size_t param_count;
+
+    // What an instantiation of it is. Record unless this is 'Array', whose
+    // instantiations are laid out from their arguments and declare no fields.
+    TypeShape shape;
 
     // The fields an instantiation is laid out from, as ordinary types written
     // over the parameters. A field naming no parameter is already its own
@@ -265,18 +278,6 @@ typedef struct TypeDef {
     const GenericMethod *methods;
     size_t method_count;
 } TypeDef;
-
-// What owns a method name: one instantiation, or the declaration every
-// instantiation of it shares. Exactly one is set, which the constructors are
-// what guarantee.
-typedef struct MethodOwner {
-    const Type *type;
-    const TypeDef *def;
-} MethodOwner;
-
-static inline MethodOwner method_owner_type(const Type *type) { return (MethodOwner){.type = type}; }
-
-static inline MethodOwner method_owner_def(const TypeDef *def) { return (MethodOwner){.def = def}; }
 
 // What an indirection names, or NULL for a kind that names nothing. The walks
 // asking how many levels deep something is read it that way, so "not an

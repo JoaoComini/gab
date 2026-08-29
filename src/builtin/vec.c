@@ -38,7 +38,7 @@ static const TypeDef *vec_declare_type(VM *vm) {
         .field_count = sizeof(fields) / sizeof(*fields),
     };
 
-    return builtin_declare(vm, &spec, NULL);
+    return builtin_declare(vm, &spec);
 }
 
 // A vector's header: the block it owns, which carries how far into it anything
@@ -139,7 +139,7 @@ void builtin_register_vec(VM *vm) {
     // finds the instantiation being built, so no receiver needs naming a self
     // the declaration could not otherwise say.
     const Type *element = type_registry_param(registry, 0);
-    const Type *self = type_registry_instantiate(registry, vec_def, &element, 1);
+    const Type *self = type_registry_apply(registry, vec_def, &element, 1);
     const Type *receiver = type_registry_ref_to(registry, self);
 
     const Type *an_int = type_registry_get_primitive(registry, TYPE_INT);

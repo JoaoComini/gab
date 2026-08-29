@@ -10,7 +10,7 @@
 
 #include <stddef.h>
 
-const TypeDef *builtin_declare(VM *vm, const BuiltinTypeSpec *spec, const Type **type) {
+const TypeDef *builtin_declare(VM *vm, const BuiltinTypeSpec *spec) {
     Arena *arena = vm->env.arena;
 
     TypeField *fields = spec->field_count ? arena_alloc(arena, spec->field_count * sizeof(TypeField)) : NULL;
@@ -39,16 +39,12 @@ const TypeDef *builtin_declare(VM *vm, const BuiltinTypeSpec *spec, const Type *
 
     Scope *scope = &vm->env.global_scope;
 
-    const Type *declared = type_registry_declare(scope->type_registry, &decl);
+    type_registry_declare(scope->type_registry, &decl);
 
     // The name binds to what it declares, whatever its arity: one taking no
     // parameters is the type it was just instantiated into, and one taking them
     // becomes a type where a mention supplies them.
     scope_decl_type_def(scope, def->name, def);
-
-    if (type) {
-        *type = declared;
-    }
 
     return def;
 }
@@ -82,13 +78,24 @@ static Symbol *method_symbol(VM *vm, const Type *receiver, const char *name, Gab
     return symbol;
 }
 
-void builtin_register_method(VM *vm, MethodOwner declared_on, const Type *receiver, const char *name,
+void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiver, const char *name,
                              GabExternFn body, const Type *return_type, const Type *const *params,
                              size_t param_count) {
     Symbol *symbol = method_symbol(vm, receiver, name, body, return_type, params, param_count);
 
     type_registry_add_method(vm->env.global_scope.type_registry, declared_on,
                              string_from_cstr(&vm->env.strings, name), symbol);
+}
+
+void builtin_register_shared_method(VM *vm, const TypeDef *declared_on, const char *name, GabExternFn body,
+                                    const Type *return_type, const Type *const *params, size_t param_count) {
+    // No receiver: the set is the declaration's, so there is no one type for
+    // parameter zero to take. What a call reaches it on is the instantiation
+    // whose set answered.
+    Symbol *symbol = method_symbol(vm, NULL, name, body, return_type, params, param_count);
+
+    type_registry_add_shared_method(vm->env.global_scope.type_registry, declared_on,
+                                    string_from_cstr(&vm->env.strings, name), symbol);
 }
 
 // As builtin_register_method, for a function the type owns rather than one a
@@ -115,7 +122,7 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
 
     extern_proto_list_add(&vm->program.extern_protos, (ExternProto){.body = body, .symbol = symbol});
 
-    type_registry_add_method(vm->env.global_scope.type_registry, method_owner_type(declared_on),
+    type_registry_add_method(vm->env.global_scope.type_registry, declared_on,
                              string_from_cstr(&vm->env.strings, name), symbol);
 }
 

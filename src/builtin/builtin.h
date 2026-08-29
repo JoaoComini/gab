@@ -44,10 +44,10 @@ typedef struct BuiltinTypeSpec {
 // of the language and in the library that provides it.
 //
 // Returns the declaration rather than the type, since one taking parameters
-// stands for no type until a mention supplies them. 'type' is filled in with
-// the instantiation for a declaration taking none, and left NULL otherwise;
-// pass NULL where it is not wanted.
-const TypeDef *builtin_declare(VM *vm, const BuiltinTypeSpec *spec, const Type **type);
+// stands for no type until a mention supplies them. A caller wanting the type a
+// declaration taking none stands for asks the registry for it, which is that
+// declaration applied to nothing.
+const TypeDef *builtin_declare(VM *vm, const BuiltinTypeSpec *spec);
 
 // Declares one method on a builtin type: a Symbol in the type's method map, and
 // an entry in the table OP_CALL_EXTERN indexes. The body is a GabExternFn
@@ -63,9 +63,18 @@ const TypeDef *builtin_declare(VM *vm, const BuiltinTypeSpec *spec, const Type *
 // owning type's, since a borrow reads it through 'owner' and an owning string
 // has no route the other way, while the receiver stays the borrow so that
 // reading a string never asks for ownership of it.
-void builtin_register_method(VM *vm, MethodOwner declared_on, const Type *receiver, const char *name,
+void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiver, const char *name,
                              GabExternFn body, const Type *return_type, const Type *const *params,
                              size_t param_count);
+
+// As builtin_register_method, for a set every instantiation of a declaration
+// answers rather than one type's: an array's 'len' is the same whatever the
+// element, so it is declared once on 'Array' and every '[T; N]' finds it.
+//
+// No receiver, because there is no one type to be parameter zero: a call takes
+// the instantiation whose set answered.
+void builtin_register_shared_method(VM *vm, const TypeDef *declared_on, const char *name, GabExternFn body,
+                                    const Type *return_type, const Type *const *params, size_t param_count);
 
 // As builtin_register_method, for a function reached on the type rather than on
 // a value: 'Type::name(args)'. Every parameter is in 'params', since nothing is
