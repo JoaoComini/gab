@@ -340,6 +340,29 @@ void type_registry_complete(TypeRegistry *registry, Type *type) {
     type_registry_drop_of(registry, type);
 }
 
+const Type *type_registry_close_struct(TypeRegistry *registry, TypeDef *def) {
+    assert(def && def->fields_pending && "a closed struct is one whose fields were pending");
+    assert(def->param_count == 0 && "a declaration taking arguments stands for no one type");
+    assert(def->field_count <= def->max_fields && "a struct closed over more fields than it opened");
+
+    // The type interned when the name was opened, which is what a field naming
+    // it has been resolving to all along. Filled rather than rebuilt: every
+    // mention already holds this pointer.
+    Type *type = (Type *)type_registry_instantiate(registry, def, NULL, 0);
+
+    for (size_t i = 0; i < def->field_count; i++) {
+        type_add_field(type, def->fields[i].name, def->fields[i].type);
+    }
+
+    // Cleared last: until the fields are in, a second instantiation would hand
+    // back a type with room for them and nothing in it.
+    def->fields_pending = false;
+
+    type_registry_complete(registry, type);
+
+    return type;
+}
+
 const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl) {
     assert(decl && decl->def && decl->def->name && "a declared type is found by name");
     assert((decl->derefs_to != NULL) == (decl->lent_part_count > 0) &&

@@ -1993,24 +1993,41 @@ static bool field_type_failed(ResolverState *state, const Type *type) {
     return decl && decl->state == STRUCT_POISONED;
 }
 
-// Derives the struct's layout from its declaration, once: resolves the fields,
-// rejects what no slot may hold, and computes the offsets and the width.
-//
-// Memoized rather than run where the declaration was bound, because a field may
-// name a struct declared further down the file: forcing that field's layout
-// from here is what orders the computation by dependency rather than by the
-// order the declarations were written in.
-// Resolves a declaration's fields as types written over its parameters, which
-// is what an instantiation substitutes into. Nothing is laid out: a field
-// naming a parameter has no width until a mention supplies one, so the checks
-// that ask for a width belong at the instantiation rather than here.
-//
-// The parameters are bound in a scope of their own, so that 'T' names the
-// parameter while the fields resolve and nothing outside the declaration.
-static void resolve_declared_fields(ResolverState *state, StructDecl *decl) {
+/*
+    Resolves a declaration's fields, once, and lays out what can be laid out.
+
+    One walk for every declaration, generic or not: a field is resolved, checked
+    for a duplicate and refused a width it cannot have, and lands in the
+    declaration. What genericity changes is only which of those checks can be
+    asked. A field written over a parameter has no width until a mention
+    supplies one, so the questions that need a width -- a containment cycle, a
+    field whose own layout failed, an unsized field -- are asked here exactly
+    when the declaration takes no parameters, and at the instantiation
+    otherwise.
+
+    Memoized rather than run where the declaration was bound, because a field
+    may name a struct declared further down the file: forcing that field's
+    layout from here is what orders the computation by dependency rather than by
+    the order the declarations were written in.
+
+    The parameters are bound in a scope of their own, so that 'T' names the
+    parameter while the fields resolve and nothing outside the declaration. A
+    declaration taking none gets that scope too and puts nothing in it, which is
+    what keeps this one path.
+*/
+static void layout_struct(ResolverState *state, StructDecl *decl) {
+    if (decl->state != STRUCT_DECLARED) {
+        return;
+    }
+
+    decl->state = STRUCT_LAYING_OUT;
+
     ASTStmt *stmt = decl->stmt;
     TypeDef *def = decl->def;
 
+    // The fields resolve in the scope the struct was declared in, which is not
+    // where the layout was demanded from: a struct declared in one module is
+    // laid out when another names it.
     Scope *enclosing = state->current_scope;
     Scope *params = scope_create(resolver_owner_arena(state), decl->scope->strings, decl->scope);
 
@@ -2026,7 +2043,8 @@ static void resolve_declared_fields(ResolverState *state, StructDecl *decl) {
     state->current_scope = params;
 
     size_t field_count = stmt->struct_decl.fields.size;
-    TypeField *fields = arena_alloc(resolver_owner_arena(state), field_count * sizeof(TypeField));
+    TypeField *fields =
+        field_count ? arena_alloc(resolver_owner_arena(state), field_count * sizeof(TypeField)) : NULL;
 
     bool poisoned = false;
     size_t resolved = 0;
@@ -2059,10 +2077,32 @@ static void resolve_declared_fields(ResolverState *state, StructDecl *decl) {
         }
 
         // A field naming a parameter is sized by whatever the argument turns
-        // out to be, so only a field naming no parameter can be judged here.
-        if (!type_has_param(field_type) && reject_unsized(state, field_type, field->span, "a field")) {
-            poisoned = true;
-            continue;
+        // out to be, so nothing below can be asked of it here.
+        if (!type_has_param(field_type)) {
+            // Asked before the field is kept, since a struct waiting on its own
+            // width has no width to give.
+            StructDecl *cycle = element_completes_a_cycle(state, field_type);
+
+            if (cycle) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, field->span, "struct '%s' cannot contain itself",
+                           cycle->name->data);
+                poisoned = true;
+                continue;
+            }
+
+            // A field whose own layout failed carries the failure up rather
+            // than being laid out at the width it does not have. Silent,
+            // because the field's declaration already reported why: this struct
+            // is unusable as a consequence, not as a second fault.
+            if (field_type_failed(state, field_type)) {
+                poisoned = true;
+                continue;
+            }
+
+            if (reject_unsized(state, field_type, field->span, "a field")) {
+                poisoned = true;
+                continue;
+            }
         }
 
         fields[resolved++] = (TypeField){.name = field_name, .type = field_type};
@@ -2070,6 +2110,8 @@ static void resolve_declared_fields(ResolverState *state, StructDecl *decl) {
 
     state->current_scope = enclosing;
 
+    // A struct with a bad field has no layout worth computing: its name is
+    // withdrawn rather than left standing over a width that would be wrong.
     if (poisoned) {
         decl->state = STRUCT_POISONED;
         scope_withdraw_type(decl->scope, decl->name);
@@ -2080,93 +2122,18 @@ static void resolve_declared_fields(ResolverState *state, StructDecl *decl) {
     def->field_count = resolved;
 
     decl->state = STRUCT_LAID_OUT;
-}
 
-static void layout_struct(ResolverState *state, StructDecl *decl) {
-    if (decl->state != STRUCT_DECLARED) {
+    // A declaration taking parameters stands for no type until a mention
+    // supplies them, so there is nothing here to lay out.
+    if (def->param_count > 0) {
         return;
     }
 
-    if (decl->def->param_count > 0) {
-        decl->state = STRUCT_LAYING_OUT;
-        resolve_declared_fields(state, decl);
-        return;
-    }
-
-    decl->state = STRUCT_LAYING_OUT;
-
-    ASTStmt *stmt = decl->stmt;
-    Type *type = (Type *)type_registry_instantiate(state->current_scope->type_registry, decl->def, NULL, 0);
-
-    // The fields resolve in the scope the struct was declared in, which is not
-    // where the layout was demanded from: a struct declared in one module is
-    // laid out when another names it.
-    Scope *enclosing = state->current_scope;
-    state->current_scope = decl->scope;
-
-    bool poisoned = false;
-
-    for (size_t i = 0; i < stmt->struct_decl.fields.size; i++) {
-        ASTField *field = stmt->struct_decl.fields.data[i];
-        String *field_name = resolver_intern(state, field->name);
-
-        if (type_find_field(type, field_name)) {
-            diag_error(state->diagnostics, GAB_ERR_NAME, field->span, "duplicate field '%s' in struct '%s'",
-                       field_name->data, decl->name->data);
-            poisoned = true;
-            continue;
-        }
-
-        const Type *field_type = resolve_type_expr(state, field->type_expr, field->span);
-
-        if (is_error_type(field_type)) {
-            poisoned = true;
-            continue;
-        }
-
-        // Asked before the field is added, since a struct waiting on its own
-        // width has no width to add.
-        StructDecl *cycle = element_completes_a_cycle(state, field_type);
-
-        if (cycle) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, field->span, "struct '%s' cannot contain itself",
-                       cycle->name->data);
-            poisoned = true;
-            continue;
-        }
-
-        // A field whose own layout failed carries the failure up rather than
-        // being laid out at the width it does not have. Silent, because the
-        // field's declaration already reported why: this struct is unusable as
-        // a consequence, not as a second fault.
-        if (field_type_failed(state, field_type)) {
-            poisoned = true;
-            continue;
-        }
-
-        if (reject_unsized(state, field_type, field->span, "a field")) {
-            poisoned = true;
-            continue;
-        }
-
-        type_add_field(type, field_name, field_type);
-    }
-
-    state->current_scope = enclosing;
-
-    // A struct with a bad field has no layout worth computing: its name stays
-    // bound so that the rest of the unit resolves against something, and the
-    // fields that did resolve are dropped rather than laid out into a width
-    // that would be wrong.
-    if (poisoned) {
-        decl->state = STRUCT_POISONED;
-        scope_withdraw_type(decl->scope, decl->name);
-        return;
-    }
-
-    type_registry_complete(state->current_scope->type_registry, type);
-
-    decl->state = STRUCT_LAID_OUT;
+    // The declaration applied to no arguments, which is the type this name
+    // stands for. Interned when the name was bound so that a sibling's field
+    // could reach it, and given the fields resolved above -- which is the room
+    // the pending state was holding.
+    type_registry_close_struct(state->current_scope->type_registry, def);
 }
 
 // Declares the function's name, return type, and parameter types — everything a

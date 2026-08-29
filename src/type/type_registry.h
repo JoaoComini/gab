@@ -148,13 +148,14 @@ Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, cons
 
     A struct's fields may name types not yet declared, so its name has to be
     bound before they resolve: 'struct A { b: box B }' is legal, and B may come
-    later in the unit. The name is therefore opened here and the fields added as
-    each resolves with type_add_field, and type_registry_complete settling the
-    layout once they all have.
+    later in the unit. The name is therefore opened here, and closed once the
+    fields are settled -- with type_registry_close_struct where they were
+    resolved onto the declaration, which is what a unit's struct does, or with
+    type_add_field and type_registry_complete where a caller fills the type
+    itself.
 
     A provider that knows its fields up front -- the standard library, and a host
-    -- states them at once with type_registry_declare instead, which is these
-    three calls in order.
+    -- states them at once with type_registry_declare instead.
 
     Between the two, the type has no layout: what may be done with it is what
     needs no width, which is to name it and to point at it.
@@ -169,6 +170,12 @@ Type *type_registry_open_struct(TypeRegistry *registry, TypeDef *def, size_t max
 // once every field is added; a type whose fields did not resolve is withdrawn
 // instead of completed.
 void type_registry_complete(TypeRegistry *registry, Type *type);
+
+// Gives an opened declaration's type the fields the declaration now holds, and
+// finishes it. What a resolver calls once a struct's fields have resolved: the
+// fields live on the declaration, and this is what puts them in the one type
+// that declaration applied to no arguments stands for.
+const Type *type_registry_close_struct(TypeRegistry *registry, TypeDef *def);
 
 /*
     What freeing a value of this type does, or NULL when it owns nothing.
