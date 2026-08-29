@@ -686,36 +686,35 @@ const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDef *def
     // this entry rather than building a second and recursing forever.
     application_insert(registry, app, type);
 
-    // Applied to nothing, so substituting is the identity and the declaration's
-    // own fields are already this type's. Read through the declaration rather
-    // than copied out of it, which is what lets the type exist before they do:
-    // a struct's name is interned when it is declared, and its fields arrive
-    // when they resolve.
+    // Applied to nothing, so substituting is the identity: this type's fields
+    // are the declaration's, read through it rather than derived. What lets the
+    // type exist before they do -- a struct's name is interned when it is
+    // declared, and its fields arrive when they resolve.
     //
     // That is the whole of why a forward reference works. 'struct A { b: box B
     // }' interns B here to build the 'box B', and B's own fields land on the
     // declaration this points at, whenever they are settled.
     if (arg_count == 0) {
-        type->record.through_def = true;
-
         return type;
     }
 
+    TypeFields *substituted = arena_alloc(registry->arena, sizeof(TypeFields));
     TypeField *fields = arena_alloc(registry->arena, generic->field_count * sizeof(TypeField));
 
     // Published before any of them is substituted, and counted as they are
     // filled: substituting a field may reach this same instantiation, and what
     // it finds must be a struct of the fields settled so far rather than a
     // count standing over memory nothing has written.
-    type->record.fields = fields;
-    type->record.field_count = 0;
+    *substituted = (TypeFields){.fields = fields, .count = 0};
+
+    type->record.substituted = substituted;
 
     for (size_t i = 0; i < generic->field_count; i++) {
         const Type *field_type = substitute(registry, generic->fields[i].type, args, arg_count);
 
         fields[i] = (TypeField){.name = generic->fields[i].name, .type = field_type};
 
-        type->record.field_count++;
+        substituted->count++;
     }
 
     type_registry_drop_of(registry, type);

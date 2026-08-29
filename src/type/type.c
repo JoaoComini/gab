@@ -116,12 +116,8 @@ const TypeField *type_fields(const Type *type) {
     }
 
     switch (type->kind) {
-    // An instantiation applied to nothing keeps no fields of its own: they are
-    // its declaration's, unsubstituted. Read through rather than copied, so a
-    // struct whose fields resolve after its name was interned needs nothing
-    // written back into the type.
     case TYPE_STRUCT:
-        return type->record.through_def ? type->decl->fields : type->record.fields;
+        return type->record.substituted ? type->record.substituted->fields : type->decl->fields;
 
     default:
         return NULL;
@@ -135,7 +131,7 @@ size_t type_field_count(const Type *type) {
 
     switch (type->kind) {
     case TYPE_STRUCT:
-        return type->record.through_def ? type->decl->field_count : type->record.field_count;
+        return type->record.substituted ? type->record.substituted->count : type->decl->field_count;
 
     default:
         return 0;

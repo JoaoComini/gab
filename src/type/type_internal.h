@@ -37,6 +37,13 @@ struct Type {
     // Distinct from the relation a borrowed view has to what it borrows: 'str'
     // is reached from 'String' by lending, which is a step down the chain a
     // receiver already walks, not a set held somewhere else.
+    //
+    // With the application this type was interned on, this is the whole of what
+    // a nominal type is: a declaration applied to arguments, which is rustc's
+    // Adt(AdtDef, GenericArgs). Its fields are that declaration's with those
+    // arguments substituted in, and are held by the registry rather than here
+    // -- so a name may be interned before its fields resolve, and no copy of
+    // them can disagree with the declaration.
     const TypeDef *decl;
 
     // Whether a parameter is reachable from here, settled as this type is
@@ -61,27 +68,21 @@ struct Type {
             const Type *pointee;
         } indirect;
 
-        // TYPE_STRUCT: the fields the layout came from. A string's two are the
-        // block holding its characters and how many of them are live.
+        // TYPE_STRUCT: where its fields were derived, for an instantiation
+        // given arguments. Owned by the registry that derived them.
         //
-        // Not TYPE_STR: those characters are what a 'str' is, so it holds no
-        // fields naming them. What does is a reference to one, and that is the
-        // reference's own shape rather than anything read off the pointee.
+        // Not TYPE_STR: a string's characters are what a 'str' is, so it holds
+        // no fields naming them. What does is a reference to one, and that is
+        // the reference's own shape rather than anything read off the pointee.
+        //
+        // NULL for one applied to no arguments, whose fields are its
+        // declaration's unsubstituted and are read through 'decl' -- so a
+        // struct interned before its fields resolve needs nothing written here
+        // once they do. What the type was applied to is not held either: that
+        // is the application it was interned on, which is where its identity
+        // was settled.
         struct {
-            // Set for an instantiation applied to no arguments, whose fields
-            // are its declaration's unsubstituted -- so they are read from
-            // 'decl' rather than held here, and the two cannot disagree.
-            //
-            // What lets the type be interned before its fields are known: a
-            // struct's name is bound when it is declared, and a sibling's field
-            // reaches this type while the declaration is still empty.
-            bool through_def;
-
-            // Only for an instantiation given arguments, whose fields are the
-            // declaration's with those substituted in. A real computation
-            // rather than a copy, which is why these are held.
-            TypeField *fields;
-            size_t field_count;
+            const TypeFields *substituted;
         } record;
 
         // TYPE_ARRAY: a run of one element, as many as the length says.

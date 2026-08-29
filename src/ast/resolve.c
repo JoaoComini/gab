@@ -36,19 +36,28 @@ typedef struct StructDecl {
     // registry interns rather than this holding a second pointer to.
     TypeDef *def;
 
+    // The three things declaring a struct does, in the order they can be done:
+    // the name is bound, the fields resolve against every name in the unit, and
+    // the width follows from the fields. Each is demanded on its own, which is
+    // what lets a field name a struct declared further down -- resolving this
+    // one's fields forces that one's.
     enum {
-        // Bound, with no layout asked for yet.
+        // Bound, with its fields not resolved yet.
         STRUCT_DECLARED,
 
-        // Being laid out. A field reaching a declaration in this state by value
-        // is a containment cycle: its width is waiting on itself.
-        STRUCT_LAYING_OUT,
+        // Its fields are resolving. A field reaching a declaration in this
+        // state by value is a containment cycle: its width is waiting on
+        // itself.
+        STRUCT_RESOLVING,
+
+        // Its fields are settled, with no width computed yet.
+        STRUCT_RESOLVED,
 
         STRUCT_LAID_OUT,
 
-        // Laid out as far as it goes: a field failed, so the type is poisoned
-        // rather than half-built. Distinct from LAID_OUT so a second demand
-        // reports nothing a second time.
+        // As far as it goes: a field failed, so the type is poisoned rather
+        // than half-built. Distinct from LAID_OUT so a second demand reports
+        // nothing a second time.
         STRUCT_POISONED,
     } state;
 } StructDecl;
@@ -1959,6 +1968,7 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
     return decl;
 }
 
+static void resolve_struct_fields(ResolverState *state, StructDecl *decl);
 static void layout_struct(ResolverState *state, StructDecl *decl);
 
 // The declaration a by-value use of this type closes a containment cycle on, or
@@ -1977,11 +1987,11 @@ static StructDecl *element_completes_a_cycle(ResolverState *state, const Type *t
         return NULL;
     }
 
-    if (decl->state == STRUCT_LAYING_OUT) {
+    if (decl->state == STRUCT_RESOLVING) {
         return decl;
     }
 
-    layout_struct(state, decl);
+    resolve_struct_fields(state, decl);
 
     return NULL;
 }
@@ -1995,33 +2005,35 @@ static bool field_type_failed(ResolverState *state, const Type *type) {
 }
 
 /*
-    Resolves a declaration's fields, once, and lays out what can be laid out.
+    Resolves a declaration's fields, once, and asks for the width they give.
 
     One walk for every declaration, generic or not: a field is resolved, checked
     for a duplicate and refused a width it cannot have, and lands in the
-    declaration. What genericity changes is only which of those checks can be
-    asked. A field written over a parameter has no width until a mention
-    supplies one, so the questions that need a width -- a containment cycle, a
-    field whose own layout failed, an unsized field -- are asked here exactly
-    when the declaration takes no parameters, and at the instantiation
-    otherwise.
+    declaration -- which is where a nominal type's fields live, so nothing is
+    written into any type here.
 
-    Memoized rather than run where the declaration was bound, because a field
-    may name a struct declared further down the file: forcing that field's
-    layout from here is what orders the computation by dependency rather than by
-    the order the declarations were written in.
+    What genericity changes is only which of those checks a field can be asked.
+    One written over a parameter has no width until a mention supplies an
+    argument, so a containment cycle, a failed layout and an unsized field are
+    asked of exactly the fields naming no parameter, and of the rest where the
+    instantiation is interned.
+
+    Run on demand rather than where the declaration was bound, because a field
+    may name a struct declared further down the file: forcing that one's fields
+    from here is what orders the work by dependency rather than by the order the
+    declarations were written in.
 
     The parameters are bound in a scope of their own, so that 'T' names the
     parameter while the fields resolve and nothing outside the declaration. A
     declaration taking none gets that scope too and puts nothing in it, which is
     what keeps this one path.
 */
-static void layout_struct(ResolverState *state, StructDecl *decl) {
+static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
     if (decl->state != STRUCT_DECLARED) {
         return;
     }
 
-    decl->state = STRUCT_LAYING_OUT;
+    decl->state = STRUCT_RESOLVING;
 
     ASTStmt *stmt = decl->stmt;
     TypeDef *def = decl->def;
@@ -2122,20 +2134,34 @@ static void layout_struct(ResolverState *state, StructDecl *decl) {
     def->fields = fields;
     def->field_count = resolved;
 
+    decl->state = STRUCT_RESOLVED;
+
+    layout_struct(state, decl);
+}
+
+// Settles the width a declaration's fields give it, which is the last of the
+// three things declaring a struct does: its name is interned when it is
+// declared, its fields resolve against every name in the unit, and only then is
+// there a width to compute.
+//
+// Nothing is written into the type -- it reads its fields through the
+// declaration -- so this is the layout and the drop plan being demanded, which
+// the registry memoizes. Separate from resolving the fields because only a
+// declaration owed no arguments has a width at all: what 'Vec' is laid out as
+// is not a question until a mention says 'Vec<int>', and that instantiation is
+// laid out where it is interned.
+static void layout_struct(ResolverState *state, StructDecl *decl) {
+    assert(decl->state == STRUCT_RESOLVED && "a width follows from fields that resolved");
+
     decl->state = STRUCT_LAID_OUT;
 
-    // A declaration taking parameters stands for no type until a mention
-    // supplies them, so there is nothing here to lay out.
-    if (def->param_count > 0) {
+    if (decl->def->param_count > 0) {
         return;
     }
 
-    // The declaration applied to no arguments, which is the type this name
-    // stands for: interned when the name was bound, and reading the fields
-    // settled just above. Nothing is written into it -- what is left is to
-    // settle the width they give it.
-    type_registry_complete(state->current_scope->type_registry,
-                           type_registry_instantiate(state->current_scope->type_registry, def, NULL, 0));
+    TypeRegistry *registry = state->current_scope->type_registry;
+
+    type_registry_complete(registry, type_registry_instantiate(registry, decl->def, NULL, 0));
 }
 
 // Declares the function's name, return type, and parameter types — everything a
@@ -2518,12 +2544,12 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
     }
     case STMT_STRUCT_DECL: {
         // A struct nested in a body has nothing above it that could have
-        // declared it, so its name is bound and its layout forced together.
+        // declared it, so all three phases run together here.
         if (!stmt->struct_decl.declared) {
             StructDecl *decl = declare_struct(state, stmt);
 
             if (decl) {
-                layout_struct(state, decl);
+                resolve_struct_fields(state, decl);
             }
         }
         break;
@@ -2750,16 +2776,17 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
         }
     }
 
-    // Layouts second, once every name in the unit is bound. A field may name a
-    // struct declared further down, and one may name the other through a 'box'
-    // in both directions -- neither resolves while the layouts are computed in
-    // the order the declarations were written.
+    // Fields second, once every name in the unit is bound, and the width each
+    // gives follows from them. A field may name a struct declared further down,
+    // and one may name the other through a 'box' in both directions -- neither
+    // resolves while the fields are read in the order the declarations were
+    // written, so resolving one forces whichever it reaches.
     //
     // Forced here rather than left to whoever first needs a width, because the
     // fields are read off this unit's AST, which does not outlive it: a struct
     // leaves this unit laid out or poisoned, never merely declared.
     for (size_t i = 0; i < state.struct_decls.size; i++) {
-        layout_struct(&state, state.struct_decls.data[i]);
+        resolve_struct_fields(&state, state.struct_decls.data[i]);
     }
 
     for (size_t i = 0; i < unit->statements.size; i++) {

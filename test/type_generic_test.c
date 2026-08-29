@@ -153,10 +153,51 @@ static void test_an_instantiation_reads_fields_declared_after_it() {
     arena_destroy(ctx.arena);
 }
 
+// A declaration's own fields are written over its parameters, and an
+// instantiation's are those substituted. So the two disagree by construction:
+// the declaration holds 'block T' whatever anything is instantiated with, and
+// each instantiation holds the block its own argument names.
+static void test_an_instantiation_does_not_share_the_declarations_fields() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    TypeRegistry *registry = type_registry_create(ctx.arena, &names);
+
+    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *bool_type = type_registry_get_primitive(registry, TYPE_BOOL);
+
+    TypeField field = {
+        .name = string_from_cstr(&ctx.strings, "data"),
+        .type = type_registry_block_of(registry, type_registry_param(registry, 0)),
+    };
+
+    TypeDef def = {
+        .name = string_from_cstr(&ctx.strings, "Holder"),
+        .param_count = 1,
+        .fields = &field,
+        .field_count = 1,
+    };
+
+    const Type *of_int = type_registry_instantiate(registry, &def, &int_type, 1);
+    const Type *of_bool = type_registry_instantiate(registry, &def, &bool_type, 1);
+
+    assert(type_fields(of_int)[0].type == type_registry_block_of(registry, int_type));
+    assert(type_fields(of_bool)[0].type == type_registry_block_of(registry, bool_type));
+
+    // The declaration still says what it said, over the parameter.
+    assert(def.fields[0].type == type_registry_block_of(registry, type_registry_param(registry, 0)));
+
+    type_registry_destroy(registry);
+    string_pool_free(&ctx.strings);
+    arena_destroy(ctx.arena);
+}
+
 int main(void) {
     test_a_declared_field_nests_constructors();
     test_a_declaration_taking_no_parameters_is_its_own_instantiation();
     test_two_declarations_alike_are_two_types();
     test_an_instantiation_reads_fields_declared_after_it();
+    test_an_instantiation_does_not_share_the_declarations_fields();
     return 0;
 }

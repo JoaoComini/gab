@@ -177,6 +177,27 @@ typedef struct TypeField {
 } TypeField;
 
 /*
+    A nominal type's fields, as its declaration's with its arguments substituted
+    in.
+
+    Held apart from the Type for the reason a layout and a drop plan are: what a
+    type is -- a declaration applied to arguments -- is settled when it is
+    interned, while what follows from that is derived, and a declaration's own
+    fields may not have resolved yet. An instantiation applied to no arguments
+    has none of these at all: substituting nothing is the identity, so it reads
+    the declaration's directly.
+
+    The count grows as the fields are filled. A field may name the very
+    instantiation being built -- 'Node<T>' holding a 'box Node<T>' -- and what
+    that reaches must be the fields settled so far rather than a count standing
+    over memory nothing has written.
+*/
+typedef struct TypeFields {
+    const TypeField *fields;
+    size_t count;
+} TypeFields;
+
+/*
     One method a generic declaration answers, in terms of its parameters.
 
     Every type here is an ordinary type that may mention a parameter, so what
@@ -286,8 +307,14 @@ size_t type_param_index(const Type *type);
 // substitution, which is what keeps the walk to the declarations that need it.
 bool type_has_param(const Type *type);
 
-// The fields a layout was computed from. Empty for a kind laid out some other
+// The fields a layout is computed from. Empty for a kind laid out some other
 // way, so a walk over them is the right no-op there.
+//
+// A nominal type's are its declaration's with its arguments substituted in, and
+// neither is held by the type itself: one applied to no arguments reads its
+// declaration's, and one given them reads what the registry derived. So a
+// struct interned before its fields resolve answers with them once they do,
+// with nothing written back into the type.
 const TypeField *type_fields(const Type *type);
 size_t type_field_count(const Type *type);
 
