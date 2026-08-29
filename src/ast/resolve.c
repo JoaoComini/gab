@@ -1084,8 +1084,14 @@ static bool bin_op_yields_bool(BinOp op) {
 // same union, so the operand is lifted out and the argument list freed before
 // anything is written back over them.
 static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
-    const Type *target =
-        scope_type_lookup(state->current_scope, resolver_intern(state, expr->call.target->var.name));
+    Resolution resolution =
+        scope_resolve(state->current_scope, resolver_intern(state, expr->call.target->var.name));
+
+    // A name means one thing, and which namespace it was found in is what
+    // decides between a conversion and a call: only a type converts, so
+    // anything else leaves the node for the call path rather than being read
+    // as a type that happens to be missing.
+    const Type *target = resolution_type(state->current_scope->type_registry, resolution);
 
     if (!target) {
         return false;
@@ -1709,10 +1715,12 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
 
         // What the name declares rather than what it names: a declaration
         // taking parameters stands for no type until this supplies them.
-        const TypeDef *base_def = base_name ? scope_type_def_lookup(base_scope, base_name) : NULL;
-        const Type *base = base_name ? scope_type_lookup(base_scope, base_name) : NULL;
+        Resolution base_resolution = base_name ? scope_resolve(base_scope, base_name) : (Resolution){0};
 
-        if (!base && !base_def) {
+        const TypeDef *base_def = base_resolution.kind == RESOLUTION_TYPE_DECL ? base_resolution.def : NULL;
+        const Type *base = resolution_type(registry, base_resolution);
+
+        if (base_resolution.kind == RESOLUTION_NONE) {
             char *name = string_ref_to_cstr(expr->apply.base->name);
             diag_error(state->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", name);
             free(name);
@@ -1861,35 +1869,35 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
     // root-namespace one and 'int' resolves with no import. A 'Module::Type'
     // expression resolved to that module's scope above, and its bare member
     // name is what that scope holds.
-    const Type *type = scope ? scope_type_lookup(scope, resolver_expr_member(state, expr->name)) : NULL;
+    Resolution resolution =
+        scope ? scope_resolve(scope, resolver_expr_member(state, expr->name)) : (Resolution){0};
 
-    if (!type) {
-        // A declaration taking parameters names no type until they are given,
-        // so a bare mention of one is the arity error a wrong count is: what it
-        // takes is what makes it a type.
-        const TypeDef *def =
-            scope ? scope_type_def_lookup(scope, resolver_expr_member(state, expr->name)) : NULL;
+    const Type *type = resolution_type(registry, resolution);
 
-        if (def) {
-            if (def == type_registry_array_def(registry)) {
-                diag_error(state->diagnostics, GAB_ERR_TYPE, span,
-                           "'Array' needs an element type and a length, as '[int; 3]'");
-            } else {
-                diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' takes %zu type argument(s), not 0",
-                           def->name->data, def->param_count);
-            }
+    if (type) {
+        return type;
+    }
 
-            return resolver_error_type(state);
+    // A declaration taking parameters names no type until they are given, so a
+    // bare mention of one is the arity error a wrong count is: what it takes is
+    // what makes it a type.
+    if (resolution.kind == RESOLUTION_TYPE_DECL) {
+        if (resolution.def == type_registry_array_def(registry)) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, span,
+                       "'Array' needs an element type and a length, as '[int; 3]'");
+        } else {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' takes %zu type argument(s), not 0",
+                       resolution.def->name->data, resolution.def->param_count);
         }
-
-        char *name_text = string_ref_to_cstr(expr->name);
-        diag_error(state->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", name_text);
-        free(name_text);
 
         return resolver_error_type(state);
     }
 
-    return type;
+    char *name_text = string_ref_to_cstr(expr->name);
+    diag_error(state->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", name_text);
+    free(name_text);
+
+    return resolver_error_type(state);
 }
 
 static void resolve_stmt(ResolverState *state, ASTStmt *stmt);
@@ -2243,7 +2251,13 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
         return;
     }
 
-    if (!type_name_of(owner) || !scope_type_lookup_local(state->current_scope, type_name_of(owner))) {
+    // Compared by declaration rather than by name: two modules may each declare
+    // a 'Config', and what this one may hang a function on is the declaration it
+    // wrote, not whichever type the name reaches from here.
+    TypeBinding *bound =
+        type_name_of(owner) ? scope_binding_lookup_local(state->current_scope, type_name_of(owner)) : NULL;
+
+    if (!bound || bound->def != type_decl(owner)) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                    "cannot declare a function on '%s', which this module does not declare",
                    type_name(state, owner));
@@ -2325,7 +2339,18 @@ static Symbol *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
         return NULL;
     }
 
-    const Type *owner = scope_type_lookup(state->current_scope, resolver_intern(state, owner_ref));
+    Resolution resolution = scope_resolve(state->current_scope, resolver_intern(state, owner_ref));
+
+    // A declaration still owed arguments owns no function set of its own: which
+    // instantiation the name meant is what a mention supplies, so it is named
+    // as the arity it is short rather than reported as holding no such member.
+    if (resolution.kind == RESOLUTION_TYPE_DECL && resolution.def->param_count > 0) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "'%s' takes %zu type argument(s), not 0",
+                   resolution.def->name->data, resolution.def->param_count);
+        return NULL;
+    }
+
+    const Type *owner = resolution_type(state->current_scope->type_registry, resolution);
 
     if (!owner) {
         return NULL;

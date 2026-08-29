@@ -308,10 +308,22 @@ void type_registry_destroy(TypeRegistry *registry) {
     deref_key_destroy(registry->derefs);
 }
 
+static void application_insert(TypeRegistry *registry, TypeApp app, Type *type);
+
 Type *type_registry_open_struct(TypeRegistry *registry, String *name, const TypeDef *def, size_t max_fields) {
     Type *type = type_struct_create(registry->arena, name, max_fields);
 
     type->decl = def;
+
+    // Interned as its declaration applied to nothing, which is what it is: a
+    // mention of the bare name asks the registry for that application, and what
+    // it must find is this type rather than a second one built from a
+    // declaration whose fields are never filled.
+    if (def) {
+        assert(def->param_count == 0 && "a type opened by name takes no arguments");
+
+        application_insert(registry, (TypeApp){.ctor = TYPE_CTOR_NOMINAL, .def = def, .arg_count = 0}, type);
+    }
 
     return type;
 }

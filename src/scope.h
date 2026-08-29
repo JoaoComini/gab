@@ -65,6 +65,52 @@ void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope 
 // module declares are namespaced by the registry rather than by their name.
 void scope_init_module(Scope *scope, Arena *arena, StringPool *strings, Scope *parent);
 
+// What a name means here, whichever namespace it was found in. One answer type
+// rather than a lookup per kind: a mention that could be several things --
+// 'Foo(x)' is a conversion where 'Foo' is a type and a call where it is a
+// function -- decides on the kind rather than by asking each namespace in turn
+// and reading a NULL as the answer.
+//
+// Rust's Res, and split the same way it is: a primitive was declared by
+// nothing, so it carries a type and no declaration.
+typedef enum {
+    RESOLUTION_NONE,
+
+    // 'int', 'float', 'bool', 'str'. Named by the root scope and declared by
+    // nothing, so there is no declaration to instantiate -- the type is what
+    // the name means.
+    RESOLUTION_PRIMITIVE,
+
+    // Every nominal name, whatever arity: 'Config', 'Vec', 'Array'. What it
+    // takes is the declaration's business rather than the resolution's, so a
+    // bare mention of one taking parameters is an arity error at the mention
+    // and not a second kind here.
+    RESOLUTION_TYPE_DECL,
+
+    // A local or a function.
+    RESOLUTION_VALUE,
+} ResolutionKind;
+
+typedef struct {
+    ResolutionKind kind;
+
+    union {
+        const Type *primitive;
+        const TypeDef *def;
+        Symbol *symbol;
+    };
+} Resolution;
+
+// What this name means: this scope, then outward. The types are consulted
+// before the values, which is what makes a conversion win over a call of the
+// same name.
+Resolution scope_resolve(Scope *scope, String *name);
+
+// The type a resolution stands for, or NULL where it stands for none: a
+// declaration still owed arguments, a value, or nothing at all. The registry is
+// what turns a declaration taking none into its one instantiation.
+const Type *resolution_type(TypeRegistry *registry, Resolution resolution);
+
 Symbol *scope_symbol_lookup(Scope *scope, String *name);
 
 // The type this name means here: this scope, then outward. A module's own
@@ -72,9 +118,9 @@ Symbol *scope_symbol_lookup(Scope *scope, String *name);
 // anywhere because the root scope declares it.
 const Type *scope_type_lookup(Scope *scope, String *name);
 
-// As scope_type_lookup, but only this scope. For declaration, where shadowing
-// an outer name is allowed and redeclaring one of this scope's own is not.
-const Type *scope_type_lookup_local(Scope *scope, String *name);
+// What this scope itself binds the name to, declaration included. For a site
+// asking which declaration a name reaches rather than what type it names.
+TypeBinding *scope_binding_lookup_local(Scope *scope, String *name);
 
 // What a declaration of this name would clash with. Both search this scope and,
 // through a staging scope, the module scope it stands in for -- so a name an
@@ -100,11 +146,6 @@ bool scope_decl_type(Scope *scope, String *name, const Type *type);
 // Binds a name to what it declares, for a declaration taking parameters: it
 // names no type until a mention supplies them.
 bool scope_decl_type_def(Scope *scope, String *name, const TypeDef *def);
-
-// What a name declares, or NULL when it names no nominal type. Answers for a
-// name taking parameters, which scope_type_lookup cannot: that one asks for a
-// type, and a declaration awaiting arguments is not one.
-const TypeDef *scope_type_def_lookup(Scope *scope, String *name);
 
 // A scope a compile declares into instead of its real target, so a compile that
 // fails declares nothing. Parented to the target, so lookups still reach what is

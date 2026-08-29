@@ -93,6 +93,22 @@ static void test_a_supplied_argument_owes_a_width() {
                           "let r: int = f();"));
 }
 
+// A declaration still owed arguments owns no function set: which instantiation
+// 'Holder::get' meant is what a mention supplies.
+static void test_a_declaration_owed_arguments_holds_no_function() {
+    assert(!test_compiles("struct Holder<T> { value: T }\n"
+                          "func f(): int { return Holder::get(); }\n"
+                          "let r: int = f();"));
+}
+
+// A conversion is spelled like a call, and which one a name is depends on what
+// that name means: a declaration owed arguments converts nothing.
+static void test_a_declaration_owed_arguments_converts_nothing() {
+    assert(!test_compiles("struct Holder<T> { value: T }\n"
+                          "func f(): int { return Holder(1); }\n"
+                          "let r: int = f();"));
+}
+
 int main() {
     test_a_generic_field_holds_its_argument();
     test_two_instantiations_are_two_types();
@@ -105,6 +121,8 @@ int main() {
     test_a_declaration_reaches_one_declared_below_it();
     test_a_function_belongs_to_an_instantiation_not_a_declaration();
     test_a_supplied_argument_owes_a_width();
+    test_a_declaration_owed_arguments_holds_no_function();
+    test_a_declaration_owed_arguments_converts_nothing();
 
     return 0;
 }

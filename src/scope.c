@@ -152,23 +152,46 @@ const Type *scope_type_lookup(Scope *scope, String *name) {
     return NULL;
 }
 
-const TypeDef *scope_type_def_lookup(Scope *scope, String *name) {
-    while (scope) {
-        TypeBinding *entry = type_map_lookup(scope->types, name);
-        if (entry) {
-            return entry->def;
+Resolution scope_resolve(Scope *scope, String *name) {
+    for (Scope *s = scope; s; s = s->parent) {
+        TypeBinding *bound = type_map_lookup(s->types, name);
+
+        if (bound) {
+            // A primitive is bound to a type nothing declared; everything else
+            // nominal is bound to its declaration, whose arity is what a
+            // mention of it owes.
+            return bound->def ? (Resolution){.kind = RESOLUTION_TYPE_DECL, .def = bound->def}
+                              : (Resolution){.kind = RESOLUTION_PRIMITIVE, .primitive = bound->type};
         }
 
-        scope = scope->parent;
+        Symbol **symbol = symbol_table_lookup(s->symbol_table, name);
+
+        if (symbol) {
+            return (Resolution){.kind = RESOLUTION_VALUE, .symbol = *symbol};
+        }
     }
 
-    return NULL;
+    return (Resolution){.kind = RESOLUTION_NONE};
 }
 
-const Type *scope_type_lookup_local(Scope *scope, String *name) {
-    TypeBinding *entry = type_map_lookup(scope->types, name);
+const Type *resolution_type(TypeRegistry *registry, Resolution resolution) {
+    switch (resolution.kind) {
+    case RESOLUTION_PRIMITIVE:
+        return resolution.primitive;
 
-    return entry ? entry->type : NULL;
+    // A declaration taking none is its own instantiation, which the registry
+    // interned the first time anything named it.
+    case RESOLUTION_TYPE_DECL:
+        return resolution.def->param_count == 0 ? type_registry_instantiate(registry, resolution.def, NULL, 0)
+                                                : NULL;
+
+    default:
+        return NULL;
+    }
+}
+
+TypeBinding *scope_binding_lookup_local(Scope *scope, String *name) {
+    return type_map_lookup(scope->types, name);
 }
 
 // A type declaration clashes with this scope, with the module scope a staging
