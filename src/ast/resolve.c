@@ -36,28 +36,25 @@ typedef struct StructDecl {
     // registry interns rather than this holding a second pointer to.
     TypeDef *def;
 
-    // The three things declaring a struct does, in the order they can be done:
-    // the name is bound, the fields resolve against every name in the unit, and
-    // the width follows from the fields. Each is demanded on its own, which is
-    // what lets a field name a struct declared further down -- resolving this
-    // one's fields forces that one's.
+    // How far this declaration's fields have got, which is the only thing a
+    // second demand for them has to know. What a width costs is not tracked
+    // here: the registry memoizes a layout and a drop plan against the type, so
+    // asking twice computes once whatever this says.
     enum {
         // Bound, with its fields not resolved yet.
         STRUCT_DECLARED,
 
-        // Its fields are resolving. A field reaching a declaration in this
-        // state by value is a containment cycle: its width is waiting on
-        // itself.
+        // Resolving. A field reaching a declaration in this state by value is a
+        // containment cycle: its width is waiting on itself.
         STRUCT_RESOLVING,
 
-        // Its fields are settled, with no width computed yet.
+        // Resolved, whether or not a width has been asked for since.
         STRUCT_RESOLVED,
 
-        STRUCT_LAID_OUT,
-
         // As far as it goes: a field failed, so the type is poisoned rather
-        // than half-built. Distinct from LAID_OUT so a second demand reports
-        // nothing a second time.
+        // than half-built. Distinct from RESOLVED so that a field naming this
+        // one carries the failure up instead of being laid out at a width it
+        // does not have.
         STRUCT_POISONED,
     } state;
 } StructDecl;
@@ -2139,22 +2136,17 @@ static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
     layout_struct(state, decl);
 }
 
-// Settles the width a declaration's fields give it, which is the last of the
-// three things declaring a struct does: its name is interned when it is
-// declared, its fields resolve against every name in the unit, and only then is
-// there a width to compute.
+// Asks for the width a declaration's fields give it, once they have resolved.
 //
-// Nothing is written into the type -- it reads its fields through the
-// declaration -- so this is the layout and the drop plan being demanded, which
-// the registry memoizes. Separate from resolving the fields because only a
-// declaration owed no arguments has a width at all: what 'Vec' is laid out as
-// is not a question until a mention says 'Vec<int>', and that instantiation is
-// laid out where it is interned.
+// Nothing is tracked and nothing is written into the type: it reads its fields
+// through the declaration, so this is only the layout and the drop plan being
+// demanded, and the registry memoizes both against the type. Asking twice
+// computes once.
+//
+// Only a declaration owed no arguments has a width at all. What 'Vec' is laid
+// out as is not a question until a mention says 'Vec<int>', and that
+// instantiation is laid out where it is interned.
 static void layout_struct(ResolverState *state, StructDecl *decl) {
-    assert(decl->state == STRUCT_RESOLVED && "a width follows from fields that resolved");
-
-    decl->state = STRUCT_LAID_OUT;
-
     if (decl->def->param_count > 0) {
         return;
     }
