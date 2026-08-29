@@ -147,7 +147,11 @@ Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, cons
     Between the two, the type has no layout: what may be done with it is what
     needs no width, which is to name it and to point at it.
 */
-Type *type_registry_open_struct(TypeRegistry *registry, String *name, size_t max_fields);
+// The declaration is carried from the start, so that a name opened here answers
+// what it declares the same way one instantiated from a TypeDef does. Its
+// fields are filled as the struct's are; nothing reads them until it is
+// complete.
+Type *type_registry_open_struct(TypeRegistry *registry, String *name, const TypeDef *def, size_t max_fields);
 
 // Lays the type out and settles how it frees, which is what finishes it. Called
 // once every field is added; a type whose fields did not resolve is withdrawn

@@ -33,7 +33,14 @@ typedef struct StructDecl {
 
     // The interned identity, which the declaration has from the start. Const
     // once laid out, but built through here, so it is the mutable pointer.
+    // NULL for a declaration taking parameters: it names no type until a
+    // mention supplies them, so there is nothing to open or lay out.
     Type *type;
+
+    // What the name declares. A declaration taking no parameters gets one too,
+    // so that every nominal name resolves the same way; its fields are filled
+    // when the layout is, and an instantiation of it is what the name binds to.
+    TypeDef *def;
 
     enum {
         // Bound, with no layout asked for yet.
@@ -1737,6 +1744,16 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
                     return resolver_error_type(state);
                 }
 
+                // A parameter is not a width and is not owed one: an argument
+                // written over one is passed through to the instantiation the
+                // mention that supplies it will build, and every question about
+                // a width is asked there. That is what lets a declaration name
+                // itself -- 'Node<T>' inside 'Node' -- without its own
+                // parameter having to stand for something laid out.
+                if (type_has_param(args[i])) {
+                    continue;
+                }
+
                 if (reject_unsized(state, args[i], span, "a type argument")) {
                     return resolver_error_type(state);
                 }
@@ -1922,10 +1939,30 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
         return NULL;
     }
 
-    Type *type = type_registry_open_struct(state->current_scope->type_registry, struct_name,
-                                           stmt->struct_decl.fields.size);
+    size_t param_count = stmt->struct_decl.param_count;
 
-    scope_decl_type(state->current_scope, struct_name, type);
+    TypeDef *def = arena_alloc(resolver_owner_arena(state), sizeof(TypeDef));
+
+    *def = (TypeDef){
+        .name = struct_name,
+        .param_count = param_count,
+    };
+
+    // A declaration taking parameters is bound as a declaration and nothing
+    // else: its fields are written over parameters, so it has no width and
+    // nothing to open. One taking none is opened here as before, because its
+    // name must stand for a type before its own fields resolve -- which is what
+    // lets two structs name each other.
+    Type *type = NULL;
+
+    if (param_count == 0) {
+        type = type_registry_open_struct(state->current_scope->type_registry, struct_name, def,
+                                         stmt->struct_decl.fields.size);
+
+        scope_decl_type(state->current_scope, struct_name, type);
+    } else {
+        scope_decl_type_def(state->current_scope, struct_name, def);
+    }
 
     StructDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(StructDecl));
 
@@ -1934,6 +1971,7 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
         .scope = state->current_scope,
         .name = struct_name,
         .type = type,
+        .def = def,
         .state = STRUCT_DECLARED,
     };
 
@@ -1984,8 +2022,96 @@ static bool field_type_failed(ResolverState *state, const Type *type) {
 // name a struct declared further down the file: forcing that field's layout
 // from here is what orders the computation by dependency rather than by the
 // order the declarations were written in.
+// Resolves a declaration's fields as types written over its parameters, which
+// is what an instantiation substitutes into. Nothing is laid out: a field
+// naming a parameter has no width until a mention supplies one, so the checks
+// that ask for a width belong at the instantiation rather than here.
+//
+// The parameters are bound in a scope of their own, so that 'T' names the
+// parameter while the fields resolve and nothing outside the declaration.
+static void resolve_declared_fields(ResolverState *state, StructDecl *decl) {
+    ASTStmt *stmt = decl->stmt;
+    TypeDef *def = decl->def;
+
+    Scope *enclosing = state->current_scope;
+    Scope *params = scope_create(resolver_owner_arena(state), decl->scope->strings, decl->scope);
+
+    for (size_t i = 0; i < stmt->struct_decl.param_count; i++) {
+        String *param_name = resolver_intern(state, stmt->struct_decl.params[i]);
+
+        if (!scope_decl_type(params, param_name, type_registry_param(decl->scope->type_registry, i))) {
+            diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "duplicate type parameter '%s' on '%s'",
+                       param_name->data, decl->name->data);
+        }
+    }
+
+    state->current_scope = params;
+
+    size_t field_count = stmt->struct_decl.fields.size;
+    TypeField *fields = arena_alloc(resolver_owner_arena(state), field_count * sizeof(TypeField));
+
+    bool poisoned = false;
+    size_t resolved = 0;
+
+    for (size_t i = 0; i < field_count; i++) {
+        ASTField *field = stmt->struct_decl.fields.data[i];
+        String *field_name = resolver_intern(state, field->name);
+
+        bool duplicate = false;
+
+        for (size_t seen = 0; seen < resolved; seen++) {
+            if (fields[seen].name == field_name) {
+                duplicate = true;
+                break;
+            }
+        }
+
+        if (duplicate) {
+            diag_error(state->diagnostics, GAB_ERR_NAME, field->span, "duplicate field '%s' in struct '%s'",
+                       field_name->data, decl->name->data);
+            poisoned = true;
+            continue;
+        }
+
+        const Type *field_type = resolve_type_expr(state, field->type_expr, field->span);
+
+        if (is_error_type(field_type)) {
+            poisoned = true;
+            continue;
+        }
+
+        // A field naming a parameter is sized by whatever the argument turns
+        // out to be, so only a field naming no parameter can be judged here.
+        if (!type_has_param(field_type) && reject_unsized(state, field_type, field->span, "a field")) {
+            poisoned = true;
+            continue;
+        }
+
+        fields[resolved++] = (TypeField){.name = field_name, .type = field_type};
+    }
+
+    state->current_scope = enclosing;
+
+    if (poisoned) {
+        decl->state = STRUCT_POISONED;
+        scope_withdraw_type(decl->scope, decl->name);
+        return;
+    }
+
+    def->fields = fields;
+    def->field_count = resolved;
+
+    decl->state = STRUCT_LAID_OUT;
+}
+
 static void layout_struct(ResolverState *state, StructDecl *decl) {
     if (decl->state != STRUCT_DECLARED) {
+        return;
+    }
+
+    if (decl->def->param_count > 0) {
+        decl->state = STRUCT_LAYING_OUT;
+        resolve_declared_fields(state, decl);
         return;
     }
 

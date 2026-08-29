@@ -778,6 +778,43 @@ static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
     StringRef name = parser->current.lexeme;
     parser_next_token(parser); // eat struct name
 
+    // The names this declaration takes, spelled where a mention spells its
+    // arguments. A struct writing none is the same declaration applied to
+    // nothing, so there is no second rule for the plain case.
+    StringRef params[GAB_MAX_TYPE_PARAMS];
+    size_t param_count = 0;
+
+    if (parser->current.type == TOKEN_LESS) {
+        parser_next_token(parser); // eat '<'
+
+        for (;;) {
+            if (!parser_expect(parser, TOKEN_IDENT, "expected a type parameter name")) {
+                return NULL;
+            }
+
+            if (param_count == GAB_MAX_TYPE_PARAMS) {
+                diag_error(parser->diagnostics, GAB_ERR_SYNTAX, parser_span(parser),
+                           "a struct takes at most %d type parameters", GAB_MAX_TYPE_PARAMS);
+                return NULL;
+            }
+
+            params[param_count++] = parser->current.lexeme;
+            parser_next_token(parser); // eat the parameter name
+
+            if (parser->current.type != TOKEN_COMMA) {
+                break;
+            }
+
+            parser_next_token(parser); // eat ','
+        }
+
+        if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after a struct's type parameters")) {
+            return NULL;
+        }
+
+        parser_next_token(parser); // eat '>'
+    }
+
     if (!parser_expect(parser, TOKEN_LBRACE, "expected '{' after struct name")) {
         return NULL;
     }
@@ -813,7 +850,7 @@ static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
 
     parser_next_token(parser); // eat '}'
 
-    return ast_struct_decl_stmt_create(span, name, fields);
+    return ast_struct_decl_stmt_create(span, name, params, param_count, fields);
 }
 
 // 'extern func f(x: int): int;' declares a signature whose body the host

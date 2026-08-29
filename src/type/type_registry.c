@@ -308,8 +308,12 @@ void type_registry_destroy(TypeRegistry *registry) {
     deref_key_destroy(registry->derefs);
 }
 
-Type *type_registry_open_struct(TypeRegistry *registry, String *name, size_t max_fields) {
-    return type_struct_create(registry->arena, name, max_fields);
+Type *type_registry_open_struct(TypeRegistry *registry, String *name, const TypeDef *def, size_t max_fields) {
+    Type *type = type_struct_create(registry->arena, name, max_fields);
+
+    type->decl = def;
+
+    return type;
 }
 
 void type_registry_complete(TypeRegistry *registry, Type *type) {

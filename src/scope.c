@@ -212,7 +212,7 @@ bool scope_decl_type(Scope *scope, String *name, const Type *type) {
         return false;
     }
 
-    type_map_insert(scope->types, name, (TypeBinding){.type = type, .def = type ? type_decl(type) : NULL});
+    type_map_insert(scope->types, name, (TypeBinding){.type = type, .def = type_decl(type)});
 
     return true;
 }

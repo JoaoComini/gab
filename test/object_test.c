@@ -34,7 +34,7 @@ static Allocator counting_allocator(AllocCounts *counts) {
 // out — freeing walks offsets, so the layout has to be real.
 static const Type *make_struct(TestContext *ctx, TypeRegistry *registry, const char *name,
                                const char **fields, const Type **field_types, size_t count) {
-    Type *type = type_registry_open_struct(registry, string_from_cstr(&ctx->strings, name), count);
+    Type *type = type_registry_open_struct(registry, string_from_cstr(&ctx->strings, name), NULL, count);
 
     for (size_t i = 0; i < count; i++) {
         type_add_field(type, string_from_cstr(&ctx->strings, fields[i]), field_types[i]);
@@ -476,7 +476,7 @@ static void test_a_type_carries_only_what_its_kind_has() {
     assert(type_field_count(box) == 0);
     assert(type_fields(box) == NULL);
 
-    Type *player = type_registry_open_struct(registry, string_from_cstr(&ctx.strings, "Player"), 1);
+    Type *player = type_registry_open_struct(registry, string_from_cstr(&ctx.strings, "Player"), NULL, 1);
     type_add_field(player, string_from_cstr(&ctx.strings, "health"), int_type);
 
     assert(type_field_count(player) == 1);
