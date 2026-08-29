@@ -122,48 +122,6 @@ typedef struct Deref {
     size_t part_count;
 } Deref;
 
-/*
-    What turns one of a declaration's methods into a Symbol an instantiation
-    answers to.
-
-    A hook because the extern table a C body is numbered in belongs to the VM,
-    while interning happens wherever a type is named -- including in a resolve
-    with no VM at all. So the VM installs this when it builds, and an
-    instantiation made without one simply declares no methods.
-
-    Nor can it be deferred to the end of a resolve: 'xs.push(7)' is checked in
-    the same pass that interned 'Vec<int>', so what a type answers to must be
-    declared the moment it is interned rather than once the unit is done.
-*/
-
-// One instantiated method: what a declaration declares, with its parameters
-// filled in. A descriptor rather than an argument list, so that what a method is
-// stays one thing to read and gains a field rather than an argument.
-typedef struct InstalledMethod {
-    // The instantiation the method is declared on, and what it answers to.
-    const Type *on;
-    const char *name;
-
-    // The body, as a GabExternFn. A void pointer because what a C body is
-    // belongs to the VM's header, which this one is reached from rather than
-    // reaching.
-    void *body;
-
-    const Type *receiver;
-    const Type *result;
-
-    // What the caller writes, the receiver excluded: it is parameter zero and is
-    // named above rather than being the first of these.
-    const Type *const *params;
-    size_t param_count;
-} InstalledMethod;
-
-typedef void (*MethodInstaller)(void *ctx, const InstalledMethod *method);
-
-// Registered once by whatever provides the bodies, so that a 'Vec<T>' first
-// named by a later compile is declared the same way.
-void type_registry_set_method_installer(TypeRegistry *registry, MethodInstaller install, void *ctx);
-
 // Declares a method, or fails if the type already answers that name. Finds one
 // by following 'owner' when the type itself does not answer, so that a type
 // sharing another's identity reaches its set.

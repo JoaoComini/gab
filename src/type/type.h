@@ -230,7 +230,8 @@ typedef struct GenericField {
     for.
 */
 typedef struct GenericMethod {
-    const char *name;
+    // Interned by the provider, as every name the registry is given is.
+    String *name;
 
     // The body, as a GabExternFn. Typed as a void pointer because what a C body
     // is belongs to the VM's header, which this one is reached from rather than

@@ -1284,6 +1284,25 @@ static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast) {
                            (ProtoBinding){.symbol = ast->symbol, .local_index = local});
 }
 
+// Reserves an extern slot for a method a generic instantiation declared. Unlike
+// a declaration's, this symbol has no AST node and no pre-pass: it comes into
+// being when a type is interned, which may be in the middle of resolving the
+// call that first names it.
+//
+// The body is already known, so no ExternRequest is recorded -- there is no host
+// name to look up, and linking has nothing to answer.
+static const size_t *codegen_reserve_instantiated(CodegenState *state, Symbol *symbol) {
+    extern_proto_list_add(&state->unit->extern_protos,
+                          (ExternProto){.body = (GabExternFn)symbol->func.body, .symbol = symbol});
+
+    size_t local = state->unit->extern_protos.size - 1;
+
+    proto_map_insert(state->local_protos, symbol, local);
+    proto_binding_list_add(&state->unit->bindings, (ProtoBinding){.symbol = symbol, .local_index = local});
+
+    return proto_map_lookup(state->local_protos, symbol);
+}
+
 static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
     ASTFuncDecl *ast = &stmt->func_decl;
 
@@ -1587,6 +1606,15 @@ static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symb
     // one an earlier unit declared already has its final index and must be left
     // alone. Which it is, is which of the two knows the answer.
     const size_t *local = proto_map_lookup(state->local_protos, (Symbol *)callee);
+
+    // A generic instantiation's method carries its body but no index: nothing
+    // declared it in a unit, so no pre-pass reserved a slot for it. The first
+    // call from this unit reserves one, and linking rebases it with every other
+    // extern.
+    if (!local && callee->func.func_index == SYMBOL_FUNC_NO_BODY && callee->func.body) {
+        local = codegen_reserve_instantiated(state, (Symbol *)callee);
+    }
+
     size_t index = local ? *local : callee->func.func_index;
 
     if (index == SYMBOL_FUNC_NO_BODY) {

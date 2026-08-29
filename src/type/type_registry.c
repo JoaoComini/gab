@@ -1,5 +1,7 @@
 #include "type_registry_internal.h"
 
+#include "symbol_table.h"
+
 #include "arena.h"
 #include "object.h"
 #include "string/string.h"
@@ -281,8 +283,6 @@ TypeRegistry *type_registry_create(Arena *arena, const TypePrimitiveNames *names
     registry->applications =
         type_app_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
-    registry->install_method = NULL;
-    registry->install_ctx = NULL;
     register_primitives(registry, names);
 
     return registry;
@@ -498,34 +498,43 @@ static const Type *generic_field_type(TypeRegistry *registry, const GenericField
 }
 
 // Declares what this instantiation answers to, with the parameters filled in.
-// Nothing at all where no installer was registered: a compile with no VM has no
-// extern table to number a body in, and nothing in it can call one.
-static void install_generic_methods(TypeRegistry *registry, const Type *type, const GenericDecl *generic,
+//
+// The Symbol is built here because everything it needs is here: the substituted
+// signature, and the arena types already live in. What it does not get is a
+// body index -- that is a table a unit owns and linking rebases, so it stays
+// SYMBOL_FUNC_NO_BODY until codegen reserves a slot for it.
+static void declare_generic_methods(TypeRegistry *registry, Type *type, const GenericDecl *generic,
                                     const Type *const *args) {
-    if (!registry->install_method) {
-        return;
-    }
-
     for (size_t i = 0; i < generic->method_count; i++) {
         const GenericMethod *method = &generic->methods[i];
 
-        const Type *params[GAB_MAX_METHOD_PARAMS];
+        Symbol *symbol = arena_alloc(registry->arena, sizeof(Symbol));
+
+        // The receiver is parameter zero, as it is for every method: what a
+        // call writes follows it.
+        const Type **params = arena_alloc(registry->arena, (method->param_count + 1) * sizeof(const Type *));
+
+        params[0] = generic_field_type(registry, &method->receiver, args, type);
 
         for (size_t p = 0; p < method->param_count; p++) {
-            params[p] = generic_field_type(registry, &method->params[p], args, type);
+            params[p + 1] = generic_field_type(registry, &method->params[p], args, type);
         }
 
-        const InstalledMethod installed = {
-            .on = type,
-            .name = method->name,
-            .body = method->body,
-            .receiver = generic_field_type(registry, &method->receiver, args, type),
-            .result = generic_field_type(registry, &method->result, args, type),
-            .params = params,
-            .param_count = method->param_count,
+        *symbol = (Symbol){
+            .kind = SYMBOL_FUNC,
+            .func =
+                {
+                    .name = method->name,
+                    .return_type = generic_field_type(registry, &method->result, args, type),
+                    .params = params,
+                    .param_count = method->param_count + 1,
+                    .is_extern = true,
+                    .body = method->body,
+                    .func_index = SYMBOL_FUNC_NO_BODY,
+                },
         };
 
-        registry->install_method(registry->install_ctx, &installed);
+        type_registry_add_method(registry, type, method->name, symbol);
     }
 }
 
@@ -581,7 +590,7 @@ const Type *type_registry_instantiate(TypeRegistry *registry, const Type *decl, 
 
     type_registry_drop_of(registry, type);
 
-    install_generic_methods(registry, type, generic, args);
+    declare_generic_methods(registry, type, generic, args);
 
     return type;
 }
@@ -625,11 +634,6 @@ const Type *type_registry_get_primitive(TypeRegistry *registry, TypeKind kind) {
 
     assert(0 && "type is not a builtin type");
     abort();
-}
-
-void type_registry_set_method_installer(TypeRegistry *registry, MethodInstaller install, void *ctx) {
-    registry->install_method = install;
-    registry->install_ctx = ctx;
 }
 
 TypePrimitiveNames type_primitive_names(StringPool *strings) {

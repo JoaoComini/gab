@@ -125,13 +125,6 @@ static void vec_at(Args *args) {
 // 'v.len()'. How many elements have been pushed, which the block carries.
 static void vec_len(Args *args) { args_return_int(args, vec_load(args).block.length); }
 
-// Declares one substituted method on one instantiation. The registry calls this
-// where a 'Vec<T>' is interned, having filled the parameter in.
-static void vec_install_method(void *ctx, const InstalledMethod *method) {
-    builtin_register_method(ctx, method->on, method->receiver, method->name, (GabExternFn)method->body,
-                            method->result, method->params, method->param_count);
-}
-
 void builtin_register_vec(VM *vm) {
     // Declared here and held as a local: what a provider gets back is its
     // handle to the declaration, and one VM's types are not another's.
@@ -163,7 +156,7 @@ void builtin_register_vec(VM *vm) {
     at_params[0] = an_int;
 
     methods[0] = (GenericMethod){
-        .name = "push",
+        .name = string_from_cstr(&vm->env.strings, "push"),
         .body = (void *)vec_push,
         .receiver = receiver,
 
@@ -175,7 +168,7 @@ void builtin_register_vec(VM *vm) {
     };
 
     methods[1] = (GenericMethod){
-        .name = "at",
+        .name = string_from_cstr(&vm->env.strings, "at"),
         .body = (void *)vec_at,
         .receiver = receiver,
         .result = element,
@@ -184,7 +177,7 @@ void builtin_register_vec(VM *vm) {
     };
 
     methods[2] = (GenericMethod){
-        .name = "len",
+        .name = string_from_cstr(&vm->env.strings, "len"),
         .body = (void *)vec_len,
         .receiver = receiver,
         .result = an_int,
@@ -198,8 +191,4 @@ void builtin_register_vec(VM *vm) {
 
     generic->methods = methods;
     generic->method_count = 3;
-
-    // How an instantiation's methods become Symbols. Registered once, so that a
-    // 'Vec<T>' first named by a later compile is declared the same way.
-    type_registry_set_method_installer(registry, vec_install_method, vm);
 }

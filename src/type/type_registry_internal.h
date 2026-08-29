@@ -132,12 +132,6 @@ typedef struct {
 typedef struct TypeRegistry {
     Arena *arena;
 
-    // How an instantiation's methods become Symbols, and what to call it with.
-    // NULL where nothing registered one, which is every compile that runs
-    // without a VM.
-    MethodInstaller install_method;
-    void *install_ctx;
-
     // Every type built by applying a constructor: 'box T', 'ref T', 'ptr T',
     // '[T; N]', and whatever a generic declaration adds. Keyed by the
     // application, so the constructor is part of what is looked up and two
