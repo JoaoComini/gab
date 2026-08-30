@@ -88,15 +88,6 @@ typedef struct {
     Span span;
 } ExternRequest;
 
-typedef struct {
-    size_t local_index;
-    struct Function *function;
-    Span span;
-} PendingInstance;
-
-#define pending_instance_list_item_free(item) ((void)(item))
-GAB_LIST(PendingInstanceList, pending_instance_list, PendingInstance)
-
 #define extern_request_list_item_free(item) ((void)(item))
 GAB_LIST(ExternRequestList, extern_request_list, ExternRequest)
 
@@ -117,8 +108,6 @@ typedef struct {
 
     ProtoBindingList bindings;
     ExternRequestList externs;
-
-    PendingInstanceList pending;
 
     Arena *arena;
 

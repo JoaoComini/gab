@@ -265,8 +265,7 @@ static void test_checking_a_unit_installs_nothing() {
 
     assert(resolve_unit(vm->env.compile_arena, ast, &staging, vm->env.module_scopes, &diagnostics));
 
-    Unit *unit =
-        codegen_generate(ast, vm->env.arena, &vm->env.strings, staging.type_registry, NULL, &diagnostics);
+    Unit *unit = codegen_generate(ast, vm->env.arena, &vm->env.strings, staging.type_registry, &diagnostics);
     assert(unit);
 
     assert(link_check(&vm->program, unit, &diagnostics));

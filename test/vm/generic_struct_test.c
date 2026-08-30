@@ -132,7 +132,16 @@ static void test_an_instantiation_reached_from_another_is_emitted() {
                         "let r: int = f();") == 6);
 }
 
+static void test_a_generic_that_instantiates_itself_is_rejected() {
+    assert(!test_compiles("struct Holder<T> { value: T }\n"
+                          "func Holder<T>::deeper(h: ref Holder<T>): int {\n"
+                          "    let n: Holder<box T>; return n.deeper(); }\n"
+                          "func f(): int { let h: Holder<int>; return h.deeper(); }\n"
+                          "let r: int = f();"));
+}
+
 int main() {
+    test_a_generic_that_instantiates_itself_is_rejected();
     test_an_instantiation_reached_from_another_is_emitted();
     test_an_instantiation_that_owns_frees_what_it_holds();
     test_each_instantiation_gets_its_own_body();

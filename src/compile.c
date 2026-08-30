@@ -60,20 +60,6 @@ static bool check_imports(VM *vm, const ASTUnit *ast, Diagnostics *diagnostics) 
     return ok;
 }
 
-typedef struct {
-    Arena *arena;
-    Scope *declaring;
-    ModuleScopeMap *module_scopes;
-    Diagnostics *diagnostics;
-} InstanceContext;
-
-static bool resolve_instance(void *context, ASTStmt *stmt, const Type *const *args, size_t arg_count) {
-    InstanceContext *ctx = context;
-
-    return resolve_method_instance(ctx->arena, stmt, ctx->declaring, ctx->module_scopes, args, arg_count,
-                                   ctx->diagnostics);
-}
-
 bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *diagnostics) {
     arena_reset(vm->env.compile_arena);
 
@@ -100,17 +86,8 @@ bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *d
         }
 
         if (resolve_unit(vm->env.compile_arena, ast, staging, vm->env.module_scopes, diagnostics)) {
-            InstanceContext context = {
-                .arena = vm->env.compile_arena,
-                .declaring = staging,
-                .module_scopes = vm->env.module_scopes,
-                .diagnostics = diagnostics,
-            };
-
-            const InstanceResolver instances = {.resolve = resolve_instance, .context = &context};
-
-            unit = codegen_generate(ast, vm->env.arena, &vm->env.strings, staging->type_registry, &instances,
-                                    diagnostics);
+            unit =
+                codegen_generate(ast, vm->env.arena, &vm->env.strings, staging->type_registry, diagnostics);
         }
     }
 

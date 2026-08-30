@@ -203,7 +203,7 @@ static bool type_moves_as_slots(TypeRegistry *registry, const Type *type);
 static OpCode field_opcode_for(size_t size, bool load, bool indirect, bool *ok);
 
 Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, TypeRegistry *registry,
-                       const InstanceResolver *instances, Diagnostics *diagnostics) {
+                       Diagnostics *diagnostics) {
     Unit *unit = calloc(1, sizeof(Unit));
 
     if (!unit) {
@@ -221,7 +221,6 @@ Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, TypeRegi
     unit->string_relocations = relocation_list_create();
     unit->bindings = proto_binding_list_create();
     unit->externs = extern_request_list_create();
-    unit->pending = pending_instance_list_create();
     unit->arena = arena;
 
     CodegenState state = {
@@ -250,30 +249,16 @@ Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, TypeRegi
         }
     }
 
+    for (size_t i = 0; i < ast->instances.size; i++) {
+        codegen_reserve_proto(&state, &ast->instances.data[i]->func_decl);
+    }
+
     for (size_t i = 0; i < ast->statements.size; i++) {
         codegen_stmt(&state, ast->statements.data[i]);
     }
 
-    for (size_t drained = 0; drained < state.unit->pending.size; drained++) {
-        PendingInstance pending = state.unit->pending.data[drained];
-
-        if (drained >= VM_MAX_PROTOTYPES) {
-            diag_error(diagnostics, GAB_ERR_CODEGEN, pending.span,
-                       "a generic function instantiates itself without end");
-            state.failed = true;
-            break;
-        }
-
-        ASTStmt *body = (ASTStmt *)pending.function->body;
-
-        if (!instances || !instances->resolve(instances->context, body, pending.function->type_args,
-                                              pending.function->type_arg_count)) {
-            state.failed = true;
-            continue;
-        }
-
-        codegen_emit_body(&state, &body->func_decl.params, body->func_decl.body, pending.local_index,
-                          pending.span);
+    for (size_t i = 0; i < ast->instances.size; i++) {
+        codegen_func_decl_stmt(&state, ast->instances.data[i]);
     }
 
     OpCode last = state.chunk->instructions.size > 0
@@ -1047,7 +1032,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         return;
     }
 
-    if (ast->owner && ast->owner->kind == TYPE_EXPR_APPLY) {
+    if (ast->owner && ast->owner->kind == TYPE_EXPR_APPLY && ast->function->instance != stmt) {
         return;
     }
 
@@ -1273,19 +1258,7 @@ static void codegen_emit_call(CodegenState *state, unsigned int dest, Function *
     const size_t *local = proto_map_lookup(state->local_protos, callee);
 
     if (!local && callee->func_index == FUNCTION_NO_BODY && callee->body) {
-        if (callee->body_kind == BODY_GAB) {
-            size_t reserved = codegen_reserve_function(state, callee);
-
-            pending_instance_list_add(&state->unit->pending, (PendingInstance){
-                                                                 .local_index = reserved,
-                                                                 .function = callee,
-                                                                 .span = span,
-                                                             });
-
-            local = proto_map_lookup(state->local_protos, callee);
-        } else {
-            local = codegen_reserve_instantiated(state, callee);
-        }
+        local = codegen_reserve_instantiated(state, callee);
     }
 
     size_t index = local ? *local : callee->func_index;

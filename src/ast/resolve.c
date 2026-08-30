@@ -1,5 +1,7 @@
 #include "ast/resolve.h"
 
+#include "ast/clone.h"
+
 #include "ast/flow_pass.h"
 #include "binding.h"
 #include "object.h"
@@ -51,6 +53,10 @@ typedef struct {
     StructDeclList struct_decls;
 
     StructDeclList resolving;
+
+    ASTUnit *unit;
+
+    unsigned int instantiating;
 
     Diagnostics *diagnostics;
 } ResolverState;
@@ -428,6 +434,55 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
 static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expected);
 static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr);
 
+#define GAB_MAX_INSTANTIATION_DEPTH 32
+
+static void resolve_func_body(ResolverState *state, ASTStmt *stmt);
+static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span);
+
+static void instantiate_body(ResolverState *state, Function *method, Span span) {
+    if (method->body_kind != BODY_GAB || method->instance || !method->body) {
+        return;
+    }
+
+    if (state->instantiating >= GAB_MAX_INSTANTIATION_DEPTH) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' instantiates itself without end",
+                   method->name->data);
+        return;
+    }
+
+    const ASTStmt *declaration = method->body;
+
+    ASTStmt *clone = ast_clone_stmt(declaration);
+
+    ast_stmt_list_add(&state->unit->instances, clone);
+    method->instance = clone;
+    clone->func_decl.function = method;
+
+    Scope *enclosing = state->current_scope;
+    Scope *params = scope_create(resolver_owner_arena(state), enclosing->strings, enclosing);
+
+    const TypeExpr *owner = clone->func_decl.owner;
+
+    for (size_t i = 0; i < method->type_arg_count && i < owner->apply.args.size; i++) {
+        const TypeExpr *param = owner->apply.args.data[i];
+
+        if (param->kind == TYPE_EXPR_NAME) {
+            scope_bind_argument(params, resolver_intern(state, param->name), method->type_args[i]);
+        }
+    }
+
+    state->current_scope = params;
+    state->instantiating++;
+
+    clone->func_decl.resolved_return_type =
+        resolve_type_expr(state, clone->func_decl.return_type, clone->span);
+
+    resolve_func_body(state, clone);
+
+    state->instantiating--;
+    state->current_scope = enclosing;
+}
+
 static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     ASTExpr *receiver = expr->call.target->field.target;
     StringRef name = expr->call.target->field.name;
@@ -477,6 +532,8 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         expr->type = resolver_error_type(state);
         return;
     }
+
+    instantiate_body(state, method, expr->span);
 
     const Type *declared_receiver = method->param_count > 0 ? method->params[0] : base;
 
@@ -2079,48 +2136,6 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
     }
 }
 
-bool resolve_method_instance(Arena *compile_arena, ASTStmt *stmt, Scope *declaring,
-                             ModuleScopeMap *module_scopes, const Type *const *args, size_t arg_count,
-                             Diagnostics *diagnostics) {
-    ResolverState state = {
-        .compile_arena = compile_arena,
-        .global_scope = declaring,
-        .current_scope = declaring,
-        .module_scopes = module_scopes,
-        .imports = NULL,
-        .module_name = NULL,
-        .func_context = {.return_type = NULL},
-        .struct_decls = struct_decl_list_create(),
-        .resolving = struct_decl_list_create(),
-        .diagnostics = diagnostics,
-    };
-
-    size_t errors_before = diagnostics_count(diagnostics);
-
-    Scope *params = scope_create(resolver_owner_arena(&state), declaring->strings, declaring);
-
-    const TypeExpr *owner = stmt->func_decl.owner;
-
-    for (size_t i = 0; i < arg_count && i < owner->apply.args.size; i++) {
-        const TypeExpr *param = owner->apply.args.data[i];
-
-        if (param->kind == TYPE_EXPR_NAME) {
-            scope_bind_argument(params, resolver_intern(&state, param->name), args[i]);
-        }
-    }
-
-    state.current_scope = params;
-
-    stmt->func_decl.resolved_return_type = resolve_type_expr(&state, stmt->func_decl.return_type, stmt->span);
-
-    resolve_func_body(&state, stmt);
-
-    struct_decl_list_free(&state.struct_decls);
-    struct_decl_list_free(&state.resolving);
-
-    return diagnostics_count(diagnostics) == errors_before;
-}
-
 bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, ModuleScopeMap *module_scopes,
                   Diagnostics *diagnostics) {
     ResolverState state = {
@@ -2137,6 +2152,7 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
             },
         .struct_decls = struct_decl_list_create(),
         .resolving = struct_decl_list_create(),
+        .unit = unit,
         .diagnostics = diagnostics,
     };
 

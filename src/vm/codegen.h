@@ -10,14 +10,7 @@
 #include "vm/link.h"
 #include "vm/opcode.h"
 
-typedef bool (*ResolveInstanceFn)(void *context, ASTStmt *stmt, const Type *const *args, size_t arg_count);
-
-typedef struct {
-    ResolveInstanceFn resolve;
-    void *context;
-} InstanceResolver;
-
 Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, TypeRegistry *registry,
-                       const InstanceResolver *instances, Diagnostics *diagnostics);
+                       Diagnostics *diagnostics);
 
 #endif
