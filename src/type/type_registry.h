@@ -22,7 +22,7 @@ typedef struct TypePrimitiveNames {
     String *error_name;
 } TypePrimitiveNames;
 
-typedef struct Symbol Symbol;
+typedef struct Binding Binding;
 
 typedef struct {
     const Type *type;

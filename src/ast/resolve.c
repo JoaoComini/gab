@@ -1,11 +1,11 @@
 #include "ast/resolve.h"
 
 #include "ast/flow_pass.h"
+#include "binding.h"
 #include "object.h"
 #include "scope.h"
 #include "string/string.h"
 #include "string/string_ref.h"
-#include "symbol_table.h"
 #include "type/type.h"
 #include "type/type_registry.h"
 
@@ -269,25 +269,10 @@ static void fold_bin_op(ASTExpr *expr) {
     expr->lit = folded;
 }
 
-static Symbol *addressed_symbol(ASTExpr *expr) {
-    switch (expr->kind) {
-    case EXPR_VARIABLE:
-        return expr->symbol;
-    case EXPR_FIELD:
-        return addressed_symbol(expr->field.target);
-    case EXPR_INDEX:
-        return addressed_symbol(expr->index.target);
-    default:
-        break;
-    }
-
-    return NULL;
-}
-
 static bool is_addressable(const ASTExpr *expr) {
     switch (expr->kind) {
     case EXPR_VARIABLE:
-        return expr->symbol && expr->symbol->kind == SYMBOL_VAR;
+        return expr->binding && expr->binding->kind == BINDING_VAR;
     case EXPR_FIELD:
         return is_addressable(expr->field.target);
     case EXPR_INDEX:
@@ -413,7 +398,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
                 return false;
             }
 
-            Symbol *addressed = addressed_symbol(receiver);
+            Binding *addressed = ast_root_local(receiver);
             if (addressed) {
                 addressed->pinned = true;
             }
@@ -609,7 +594,7 @@ static bool borrow_into(ResolverState *state, ASTExpr **slot, const Type *destin
         return false;
     }
 
-    Symbol *addressed = addressed_symbol(*slot);
+    Binding *addressed = ast_root_local(*slot);
     if (addressed) {
         addressed->pinned = true;
     }
@@ -753,7 +738,7 @@ static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
 
     expr->kind = EXPR_CAST;
     expr->cast.operand = operand;
-    expr->symbol = NULL;
+    expr->binding = NULL;
 
     if (!operand) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "a conversion to %s takes one operand",
@@ -836,15 +821,15 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         break;
     }
     case EXPR_VARIABLE: {
-        Symbol *entry = scope_symbol_lookup(state->current_scope, resolver_intern(state, expr->var.name));
+        Binding *entry = scope_binding_lookup(state->current_scope, resolver_intern(state, expr->var.name));
 
         if (entry) {
-            if (entry->kind == SYMBOL_FUNC) {
+            if (entry->kind == BINDING_FUNC) {
                 expr->callee = &entry->func;
                 break;
             }
 
-            expr->symbol = entry;
+            expr->binding = entry;
             expr->type = entry->var.type;
             break;
         }
@@ -1004,7 +989,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             break;
         }
 
-        Symbol *addressed = addressed_symbol(expr->unary.target);
+        Binding *addressed = ast_root_local(expr->unary.target);
         if (addressed) {
             addressed->pinned = true;
         }
@@ -1191,7 +1176,7 @@ static void mark_implicit_move(ResolverState *state, ASTExpr *value, const Type 
         return;
     }
 
-    if (value->kind != EXPR_VARIABLE || !value->symbol || value->symbol->kind != SYMBOL_VAR) {
+    if (value->kind != EXPR_VARIABLE || !value->binding || value->binding->kind != BINDING_VAR) {
         return;
     }
 
@@ -1621,9 +1606,9 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
 
     String *name = resolver_intern(state, stmt->func_decl.name);
 
-    Symbol *func = arena_alloc(resolver_owner_arena(state), sizeof(Symbol));
-    *func = (Symbol){
-        .kind = SYMBOL_FUNC,
+    Binding *func = arena_alloc(resolver_owner_arena(state), sizeof(Binding));
+    *func = (Binding){
+        .kind = BINDING_FUNC,
         .scope_depth = state->current_scope->depth,
         .pinned = false,
         .func =
@@ -1631,7 +1616,7 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
                 .return_type = return_type,
                 .params = NULL,
                 .param_count = 0,
-                .func_index = SYMBOL_FUNC_NO_BODY,
+                .func_index = FUNCTION_NO_BODY,
             },
     };
 
@@ -1661,7 +1646,7 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
         return;
     }
 
-    stmt->func_decl.symbol = func;
+    stmt->func_decl.binding = func;
 }
 
 static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
@@ -1711,7 +1696,8 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
 
     stmt->func_decl.resolved_return_type = func_return_type;
 
-    Symbol *func = scope_decl_func(state->current_scope, resolver_intern(state, func_name), func_return_type);
+    Binding *func =
+        scope_decl_func(state->current_scope, resolver_intern(state, func_name), func_return_type);
 
     if (!func) {
         char *name = string_ref_to_cstr(func_name);
@@ -1720,7 +1706,7 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
         free(name);
     }
 
-    stmt->func_decl.symbol = func;
+    stmt->func_decl.binding = func;
 
     if (func) {
         func->func.is_extern = stmt->func_decl.body == NULL;
@@ -1756,16 +1742,16 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
         String *param_name = resolver_intern(state, param->name);
         const Type *param_type = resolve_type_expr(state, param->type_expr, param->span);
 
-        Symbol *symbol = scope_decl_var(state->current_scope, param_name, param_type);
+        Binding *binding = scope_decl_var(state->current_scope, param_name, param_type);
 
-        if (!symbol) {
+        if (!binding) {
             char *name = string_ref_to_cstr(param->name);
             diag_error(state->diagnostics, GAB_ERR_NAME, param->span, "duplicate parameter '%s'", name);
             free(name);
             continue;
         }
 
-        param->symbol = symbol;
+        param->binding = binding;
     }
 
     FuncContext previous_context = state->func_context;
@@ -1778,11 +1764,11 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
 
     if (diagnostics_count(state->diagnostics) == errors_before) {
         size_t param_count = stmt->func_decl.params.size;
-        Symbol **params = arena_alloc(state->compile_arena, (param_count + 1) * sizeof(Symbol *));
+        Binding **params = arena_alloc(state->compile_arena, (param_count + 1) * sizeof(Binding *));
         size_t count = 0;
 
         for (size_t i = 0; i < param_count; i++) {
-            params[count++] = stmt->func_decl.params.data[i]->symbol;
+            params[count++] = stmt->func_decl.params.data[i]->binding;
         }
 
         flow_pass_run(state->compile_arena, state->current_scope->type_registry, stmt->func_decl.body, params,
@@ -1857,7 +1843,8 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
             type = resolver_error_type(state);
         }
 
-        Symbol *var = scope_decl_var(state->current_scope, resolver_intern(state, stmt->var_decl.name), type);
+        Binding *var =
+            scope_decl_var(state->current_scope, resolver_intern(state, stmt->var_decl.name), type);
 
         if (!var) {
             char *name = string_ref_to_cstr(stmt->var_decl.name);
@@ -1869,7 +1856,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
 
         mark_implicit_move(state, stmt->var_decl.initializer, type, stmt->span);
 
-        stmt->var_decl.symbol = var;
+        stmt->var_decl.binding = var;
         break;
     }
     case STMT_FUNC_DECL: {
@@ -1918,10 +1905,10 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
             break;
         }
 
-        Symbol *target = stmt->assign.target->symbol;
+        Binding *target = stmt->assign.target->binding;
 
-        if (target && target->kind == SYMBOL_VAR) {
-            if (stmt->assign.value->kind == EXPR_VARIABLE && stmt->assign.value->symbol == target &&
+        if (target && target->kind == BINDING_VAR) {
+            if (stmt->assign.value->kind == EXPR_VARIABLE && stmt->assign.value->binding == target &&
                 !type_registry_copies(state->current_scope->type_registry, target_type)) {
                 diag_error(state->diagnostics, GAB_ERR_LIFETIME, stmt->span,
                            "'%s' owns what it holds, so it cannot be assigned to itself",

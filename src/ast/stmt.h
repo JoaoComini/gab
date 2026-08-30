@@ -3,8 +3,8 @@
 
 #include "ast/expr.h"
 #include "ast/type_expr.h"
+#include "binding.h"
 #include "string/string_ref.h"
-#include "symbol_table.h"
 #include "type/type.h"
 #include "util/list.h"
 
@@ -14,7 +14,7 @@ typedef struct ASTField {
 
     Span span;
 
-    Symbol *symbol;
+    Binding *binding;
 } ASTField;
 
 ASTField *ast_field_create(Span span, StringRef name, TypeExpr *type_expr);
@@ -52,7 +52,7 @@ typedef struct {
     TypeExpr *type_expr;
     ASTExpr *initializer;
 
-    Symbol *symbol;
+    Binding *binding;
 } ASTVarDecl;
 
 typedef struct {
@@ -64,7 +64,7 @@ typedef struct {
     ASTFieldList params;
     struct ASTStmt *body;
 
-    Symbol *symbol;
+    Binding *binding;
 
     const Type *resolved_return_type;
 

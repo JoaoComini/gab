@@ -21,7 +21,7 @@ typedef struct {
     unsigned int depth;
 } SlotBinding;
 
-GAB_HASH_MAP(SlotMap, slot_map, Symbol *, SlotBinding)
+GAB_HASH_MAP(SlotMap, slot_map, Binding *, SlotBinding)
 
 #define SLOT_MAP_INITIAL_CAPACITY 16
 
@@ -109,8 +109,8 @@ static bool codegen_expr_into(CodegenState *state, ASTExpr *value, unsigned int 
 static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast);
 static void codegen_compound_assign_stmt(CodegenState *state, ASTCompoundAssignStmt *ast);
 static void codegen_block_stmt(CodegenState *state, ASTBlockStmt *ast);
-static bool stmt_may_assign(const ASTStmt *stmt, const Symbol *symbol);
-static bool for_is_countable(const ASTForStmt *ast, const Symbol **counter, const Symbol **bound);
+static bool stmt_may_assign(const ASTStmt *stmt, const Binding *binding);
+static bool for_is_countable(const ASTForStmt *ast, const Binding **counter, const Binding **bound);
 static void codegen_for_stmt(CodegenState *state, ASTForStmt *ast);
 static void codegen_jump_stmt(CodegenState *state, ASTStmt *ast);
 static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast);
@@ -180,9 +180,9 @@ static void codegen_emit_releases_below(CodegenState *state, unsigned int keep_d
 
 static void codegen_emit_release(CodegenState *state, unsigned int slot, const Type *type);
 
-static unsigned int codegen_slot_of(CodegenState *state, Symbol *symbol);
-static unsigned int codegen_decl_depth_of(CodegenState *state, Symbol *symbol);
-static void codegen_set_slot(CodegenState *state, Symbol *symbol, unsigned int slot);
+static unsigned int codegen_slot_of(CodegenState *state, Binding *binding);
+static unsigned int codegen_decl_depth_of(CodegenState *state, Binding *binding);
+static void codegen_set_slot(CodegenState *state, Binding *binding, unsigned int slot);
 static unsigned int codegen_alloc_register(CodegenState *state, Span span);
 static unsigned int codegen_alloc_slots(CodegenState *state, unsigned int count, unsigned int align_slots,
                                         Span span);
@@ -447,20 +447,20 @@ static void codegen_walk_owning_slots(CodegenState *state, const Type *type, uns
 static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
     Span span = ast->initializer ? ast->initializer->span : (Span){0};
 
-    codegen_set_slot(state, ast->symbol,
-                     codegen_alloc_slots(state, type_slot_count(state->registry, ast->symbol->var.type),
-                                         type_align_slots(state->registry, ast->symbol->var.type), span));
+    codegen_set_slot(state, ast->binding,
+                     codegen_alloc_slots(state, type_slot_count(state->registry, ast->binding->var.type),
+                                         type_align_slots(state->registry, ast->binding->var.type), span));
 
-    bool is_ref = ast->symbol->var.type && type_kind(ast->symbol->var.type) == TYPE_REF;
+    bool is_ref = ast->binding->var.type && type_kind(ast->binding->var.type) == TYPE_REF;
 
     if (!ast->initializer) {
         if (!is_ref) {
-            unsigned int slot = codegen_slot_of(state, ast->symbol);
+            unsigned int slot = codegen_slot_of(state, ast->binding);
 
-            codegen_walk_owning_slots(state, ast->symbol->var.type, slot, OWNING_SLOT_NULL);
+            codegen_walk_owning_slots(state, ast->binding->var.type, slot, OWNING_SLOT_NULL);
 
-            if (type_owns_through_members(state->registry, ast->symbol->var.type)) {
-                codegen_walk_owning_slots(state, ast->symbol->var.type, slot, OWNING_SLOT_OWN);
+            if (type_owns_through_members(state->registry, ast->binding->var.type)) {
+                codegen_walk_owning_slots(state, ast->binding->var.type, slot, OWNING_SLOT_OWN);
             }
         }
 
@@ -469,9 +469,9 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
 
     unsigned int saved = state->next_reg;
 
-    unsigned int slot = codegen_slot_of(state, ast->symbol);
+    unsigned int slot = codegen_slot_of(state, ast->binding);
 
-    if (!is_ref && !type_registry_owns(state->registry, ast->symbol->var.type) &&
+    if (!is_ref && !type_registry_owns(state->registry, ast->binding->var.type) &&
         codegen_expr_into(state, ast->initializer, slot)) {
         codegen_release_registers(state, saved);
         return;
@@ -479,10 +479,10 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
 
     unsigned int r1 = codegen_expr(state, ast->initializer);
 
-    codegen_copy_slots(state, slot, r1, type_slot_count(state->registry, ast->symbol->var.type));
+    codegen_copy_slots(state, slot, r1, type_slot_count(state->registry, ast->binding->var.type));
 
     if (!is_ref && expr_yields_owned(state->registry, ast->initializer)) {
-        codegen_walk_owning_slots(state, ast->symbol->var.type, slot, OWNING_SLOT_OWN);
+        codegen_walk_owning_slots(state, ast->binding->var.type, slot, OWNING_SLOT_OWN);
 
         codegen_drop_temporary(state, r1);
     }
@@ -504,7 +504,7 @@ static bool codegen_expr_into(CodegenState *state, ASTExpr *value, unsigned int 
         return true;
     }
     case EXPR_VARIABLE:
-        codegen_copy_slots(state, dest, codegen_slot_of(state, value->symbol), 1);
+        codegen_copy_slots(state, dest, codegen_slot_of(state, value->binding), 1);
         return true;
 
     case EXPR_BIN_OP:
@@ -609,7 +609,7 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
 
     if (!target_is_ref && type_registry_owns(state->registry, ast->target->type) &&
         expr_yields_owned(state->registry, ast->value)) {
-        Symbol *target = ast_root_local(ast->target);
+        Binding *target = ast_root_local(ast->target);
 
         codegen_own_slot_at(state, rd, ast->target->type,
                             target ? codegen_decl_depth_of(state, target) : state->depth);
@@ -687,32 +687,32 @@ static void codegen_block_stmt(CodegenState *state, ASTBlockStmt *ast) {
     codegen_release_registers(state, saved);
 }
 
-static bool stmt_may_assign(const ASTStmt *stmt, const Symbol *symbol) {
+static bool stmt_may_assign(const ASTStmt *stmt, const Binding *binding) {
     if (!stmt) {
         return false;
     }
 
     switch (stmt->kind) {
     case STMT_ASSIGN:
-        return stmt->assign.target->symbol == symbol;
+        return stmt->assign.target->binding == binding;
     case STMT_COMPOUND_ASSIGN:
-        return stmt->compound_assign.target->symbol == symbol;
+        return stmt->compound_assign.target->binding == binding;
     case STMT_VAR_DECL:
-        return stmt->var_decl.symbol == symbol;
+        return stmt->var_decl.binding == binding;
     case STMT_BLOCK:
         for (size_t i = 0; i < stmt->block.list.size; i++) {
-            if (stmt_may_assign(stmt->block.list.data[i], symbol)) {
+            if (stmt_may_assign(stmt->block.list.data[i], binding)) {
                 return true;
             }
         }
 
         return false;
     case STMT_IF:
-        return stmt_may_assign(stmt->ifstmt.then_block, symbol) ||
-               stmt_may_assign(stmt->ifstmt.else_block, symbol);
+        return stmt_may_assign(stmt->ifstmt.then_block, binding) ||
+               stmt_may_assign(stmt->ifstmt.else_block, binding);
     case STMT_FOR:
-        return stmt_may_assign(stmt->forstmt.init, symbol) || stmt_may_assign(stmt->forstmt.post, symbol) ||
-               stmt_may_assign(stmt->forstmt.body, symbol);
+        return stmt_may_assign(stmt->forstmt.init, binding) || stmt_may_assign(stmt->forstmt.post, binding) ||
+               stmt_may_assign(stmt->forstmt.body, binding);
     case STMT_EXPR:
     case STMT_FUNC_DECL:
     case STMT_STRUCT_DECL:
@@ -728,12 +728,12 @@ static bool is_one(const ASTExpr *expr) {
     return expr->kind == EXPR_LITERAL && expr->lit.kind == TYPE_INT && expr->lit.as_int == 1;
 }
 
-static bool for_step_is_one(const ASTStmt *post, const Symbol *counter) {
+static bool for_step_is_one(const ASTStmt *post, const Binding *counter) {
     if (post->kind == STMT_COMPOUND_ASSIGN) {
         const ASTCompoundAssignStmt *step = &post->compound_assign;
 
         if (step->op != BIN_OP_ADD || step->target->kind != EXPR_VARIABLE ||
-            step->target->symbol != counter) {
+            step->target->binding != counter) {
             return false;
         }
 
@@ -747,7 +747,7 @@ static bool for_step_is_one(const ASTStmt *post, const Symbol *counter) {
     const ASTExpr *target = post->assign.target;
     const ASTExpr *value = post->assign.value;
 
-    if (target->kind != EXPR_VARIABLE || target->symbol != counter) {
+    if (target->kind != EXPR_VARIABLE || target->binding != counter) {
         return false;
     }
 
@@ -758,18 +758,18 @@ static bool for_step_is_one(const ASTStmt *post, const Symbol *counter) {
     const ASTExpr *lhs = value->bin_op.left;
     const ASTExpr *rhs = value->bin_op.right;
 
-    if (lhs->kind == EXPR_VARIABLE && lhs->symbol == counter) {
+    if (lhs->kind == EXPR_VARIABLE && lhs->binding == counter) {
         return is_one(rhs);
     }
 
-    if (rhs->kind == EXPR_VARIABLE && rhs->symbol == counter) {
+    if (rhs->kind == EXPR_VARIABLE && rhs->binding == counter) {
         return is_one(lhs);
     }
 
     return false;
 }
 
-static bool for_is_countable(const ASTForStmt *ast, const Symbol **counter, const Symbol **bound) {
+static bool for_is_countable(const ASTForStmt *ast, const Binding **counter, const Binding **bound) {
     if (!ast->condition || !ast->post || !ast->body) {
         return false;
     }
@@ -790,20 +790,20 @@ static bool for_is_countable(const ASTForStmt *ast, const Symbol **counter, cons
         return false;
     }
 
-    if (!for_step_is_one(ast->post, left->symbol)) {
+    if (!for_step_is_one(ast->post, left->binding)) {
         return false;
     }
 
-    if (left->symbol->pinned || right->symbol->pinned) {
+    if (left->binding->pinned || right->binding->pinned) {
         return false;
     }
 
-    if (stmt_may_assign(ast->body, left->symbol) || stmt_may_assign(ast->body, right->symbol)) {
+    if (stmt_may_assign(ast->body, left->binding) || stmt_may_assign(ast->body, right->binding)) {
         return false;
     }
 
-    *counter = left->symbol;
-    *bound = right->symbol;
+    *counter = left->binding;
+    *bound = right->binding;
 
     return true;
 }
@@ -825,12 +825,12 @@ static void codegen_for_stmt(CodegenState *state, ASTForStmt *ast) {
     };
     state->loop = &loop;
 
-    const Symbol *counter = NULL;
-    const Symbol *bound = NULL;
+    const Binding *counter = NULL;
+    const Binding *bound = NULL;
 
     if (for_is_countable(ast, &counter, &bound)) {
-        unsigned int counter_reg = codegen_slot_of(state, (Symbol *)counter);
-        unsigned int bound_reg = codegen_slot_of(state, (Symbol *)bound);
+        unsigned int counter_reg = codegen_slot_of(state, (Binding *)counter);
+        unsigned int bound_reg = codegen_slot_of(state, (Binding *)bound);
 
         unsigned int left = codegen_alloc_register(state, ast->condition->span);
 
@@ -978,11 +978,11 @@ static size_t codegen_reserve_function(CodegenState *state, Function *function) 
 }
 
 static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast) {
-    if (!ast->symbol || proto_map_lookup(state->local_protos, &ast->symbol->func)) {
+    if (!ast->binding || proto_map_lookup(state->local_protos, &ast->binding->func)) {
         return;
     }
 
-    codegen_reserve_function(state, &ast->symbol->func);
+    codegen_reserve_function(state, &ast->binding->func);
 }
 
 static const size_t *codegen_reserve_instantiated(CodegenState *state, Function *function) {
@@ -999,11 +999,11 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
 
     codegen_reserve_proto(state, ast);
 
-    if (!ast->symbol) {
+    if (!ast->binding) {
         return;
     }
 
-    const size_t *local = proto_map_lookup(state->local_protos, &ast->symbol->func);
+    const size_t *local = proto_map_lookup(state->local_protos, &ast->binding->func);
 
     if (!local) {
         return;
@@ -1011,12 +1011,12 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
 
     size_t func_index = *local;
 
-    if (ast->symbol->func.is_extern) {
-        state->unit->extern_protos.data[func_index] = (ExternProto){.function = &ast->symbol->func};
+    if (ast->binding->func.is_extern) {
+        state->unit->extern_protos.data[func_index] = (ExternProto){.function = &ast->binding->func};
 
         extern_request_list_add(
             &state->unit->externs,
-            (ExternRequest){.local_index = func_index, .function = &ast->symbol->func, .span = stmt->span});
+            (ExternRequest){.local_index = func_index, .function = &ast->binding->func, .span = stmt->span});
 
         return;
     }
@@ -1042,7 +1042,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
     };
 
     for (size_t i = 0; i < ast->params.size; i++) {
-        Symbol *param = ast->params.data[i]->symbol;
+        Binding *param = ast->params.data[i]->binding;
 
         codegen_set_slot(&func_state, param, func_next_reg);
         func_next_reg += type_slot_count(state->registry, param->var.type);
@@ -1069,7 +1069,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
     func_state.depth = 1;
 
     for (size_t i = 0; i < ast->params.size; i++) {
-        Symbol *param = ast->params.data[i]->symbol;
+        Binding *param = ast->params.data[i]->binding;
 
         if (type_registry_owns(state->registry, param->var.type)) {
             codegen_own_slot(&func_state, codegen_slot_of(&func_state, param), param->var.type);
@@ -1103,10 +1103,10 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
 }
 
 static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
-    if (ast->moves && ast->kind == EXPR_VARIABLE && ast->symbol) {
+    if (ast->moves && ast->kind == EXPR_VARIABLE && ast->binding) {
         unsigned int reg = codegen_variable_expr(state, ast);
 
-        codegen_walk_owning_slots(state, ast->type, codegen_slot_of(state, ast->symbol), OWNING_SLOT_DISOWN);
+        codegen_walk_owning_slots(state, ast->type, codegen_slot_of(state, ast->binding), OWNING_SLOT_DISOWN);
 
         return reg;
     }
@@ -1231,19 +1231,19 @@ static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node) {
 }
 
 static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node) {
-    return codegen_slot_of(state, node->symbol);
+    return codegen_slot_of(state, node->binding);
 }
 
 static void codegen_emit_call(CodegenState *state, unsigned int dest, Function *callee, Span span) {
     const size_t *local = proto_map_lookup(state->local_protos, callee);
 
-    if (!local && callee->func_index == SYMBOL_FUNC_NO_BODY && callee->body) {
+    if (!local && callee->func_index == FUNCTION_NO_BODY && callee->body) {
         local = codegen_reserve_instantiated(state, callee);
     }
 
     size_t index = local ? *local : callee->func_index;
 
-    if (index == SYMBOL_FUNC_NO_BODY) {
+    if (index == FUNCTION_NO_BODY) {
         if (!state->failed) {
             diag_error(state->diagnostics, GAB_ERR_CODEGEN, span, "call to a function with no body");
         }
@@ -2221,24 +2221,24 @@ static void codegen_emit_releases_below(CodegenState *state, unsigned int keep_d
     }
 }
 
-static unsigned int codegen_slot_of(CodegenState *state, Symbol *symbol) {
-    SlotBinding *slot = slot_map_lookup(state->slots, symbol);
+static unsigned int codegen_slot_of(CodegenState *state, Binding *binding) {
+    SlotBinding *slot = slot_map_lookup(state->slots, binding);
 
-    assert(slot && "symbol was never assigned a frame slot");
+    assert(slot && "binding was never assigned a frame slot");
 
     return slot->slot;
 }
 
-static unsigned int codegen_decl_depth_of(CodegenState *state, Symbol *symbol) {
-    SlotBinding *slot = slot_map_lookup(state->slots, symbol);
+static unsigned int codegen_decl_depth_of(CodegenState *state, Binding *binding) {
+    SlotBinding *slot = slot_map_lookup(state->slots, binding);
 
-    assert(slot && "symbol was never assigned a frame slot");
+    assert(slot && "binding was never assigned a frame slot");
 
     return slot->depth;
 }
 
-static void codegen_set_slot(CodegenState *state, Symbol *symbol, unsigned int slot) {
-    slot_map_insert(state->slots, symbol, (SlotBinding){.slot = slot, .depth = state->depth});
+static void codegen_set_slot(CodegenState *state, Binding *binding, unsigned int slot) {
+    slot_map_insert(state->slots, binding, (SlotBinding){.slot = slot, .depth = state->depth});
 }
 
 static unsigned int codegen_alloc_register(CodegenState *state, Span span) {

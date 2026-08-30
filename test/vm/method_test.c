@@ -57,7 +57,7 @@ static void test_method_is_not_reachable_as_a_bare_name() {
                            "func Player::damage(p: ref Player, n: int): bool { return true; }\n");
     assert(ok);
 
-    assert(!scope_symbol_lookup(scope, string_from_cstr(&ctx.strings, "damage")));
+    assert(!scope_binding_lookup(scope, string_from_cstr(&ctx.strings, "damage")));
 
     ast_unit_destroy(unit);
     test_context_free(&ctx);

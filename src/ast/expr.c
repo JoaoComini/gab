@@ -4,7 +4,7 @@ ASTExpr *ast_expr_create(Span span) {
     ASTExpr *node = malloc(sizeof(ASTExpr));
     node->span = span;
     node->type = NULL;
-    node->symbol = NULL;
+    node->binding = NULL;
     node->callee = NULL;
     node->moves = false;
 
@@ -176,13 +176,22 @@ void ast_expr_free(ASTExpr *expr) {
     free(expr);
 }
 
-Symbol *ast_root_local(const ASTExpr *expr) {
-    for (; expr; expr = expr->kind == EXPR_FIELD ? expr->field.target : expr->unary.target) {
-        if (expr->kind == EXPR_VARIABLE) {
-            return expr->symbol;
-        }
-
-        if (expr->kind != EXPR_FIELD && expr->kind != EXPR_DEREF && expr->kind != EXPR_ADDR_OF) {
+Binding *ast_root_local(const ASTExpr *expr) {
+    while (expr) {
+        switch (expr->kind) {
+        case EXPR_VARIABLE:
+            return expr->binding;
+        case EXPR_FIELD:
+            expr = expr->field.target;
+            break;
+        case EXPR_INDEX:
+            expr = expr->index.target;
+            break;
+        case EXPR_DEREF:
+        case EXPR_ADDR_OF:
+            expr = expr->unary.target;
+            break;
+        default:
             return NULL;
         }
     }

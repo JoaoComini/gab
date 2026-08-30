@@ -2,9 +2,9 @@
 #define GAB_AST_EXPR_H
 
 #include "ast/type_expr.h"
+#include "binding.h"
 #include "diagnostics.h"
 #include "string/string.h"
-#include "symbol_table.h"
 #include "type/type.h"
 #include "util/list.h"
 
@@ -128,7 +128,7 @@ typedef struct ASTExpr {
 
     const Type *type;
 
-    Symbol *symbol;
+    Binding *binding;
     Function *callee;
 
     bool moves;
@@ -151,7 +151,7 @@ ASTExpr *ast_index_expr_create(Span span, ASTExpr *target, ASTExpr *index);
 
 const TypeField *ast_field_of(TypeRegistry *registry, const ASTExpr *expr);
 
-Symbol *ast_root_local(const ASTExpr *expr);
+Binding *ast_root_local(const ASTExpr *expr);
 void ast_expr_free(ASTExpr *node);
 
 #endif

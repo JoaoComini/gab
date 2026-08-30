@@ -1,7 +1,7 @@
 #include "vm/args.h"
 
+#include "binding.h"
 #include "object.h"
-#include "symbol_table.h"
 #include "type/type_registry.h"
 #include "vm/interp.h"
 #include "vm/opcode.h"

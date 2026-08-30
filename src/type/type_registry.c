@@ -1,6 +1,6 @@
 #include "type_registry_internal.h"
 
-#include "symbol_table.h"
+#include "binding.h"
 
 #include "arena.h"
 #include "object.h"
@@ -498,7 +498,7 @@ static Function *instantiate_method(TypeRegistry *registry, const MethodDecl *me
         .param_count = method->param_count + 1,
         .is_extern = true,
         .body = method->body,
-        .func_index = SYMBOL_FUNC_NO_BODY,
+        .func_index = FUNCTION_NO_BODY,
     };
 
     return function;

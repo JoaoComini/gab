@@ -1,9 +1,9 @@
 #include "vm/link.h"
 
 #include "arena.h"
+#include "binding.h"
 #include "scope.h"
 #include "string/string.h"
-#include "symbol_table.h"
 #include "vm/chunk.h"
 #include "vm/interp.h"
 #include "vm/opcode.h"

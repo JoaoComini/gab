@@ -5,7 +5,7 @@
 #include "ast/stmt.h"
 #include "diagnostics.h"
 
-void flow_pass_run(Arena *arena, TypeRegistry *registry, ASTStmt *body, Symbol **params, size_t param_count,
+void flow_pass_run(Arena *arena, TypeRegistry *registry, ASTStmt *body, Binding **params, size_t param_count,
                    const Type *return_type, Diagnostics *diagnostics);
 
 #endif

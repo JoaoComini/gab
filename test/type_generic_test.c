@@ -1,5 +1,5 @@
+#include "binding.h"
 #include "support/test_context.h"
-#include "symbol_table.h"
 #include "type/type.h"
 #include "type/type_registry.h"
 

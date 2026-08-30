@@ -67,7 +67,7 @@ typedef enum {
     TYPE_META_LENGTH,
 } TypeMetadata;
 
-typedef struct Symbol Symbol;
+typedef struct Binding Binding;
 
 typedef struct Function Function;
 

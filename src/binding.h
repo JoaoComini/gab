@@ -1,5 +1,5 @@
-#ifndef GAB_SYMBOL_TABLE_H
-#define GAB_SYMBOL_TABLE_H
+#ifndef GAB_BINDING_H
+#define GAB_BINDING_H
 
 #include "scope.h"
 #include "string/string.h"
@@ -9,14 +9,14 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define SYMBOL_TABLE_INITIAL_CAPACITY 8
+#define BINDING_TABLE_INITIAL_CAPACITY 8
 
-#define SYMBOL_FUNC_NO_BODY ((size_t)-1)
+#define FUNCTION_NO_BODY ((size_t)-1)
 
 typedef enum {
-    SYMBOL_VAR,
-    SYMBOL_FUNC,
-} SymbolKind;
+    BINDING_VAR,
+    BINDING_FUNC,
+} BindingKind;
 
 typedef struct Function {
     const Type *return_type;
@@ -34,8 +34,8 @@ typedef struct Function {
     void *body;
 } Function;
 
-typedef struct Symbol {
-    SymbolKind kind;
+typedef struct Binding {
+    BindingKind kind;
 
     int scope_depth;
 
@@ -48,13 +48,13 @@ typedef struct Symbol {
 
         Function func;
     };
-} Symbol;
+} Binding;
 
-#define symbol_table_hash(key) (size_t)key
-#define symbol_table_key_equals(key, other) key == other
-#define symbol_table_key_dup(key) key
-#define symbol_table_entry_free(key, value)
+#define binding_table_hash(key) (size_t)key
+#define binding_table_key_equals(key, other) key == other
+#define binding_table_key_dup(key) key
+#define binding_table_entry_free(key, value)
 
-GAB_HASH_MAP(SymbolTable, symbol_table, String *, Symbol *);
+GAB_HASH_MAP(BindingTable, binding_table, String *, Binding *);
 
 #endif

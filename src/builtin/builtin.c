@@ -1,8 +1,8 @@
 #include "builtin/builtin.h"
 
 #include "arena.h"
+#include "binding.h"
 #include "string/string.h"
-#include "symbol_table.h"
 #include "type/type.h"
 #include "type/type_registry.h"
 #include "vm/link.h"
@@ -90,7 +90,7 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
         .is_extern = true,
         .name = string_from_cstr(&vm->env.strings, name),
         .module = NULL,
-        .func_index = SYMBOL_FUNC_NO_BODY,
+        .func_index = FUNCTION_NO_BODY,
         .body = (void *)body,
     };
 

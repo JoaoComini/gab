@@ -7,8 +7,8 @@
 
 #include <stdbool.h>
 
-typedef struct SymbolTable SymbolTable;
-typedef struct Symbol Symbol;
+typedef struct BindingTable BindingTable;
+typedef struct Binding Binding;
 typedef struct Scope Scope;
 
 #define module_scope_map_hash(key) (size_t)key
@@ -21,7 +21,7 @@ GAB_HASH_MAP(ModuleScopeMap, module_scope_map, String *, Scope *)
 typedef struct Scope {
     Arena *arena;
 
-    SymbolTable *symbol_table;
+    BindingTable *bindings;
     TypeMap *types;
 
     TypeRegistry *type_registry;
@@ -59,7 +59,7 @@ typedef struct {
     union {
         const Type *type;
         const TypeDef *def;
-        Symbol *symbol;
+        Binding *binding;
     };
 } Resolution;
 
@@ -67,14 +67,14 @@ Resolution scope_resolve(Scope *scope, String *name);
 
 const Type *resolution_type(TypeRegistry *registry, Resolution resolution);
 
-Symbol *scope_symbol_lookup(Scope *scope, String *name);
+Binding *scope_binding_lookup(Scope *scope, String *name);
 
 const Type *scope_type_lookup(Scope *scope, String *name);
 
 TypeBinding *scope_binding_lookup_local(Scope *scope, String *name);
 
 bool scope_declares_type(Scope *scope, String *name);
-Symbol *scope_symbol_lookup_declaring(Scope *scope, String *name);
+Binding *scope_binding_lookup_declaring(Scope *scope, String *name);
 
 void scope_withdraw_type(Scope *scope, String *name);
 
@@ -86,7 +86,7 @@ void scope_init_staging(Scope *scope, Arena *arena, StringPool *strings, Scope *
 
 void scope_merge_staged(Scope *target, Scope *staged);
 
-Symbol *scope_decl_var(Scope *scope, String *name, const Type *type);
-Symbol *scope_decl_func(Scope *scope, String *name, const Type *return_type);
+Binding *scope_decl_var(Scope *scope, String *name, const Type *type);
+Binding *scope_decl_func(Scope *scope, String *name, const Type *return_type);
 
 #endif

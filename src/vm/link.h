@@ -11,7 +11,7 @@
 
 #include <stddef.h>
 
-struct Symbol;
+struct Binding;
 struct Type;
 
 typedef struct {

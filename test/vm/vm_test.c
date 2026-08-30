@@ -5,10 +5,10 @@
 #include "vm/vm.h"
 
 #include "ast/resolve.h"
+#include "binding.h"
 #include "lexer.h"
 #include "parser.h"
 #include "string/string.h"
-#include "symbol_table.h"
 #include "type/type_registry.h"
 #include "vm/opcode.h"
 
@@ -141,10 +141,10 @@ static void test_function_signatures_survive_a_later_compile() {
                         "struct Player { health: int, mana: int }\n"
                         "func on_update(p: Player, dt: float): int { return p.health; }\n");
 
-    Symbol *on_update =
-        scope_symbol_lookup(environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "test")),
-                            string_from_cstr(&vm->env.strings, "on_update"));
-    assert(on_update && on_update->kind == SYMBOL_FUNC);
+    Binding *on_update =
+        scope_binding_lookup(environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "test")),
+                             string_from_cstr(&vm->env.strings, "on_update"));
+    assert(on_update && on_update->kind == BINDING_FUNC);
     assert(on_update->func.param_count == 2);
 
     compile_and_run(vm,
@@ -272,8 +272,9 @@ static void test_checking_a_unit_installs_nothing() {
 
     assert(loaded_protos(vm) == protos);
     assert(vm->program.heap_shapes.size == types);
-    assert(!scope_symbol_lookup(environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "dry")),
-                                string_from_cstr(&vm->env.strings, "second")));
+    assert(
+        !scope_binding_lookup(environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "dry")),
+                              string_from_cstr(&vm->env.strings, "second")));
 
     unit_free(unit);
     ast_unit_destroy(ast);

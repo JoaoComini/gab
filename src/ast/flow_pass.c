@@ -40,20 +40,20 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
 
     switch (expr->kind) {
     case EXPR_ADDR_OF: {
-        const Symbol *symbol = ast_root_local(expr->unary.target);
+        const Binding *binding = ast_root_local(expr->unary.target);
 
-        return symbol ? symbol->scope_depth : 0;
+        return binding ? binding->scope_depth : 0;
     }
     case EXPR_VARIABLE:
-        if (!expr->symbol) {
+        if (!expr->binding) {
             return 0;
         }
 
         if (type_registry_holds_its_memory_inline(pass->registry, expr->type)) {
-            return expr->symbol->scope_depth;
+            return expr->binding->scope_depth;
         }
 
-        return flow_get(pass->flow, expr->symbol).inner_depth;
+        return flow_get(pass->flow, expr->binding).inner_depth;
     case EXPR_NEW:
 
         return 0;
@@ -92,16 +92,16 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
     }
 }
 
-static bool owning_field_of_local(TypeRegistry *registry, const ASTExpr *expr, Symbol **out_symbol,
+static bool owning_field_of_local(TypeRegistry *registry, const ASTExpr *expr, Binding **out_binding,
                                   unsigned int *out_index) {
     if (expr->kind != EXPR_FIELD || expr->field.target->kind != EXPR_VARIABLE) {
         return false;
     }
 
-    Symbol *symbol = expr->field.target->symbol;
+    Binding *binding = expr->field.target->binding;
     const Type *struct_type = expr->field.target->type;
 
-    if (!symbol || symbol->kind != SYMBOL_VAR || !struct_type || type_kind(struct_type) != TYPE_STRUCT) {
+    if (!binding || binding->kind != BINDING_VAR || !struct_type || type_kind(struct_type) != TYPE_STRUCT) {
         return false;
     }
 
@@ -131,7 +131,7 @@ static bool owning_field_of_local(TypeRegistry *registry, const ASTExpr *expr, S
         return false;
     }
 
-    *out_symbol = symbol;
+    *out_binding = binding;
     *out_index = (unsigned int)index;
 
     return true;
@@ -144,8 +144,8 @@ static uint64_t initialized_fields(FlowPass *pass, ASTExpr *initializer) {
 
     ASTExpr *source = initializer;
 
-    if (source->kind == EXPR_VARIABLE && source->symbol && source->symbol->kind == SYMBOL_VAR) {
-        return flow_get(pass->flow, source->symbol).written_fields;
+    if (source->kind == EXPR_VARIABLE && source->binding && source->binding->kind == BINDING_VAR) {
+        return flow_get(pass->flow, source->binding).written_fields;
     }
 
     return UINT64_MAX;
@@ -196,9 +196,9 @@ static void flow_pass_expr(FlowPass *pass, ASTExpr *expr) {
 
     switch (expr->kind) {
     case EXPR_VARIABLE: {
-        Symbol *entry = expr->symbol;
+        Binding *entry = expr->binding;
 
-        if (!entry || entry->kind != SYMBOL_VAR || pass->assigning) {
+        if (!entry || entry->kind != BINDING_VAR || pass->assigning) {
             break;
         }
 
@@ -234,7 +234,7 @@ static void flow_pass_expr(FlowPass *pass, ASTExpr *expr) {
 
         pass->assigning = assigning;
 
-        Symbol *field_owner;
+        Binding *field_owner;
         unsigned int field_index;
 
         if (!stored_into && owning_field_of_local(pass->registry, expr, &field_owner, &field_index)) {
@@ -297,7 +297,7 @@ static void flow_pass_stmt(FlowPass *pass, ASTStmt *stmt) {
     case STMT_VAR_DECL: {
         flow_pass_expr(pass, stmt->var_decl.initializer);
 
-        Symbol *var = stmt->var_decl.symbol;
+        Binding *var = stmt->var_decl.binding;
 
         if (!var) {
             break;
@@ -324,7 +324,7 @@ static void flow_pass_stmt(FlowPass *pass, ASTStmt *stmt) {
             check_stored_lifetime(pass, stmt->assign.value, stmt->assign.target->type, 0, stmt->span,
                                   "stored here");
 
-            Symbol *field_owner;
+            Binding *field_owner;
             unsigned int field_index;
 
             if (owning_field_of_local(pass->registry, stmt->assign.target, &field_owner, &field_index)) {
@@ -336,9 +336,9 @@ static void flow_pass_stmt(FlowPass *pass, ASTStmt *stmt) {
             break;
         }
 
-        Symbol *target = stmt->assign.target->symbol;
+        Binding *target = stmt->assign.target->binding;
 
-        if (target && target->kind == SYMBOL_VAR) {
+        if (target && target->kind == BINDING_VAR) {
             check_stored_lifetime(pass, stmt->assign.value, stmt->assign.target->type, target->scope_depth,
                                   stmt->span, "assigned here");
 
@@ -369,7 +369,7 @@ static void flow_pass_block(FlowPass *pass, CFGBlock *block) {
     }
 }
 
-void flow_pass_run(Arena *arena, TypeRegistry *registry, ASTStmt *body, Symbol **params, size_t param_count,
+void flow_pass_run(Arena *arena, TypeRegistry *registry, ASTStmt *body, Binding **params, size_t param_count,
                    const Type *return_type, Diagnostics *diagnostics) {
     CFG *cfg = cfg_build(arena, body);
 

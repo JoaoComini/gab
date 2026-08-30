@@ -8,8 +8,8 @@ void flow_init(Flow *flow, Arena *arena) {
     flow->unreachable = false;
 }
 
-FlowSlot flow_get(const Flow *flow, Symbol *symbol) {
-    FlowSlot *found = flow_map_lookup(flow->slots, symbol);
+FlowSlot flow_get(const Flow *flow, Binding *binding) {
+    FlowSlot *found = flow_map_lookup(flow->slots, binding);
 
     if (found) {
         return *found;
@@ -18,15 +18,15 @@ FlowSlot flow_get(const Flow *flow, Symbol *symbol) {
     return (FlowSlot){.init = FLOW_UNREACHED, .inner_depth = 0, .written_fields = 0};
 }
 
-void flow_set(Flow *flow, Symbol *symbol, FlowSlot slot) {
-    FlowSlot *found = flow_map_lookup(flow->slots, symbol);
+void flow_set(Flow *flow, Binding *binding, FlowSlot slot) {
+    FlowSlot *found = flow_map_lookup(flow->slots, binding);
 
     if (found) {
         *found = slot;
         return;
     }
 
-    flow_map_insert(flow->slots, symbol, slot);
+    flow_map_insert(flow->slots, binding, slot);
 }
 
 #define flow_for_each(map, entry)                                                                            \

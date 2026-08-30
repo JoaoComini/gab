@@ -1,7 +1,7 @@
 #include "scope.h"
 #include "arena.h"
+#include "binding.h"
 #include "string/string.h"
-#include "symbol_table.h"
 #include "type/type_registry.h"
 #include <assert.h>
 
@@ -30,7 +30,7 @@ static void scope_declare_primitives(Scope *scope) {
 void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope *parent, int depth) {
     scope->arena = arena;
     scope->strings = strings;
-    scope->symbol_table = symbol_table_create_alloc(arena_allocator(arena), SYMBOL_TABLE_INITIAL_CAPACITY);
+    scope->bindings = binding_table_create_alloc(arena_allocator(arena), BINDING_TABLE_INITIAL_CAPACITY);
     scope->types = type_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     scope->parent = parent;
     scope->depth = depth;
@@ -50,7 +50,7 @@ void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope 
 void scope_init_over(Scope *scope, Arena *arena, StringPool *strings, TypeRegistry *registry) {
     scope->arena = arena;
     scope->strings = strings;
-    scope->symbol_table = symbol_table_create_alloc(arena_allocator(arena), SYMBOL_TABLE_INITIAL_CAPACITY);
+    scope->bindings = binding_table_create_alloc(arena_allocator(arena), BINDING_TABLE_INITIAL_CAPACITY);
     scope->types = type_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     scope->parent = NULL;
     scope->depth = 0;
@@ -78,9 +78,9 @@ void scope_init_staging(Scope *scope, Arena *arena, StringPool *strings, Scope *
 }
 
 void scope_merge_staged(Scope *target, Scope *staged) {
-    for (size_t i = 0; i < staged->symbol_table->capacity; i++) {
-        for (SymbolTableEntry *entry = staged->symbol_table->buckets[i]; entry; entry = entry->next) {
-            symbol_table_insert(target->symbol_table, entry->key, entry->value);
+    for (size_t i = 0; i < staged->bindings->capacity; i++) {
+        for (BindingTableEntry *entry = staged->bindings->buckets[i]; entry; entry = entry->next) {
+            binding_table_insert(target->bindings, entry->key, entry->value);
         }
     }
 
@@ -91,9 +91,9 @@ void scope_merge_staged(Scope *target, Scope *staged) {
     }
 }
 
-Symbol *scope_symbol_lookup(Scope *scope, String *name) {
+Binding *scope_binding_lookup(Scope *scope, String *name) {
     while (scope) {
-        Symbol **entry = symbol_table_lookup(scope->symbol_table, name);
+        Binding **entry = binding_table_lookup(scope->bindings, name);
         if (entry) {
             return *entry;
         }
@@ -120,10 +120,10 @@ Resolution scope_resolve(Scope *scope, String *name) {
             return (Resolution){.kind = RESOLUTION_TYPE_DECL, .def = bound->def};
         }
 
-        Symbol **symbol = symbol_table_lookup(s->symbol_table, name);
+        Binding **binding = binding_table_lookup(s->bindings, name);
 
-        if (symbol) {
-            return (Resolution){.kind = RESOLUTION_VALUE, .symbol = *symbol};
+        if (binding) {
+            return (Resolution){.kind = RESOLUTION_VALUE, .binding = *binding};
         }
     }
 
@@ -158,9 +158,9 @@ bool scope_declares_type(Scope *scope, String *name) {
     return false;
 }
 
-Symbol *scope_symbol_lookup_declaring(Scope *scope, String *name) {
+Binding *scope_binding_lookup_declaring(Scope *scope, String *name) {
     for (Scope *s = scope;; s = s->parent) {
-        Symbol **entry = symbol_table_lookup(s->symbol_table, name);
+        Binding **entry = binding_table_lookup(s->bindings, name);
 
         if (entry) {
             return *entry;
@@ -196,18 +196,18 @@ bool scope_bind_decl(Scope *scope, String *name, const TypeDef *def) {
     return true;
 }
 
-Symbol *scope_decl_var(Scope *scope, String *name, const Type *type) {
-    if (scope_symbol_lookup_declaring(scope, name)) {
+Binding *scope_decl_var(Scope *scope, String *name, const Type *type) {
+    if (scope_binding_lookup_declaring(scope, name)) {
         return NULL;
     }
 
-    Symbol *sym = arena_alloc(scope->arena, sizeof(Symbol));
-    sym->kind = SYMBOL_VAR;
+    Binding *sym = arena_alloc(scope->arena, sizeof(Binding));
+    sym->kind = BINDING_VAR;
     sym->scope_depth = scope->depth;
     sym->pinned = false;
     sym->var.type = type;
 
-    Symbol **decl = symbol_table_insert(scope->symbol_table, name, sym);
+    Binding **decl = binding_table_insert(scope->bindings, name, sym);
     if (!decl) {
         return NULL;
     }
@@ -215,22 +215,22 @@ Symbol *scope_decl_var(Scope *scope, String *name, const Type *type) {
     return *decl;
 }
 
-Symbol *scope_decl_func(Scope *scope, String *name, const Type *return_type) {
-    if (scope_symbol_lookup_declaring(scope, name)) {
+Binding *scope_decl_func(Scope *scope, String *name, const Type *return_type) {
+    if (scope_binding_lookup_declaring(scope, name)) {
         return NULL;
     }
 
-    Symbol *sym = arena_alloc(scope->arena, sizeof(Symbol));
-    sym->kind = SYMBOL_FUNC;
+    Binding *sym = arena_alloc(scope->arena, sizeof(Binding));
+    sym->kind = BINDING_FUNC;
     sym->scope_depth = scope->depth;
     sym->pinned = false;
     sym->func.return_type = return_type;
     sym->func.params = NULL;
     sym->func.param_count = 0;
-    sym->func.func_index = SYMBOL_FUNC_NO_BODY;
+    sym->func.func_index = FUNCTION_NO_BODY;
     sym->func.is_extern = false;
 
-    Symbol **decl = symbol_table_insert(scope->symbol_table, name, sym);
+    Binding **decl = binding_table_insert(scope->bindings, name, sym);
     if (!decl) {
         return NULL;
     }

@@ -20,7 +20,7 @@ ASTStmt *ast_var_decl_stmt_create(Span span, StringRef name, TypeExpr *type_expr
     stmt->var_decl.name = name;
     stmt->var_decl.type_expr = type_expr;
     stmt->var_decl.initializer = initializer;
-    stmt->var_decl.symbol = NULL;
+    stmt->var_decl.binding = NULL;
     return stmt;
 }
 
@@ -33,7 +33,7 @@ ASTStmt *ast_func_decl_stmt_create(Span span, StringRef name, TypeExpr *return_t
     stmt->func_decl.return_type = return_type;
     stmt->func_decl.params = params;
     stmt->func_decl.body = body;
-    stmt->func_decl.symbol = NULL;
+    stmt->func_decl.binding = NULL;
     stmt->func_decl.resolved_return_type = NULL;
     stmt->func_decl.declared = false;
     return stmt;
@@ -179,7 +179,7 @@ ASTField *ast_field_create(Span span, StringRef name, TypeExpr *type_expr) {
     field->span = span;
     field->name = name;
     field->type_expr = type_expr;
-    field->symbol = NULL;
+    field->binding = NULL;
 
     return field;
 }

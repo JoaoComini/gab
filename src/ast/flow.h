@@ -2,7 +2,7 @@
 #define GAB_AST_FLOW_H
 
 #include "arena.h"
-#include "symbol_table.h"
+#include "binding.h"
 #include "util/hash_map.h"
 
 #include <stdbool.h>
@@ -31,7 +31,7 @@ typedef struct {
 #define flow_map_key_dup(key) key
 #define flow_map_entry_free(key, value)
 
-GAB_HASH_MAP(FlowMap, flow_map, Symbol *, FlowSlot)
+GAB_HASH_MAP(FlowMap, flow_map, Binding *, FlowSlot)
 
 typedef struct {
     FlowMap *slots;
@@ -42,8 +42,8 @@ typedef struct {
 
 void flow_init(Flow *flow, Arena *arena);
 
-FlowSlot flow_get(const Flow *flow, Symbol *symbol);
-void flow_set(Flow *flow, Symbol *symbol, FlowSlot slot);
+FlowSlot flow_get(const Flow *flow, Binding *binding);
+void flow_set(Flow *flow, Binding *binding, FlowSlot slot);
 
 void flow_copy(Flow *into, const Flow *from);
 
