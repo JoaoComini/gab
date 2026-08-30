@@ -43,7 +43,7 @@ static void test_binds_tighter_than_a_binary_operator() {
 
 static void test_binds_looser_than_a_postfix() {
     assert(test_run_bool("struct Flags { on: bool }\n"
-                         "func f(): bool { let g: Flags; g.on = false; return !g.on; }\n"
+                         "func f(): bool { let g = Flags { on: false }; return !g.on; }\n"
                          "let r: bool = f();\n") == true);
 }
 

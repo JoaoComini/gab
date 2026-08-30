@@ -225,9 +225,7 @@ static void test_struct_argument_and_return(void) {
                         "module test;\n"
                         "struct Player { health: int, mana: int }\n"
                         "func hurt(p: Player, amount: int): Player {\n"
-                        "  let out: Player;\n"
-                        "  out.health = p.health - amount;\n"
-                        "  out.mana = p.mana;\n"
+                        "  let out = Player { health: p.health - amount, mana: p.mana };\n"
                         "  return out;\n"
                         "}\n",
                         &err);
@@ -642,7 +640,7 @@ static void test_a_module_may_be_imported_twice(void) {
                     "module B;\n"
                     "import A;\n"
                     "import A;\n"
-                    "func f(): int { let t: A::T; return t.v; }\n",
+                    "func f(): int { let t = A::T { v: 0 }; return t.v; }\n",
                     &err));
 
     gab_vm_free(vm);
@@ -671,7 +669,7 @@ static void test_modules_cannot_import_each_other(void) {
     assert(gab_load(vm, "mid.gab",
                     "module Mid;\n"
                     "import Base;\n"
-                    "func f(): int { let t: Base::T; return t.v; }\n",
+                    "func f(): int { let t = Base::T { v: 0 }; return t.v; }\n",
                     &err));
 
     assert(!gab_load(vm, "base2.gab", "module Base;\nimport Mid;\nfunc g(): int { return 1; }\n", &err));
@@ -687,18 +685,19 @@ static void test_a_qualified_name_needs_an_import(void) {
 
     assert(gab_load(vm, "a.gab", "module A;\nstruct Thing { v: int }\n", &err));
 
-    assert(!gab_load(vm, "b.gab", "module B;\nfunc f(): int { let t: A::Thing; return t.v; }\n", &err));
+    assert(!gab_load(vm, "b.gab", "module B;\nfunc f(): int { let t = A::Thing { v: 0 }; return t.v; }\n",
+                     &err));
     assert(err.message[0] != '\0');
 
     assert(gab_load(vm, "b.gab",
                     "module B;\n"
                     "import A;\n"
-                    "func f(): int { let t: A::Thing; return t.v; }\n",
+                    "func f(): int { let t = A::Thing { v: 0 }; return t.v; }\n",
                     &err));
 
     assert(gab_load(vm, "a2.gab",
                     "module A;\n"
-                    "func g(): int { let t: A::Thing; return t.v; }\n",
+                    "func g(): int { let t = A::Thing { v: 0 }; return t.v; }\n",
                     &err));
 
     gab_vm_free(vm);
@@ -716,16 +715,18 @@ static void test_qualified_type_reference_crosses_modules(void) {
                           "module Enemy;\n"
                           "import Player;\n"
                           "struct Config { hp: int }\n"
-                          "func f(): int { let c: Player::Config; return c.health; }\n",
+                          "func f(): int { let c = Player::Config { health: 0 }; return c.health; }\n",
                           &err);
     assert(enemy);
 
     assert(gab_type_size(vm, gab_find_type(vm, "Enemy", "Config")) == sizeof(int));
 
-    assert(!gab_load(vm, "bad.gab",
-                     "module A;\nimport Nope;\nfunc f(): int { let c: Nope::Config; return 0; }\n", &err));
-    assert(
-        !gab_load(vm, "bad2.gab", "module B;\nfunc f(): int { let c: Player::Missing; return 0; }\n", &err));
+    assert(!gab_load(
+        vm, "bad.gab",
+        "module A;\nimport Nope;\nfunc f(): int { let c = Nope::Config { health: 0 }; return 0; }\n", &err));
+    assert(!gab_load(vm, "bad2.gab",
+                     "module B;\nfunc f(): int { let c = Player::Missing { health: 0 }; return 0; }\n",
+                     &err));
 
     gab_vm_free(vm);
 }

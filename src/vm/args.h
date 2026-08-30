@@ -14,6 +14,8 @@ uint8_t *args_address(Args *args, int index, const Type **out_type);
 
 uint8_t *args_return_address(Args *args);
 
+const Type *args_return_type(Args *args);
+
 unsigned int args_type_slots(TypeRegistry *registry, const Type *type);
 
 int32_t args_int(Args *args, int index);

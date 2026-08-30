@@ -52,8 +52,7 @@ static void test_a_value_reaches_a_ref_parameter_by_address() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func peek(b: ref Box): int { return b.n; }\n"
                         "func main(): int {\n"
-                        "    let a: Box;\n"
-                        "    a.n = 6;\n"
+                        "    let a = Box { n: 6 };\n"
                         "    return peek(a);\n"
                         "}\n"
                         "let r: int = main();") == 6);

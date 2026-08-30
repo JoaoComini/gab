@@ -174,8 +174,7 @@ static void test_pointer_receiver_mutates_the_caller() {
             "struct Player { health: int }\n"
             "func Player::damage(p: ref Player, n: int): int { p.health = p.health - n; return p.health; }\n"
             "func main(): int {\n"
-            "    let p: Player;\n"
-            "    p.health = 100;\n"
+            "    let p = Player { health: 100 };\n"
             "    let ignored: int = p.damage(30);\n"
             "    return p.health;\n"
             "}\n"
@@ -186,8 +185,7 @@ static void test_value_receiver_does_not_mutate_the_caller() {
     assert(test_run_int("struct Player { health: int }\n"
                         "func Player::zero(p: Player): int { p.health = 0; return p.health; }\n"
                         "func main(): int {\n"
-                        "    let p: Player;\n"
-                        "    p.health = 55;\n"
+                        "    let p = Player { health: 55 };\n"
                         "    let ignored: int = p.zero();\n"
                         "    return p.health;\n"
                         "}\n"
@@ -200,8 +198,8 @@ static void test_same_name_dispatches_by_type() {
                         "func Player::tag(p: ref Player): int { return 1; }\n"
                         "func Enemy::tag(e: ref Enemy): int { return 2; }\n"
                         "func main(): int {\n"
-                        "    let p: Player;\n"
-                        "    let e: Enemy;\n"
+                        "    let p = Player { health: 0 };\n"
+                        "    let e = Enemy { health: 0 };\n"
                         "    return p.tag() * 10 + e.tag();\n"
                         "}\n"
                         "let r: int = main();") == 12);
@@ -212,8 +210,7 @@ static void test_method_calls_another_method() {
                         "func Player::hp(p: ref Player): int { return p.health; }\n"
                         "func Player::double_hp(p: ref Player): int { return p.hp() + p.hp(); }\n"
                         "func main(): int {\n"
-                        "    let p: Player;\n"
-                        "    p.health = 21;\n"
+                        "    let p = Player { health: 21 };\n"
                         "    return p.double_hp();\n"
                         "}\n"
                         "let r: int = main();") == 42);
@@ -224,7 +221,7 @@ static void test_method_arguments() {
                "struct Point { x: int, y: int }\n"
                "func Point::set(v: ref Point, a: int, b: int): int { v.x = a; v.y = b; return v.x + v.y; }\n"
                "func main(): int {\n"
-               "    let v: Point;\n"
+               "    let v = Point { x: 0, y: 0 };\n"
                "    return v.set(3, 4);\n"
                "}\n"
                "let r: int = main();") == 7);
@@ -238,8 +235,7 @@ static void test_recursive_method() {
                         "    return c.countdown(n - 1);\n"
                         "}\n"
                         "func main(): int {\n"
-                        "    let c: Counter;\n"
-                        "    c.n = 0;\n"
+                        "    let c = Counter { n: 0 };\n"
                         "    return c.countdown(4);\n"
                         "}\n"
                         "let r: int = main();") == 10);
@@ -249,8 +245,7 @@ static void test_call_through_a_pointer_receiver() {
     assert(test_run_int("struct Player { health: int }\n"
                         "func Player::hp(p: ref Player): int { return p.health; }\n"
                         "func main(): int {\n"
-                        "    let p: Player;\n"
-                        "    p.health = 9;\n"
+                        "    let p = Player { health: 9 };\n"
                         "    let q: ref Player = p;\n"
                         "    return q.hp();\n"
                         "}\n"
@@ -261,8 +256,7 @@ static void test_value_method_through_a_pointer() {
     assert(test_run_int("struct Player { health: int }\n"
                         "func Player::hp(p: Player): int { return p.health; }\n"
                         "func main(): int {\n"
-                        "    let p: Player;\n"
-                        "    p.health = 13;\n"
+                        "    let p = Player { health: 13 };\n"
                         "    let q: ref Player = p;\n"
                         "    return q.hp();\n"
                         "}\n"
@@ -273,17 +267,12 @@ static void test_struct_parameter_and_return() {
     assert(test_run_int("struct Point { x: int, y: int }\n"
                         "struct Adder { bias: int }\n"
                         "func Adder::add(a: ref Adder, v: Point): Point {\n"
-                        "    let out: Point;\n"
-                        "    out.x = v.x + a.bias;\n"
-                        "    out.y = v.y + a.bias;\n"
+                        "    let out = Point { x: v.x + a.bias, y: v.y + a.bias };\n"
                         "    return out;\n"
                         "}\n"
                         "func main(): int {\n"
-                        "    let a: Adder;\n"
-                        "    a.bias = 10;\n"
-                        "    let v: Point;\n"
-                        "    v.x = 1;\n"
-                        "    v.y = 2;\n"
+                        "    let a = Adder { bias: 10 };\n"
+                        "    let v = Point { x: 1, y: 2 };\n"
                         "    let out: Point = a.add(v);\n"
                         "    return out.x * 100 + out.y;\n"
                         "}\n"
@@ -295,8 +284,7 @@ static void test_call_on_a_nested_struct() {
                         "struct Outer { inner: Inner }\n"
                         "func Inner::bump(i: ref Inner): int { i.n = i.n + 1; return i.n; }\n"
                         "func main(): int {\n"
-                        "    let o: Outer;\n"
-                        "    o.inner.n = 5;\n"
+                        "    let o = Outer { inner: Inner { n: 5 } };\n"
                         "    let ignored: int = o.inner.bump();\n"
                         "    return o.inner.n;\n"
                         "}\n"
@@ -305,19 +293,19 @@ static void test_call_on_a_nested_struct() {
 
 static void test_call_diagnostics() {
     assert(fails("struct Player { health: int }\n"
-                 "func main(): int { let p: Player; return p.nope(); }\n"));
+                 "func main(): int { let p = Player { health: 0 }; return p.nope(); }\n"));
 
     assert(fails("struct Player { health: int }\n"
                  "func Player::hp(p: ref Player): int { return p.health; }\n"
-                 "func main(): int { let p: Player; return p.hp(1); }\n"));
+                 "func main(): int { let p = Player { health: 0 }; return p.hp(1); }\n"));
 
     assert(fails("struct Player { health: int }\n"
                  "func Player::set(p: ref Player, n: int): int { return n; }\n"
-                 "func main(): int { let p: Player; return p.set(true); }\n"));
+                 "func main(): int { let p = Player { health: 0 }; return p.set(true); }\n"));
 
     assert(fails("struct Player { health: int }\n"
                  "func Player::hp(p: ref Player): int { return p.health; }\n"
-                 "func make(): Player { let p: Player; return p; }\n"
+                 "func make(): Player { let p = Player { health: 0 }; return p; }\n"
                  "func main(): int { return make().hp(); }\n"));
 
     assert(fails("func main(): int { let n: int = 1; return n.hp(); }\n"));
@@ -338,8 +326,7 @@ static void test_a_value_receiver_has_its_address_taken() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func Box::bump(b: ref Box): int { b.n = b.n + 1; return b.n; }\n"
                         "func main(): int {\n"
-                        "    let b: Box;\n"
-                        "    b.n = 4;\n"
+                        "    let b = Box { n: 4 };\n"
                         "    let got: int = b.bump();\n"
                         "    return got * 10 + b.n;\n"
                         "}\n"
@@ -417,7 +404,7 @@ static void test_a_consuming_function_takes_the_receiver() {
 static void test_a_pointer_method_on_a_temporary_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func Box::get(b: ref Box): int { return b.n; }\n"
-                          "func make(): Box { let b: Box; return b; }\n"
+                          "func make(): Box { let b = Box { n: 0 }; return b; }\n"
                           "func main(): int { return make().get(); }\n"));
 }
 

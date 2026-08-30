@@ -167,6 +167,8 @@ bool args_return_string_copy(Args *args, const char *data, int32_t length) {
     return true;
 }
 
+const Type *args_return_type(Args *args) { return args->function->return_type; }
+
 void args_return_struct(Args *args, const void *data, size_t size) {
     assert(data && "a C body returned a struct from nothing");
 

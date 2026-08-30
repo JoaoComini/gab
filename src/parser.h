@@ -7,6 +7,12 @@
 
 #include <stdbool.h>
 
+/* A '{' closes an 'if' or 'for' header, so a struct literal is spelled there only inside brackets. */
+typedef enum {
+    EXPR_ANY,
+    EXPR_NO_STRUCT_LIT,
+} ExprContext;
+
 typedef struct {
     Lexer *lexer;
 

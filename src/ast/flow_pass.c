@@ -92,66 +92,6 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
     }
 }
 
-static bool owning_field_of_local(TypeRegistry *registry, const ASTExpr *expr, Binding **out_binding,
-                                  unsigned int *out_index) {
-    if (expr->kind != EXPR_FIELD || expr->field.target->kind != EXPR_VARIABLE) {
-        return false;
-    }
-
-    Binding *binding = ast_binding_of(expr->field.target);
-    const Type *struct_type = expr->field.target->type;
-
-    if (!binding || binding->kind != BINDING_VAR || !struct_type || type_kind(struct_type) != TYPE_STRUCT) {
-        return false;
-    }
-
-    const TypeField *field = ast_field_of(registry, expr);
-
-    if (!field || type_kind(field->type) != TYPE_BOX) {
-        return false;
-    }
-
-    size_t index = 0;
-
-    const TypeFields *fields = type_registry_fields_of(registry, struct_type);
-
-    for (size_t i = 0; i < fields->count; i++) {
-        const TypeField *other = &fields->fields[i];
-
-        if (other == field) {
-            break;
-        }
-
-        if (type_kind(other->type) == TYPE_BOX) {
-            index++;
-        }
-    }
-
-    if (index >= FLOW_MAX_FIELDS) {
-        return false;
-    }
-
-    *out_binding = binding;
-    *out_index = (unsigned int)index;
-
-    return true;
-}
-
-static uint64_t initialized_fields(FlowPass *pass, ASTExpr *initializer) {
-    if (!initializer) {
-        return 0;
-    }
-
-    ASTExpr *source = initializer;
-
-    if (source->kind == EXPR_VARIABLE && ast_binding_of(source) &&
-        ast_binding_of(source)->kind == BINDING_VAR) {
-        return flow_get(pass->flow, ast_binding_of(source)).written_fields;
-    }
-
-    return UINT64_MAX;
-}
-
 static bool borrows_memory(const Type *type) {
     if (!type) {
         return false;
@@ -225,7 +165,6 @@ static void flow_pass_expr(FlowPass *pass, ASTExpr *expr) {
         break;
     }
     case EXPR_FIELD: {
-        bool stored_into = pass->assigning_field;
         pass->assigning_field = false;
 
         bool assigning = pass->assigning;
@@ -235,17 +174,6 @@ static void flow_pass_expr(FlowPass *pass, ASTExpr *expr) {
 
         pass->assigning = assigning;
 
-        Binding *field_owner;
-        unsigned int field_index;
-
-        if (!stored_into && owning_field_of_local(pass->registry, expr, &field_owner, &field_index)) {
-            FlowSlot slot = flow_get(pass->flow, field_owner);
-
-            if (!(slot.written_fields & ((uint64_t)1 << field_index))) {
-                flow_report(pass, expr->span, "'%s' is read before it is given a value",
-                            ast_field_of(pass->registry, expr)->name->data);
-            }
-        }
         break;
     }
     case EXPR_LEND:
@@ -306,8 +234,7 @@ static void flow_pass_stmt(FlowPass *pass, ASTStmt *stmt) {
 
         flow_set(pass->flow, var,
                  (FlowSlot){.init = stmt->var_decl.initializer ? FLOW_INIT : FLOW_UNINIT,
-                            .inner_depth = inner_depth(pass, stmt->var_decl.initializer),
-                            .written_fields = initialized_fields(pass, stmt->var_decl.initializer)});
+                            .inner_depth = inner_depth(pass, stmt->var_decl.initializer)});
         break;
     }
     case STMT_ASSIGN: {
@@ -325,15 +252,6 @@ static void flow_pass_stmt(FlowPass *pass, ASTStmt *stmt) {
             check_stored_lifetime(pass, stmt->assign.value, stmt->assign.target->type, 0, stmt->span,
                                   "stored here");
 
-            Binding *field_owner;
-            unsigned int field_index;
-
-            if (owning_field_of_local(pass->registry, stmt->assign.target, &field_owner, &field_index)) {
-                FlowSlot slot = flow_get(pass->flow, field_owner);
-
-                slot.written_fields |= (uint64_t)1 << field_index;
-                flow_set(pass->flow, field_owner, slot);
-            }
             break;
         }
 
@@ -343,15 +261,8 @@ static void flow_pass_stmt(FlowPass *pass, ASTStmt *stmt) {
             check_stored_lifetime(pass, stmt->assign.value, stmt->assign.target->type, target->scope_depth,
                                   stmt->span, "assigned here");
 
-            FlowSlot slot = flow_get(pass->flow, target);
-
             flow_set(pass->flow, target,
-                     (FlowSlot){.init = FLOW_INIT,
-                                .inner_depth = inner_depth(pass, stmt->assign.value),
-                                .written_fields = stmt->assign.value->type &&
-                                                          type_kind(stmt->assign.value->type) == TYPE_STRUCT
-                                                      ? initialized_fields(pass, stmt->assign.value)
-                                                      : slot.written_fields});
+                     (FlowSlot){.init = FLOW_INIT, .inner_depth = inner_depth(pass, stmt->assign.value)});
         }
         break;
     }
@@ -385,8 +296,7 @@ void flow_pass_run(Arena *arena, TypeRegistry *registry, ASTStmt *body, Binding 
 
     for (size_t i = 0; i < param_count; i++) {
         if (params[i]) {
-            flow_set(&entries[cfg->entry->index], params[i],
-                     (FlowSlot){.init = FLOW_INIT, .inner_depth = 0, .written_fields = UINT64_MAX});
+            flow_set(&entries[cfg->entry->index], params[i], (FlowSlot){.init = FLOW_INIT, .inner_depth = 0});
         }
     }
 

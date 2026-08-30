@@ -4,13 +4,13 @@
 
 static void test_a_generic_field_holds_its_argument() {
     assert(test_run_int("struct Holder<T> { value: T }\n"
-                        "func f(): int { let h: Holder<int>; h.value = 7; return h.value; }\n"
+                        "func f(): int { let h = Holder<int> { value: 7 }; return h.value; }\n"
                         "let r: int = f();") == 7);
 }
 
 static void test_two_instantiations_are_two_types() {
     assert(!test_compiles("struct Holder<T> { value: T }\n"
-                          "func f(): int { let h: Holder<int>; h.value = 1.5; return h.value; }\n"
+                          "func f(): int { let h = Holder<int> { value: 1.5 }; return h.value; }\n"
                           "let r: int = f();"));
 }
 
@@ -34,28 +34,29 @@ static void test_a_parameter_names_nothing_outside_its_declaration() {
 static void test_a_parameter_nests_under_a_constructor() {
     assert(test_run_int("struct Cell { n: int }\n"
                         "struct Holder<T> { value: box T }\n"
-                        "func f(): int { let h: Holder<Cell>; h.value = new Cell; h.value.n = 9;\n"
+                        "func f(): int { let h = Holder<Cell> { value: new Cell }; h.value.n = 9;\n"
                         "return h.value.n; }\n"
                         "let r: int = f();") == 9);
 }
 
 static void test_each_argument_reaches_its_own_parameter() {
     assert(test_run_int("struct Pair<A, B> { first: A, second: B }\n"
-                        "func f(): int { let p: Pair<int, bool>; p.first = 4; p.second = true;\n"
+                        "func f(): int { let p = Pair<int, bool> { first: 4, second: true };\n"
                         "if p.second { return p.first; } return 0; }\n"
                         "let r: int = f();") == 4);
 }
 
 static void test_a_declaration_reaches_itself_through_an_indirection() {
     assert(test_run_int("struct Node<T> { value: T, next: box Node<T> }\n"
-                        "func f(): int { let n: Node<int>; n.value = 5; return n.value; }\n"
+                        "func f(): int { let n = Node<int> { value: 5, next: new Node<int> };\n"
+                        "return n.value; }\n"
                         "let r: int = f();") == 5);
 }
 
 static void test_a_declaration_reaches_one_declared_below_it() {
     assert(test_run_int("struct Outer<T> { inner: box Inner<T> }\n"
                         "struct Inner<T> { value: T }\n"
-                        "func f(): int { let o: Outer<int>; o.inner = new Inner<int>;\n"
+                        "func f(): int { let o = Outer<int> { inner: new Inner<int> };\n"
                         "o.inner.value = 6; return o.inner.value; }\n"
                         "let r: int = f();") == 6);
 }
@@ -94,22 +95,22 @@ static void test_a_declaration_owed_arguments_converts_nothing() {
 
 static void test_a_parameter_is_the_element_of_an_array() {
     assert(test_run_int("struct Buf<T> { xs: [T; 3] }\n"
-                        "func f(): int { let b: Buf<int>; b.xs[1] = 9; return b.xs[1]; }\n"
+                        "func f(): int { let b = Buf<int> { xs: [0, 9, 0] }; return b.xs[1]; }\n"
                         "let r: int = f();") == 9);
 }
 
 static void test_a_method_on_a_declaration_serves_an_instantiation() {
     assert(test_run_int("struct Holder<T> { value: T }\n"
                         "func Holder<T>::get(h: ref Holder<T>): T { return h.value; }\n"
-                        "func f(): int { let h: Holder<int>; h.value = 3; return h.get(); }\n"
+                        "func f(): int { let h = Holder<int> { value: 3 }; return h.get(); }\n"
                         "let r: int = f();") == 3);
 }
 
 static void test_each_instantiation_gets_its_own_body() {
     assert(test_run_int("struct Holder<T> { value: T }\n"
                         "func Holder<T>::get(h: ref Holder<T>): T { return h.value; }\n"
-                        "func f(): int { let a: Holder<int>; a.value = 4;\n"
-                        "let b: Holder<bool>; b.value = true;\n"
+                        "func f(): int { let a = Holder<int> { value: 4 };\n"
+                        "let b = Holder<bool> { value: true };\n"
                         "if b.get() { return a.get(); } return 0; }\n"
                         "let r: int = f();") == 4);
 }
@@ -118,7 +119,7 @@ static void test_an_instantiation_that_owns_frees_what_it_holds() {
     assert(test_run_int("struct Cell { n: int }\n"
                         "struct Holder<T> { value: T }\n"
                         "func Holder<T>::read(h: ref Holder<T>): int { return 1; }\n"
-                        "func f(): int { let h: Holder<box Cell>; h.value = new Cell;\n"
+                        "func f(): int { let h = Holder<box Cell> { value: new Cell };\n"
                         "h.value.n = 8; return h.read() + h.value.n; }\n"
                         "let r: int = f();") == 9);
 }
@@ -128,7 +129,8 @@ static void test_an_instantiation_reached_from_another_is_emitted() {
                         "struct Wrap<T> { inner: Holder<T> }\n"
                         "func Holder<T>::get(h: ref Holder<T>): T { return h.value; }\n"
                         "func Wrap<T>::unwrap(w: ref Wrap<T>): T { return w.inner.get(); }\n"
-                        "func f(): int { let w: Wrap<int>; w.inner.value = 6; return w.unwrap(); }\n"
+                        "func f(): int { let w = Wrap<int> { inner: Holder<int> { value: 6 } };\n"
+                        "return w.unwrap(); }\n"
                         "let r: int = f();") == 6);
 }
 
@@ -136,7 +138,7 @@ static void test_a_generic_that_instantiates_itself_is_rejected() {
     assert(!test_compiles("struct Holder<T> { value: T }\n"
                           "func Holder<T>::deeper(h: ref Holder<T>): int {\n"
                           "    let n: Holder<box T>; return n.deeper(); }\n"
-                          "func f(): int { let h: Holder<int>; return h.deeper(); }\n"
+                          "func f(): int { let h = Holder<int> { value: 0 }; return h.deeper(); }\n"
                           "let r: int = f();"));
 }
 

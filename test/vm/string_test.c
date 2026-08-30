@@ -131,7 +131,7 @@ static void test_a_struct_field_borrows_its_characters() {
     assert(test_compiles("struct Person { name: ref str }\n"));
 
     TestProgram program = test_compile("struct Person { name: ref str }\n"
-                                       "func f(): int { let p: Person; return 0; }\n");
+                                       "func f(): int { let p = Person { name: \"\" }; return 0; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
@@ -143,7 +143,7 @@ static void test_a_struct_field_borrows_its_characters() {
 static void test_an_owning_string_field_is_released() {
     TestProgram program =
         test_compile("struct Doc { body: String }\n"
-                     "func f(a: ref str): int { let d: Doc; d.body = a.to_owned(); return 0; }\n");
+                     "func f(a: ref str): int { let d = Doc { body: a.to_owned() }; return 0; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
@@ -153,7 +153,7 @@ static void test_an_owning_string_field_is_released() {
 
     assert(test_run_bool(
                "struct Doc { body: String }\n"
-               "func f(a: ref str): bool { let d: Doc; d.body = a.to_owned(); return d.body == \"ab\"; }\n"
+               "func f(a: ref str): bool { let d = Doc { body: a.to_owned() }; return d.body == \"ab\"; }\n"
                "let r: bool = f(\"ab\");") == true);
 }
 
@@ -174,7 +174,7 @@ static void test_reassigning_a_string_frees_the_old_characters() {
 
 static void test_a_string_declared_empty_is_freed_once() {
     assert(test_run_int("func f(): int {\n"
-                        "    let s: String;\n"
+                        "    let s: String = String::from(\"\");\n"
                         "    s = \"ab\".to_owned();\n"
                         "    return s.len();\n"
                         "}\n"

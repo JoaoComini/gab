@@ -12,11 +12,11 @@ static void test_a_primitive_needs_no_library() {
 }
 
 static void test_a_registered_type_needs_the_library() {
-    assert(!test_compiles("func f(): int { let s: String; return 0; }\n"));
-    assert(!test_compiles("func f(): int { let v: Vec<int>; return 0; }\n"));
+    assert(!test_compiles("func f(): int { let s: String = String::from(\"\"); return 0; }\n"));
+    assert(!test_compiles("func f(): int { let v: Vec<int> = Vec<int>::new(0); return 0; }\n"));
 
-    assert(test_compiles_on_vm("func f(): int { let s: String; return 0; }\n"));
-    assert(test_compiles_on_vm("func f(): int { let v: Vec<int>; return 0; }\n"));
+    assert(test_compiles_on_vm("func f(): int { let s: String = String::from(\"\"); return 0; }\n"));
+    assert(test_compiles_on_vm("func f(): int { let v: Vec<int> = Vec<int>::new(0); return 0; }\n"));
 }
 
 static void test_each_vm_declares_its_own() {

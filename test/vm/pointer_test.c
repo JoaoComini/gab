@@ -159,7 +159,7 @@ static void test_scalar_read_and_write_through_a_pointer() {
 
 static void test_field_write_through_a_pointer() {
     assert(test_run_int("struct Player { health: int, mana: int }\n"
-                        "func f(): int { let p: Player; p.health = 1; p.mana = 2;\n"
+                        "func f(): int { let p = Player { health: 1, mana: 2 };\n"
                         "let q: ref Player = p; (*q).health = 10;\n"
                         "return p.health * 100 + p.mana; }\n"
                         "let r: int = f();") == 1002);
@@ -167,7 +167,7 @@ static void test_field_write_through_a_pointer() {
 
 static void test_pointer_to_a_struct_field() {
     assert(test_run_int("struct Point { x: int, y: int }\n"
-                        "func f(): int { let v: Point; v.x = 1; v.y = 2;\n"
+                        "func f(): int { let v = Point { x: 1, y: 2 };\n"
                         "let p: ref int = v.y; *p = 9;\n"
                         "return v.x * 100 + v.y; }\n"
                         "let r: int = f();") == 109);
@@ -175,8 +175,7 @@ static void test_pointer_to_a_struct_field() {
 
 static void test_pointer_to_a_sub_word_field() {
     assert(test_run_int("struct Flags { a: bool, b: bool, c: bool, d: bool }\n"
-                        "func f(): int { let v: Flags;\n"
-                        "v.a = true; v.b = true; v.c = true; v.d = true;\n"
+                        "func f(): int { let v = Flags { a: true, b: true, c: true, d: true };\n"
                         "let p: ref bool = v.b; *p = false;\n"
                         "let n: int = 0;\n"
                         "if v.a { n = n + 1000; }\n"
@@ -189,7 +188,7 @@ static void test_pointer_to_a_sub_word_field() {
 
 static void test_dereferencing_a_whole_struct() {
     assert(test_run_int("struct Point { x: int, y: int }\n"
-                        "func f(): int { let v: Point; v.x = 3; v.y = 4;\n"
+                        "func f(): int { let v = Point { x: 3, y: 4 };\n"
                         "let p: ref Point = v;\n"
                         "let copy: Point = *p;\n"
                         "v.x = 100;\n"
@@ -225,13 +224,13 @@ static void test_a_pointer_survives_a_stack_growth() {
 
 static void test_field_access_auto_derefs() {
     assert(test_run_int("struct Player { health: int, mana: int }\n"
-                        "func f(): int { let p: Player; p.health = 1; p.mana = 2;\n"
+                        "func f(): int { let p = Player { health: 1, mana: 2 };\n"
                         "let q: ref Player = p; q.health = 10;\n"
                         "return p.health * 100 + p.mana; }\n"
                         "let r: int = f();") == 1002);
 
     assert(test_run_int("struct Player { health: int, mana: int }\n"
-                        "func f(): int { let p: Player; p.health = 10;\n"
+                        "func f(): int { let p = Player { health: 10, mana: 0 };\n"
                         "let q: ref Player = p; return q.health; }\n"
                         "let r: int = f();") == 10);
 }
@@ -239,14 +238,15 @@ static void test_field_access_auto_derefs() {
 static void test_auto_deref_reaches_a_nested_field() {
     assert(test_run_int("struct Inner { v: int }\n"
                         "struct Outer { a: int, inner: Inner }\n"
-                        "func f(): int { let o: Outer; let q: ref Outer = o;\n"
+                        "func f(): int { let o = Outer { a: 0, inner: Inner { v: 0 } };\n"
+                        "let q: ref Outer = o;\n"
                         "q.inner.v = 7; return o.inner.v; }\n"
                         "let r: int = f();") == 7);
 }
 
 static void test_address_of_a_field_through_a_pointer() {
     assert(test_run_int("struct Player { health: int, mana: int }\n"
-                        "func f(): int { let p: Player; p.mana = 2;\n"
+                        "func f(): int { let p = Player { health: 0, mana: 2 };\n"
                         "let q: ref Player = p;\n"
                         "let h: ref int = q.health; *h = 9;\n"
                         "return p.health * 100 + p.mana; }\n"

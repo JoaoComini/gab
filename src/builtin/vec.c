@@ -89,6 +89,29 @@ static void vec_at(Args *args) {
 
 static void vec_len(Args *args) { args_return_int(args, vec_load(args).block.length); }
 
+static void vec_new(Args *args) {
+    int32_t count = args_int(args, 0);
+
+    if (count < 0) {
+        vm_fail(args->vm, VM_RUN_ERR_EXTERN, "a vector cannot reserve a negative count");
+        return;
+    }
+
+    TypeRegistry *registry = args->vm->env.global_scope.type_registry;
+
+    size_t stride = type_registry_size_of(
+        registry, type_pointee(type_registry_fields_of(registry, args_return_type(args))->fields[0].type));
+
+    VecHeader vec = {0};
+
+    if (count > 0 && !block_reserve(DEFAULT_ALLOCATOR, &vec.block, count, stride)) {
+        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory reserving a vector");
+        return;
+    }
+
+    args_return_struct(args, &vec, sizeof vec);
+}
+
 void builtin_register_vec(VM *vm) {
     const TypeDef *vec_def = vec_declare_type(vm);
 
@@ -106,4 +129,8 @@ void builtin_register_vec(VM *vm) {
     builtin_register_method(vm, self, receiver, "push", vec_push, NULL, push_params, 1);
     builtin_register_method(vm, self, receiver, "at", vec_at, element, at_params, 1);
     builtin_register_method(vm, self, receiver, "len", vec_len, an_int, NULL, 0);
+
+    const Type *const new_params[] = {an_int};
+
+    builtin_register_static(vm, self, "new", vec_new, self, new_params, 1);
 }

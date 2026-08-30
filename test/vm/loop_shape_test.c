@@ -26,9 +26,7 @@ static void test_a_local_loop_body_loads_no_constants() {
 static void test_a_field_loop_body_loads_and_stores_each_access() {
     TestProgram program = test_compile("struct Point { x: int, y: int }\n"
                                        "func run(n: int): int {\n"
-                                       "    let v: Point;\n"
-                                       "    v.x = 1;\n"
-                                       "    v.y = 2;\n"
+                                       "    let v = Point { x: 1, y: 2 };\n"
                                        "    for let i: int = 0; i < n; i += 1 {\n"
                                        "        v.x += v.y;\n"
                                        "        v.y = v.x - v.y;\n"

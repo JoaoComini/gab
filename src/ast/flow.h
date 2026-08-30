@@ -16,14 +16,10 @@ typedef enum {
     FLOW_INIT,
 } FlowInit;
 
-#define FLOW_MAX_FIELDS 64
-
 typedef struct {
     FlowInit init;
 
     int inner_depth;
-
-    uint64_t written_fields;
 } FlowSlot;
 
 #define flow_map_hash(key) ((size_t)(key) >> 4)

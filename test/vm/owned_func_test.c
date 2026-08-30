@@ -21,8 +21,7 @@ static void test_the_sugar_fills_parameter_zero() {
     assert(test_run_int("struct Counter { n: int }\n"
                         "func Counter::of(c: ref Counter): int { return c.n; }\n"
                         "func main(): int {\n"
-                        "    let c: Counter;\n"
-                        "    c.n = 5;\n"
+                        "    let c = Counter { n: 5 };\n"
                         "    return c.of() + Counter::of(c);\n"
                         "}\n"
                         "let r: int = main();") == 10);
