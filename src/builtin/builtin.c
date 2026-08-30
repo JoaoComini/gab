@@ -64,9 +64,8 @@ static Symbol *method_symbol(VM *vm, const Type *receiver, const char *name, Gab
         symbol->func.params[i + 1] = params[i];
     }
 
-    symbol->func.func_index = vm->program.extern_protos.size;
-
-    extern_proto_list_add(&vm->program.extern_protos, (ExternProto){.body = body, .symbol = symbol});
+    symbol->func.func_index = SYMBOL_FUNC_NO_BODY;
+    symbol->func.body = (void *)body;
 
     return symbol;
 }
@@ -130,9 +129,8 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
         symbol->func.params[i] = params[i];
     }
 
-    symbol->func.func_index = vm->program.extern_protos.size;
-
-    extern_proto_list_add(&vm->program.extern_protos, (ExternProto){.body = body, .symbol = symbol});
+    symbol->func.func_index = SYMBOL_FUNC_NO_BODY;
+    symbol->func.body = (void *)body;
 
     type_registry_add_method(vm->env.global_scope.type_registry, declared_on,
                              string_from_cstr(&vm->env.strings, name), symbol);
