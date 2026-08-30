@@ -26,13 +26,15 @@ typedef struct Function {
 
     size_t func_index;
 
-    bool is_extern;
+    BodyKind body_kind;
 
     String *name;
     String *module;
 
     void *body;
 } Function;
+
+static inline bool function_runs_native(const Function *function) { return function->body_kind != BODY_GAB; }
 
 typedef struct Binding {
     BindingKind kind;

@@ -232,7 +232,7 @@ Binding *scope_decl_func(Scope *scope, String *name, const Type *return_type) {
         .params = NULL,
         .param_count = 0,
         .func_index = FUNCTION_NO_BODY,
-        .is_extern = false,
+        .body_kind = BODY_GAB,
     };
 
     Binding **decl = binding_table_insert(scope->bindings, name, binding);

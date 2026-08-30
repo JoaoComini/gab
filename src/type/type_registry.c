@@ -496,7 +496,7 @@ static Function *instantiate_method(TypeRegistry *registry, const MethodDecl *me
         .return_type = substitute(registry, method->result, args, arg_count),
         .params = params,
         .param_count = method->param_count + 1,
-        .is_extern = true,
+        .body_kind = method->body_kind,
         .body = method->body,
         .func_index = FUNCTION_NO_BODY,
     };

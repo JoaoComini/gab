@@ -1627,6 +1627,7 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
 
     const MethodDecl method = {
         .name = name,
+        .body_kind = BODY_GAB,
         .receiver = param_count > 0 ? func->params[0] : owner,
         .result = return_type,
         .params = func->params,
@@ -1705,9 +1706,9 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
     stmt->func_decl.function = func;
 
     if (func) {
-        func->is_extern = stmt->func_decl.body == NULL;
+        func->body_kind = stmt->func_decl.body == NULL ? BODY_HOST : BODY_GAB;
 
-        if (func->is_extern) {
+        if (func->body_kind == BODY_HOST) {
             func->name = resolver_intern(state, func_name);
             func->module = state->module_name;
         }

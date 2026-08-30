@@ -185,7 +185,7 @@ void link_install(Program *program, Unit *unit) {
 
     for (size_t i = 0; i < unit->bindings.size; i++) {
         const ProtoBinding *binding = &unit->bindings.data[i];
-        size_t base = binding->function->is_extern ? extern_base : proto_base;
+        size_t base = function_runs_native(binding->function) ? extern_base : proto_base;
 
         binding->function->func_index = base + binding->local_index;
     }

@@ -81,9 +81,18 @@ typedef struct TypeFields {
     size_t count;
 } TypeFields;
 
+typedef enum {
+    BODY_GAB,
+
+    BODY_HOST,
+
+    BODY_NATIVE,
+} BodyKind;
+
 typedef struct MethodDecl {
     String *name;
 
+    BodyKind body_kind;
     void *body;
 
     const Type *receiver;

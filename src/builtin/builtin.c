@@ -64,6 +64,7 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
                              size_t param_count) {
     const MethodDecl method = {
         .name = string_from_cstr(&vm->env.strings, name),
+        .body_kind = BODY_NATIVE,
         .body = (void *)body,
         .receiver = receiver,
         .result = return_type,
@@ -87,7 +88,7 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
         .return_type = return_type,
         .params = (const Type **)owned_params(arena, params, param_count),
         .param_count = param_count,
-        .is_extern = true,
+        .body_kind = BODY_NATIVE,
         .name = string_from_cstr(&vm->env.strings, name),
         .module = NULL,
         .func_index = FUNCTION_NO_BODY,

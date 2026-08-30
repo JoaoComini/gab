@@ -957,7 +957,7 @@ static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast) {
 static size_t codegen_reserve_function(CodegenState *state, Function *function) {
     size_t local;
 
-    if (function->is_extern) {
+    if (function_runs_native(function)) {
         extern_proto_list_add(&state->unit->extern_protos, (ExternProto){0});
 
         local = state->unit->extern_protos.size - 1;
@@ -1011,7 +1011,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
 
     size_t func_index = *local;
 
-    if (ast->function->is_extern) {
+    if (ast->function->body_kind == BODY_HOST) {
         state->unit->extern_protos.data[func_index] = (ExternProto){.function = ast->function};
 
         extern_request_list_add(
@@ -1252,9 +1252,9 @@ static void codegen_emit_call(CodegenState *state, unsigned int dest, Function *
         return;
     }
 
-    bool is_extern = callee->is_extern;
+    bool runs_native = function_runs_native(callee);
 
-    if (!local && index > (is_extern ? VM_MAX_EXTERN_PROTOS : VM_MAX_PROTOTYPES)) {
+    if (!local && index > (runs_native ? VM_MAX_EXTERN_PROTOS : VM_MAX_PROTOTYPES)) {
         if (!state->failed) {
             diag_error(state->diagnostics, GAB_ERR_CODEGEN, span, "too many functions in one program");
         }
@@ -1264,10 +1264,10 @@ static void codegen_emit_call(CodegenState *state, unsigned int dest, Function *
     }
 
     size_t offset = chunk_add_instruction(
-        state->chunk, VM_ENCODE_I(is_extern ? OP_CALL_EXTERN : OP_CALL, dest, (unsigned int)index));
+        state->chunk, VM_ENCODE_I(runs_native ? OP_CALL_EXTERN : OP_CALL, dest, (unsigned int)index));
 
     if (local) {
-        relocation_list_add(is_extern ? &state->unit->extern_relocations : &state->unit->proto_relocations,
+        relocation_list_add(runs_native ? &state->unit->extern_relocations : &state->unit->proto_relocations,
                             (Relocation){.chunk = state->chunk, .offset = offset});
     }
 }
