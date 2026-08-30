@@ -27,10 +27,6 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
                              GabExternFn body, const Type *return_type, const Type *const *params,
                              size_t param_count);
 
-void builtin_declare_method(VM *vm, const TypeDef *declared_on, const char *name, GabExternFn body,
-                            const Type *receiver, const Type *result, const Type *const *params,
-                            size_t param_count);
-
 void builtin_register_static(VM *vm, const Type *declared_on, const char *name, GabExternFn body,
                              const Type *return_type, const Type *const *params, size_t param_count);
 

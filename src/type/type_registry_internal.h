@@ -12,32 +12,34 @@
 GAB_HASH_MAP(TypeInternTable, type_intern, const Type *, Type *)
 
 typedef struct MethodKey {
-    const TypeDef *def;
-
     const Type *type;
 
     const String *name;
 } MethodKey;
 
-#define method_key_hash(key) ((((size_t)(key).def * 31) ^ ((size_t)(key).type * 17)) ^ (size_t)(key).name)
-#define method_key_key_equals(key, other)                                                                    \
-    ((key).def == (other).def && (key).type == (other).type && (key).name == (other).name)
+#define method_key_hash(key) (((size_t)(key).type * 31) ^ (size_t)(key).name)
+#define method_key_key_equals(key, other) ((key).type == (other).type && (key).name == (other).name)
 #define method_key_key_dup(key) key
 #define method_key_entry_free(key, value)
 
-GAB_HASH_MAP(MethodTable, method_key, MethodKey, Symbol *)
+#define method_decl_key_hash(key) method_key_hash(key)
+#define method_decl_key_key_equals(key, other) method_key_key_equals(key, other)
+#define method_decl_key_key_dup(key) key
+#define method_decl_key_entry_free(key, value)
 
-#define signature_key_hash(key) (((size_t)(key).type * 31) ^ (size_t)(key).name)
-#define signature_key_key_equals(key, other) ((key).type == (other).type && (key).name == (other).name)
-#define signature_key_key_dup(key) key
-#define signature_key_entry_free(key, value)
+GAB_HASH_MAP(MethodTable, method_decl_key, MethodKey, MethodDecl *)
 
-typedef struct SignatureKey {
+#define instance_key_hash(key) (((size_t)(key).type * 31) ^ (size_t)(key).name)
+#define instance_key_key_equals(key, other) ((key).type == (other).type && (key).name == (other).name)
+#define instance_key_key_dup(key) key
+#define instance_key_entry_free(key, value)
+
+typedef struct InstanceKey {
     const Type *type;
     const String *name;
-} SignatureKey;
+} InstanceKey;
 
-GAB_HASH_MAP(SignatureTable, signature_key, SignatureKey, Symbol *)
+GAB_HASH_MAP(InstanceTable, instance_key, InstanceKey, Symbol *)
 
 #define drop_key_hash(key) (size_t)key
 #define drop_key_key_equals(key, other) key == other
@@ -79,7 +81,7 @@ typedef struct TypeRegistry {
 
     MethodTable *methods;
 
-    SignatureTable *signatures;
+    InstanceTable *instances;
 
     DropTable *drops;
 

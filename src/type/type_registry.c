@@ -215,8 +215,8 @@ TypeRegistry *type_registry_create(Arena *arena, const TypePrimitiveNames *names
     registry->drops = drop_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->derefs = deref_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->layouts = layout_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
-    registry->methods = method_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
-    registry->signatures = signature_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->methods = method_decl_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->instances = instance_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->applications = type_intern_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
 
@@ -229,8 +229,8 @@ TypeRegistry *type_registry_create(Arena *arena, const TypePrimitiveNames *names
 
 void type_registry_destroy(TypeRegistry *registry) {
     type_intern_destroy(registry->applications);
-    method_key_destroy(registry->methods);
-    signature_key_destroy(registry->signatures);
+    method_decl_key_destroy(registry->methods);
+    instance_key_destroy(registry->instances);
     drop_key_destroy(registry->drops);
     deref_key_destroy(registry->derefs);
 }
@@ -278,40 +278,46 @@ const Type *type_registry_declare_struct(TypeRegistry *registry, String *name, c
     return type_registry_declare(registry, &decl);
 }
 
-static MethodKey method_key_of(const Type *type, const String *name) {
+static const Type *generic_form_of(TypeRegistry *registry, const Type *type) {
     const TypeDef *def = type_decl(type);
 
-    return (MethodKey){.def = def, .type = def ? NULL : type, .name = name};
+    if (!def || def->param_count == 0) {
+        return type;
+    }
+
+    const Type *params[GAB_MAX_TYPE_PARAMS];
+
+    for (size_t i = 0; i < def->param_count; i++) {
+        params[i] = type_registry_param(registry, i);
+    }
+
+    return type_registry_apply(registry, def, params, def->param_count);
 }
 
-bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method) {
-    assert(type && name && method && "a method is a type, a name and a body");
+static MethodKey method_key_of(TypeRegistry *registry, const Type *type, const String *name) {
+    return (MethodKey){.type = generic_form_of(registry, type), .name = name};
+}
 
-    if (type_registry_find_method(registry, type, name)) {
+static Symbol *instantiate_method(TypeRegistry *registry, const MethodDecl *method, const Type *const *args,
+                                  size_t arg_count);
+
+static bool declare_method(TypeRegistry *registry, MethodKey key, const MethodDecl *method) {
+    if (method_decl_key_lookup(registry->methods, key)) {
         return false;
     }
 
-    method_key_insert(registry->methods, method_key_of(type, name), method);
+    MethodDecl *owned = arena_alloc(registry->arena, sizeof(MethodDecl));
+    *owned = *method;
+
+    method_decl_key_insert(registry->methods, key, owned);
+
     return true;
 }
 
-static Symbol *substitute_signature(TypeRegistry *registry, const GenericMethod *method,
-                                    const Type *const *args, size_t arg_count);
+bool type_registry_declare_method(TypeRegistry *registry, const Type *type, const MethodDecl *method) {
+    assert(type && method && method->name && "a method is a type, a name and a signature");
 
-static const GenericMethod *declared_method(const Type *type, const String *name) {
-    const TypeDef *def = type_decl(type);
-
-    if (!def) {
-        return NULL;
-    }
-
-    for (size_t i = 0; i < def->method_count; i++) {
-        if (def->methods[i].name == name) {
-            return &def->methods[i];
-        }
-    }
-
-    return NULL;
+    return declare_method(registry, method_key_of(registry, type, method->name), method);
 }
 
 Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name) {
@@ -319,19 +325,20 @@ Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, cons
         return NULL;
     }
 
-    Symbol **stored = method_key_lookup(registry->methods, method_key_of(type, name));
-    if (stored) {
-        return *stored;
-    }
-
-    Symbol **cached = signature_key_lookup(registry->signatures, (SignatureKey){.type = type, .name = name});
+    Symbol **cached = instance_key_lookup(registry->instances, (InstanceKey){.type = type, .name = name});
     if (cached) {
         return *cached;
     }
 
-    const GenericMethod *method = declared_method(type, name);
-    if (!method) {
+    MethodDecl **declared = method_decl_key_lookup(registry->methods, method_key_of(registry, type, name));
+    if (!declared) {
         return NULL;
+    }
+
+    const MethodDecl *method = *declared;
+
+    if (method->symbol) {
+        return method->symbol;
     }
 
     const Type *args[GAB_MAX_TYPE_PARAMS];
@@ -342,9 +349,9 @@ Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, cons
         args[i] = type_args(type)[i].type;
     }
 
-    Symbol *symbol = substitute_signature(registry, method, args, type_arg_count(type));
+    Symbol *symbol = instantiate_method(registry, method, args, type_arg_count(type));
 
-    signature_key_insert(registry->signatures, (SignatureKey){.type = type, .name = name}, symbol);
+    instance_key_insert(registry->instances, (InstanceKey){.type = type, .name = name}, symbol);
 
     return symbol;
 }
@@ -470,8 +477,8 @@ static const Type *substitute(TypeRegistry *registry, const Type *type, const Ty
     return type;
 }
 
-static Symbol *substitute_signature(TypeRegistry *registry, const GenericMethod *method,
-                                    const Type *const *args, size_t arg_count) {
+static Symbol *instantiate_method(TypeRegistry *registry, const MethodDecl *method, const Type *const *args,
+                                  size_t arg_count) {
     Symbol *symbol = arena_alloc(registry->arena, sizeof(Symbol));
 
     const Type **params = arena_alloc(registry->arena, (method->param_count + 1) * sizeof(const Type *));

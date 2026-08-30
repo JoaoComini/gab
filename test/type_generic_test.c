@@ -213,14 +213,13 @@ static void test_a_declared_method_is_substituted_per_instantiation() {
 
     TypeDef def = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
 
-    GenericMethod method = {
+    MethodDecl method = {
         .name = at,
         .receiver = type_registry_apply(registry, &def, &param, 1),
         .result = param,
     };
 
-    def.methods = &method;
-    def.method_count = 1;
+    type_registry_declare_method(registry, type_registry_apply(registry, &def, &param, 1), &method);
 
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
     const Type *of_bool = type_registry_apply(registry, &def, &bool_type, 1);
@@ -259,14 +258,13 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
 
     assert(type_registry_find_method(registry, of_int, at) == NULL);
 
-    GenericMethod method = {
+    MethodDecl method = {
         .name = at,
         .receiver = type_registry_apply(registry, &def, &param, 1),
         .result = param,
     };
 
-    def.methods = &method;
-    def.method_count = 1;
+    type_registry_declare_method(registry, type_registry_apply(registry, &def, &param, 1), &method);
 
     const Symbol *found = type_registry_find_method(registry, of_int, at);
 
@@ -292,20 +290,19 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
 
     TypeDef def = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
 
-    GenericMethod method = {
+    MethodDecl method = {
         .name = at,
         .receiver = type_registry_apply(registry, &def, &param, 1),
         .result = param,
     };
 
-    def.methods = &method;
-    def.method_count = 1;
+    type_registry_declare_method(registry, type_registry_apply(registry, &def, &param, 1), &method);
 
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
 
     Symbol other = {0};
 
-    assert(!type_registry_add_method(registry, of_int, at, &other));
+    assert(!type_registry_declare_method(registry, of_int, &(MethodDecl){.name = at, .symbol = &other}));
 
     assert(type_registry_find_method(registry, of_int, at)->func.return_type == int_type);
 
@@ -333,11 +330,11 @@ static void test_a_method_declared_on_one_instantiation_answers_on_every_one() {
 
     Symbol method = {0};
 
-    assert(type_registry_add_method(registry, of_int, name, &method));
+    assert(type_registry_declare_method(registry, of_int, &(MethodDecl){.name = name, .symbol = &method}));
 
     assert(type_registry_find_method(registry, of_bool, name) == &method);
 
-    assert(!type_registry_add_method(registry, of_bool, name, &method));
+    assert(!type_registry_declare_method(registry, of_bool, &(MethodDecl){.name = name, .symbol = &method}));
 
     TypeDef other = {.name = string_from_cstr(&ctx.strings, "Other"), .param_count = 1};
 
@@ -364,14 +361,13 @@ static void test_a_substituted_signature_is_read_once_per_type() {
 
     TypeDef def = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
 
-    GenericMethod method = {
+    MethodDecl method = {
         .name = at,
         .receiver = type_registry_apply(registry, &def, &param, 1),
         .result = param,
     };
 
-    def.methods = &method;
-    def.method_count = 1;
+    type_registry_declare_method(registry, type_registry_apply(registry, &def, &param, 1), &method);
 
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
 
@@ -388,7 +384,34 @@ static void test_a_substituted_signature_is_read_once_per_type() {
     arena_destroy(ctx.arena);
 }
 
+static void test_two_instantiations_share_one_generic_form(void) {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    TypeRegistry *registry = type_registry_create(ctx.arena, &names);
+
+    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *bool_type = type_registry_get_primitive(registry, TYPE_BOOL);
+    const Type *param = type_registry_param(registry, 0);
+
+    TypeDef def = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
+
+    const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
+    const Type *of_bool = type_registry_apply(registry, &def, &bool_type, 1);
+    const Type *generic = type_registry_apply(registry, &def, &param, 1);
+
+    assert(of_int != of_bool);
+    assert(generic == type_registry_apply(registry, &def, &param, 1));
+    assert(generic != of_int && generic != of_bool);
+
+    type_registry_destroy(registry);
+    string_pool_free(&ctx.strings);
+    arena_destroy(ctx.arena);
+}
+
 int main(void) {
+    test_two_instantiations_share_one_generic_form();
     test_a_declared_field_nests_constructors();
     test_a_declaration_taking_no_parameters_is_its_own_instantiation();
     test_two_declarations_alike_are_two_types();

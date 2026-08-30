@@ -77,7 +77,7 @@ typedef struct TypeFields {
     size_t count;
 } TypeFields;
 
-typedef struct GenericMethod {
+typedef struct MethodDecl {
     String *name;
 
     void *body;
@@ -87,7 +87,9 @@ typedef struct GenericMethod {
 
     const Type *const *params;
     size_t param_count;
-} GenericMethod;
+
+    Symbol *symbol;
+} MethodDecl;
 
 typedef struct TypeDef {
     String *name;
@@ -96,9 +98,6 @@ typedef struct TypeDef {
 
     const TypeField *fields;
     size_t field_count;
-
-    const GenericMethod *methods;
-    size_t method_count;
 } TypeDef;
 
 TypeKind type_kind(const Type *type);

@@ -127,6 +127,31 @@ static void test_lookup_failures(void) {
     gab_vm_free(vm);
 }
 
+static void test_a_host_call_reaches_a_builtin_method(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    bool mod = gab_load(vm, "<m>",
+                        "module test;\n"
+                        "func size(): int { let s: ref str = \"abcd\"; return s.len(); }\n",
+                        &err);
+    assert(mod);
+
+    GabFunc *fn = gab_lookup(vm, "test", "size", &err);
+    assert(fn);
+
+    GabCall *fn_call = gab_call_init(fn, &err);
+    assert(fn_call);
+
+    int result = 0;
+    assert(gab_call(vm, fn_call, &result, &err) == GAB_OK);
+    assert(result == 4);
+
+    gab_call_free(fn_call);
+
+    gab_vm_free(vm);
+}
+
 static void test_call_with_scalar_args(void) {
     GabVM *vm = gab_vm_new();
 
@@ -1099,6 +1124,7 @@ int main(void) {
     test_type_survives_a_later_compile();
     test_layout_matches_c();
     test_lookup_failures();
+    test_a_host_call_reaches_a_builtin_method();
     test_call_with_scalar_args();
     test_call_in_a_loop();
     test_struct_argument_and_return();

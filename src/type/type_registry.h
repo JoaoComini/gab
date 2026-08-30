@@ -59,7 +59,7 @@ typedef struct Deref {
     size_t part_count;
 } Deref;
 
-bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method);
+bool type_registry_declare_method(TypeRegistry *registry, const Type *type, const MethodDecl *method);
 
 Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name);
 
