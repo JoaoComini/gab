@@ -197,11 +197,12 @@ static void test_an_array_of_a_copyable_element_copies() {
 
 // An array of an owning element does not: a second binding would leave two
 // slots believing they free the same objects.
-static void test_an_array_of_an_owning_element_does_not_copy() {
+static void test_an_array_of_an_owning_element_transfers() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func f(): int {\n"
                           "    let xs: [box Box; 1];\n"
                           "    let ys: [box Box; 1] = xs;\n"
+                          "    let zs: [box Box; 1] = xs;\n"
                           "    return 0;\n"
                           "}\n"));
 }
@@ -261,6 +262,40 @@ static void test_the_bare_array_names_no_type() {
                           "let r: int = f();"));
 }
 
+// Indexing reads through the array rather than out of it, so it names what the
+// array holds -- and an array whose ownership has been handed over holds
+// nothing to read.
+static void test_indexing_an_array_given_up_is_refused() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "func f(): int {\n"
+                          "    let xs: [box Box; 1];\n"
+                          "    let ys: [box Box; 1] = xs;\n"
+                          "    return xs[0].n;\n"
+                          "}\n"));
+
+    // The index is read too, so a slot given up cannot say which element.
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "struct Key { n: int, b: box Box }\n"
+                          "func f(): int {\n"
+                          "    let xs: [int; 2];\n"
+                          "    let k: Key;\n"
+                          "    let j: Key = k;\n"
+                          "    return xs[k.n];\n"
+                          "}\n"));
+}
+
+// An element cannot be given up on its own. Taking one out would leave the rest
+// of the array behind, and what a half-emptied array holds is not something the
+// language says -- the same reason a field cannot be given up alone.
+static void test_giving_up_one_element_is_refused() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "func f(): int {\n"
+                          "    let xs: [box Box; 2];\n"
+                          "    let b: box Box = xs[0];\n"
+                          "    return 0;\n"
+                          "}\n"));
+}
+
 int main(void) {
     test_a_fixed_array_holds_its_length_in_its_type();
     test_elements_are_distinct();
@@ -278,7 +313,9 @@ int main(void) {
     test_a_borrowed_array_knows_its_length();
     test_an_array_knows_its_length();
     test_an_array_of_a_copyable_element_copies();
-    test_an_array_of_an_owning_element_does_not_copy();
+    test_an_array_of_an_owning_element_transfers();
+    test_indexing_an_array_given_up_is_refused();
+    test_giving_up_one_element_is_refused();
     test_an_array_names_its_element_and_its_length();
     test_an_array_lends_to_a_borrow();
     test_what_may_be_indexed_and_by_what();

@@ -1274,20 +1274,6 @@ static ASTExpr *parse_unary(Parser *parser) {
         return ast_array_lit_expr_create(span, elements);
     }
 
-    // 'move x' transfers ownership out of 'x'. It takes an operand rather
-    // than a type, but binds like the other prefixes: 'move p.x' moves the
-    // field, not the struct.
-    if (parser->current.type == TOKEN_MOVE) {
-        parser_next_token(parser); // eat 'move'
-
-        ASTExpr *target = parse_unary(parser);
-        if (!target) {
-            return NULL;
-        }
-
-        return ast_move_expr_create(span, target);
-    }
-
     // Some of these share a token with a binary operator -- '*' with
     // multiplication, '-' with subtraction -- and only its position tells the
     // two apart. Recursing into parse_unary is what makes them stack, so

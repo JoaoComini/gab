@@ -1,6 +1,7 @@
 // A parameter may own what it is given, and only when the call site said so.
 // Bare 'box T' owns, 'ref T' borrows -- the same spelling locals and fields use --
-// so a call site can tell from the declaration alone whether a move is needed.
+// so a call site can tell from the declaration alone whether it gives up what
+// it holds.
 
 #include "support/run.h"
 
@@ -14,38 +15,37 @@ static void test_an_owning_parameter_takes_a_moved_argument() {
                         "func main(): int {\n"
                         "    let a: box Box = new Box;\n"
                         "    a.n = 6;\n"
-                        "    return consume(move a);\n"
+                        "    return consume(a);\n"
                         "}\n"
                         "let r: int = main();") == 6);
 }
 
-// Ownership is part of the signature, so passing a non-copyable argument to an
-// owning parameter without saying where it goes is refused -- and the refusal
-// teaches the same remedies a binding does.
-static void test_an_owning_parameter_refuses_an_unmoved_argument() {
+// Ownership is part of the signature, so an owning parameter takes what it is
+// given: the argument is handed over at the call and the caller's slot is dead.
+static void test_an_owning_parameter_takes_its_argument() {
     const char *source = "struct Box { n: int }\n"
                          "func consume(b: box Box): int { return b.n; }\n"
                          "func main(): int {\n"
                          "    let a: box Box = new Box;\n"
-                         "    return consume(a);\n"
+                         "    consume(a);\n"
+                         "    return a.n;\n"
                          "}\n";
 
     assert(!test_compiles(source));
-    assert(test_diagnostic_mentions(source, "move"));
-    assert(test_diagnostic_mentions(source, "declares no 'clone'"));
+    assert(test_diagnostic_mentions(source, "no longer holds a value"));
 }
-// The argument is dead after the call, exactly as it would be after any move.
+// The argument is dead after the call, exactly as it is after any transfer.
 static void test_a_moved_argument_is_dead_after_the_call() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func consume(b: box Box): int { return b.n; }\n"
                           "func main(): int {\n"
                           "    let a: box Box = new Box;\n"
-                          "    consume(move a);\n"
+                          "    consume(a);\n"
                           "    return a.n;\n"
                           "}\n"));
 }
 
-// A 'ref T' parameter borrows, so it takes an argument without a move and the
+// A 'ref T' parameter borrows, so it takes an argument without giving it up and the
 // caller goes on owning it.
 static void test_a_ref_parameter_still_borrows() {
     assert(test_run_int("struct Box { n: int }\n"
@@ -98,7 +98,7 @@ static void test_only_the_callee_frees_an_owned_argument() {
                                        "func consume(b: box Box): int { return b.n; }\n"
                                        "func main(): int {\n"
                                        "    let a: box Box = new Box;\n"
-                                       "    return consume(move a);\n"
+                                       "    return consume(a);\n"
                                        "}\n");
 
     assert(test_count_opcode(test_func_chunk(&program, 1), OP_RELEASE) == 0);
@@ -114,7 +114,7 @@ static void test_an_owned_parameter_may_be_returned() {
                         "func main(): int {\n"
                         "    let a: box Box = new Box;\n"
                         "    a.n = 9;\n"
-                        "    let back: box Box = through(move a);\n"
+                        "    let back: box Box = through(a);\n"
                         "    return back.n;\n"
                         "}\n"
                         "let r: int = main();") == 9);
@@ -134,15 +134,17 @@ static void test_parameter_zero_may_own() {
                         "func main(): int {\n"
                         "    let a: box Box = new Box;\n"
                         "    a.n = 4;\n"
-                        "    return Box::take(move a);\n"
+                        "    return Box::take(a);\n"
                         "}\n"
                         "let r: int = main();") == 4);
 
+    // Reached on a value like any other, and what it took is gone after.
     assert(!test_compiles("struct Box { n: int }\n"
                           "func Box::take(b: box Box): int { return b.n; }\n"
                           "func main(): int {\n"
                           "    let a: box Box = new Box;\n"
-                          "    return a.take();\n"
+                          "    a.take();\n"
+                          "    return a.n;\n"
                           "}\n"));
 }
 
@@ -154,24 +156,24 @@ static void test_a_method_parameter_may_own() {
                         "    let host: box Box = new Box;\n"
                         "    let gift: box Box = new Box;\n"
                         "    gift.n = 3;\n"
-                        "    return host.adopt(move gift);\n"
+                        "    return host.adopt(gift);\n"
                         "}\n"
                         "let r: int = main();") == 3);
 }
 
-// A parameter by value takes ownership, and the call site spells it: the copy
-// is what is refused, not the signature. This is what a receiver clause could
-// not express, since a call on a value had nowhere to write the move.
-static void test_a_by_value_parameter_takes_ownership_with_a_move() {
+// A parameter by value takes ownership: what owns is handed over at the call,
+// so the caller's slot is dead after it.
+static void test_a_by_value_parameter_takes_ownership() {
     assert(test_compiles_on_vm("func take(s: String): int { return 0; }\n"
                                "func main(): int {\n"
                                "    let s: String = String::from(\"hi\");\n"
-                               "    return take(move s);\n"
+                               "    return take(s);\n"
                                "}\n"));
 
     assert(!test_compiles_on_vm("func take(s: String): int { return 0; }\n"
                                 "func main(): int {\n"
                                 "    let s: String = String::from(\"hi\");\n"
+                                "    take(s);\n"
                                 "    return take(s);\n"
                                 "}\n"));
 
@@ -180,13 +182,13 @@ static void test_a_by_value_parameter_takes_ownership_with_a_move() {
     assert(test_compiles_on_vm("func take(s: box String): int { return 0; }\n"
                                "func main(): int {\n"
                                "    let s: box String = new String;\n"
-                               "    return take(move s);\n"
+                               "    return take(s);\n"
                                "}\n"));
 }
 
 int main(void) {
     test_an_owning_parameter_takes_a_moved_argument();
-    test_an_owning_parameter_refuses_an_unmoved_argument();
+    test_an_owning_parameter_takes_its_argument();
     test_a_moved_argument_is_dead_after_the_call();
     test_a_ref_parameter_still_borrows();
     test_a_value_reaches_a_ref_parameter_by_address();
@@ -196,7 +198,7 @@ int main(void) {
     test_an_owned_parameter_may_be_returned();
     test_a_borrow_cannot_be_laundered_into_an_owned_return();
     test_parameter_zero_may_own();
-    test_a_by_value_parameter_takes_ownership_with_a_move();
+    test_a_by_value_parameter_takes_ownership();
     test_a_method_parameter_may_own();
 
     printf("All owning parameter tests passed\n");

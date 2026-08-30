@@ -453,17 +453,26 @@ static void test_a_receiver_two_levels_out_reaches_the_method() {
                         "let r: int = main();") == 7);
 }
 
-// A function consuming parameter zero is declared like any other, and is
-// reached where the transfer can be written rather than through a value.
-static void test_a_consuming_function_is_not_reached_through_a_value() {
+// A function consuming parameter zero is declared like any other and is reached
+// on a value like any other: the receiver is handed over rather than lent, so
+// the slot it came from names nothing after the call.
+static void test_a_consuming_function_takes_the_receiver() {
     assert(test_compiles("struct Box { n: int }\n"
                          "func Box::peek(b: box Box): int { return b.n; }\n"));
+
+    assert(test_compiles("struct Box { n: int }\n"
+                         "func Box::peek(b: box Box): int { return b.n; }\n"
+                         "func main(): int {\n"
+                         "    let a: box Box = new Box;\n"
+                         "    return a.peek();\n"
+                         "}\n"));
 
     assert(!test_compiles("struct Box { n: int }\n"
                           "func Box::peek(b: box Box): int { return b.n; }\n"
                           "func main(): int {\n"
                           "    let a: box Box = new Box;\n"
-                          "    return a.peek();\n"
+                          "    a.peek();\n"
+                          "    return a.n;\n"
                           "}\n"));
 }
 
@@ -510,11 +519,11 @@ static void test_parameter_zero_takes_the_form_it_declares() {
     assert(test_compiles("struct Point { x: int, y: int }\n"
                          "func Point::peek(p: Point): int { return p.x; }\n"));
 
-    // The sugar copies what it reaches, so an owning type is passed where the
-    // transfer can be written rather than through a value.
+    // A value receiver of a type that owns is given what the slot held, so the
+    // slot names nothing after the call.
     assert(!test_compiles("struct Node { child: box Node }\n"
                           "func Node::peek(n: Node): int { return 0; }\n"
-                          "func main(): int { let a: Node; return a.peek(); }\n"));
+                          "func main(): int { let a: Node; a.peek(); return a.peek(); }\n"));
 }
 
 // A method reached through a shared method set still has to be given the
@@ -541,7 +550,7 @@ int main(void) {
     test_a_method_on_a_ref_receiver();
     test_a_method_through_a_ref_mutates_the_owned_object();
     test_a_receiver_two_levels_out_reaches_the_method();
-    test_a_consuming_function_is_not_reached_through_a_value();
+    test_a_consuming_function_takes_the_receiver();
     test_a_pointer_method_on_a_temporary_is_refused();
     test_arity_errors_exclude_the_receiver();
     test_an_unknown_method_is_refused();

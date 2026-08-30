@@ -55,34 +55,38 @@ static void test_a_function_needs_a_type_its_module_declares() {
 }
 
 // A function a type owns may consume what it is given: parameter zero is an
-// ordinary parameter, so the call site has 'move' to spell the transfer with.
+// ordinary parameter, so the call site hands its argument over.
 static void test_a_function_consumes_what_it_is_given() {
     assert(test_run_int("struct Holder { n: int }\n"
                         "func Holder::take(h: box Holder): int { return h.n; }\n"
                         "func main(): int {\n"
                         "    let h: box Holder = new Holder;\n"
                         "    h.n = 6;\n"
-                        "    return Holder::take(move h);\n"
+                        "    return Holder::take(h);\n"
                         "}\n"
                         "let r: int = main();") == 6);
 }
 
-// The sugar borrows but never moves: a consuming function is reached where
-// 'move' is written, rather than through a value that would give up ownership
-// with nothing at the call site saying so.
-static void test_a_consuming_function_is_not_reached_through_a_value() {
-    const char *source = "struct Holder { n: int }\n"
-                         "func Holder::take(h: box Holder): int { return h.n; }\n"
-                         "func main(): int {\n"
-                         "    let h: box Holder = new Holder;\n"
-                         "    return h.take();\n"
-                         "}\n";
+// A function consuming parameter zero is reached on a value like any other: the
+// sugar hands the receiver over, and the slot it came from is dead after.
+static void test_a_consuming_function_is_reached_through_a_value() {
+    assert(test_run_int("struct Holder { n: int }\n"
+                        "func Holder::take(h: box Holder): int { return h.n; }\n"
+                        "func main(): int {\n"
+                        "    let h: box Holder = new Holder;\n"
+                        "    h.n = 4;\n"
+                        "    return h.take();\n"
+                        "}\n"
+                        "let r: int = main();") == 4);
 
-    assert(!test_compiles(source));
-
-    // The message names the spelling that works, since the call is refused for
-    // how it was written rather than for what it names.
-    assert(test_diagnostic_mentions(source, "Holder::take(move ...)"));
+    // What it took is gone: the receiver was handed over, not lent.
+    assert(!test_compiles("struct Holder { n: int }\n"
+                          "func Holder::take(h: box Holder): int { return h.n; }\n"
+                          "func main(): int {\n"
+                          "    let h: box Holder = new Holder;\n"
+                          "    h.take();\n"
+                          "    return h.n;\n"
+                          "}\n"));
 }
 
 int main(void) {
@@ -93,7 +97,7 @@ int main(void) {
     test_an_unknown_name_on_a_type_is_rejected();
     test_a_function_needs_a_type_its_module_declares();
     test_a_function_consumes_what_it_is_given();
-    test_a_consuming_function_is_not_reached_through_a_value();
+    test_a_consuming_function_is_reached_through_a_value();
 
     printf("All owned function tests passed\n");
     return 0;

@@ -78,8 +78,8 @@ static void test_a_literal_initialiser_loads_into_the_variable() {
     test_program_free(&program);
 }
 
-// Assigning one variable to another is the move itself, not a read into a
-// temporary followed by a second move.
+// Assigning one variable to another is a single move instruction, not a read
+// into a temporary followed by a second one.
 static void test_assigning_a_variable_is_a_single_move() {
     TestProgram program =
         test_compile("func f(): int { let a: int = 1; let b: int = 2; a = b; return a; }\n");
