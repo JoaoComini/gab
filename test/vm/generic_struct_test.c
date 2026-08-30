@@ -60,9 +60,16 @@ static void test_a_declaration_reaches_one_declared_below_it() {
                         "let r: int = f();") == 6);
 }
 
-static void test_a_function_belongs_to_an_instantiation_not_a_declaration() {
+static void test_a_declaration_holds_a_function_over_its_parameters() {
+    assert(test_compiles("struct Holder<T> { value: T }\n"
+                         "extern func Holder<T>::get(h: ref Holder<T>): T;\n"
+                         "func f(): int { return 1; }\n"
+                         "let r: int = f();"));
+}
+
+static void test_a_parameter_names_the_declaration_it_belongs_to() {
     assert(!test_compiles("struct Holder<T> { value: T }\n"
-                          "func Holder::get(h: ref Holder<int>): int { return h.value; }\n"
+                          "extern func Holder<U>::get(h: ref Holder<T>): int;\n"
                           "func f(): int { return 1; }\n"
                           "let r: int = f();"));
 }
@@ -102,7 +109,8 @@ int main() {
     test_each_argument_reaches_its_own_parameter();
     test_a_declaration_reaches_itself_through_an_indirection();
     test_a_declaration_reaches_one_declared_below_it();
-    test_a_function_belongs_to_an_instantiation_not_a_declaration();
+    test_a_declaration_holds_a_function_over_its_parameters();
+    test_a_parameter_names_the_declaration_it_belongs_to();
     test_a_supplied_argument_owes_a_width();
     test_a_declaration_owed_arguments_holds_no_function();
     test_a_declaration_owed_arguments_converts_nothing();

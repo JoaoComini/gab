@@ -778,14 +778,57 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
     TypeExpr *owner = NULL;
 
+    TypeExprList owner_params = type_expr_list_create();
+
+    if (parser->current.type == TOKEN_LESS) {
+        parser_next_token(parser);
+
+        for (;;) {
+            if (!parser_expect(parser, TOKEN_IDENT, "expected a type parameter name")) {
+                type_expr_list_free(&owner_params);
+                return NULL;
+            }
+
+            type_expr_list_add(&owner_params, type_expr_name(parser->current.lexeme));
+            parser_next_token(parser);
+
+            if (parser->current.type != TOKEN_COMMA) {
+                break;
+            }
+
+            parser_next_token(parser);
+        }
+
+        if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after a function's type parameters")) {
+            type_expr_list_free(&owner_params);
+            return NULL;
+        }
+
+        parser_next_token(parser);
+
+        if (parser->current.type != TOKEN_COLON_COLON) {
+            parser_error(parser, "a type parameter list belongs to the type a function is declared on");
+            type_expr_list_free(&owner_params);
+            return NULL;
+        }
+    }
+
     if (parser->current.type == TOKEN_COLON_COLON) {
         parser_next_token(parser);
 
         if (!parser_expect(parser, TOKEN_IDENT, "expected a function name after '::'")) {
+            type_expr_list_free(&owner_params);
             return NULL;
         }
 
         owner = type_expr_name(func_name);
+
+        if (owner_params.size > 0) {
+            TypeExpr *apply = type_expr_apply(owner);
+            apply->apply.args = owner_params;
+            owner = apply;
+        }
+
         func_name = parser->current.lexeme;
 
         parser_next_token(parser);

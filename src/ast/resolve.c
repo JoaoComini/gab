@@ -1573,7 +1573,29 @@ static const Type *resolve_param_type(ResolverState *state, ASTField *param) {
     return type;
 }
 
-static void declare_owned(ResolverState *state, ASTStmt *stmt) {
+static Scope *owner_param_scope(ResolverState *state, const TypeExpr *owner) {
+    if (!owner || owner->kind != TYPE_EXPR_APPLY) {
+        return NULL;
+    }
+
+    Scope *enclosing = state->current_scope;
+    Scope *params = scope_create(resolver_owner_arena(state), enclosing->strings, enclosing);
+
+    for (size_t i = 0; i < owner->apply.args.size; i++) {
+        const TypeExpr *arg = owner->apply.args.data[i];
+
+        if (arg->kind != TYPE_EXPR_NAME) {
+            continue;
+        }
+
+        scope_bind_type(params, resolver_intern(state, arg->name),
+                        type_registry_param(enclosing->type_registry, i));
+    }
+
+    return params;
+}
+
+static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTStmt *stmt) {
     const Type *owner = resolve_type_expr(state, stmt->func_decl.owner, stmt->span);
 
     if (is_error_type(owner)) {
@@ -1587,7 +1609,7 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
     }
 
     TypeBinding *bound =
-        type_name_of(owner) ? scope_binding_lookup_local(state->current_scope, type_name_of(owner)) : NULL;
+        type_name_of(owner) ? scope_binding_lookup_local(declaring, type_name_of(owner)) : NULL;
 
     if (!bound || bound->def != type_decl(owner)) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
@@ -1598,7 +1620,7 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
 
     const Type *return_type = resolve_type_expr(state, stmt->func_decl.return_type, stmt->span);
 
-    if (reject_unsized(state, return_type, stmt->span, "returned")) {
+    if (!type_has_param(return_type) && reject_unsized(state, return_type, stmt->span, "returned")) {
         return_type = resolver_error_type(state);
     }
 
@@ -1642,6 +1664,19 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
     }
 
     stmt->func_decl.function = func;
+}
+
+static void declare_owned(ResolverState *state, ASTStmt *stmt) {
+    Scope *enclosing = state->current_scope;
+    Scope *params = owner_param_scope(state, stmt->func_decl.owner);
+
+    if (params) {
+        state->current_scope = params;
+    }
+
+    declare_owned_in_scope(state, enclosing, stmt);
+
+    state->current_scope = enclosing;
 }
 
 static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
@@ -1726,6 +1761,10 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
             func->params[i] = resolve_param_type(state, param);
         }
     }
+}
+
+static bool func_decl_is_generic(const ASTStmt *stmt) {
+    return stmt->func_decl.owner && stmt->func_decl.owner->kind == TYPE_EXPR_APPLY;
 }
 
 static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
@@ -1859,6 +1898,12 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
     case STMT_FUNC_DECL: {
         if (!stmt->func_decl.declared) {
             declare_func(state, stmt);
+        }
+
+        if (stmt->func_decl.body && func_decl_is_generic(stmt)) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
+                       "a function declared on a type that takes type parameters has no body yet");
+            break;
         }
 
         if (stmt->func_decl.body) {
