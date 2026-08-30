@@ -79,23 +79,24 @@ static void test_a_slot_moved_before_a_break_is_dead_after_the_loop() {
                           "func main(): int {\n"
                           "    let a: box Box = new Box;\n"
                           "    for let i = 0; i < 2; i = i + 1 {\n"
-                          "        if i == 1 { let b = move a; break; }\n"
+                          "        if i == 1 { let b = a; break; }\n"
                           "    }\n"
                           "    return a.n;\n"
                           "}\n"));
 }
 
-// A move in an inner loop is a move on the outer loop's back-edge too, so the
-// second iteration of either would move the same slot twice. Seeing this needs
+// A transfer in an inner loop is one on the outer loop's back-edge too, so
+// the second iteration of either would empty the same slot twice. Seeing this
+// needs
 // the state to go round until it stops changing rather than a fixed number of
 // passes over the body.
-static void test_a_move_in_a_nested_loop_is_refused() {
+static void test_a_transfer_in_a_nested_loop_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
                           "    let a: box Box = new Box;\n"
                           "    for let i = 0; i < 2; i = i + 1 {\n"
                           "        for let j = 0; j < 2; j = j + 1 {\n"
-                          "            let b = move a;\n"
+                          "            let b = a;\n"
                           "        }\n"
                           "    }\n"
                           "    return 0;\n"
@@ -148,7 +149,7 @@ int main(void) {
     test_a_non_bool_condition_is_rejected();
     test_break_outside_a_loop_is_rejected();
     test_a_slot_moved_before_a_break_is_dead_after_the_loop();
-    test_a_move_in_a_nested_loop_is_refused();
+    test_a_transfer_in_a_nested_loop_is_refused();
 
     test_both_spellings_of_a_step_count_alike();
     test_a_body_that_steps_the_counter_still_runs_as_written();

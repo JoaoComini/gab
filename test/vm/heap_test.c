@@ -98,13 +98,13 @@ static void test_an_alias_is_borrowed_not_owned() {
                         "}\n"
                         "let r: int = main();") == 5);
 
-    // Naming it a second time as an owner would make two slots free it, so it
-    // takes a 'move' -- and then the first name is dead.
+    // Naming it a second time as an owner hands it over rather than making two
+    // slots free it, so the first name is dead after.
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
                           "    let a: box Box = new Box;\n"
                           "    let b: box Box = a;\n"
-                          "    return b.n;\n"
+                          "    return a.n;\n"
                           "}\n"));
 }
 
@@ -167,17 +167,27 @@ static void test_an_abnormal_unwind_frees_what_it_held() {
 // A strong field owns what it names, so it may only be given something nothing
 // else owns. 'i' is owned by its own slot, and storing it would leave the object
 // with two owners — the field and the slot — each releasing it independently.
-static void test_storing_a_borrowed_reference_into_a_field_is_refused() {
-    assert(!test_codegens("struct Inner { n: int }\n"
+static void test_storing_an_owning_value_into_a_field_transfers_it() {
+    assert(test_run_int("struct Inner { n: int }\n"
+                        "struct Outer { child: box Inner }\n"
+                        "func main(): int {\n"
+                        "    let o: box Outer = new Outer;\n"
+                        "    let i: box Inner = new Inner;\n"
+                        "    i.n = 6;\n"
+                        "    o.child = i;\n"
+                        "    return o.child.n;\n"
+                        "}\n"
+                        "let r: int = main();") == 6);
+
+    // The slot it came from names nothing after: the field is the owner now.
+    assert(!test_compiles("struct Inner { n: int }\n"
                           "struct Outer { child: box Inner }\n"
                           "func main(): int {\n"
                           "    let o: box Outer = new Outer;\n"
                           "    let i: box Inner = new Inner;\n"
-                          "    i.n = 6;\n"
                           "    o.child = i;\n"
-                          "    return o.child.n;\n"
-                          "}\n"
-                          "let r: int = main();"));
+                          "    return i.n;\n"
+                          "}\n"));
 }
 
 // A parameter is a borrow like any other name, so it is refused for the same
@@ -325,7 +335,7 @@ int main(void) {
     test_field_self_assignment_is_refused();
     test_variable_self_assignment_is_refused();
     test_reassigning_an_owning_variable_frees_the_old_object();
-    test_storing_a_borrowed_reference_into_a_field_is_refused();
+    test_storing_an_owning_value_into_a_field_transfers_it();
     test_storing_a_parameter_into_a_field_is_refused();
     test_storing_a_call_result_into_a_field_is_allowed();
     test_an_owned_argument_is_freed_by_the_call_site();

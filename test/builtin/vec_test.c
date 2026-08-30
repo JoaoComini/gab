@@ -57,11 +57,11 @@ static void test_an_owning_element_is_freed_with_the_vec() {
 
 // A vector owns its block, so copying one would make a second header freeing
 // the same memory.
-static void test_a_vec_does_not_copy() {
+static void test_a_vec_transfers_rather_than_copying() {
     assert(!test_codegens("func f(): int {\n"
                           "    let xs: Vec<int>;\n"
                           "    let ys: Vec<int> = xs;\n"
-                          "    return 0;\n"
+                          "    return xs.len();\n"
                           "}\n"
                           "let r: int = f();"));
 }
@@ -129,7 +129,7 @@ int main(void) {
     test_a_vec_counts_what_it_holds();
     test_an_index_outside_the_vec_fails_the_run();
     test_an_owning_element_is_freed_with_the_vec();
-    test_a_vec_does_not_copy();
+    test_a_vec_transfers_rather_than_copying();
     test_a_vec_needs_an_element();
     test_a_vec_takes_one_element();
     test_a_push_yields_nothing();

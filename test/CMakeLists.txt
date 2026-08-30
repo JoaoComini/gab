@@ -29,7 +29,6 @@ set(
     vm/owning_param_test.c
     vm/field_ownership_test.c
     vm/uninitialized_test.c
-    vm/clone_test.c
     ast/cfg_test.c
     vm/string_test.c
     vm/str_test.c

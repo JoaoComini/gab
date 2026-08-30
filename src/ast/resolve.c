@@ -435,7 +435,7 @@ static bool accepts_by_borrowing(const Type *to, const Type *from);
 static bool lends_by_value(TypeRegistry *registry, const Type *to, const Type *from);
 static bool lends_by_pointer(const Type *to, const Type *from);
 static bool borrow_into(ResolverState *state, ASTExpr **slot, const Type *destination, Span span);
-static void check_implicit_copy(ResolverState *state, ASTExpr *value, const Type *destination, Span span);
+static void mark_implicit_move(ResolverState *state, ASTExpr *value, const Type *destination, Span span);
 
 static void check_call_args(ResolverState *state, ASTExprList *args, const Type **params) {
     for (size_t i = 0; i < args->size; i++) {
@@ -460,8 +460,8 @@ static void check_call_args(ResolverState *state, ASTExprList *args, const Type 
         }
 
         // An owning parameter takes ownership, so the argument is bound into it
-        // exactly as it would be into a 'let': a non-copyable one needs a move.
-        check_implicit_copy(state, args->data[i], param_type, arg->span);
+        // exactly as it would be into a 'let': one that owns is handed over.
+        mark_implicit_move(state, args->data[i], param_type, arg->span);
     }
 }
 
@@ -721,19 +721,6 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     // type whose set answered -- stands in until then so that nothing here reads
     // past an empty parameter list.
     const Type *declared_receiver = method->func.param_count > 0 ? method->func.params[0] : base;
-
-    // The sugar borrows, and never moves: a function consuming parameter zero
-    // is reached where the transfer can be written, so that no call site gives
-    // up ownership without saying so.
-    if (method->func.param_count > 0 && type_kind(declared_receiver) == TYPE_BOX) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                   "'%s' consumes what it takes, so it is called as '%s::%s(move ...)' rather than on a "
-                   "value",
-                   method_name->data, type_name(state, base), method_name->data);
-
-        expr->type = resolver_error_type(state);
-        return;
-    }
 
     // The sugar fills parameter zero, so a function that declares none has
     // nothing for the value to become and is reached on the type instead.
@@ -1381,32 +1368,6 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
 
         break;
     }
-    case EXPR_MOVE: {
-        resolve_expr(state, expr->unary.target, NULL);
-
-        const Type *target_type = expr->unary.target->type;
-
-        if (is_error_type(target_type)) {
-            expr->type = resolver_error_type(state);
-            break;
-        }
-
-        // A move produces exactly what the operand held; only what happens to
-        // the operand's slot differs.
-        expr->type = target_type;
-
-        // A struct moves whole or not at all. Moving one field would leave the
-        // rest behind, and a half-moved struct is not something the language
-        // says anything about: what its other fields mean, whether it may be
-        // passed on, and what its scope end frees are all unanswered.
-        if (expr->unary.target->kind == EXPR_FIELD) {
-            diag_error(state->diagnostics, GAB_ERR_LIFETIME, expr->span,
-                       "a field cannot be moved out of on its own; move the whole struct instead");
-            break;
-        }
-
-        break;
-    }
     case EXPR_ADDR_OF: {
         resolve_expr(state, expr->unary.target, NULL);
 
@@ -1616,7 +1577,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
                 continue;
             }
 
-            check_implicit_copy(state, expr->array_lit.elements.data[i], element, value->span);
+            mark_implicit_move(state, expr->array_lit.elements.data[i], element, value->span);
         }
 
         expr->type = ok ? expected : resolver_error_type(state);
@@ -1642,16 +1603,18 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
     }
 }
 
-// Rejects binding a non-copyable value without saying where ownership goes.
-// Copying is the default and is implicit, so the error is not that a copy is
-// impossible but that this one was not asked for: the message names both ways
-// to ask, since which is wanted is the programmer's to say.
+// Settles whether binding this value hands its ownership over.
 //
-// Only a value read out of a named slot can be implicitly copied. A temporary
-// -- 'new Box', a call's owned return -- is already nobody else's, so binding
-// it transfers what it made rather than duplicating what someone holds.
-static void check_implicit_copy(ResolverState *state, ASTExpr *value, const Type *destination, Span span) {
-    if (!value || value->kind == EXPR_MOVE || is_error_type(value->type)) {
+// A bind moves exactly when the source owns something a copy would duplicate
+// and the destination is what would free it. Both halves matter: a value that
+// owns nothing is copied wherever it goes, and one that owns something still
+// only transfers into a slot that frees it.
+//
+// Determined by the types rather than written at the site, so one spelling
+// serves every type -- which is what lets a body written over a parameter bind
+// a T without knowing whether that T copies or moves.
+static void mark_implicit_move(ResolverState *state, ASTExpr *value, const Type *destination, Span span) {
+    if (!value || is_error_type(value->type)) {
         return;
     }
 
@@ -1659,35 +1622,46 @@ static void check_implicit_copy(ResolverState *state, ASTExpr *value, const Type
         return;
     }
 
-    // Binding into a slot that owns nothing borrows rather than copies: the
+    // Binding into a slot that owns nothing borrows rather than transfers: the
     // destination never frees what it names, so the owner stays the only one.
     // True of a 'ref T' and of a 'str', which owns nothing through its fields.
     if (destination && !type_is_owned(destination)) {
         return;
     }
 
-    if (!value->symbol || value->symbol->kind != SYMBOL_VAR) {
-        return;
-    }
-
-    // Only advise the clone where there is one to call. A type that declares
-    // none is told so instead, since sending the programmer to a method that
-    // does not exist costs them the round trip to find that out.
-    const Type *base = receiver_base_type(value->type);
-
-    if (base && type_registry_find_method(state->current_scope->type_registry, base,
-                                          resolver_intern(state, string_ref_create("clone")))) {
+    // A struct moves whole or not at all. Transferring one field would leave
+    // the rest behind, and a half-moved struct is not something the language
+    // says anything about: what its other fields mean, whether it may be passed
+    // on, and what its scope end frees are all unanswered.
+    if (value->kind == EXPR_FIELD) {
         diag_error(state->diagnostics, GAB_ERR_LIFETIME, span,
-                   "%s owns what it holds, so binding it needs 'move' to transfer ownership, or "
-                   "'clone()' to duplicate it",
-                   type_name(state, value->type));
+                   "a field cannot be given up on its own; bind the whole struct instead");
         return;
     }
 
-    diag_error(state->diagnostics, GAB_ERR_LIFETIME, span,
-               "%s owns what it holds, so binding it needs 'move' to transfer ownership; it declares no "
-               "'clone' to duplicate it",
-               type_name(state, value->type));
+    // An array likewise. Which element was taken is a run-time question, so
+    // nothing here could say which of them the array still holds -- and its
+    // scope end frees every one.
+    if (value->kind == EXPR_INDEX) {
+        diag_error(state->diagnostics, GAB_ERR_LIFETIME, span,
+                   "an element cannot be given up on its own; bind the whole array instead");
+        return;
+    }
+
+    // Only a value read out of a named slot has an owner to take it from. A
+    // temporary -- 'new Box', a call's owned return -- is already nobody
+    // else's, so binding it hands over what it made rather than what someone
+    // holds.
+    //
+    // The slot itself, not a place reached through it. A deref carries its
+    // target's symbol so that '*p = v' stays assignable, and a field carries
+    // its owner's -- but what those name lives inside what the slot holds, and
+    // giving up the slot is not what binding one of them does.
+    if (value->kind != EXPR_VARIABLE || !value->symbol || value->symbol->kind != SYMBOL_VAR) {
+        return;
+    }
+
+    value->moves = true;
 }
 
 // Returns NULL when there is no spec to resolve (an omitted type), and the
@@ -2327,25 +2301,6 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
         }
     }
 
-    // 'clone' is the remedy the implicit-copy diagnostic names, so its shape is
-    // fixed: it duplicates what it is given and yields another of the same type.
-    // Checked here rather than at a call so a type declaring the wrong thing
-    // hears about it where it wrote it.
-    if (name == resolver_intern(state, string_ref_create("clone"))) {
-        if (return_type != owner) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
-                       "'clone' duplicates what it takes, so it must return %s, not %s",
-                       type_name_of(owner)->data, type_name(state, return_type));
-            return;
-        }
-
-        if (param_count != 1) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
-                       "'clone' duplicates what it takes and takes nothing else");
-            return;
-        }
-    }
-
     if (!type_registry_add_method(state->current_scope->type_registry, owner, name, func)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' already has a function '%s'",
                    type_name_of(owner)->data, name->data);
@@ -2583,7 +2538,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
             break;
         }
 
-        check_implicit_copy(state, stmt->var_decl.initializer, type, stmt->span);
+        mark_implicit_move(state, stmt->var_decl.initializer, type, stmt->span);
 
         stmt->var_decl.symbol = var;
         break;
@@ -2646,15 +2601,28 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         // dangles the moment the frame returns, ownership notwithstanding.
         if (stmt->assign.target->kind == EXPR_FIELD || stmt->assign.target->kind == EXPR_DEREF) {
             // An owning field takes ownership of what is stored in it, exactly
-            // as a 'let' does, so a non-copyable value needs a move.
-            check_implicit_copy(state, stmt->assign.value, target_type, stmt->span);
+            // as a 'let' does, so a value that owns is handed over.
+            mark_implicit_move(state, stmt->assign.value, target_type, stmt->span);
             break;
         }
 
         Symbol *target = stmt->assign.target->symbol;
 
         if (target && target->kind == SYMBOL_VAR) {
-            check_implicit_copy(state, stmt->assign.value, target_type, stmt->span);
+            // A slot cannot be given what it is already holding. Taking
+            // ownership out of the destination and storing it back leaves the
+            // slot both disowned and written, which is neither a transfer nor a
+            // copy -- and what the old value's release would free is the same
+            // object the new one names.
+            if (stmt->assign.value->kind == EXPR_VARIABLE && stmt->assign.value->symbol == target &&
+                !type_is_copyable(target_type)) {
+                diag_error(state->diagnostics, GAB_ERR_LIFETIME, stmt->span,
+                           "'%s' owns what it holds, so it cannot be assigned to itself",
+                           type_name_of(target_type) ? type_name_of(target_type)->data : "a value");
+                break;
+            }
+
+            mark_implicit_move(state, stmt->assign.value, target_type, stmt->span);
         }
         break;
     }

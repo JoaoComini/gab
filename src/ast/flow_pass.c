@@ -183,7 +183,7 @@ static uint64_t initialized_fields(FlowPass *pass, ASTExpr *initializer) {
         return 0;
     }
 
-    ASTExpr *source = initializer->kind == EXPR_MOVE ? initializer->unary.target : initializer;
+    ASTExpr *source = initializer;
 
     if (source->kind == EXPR_VARIABLE && source->symbol && source->symbol->kind == SYMBOL_VAR) {
         return flow_get(pass->flow, source->symbol).written_fields;
@@ -269,6 +269,17 @@ static void flow_pass_expr(FlowPass *pass, ASTExpr *expr) {
             flow_report(pass, expr->span, "'%s' is read before it is given a value", name);
             free(name);
         }
+
+        // Read as the source of a bind that owns it, so this slot has given it
+        // up. Killed after the read is checked: reading it here is what hands
+        // it over, and only a later read is the error.
+        if (expr->moves) {
+            FlowSlot slot = flow_get(pass->flow, entry);
+
+            slot.init = FLOW_MOVED;
+            flow_set(pass->flow, entry, slot);
+        }
+
         break;
     }
     case EXPR_FIELD: {
@@ -297,25 +308,6 @@ static void flow_pass_expr(FlowPass *pass, ASTExpr *expr) {
         }
         break;
     }
-    case EXPR_MOVE: {
-        flow_pass_expr(pass, expr->unary.target);
-
-        Symbol *source = expr->unary.target->symbol;
-
-        // Moving out of anything but a named slot has nothing to kill: a
-        // temporary already owns what it produced.
-        if (!source || source->kind != SYMBOL_VAR || expr->unary.target->kind == EXPR_FIELD) {
-            break;
-        }
-
-        // Only 'init' changes: the slot is dead, but what its fields hold is
-        // what the destination now receives.
-        FlowSlot slot = flow_get(pass->flow, source);
-
-        slot.init = FLOW_MOVED;
-        flow_set(pass->flow, source, slot);
-        break;
-    }
     case EXPR_LEND:
         flow_pass_expr(pass, expr->lend.target);
         break;
@@ -325,6 +317,15 @@ static void flow_pass_expr(FlowPass *pass, ASTExpr *expr) {
     case EXPR_NEG:
     case EXPR_NOT:
         flow_pass_expr(pass, expr->unary.target);
+        break;
+
+    // Both halves are read: the array to reach its block, and the index to say
+    // which element. Reaching through an array is not taking it, so nothing is
+    // killed here -- what an element names belongs to the array, and giving one
+    // up on its own would leave the rest behind.
+    case EXPR_INDEX:
+        flow_pass_expr(pass, expr->index.target);
+        flow_pass_expr(pass, expr->index.index);
         break;
     case EXPR_BIN_OP:
         flow_pass_expr(pass, expr->bin_op.left);

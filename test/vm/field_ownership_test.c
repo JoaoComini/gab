@@ -28,7 +28,7 @@ static void test_a_move_into_an_owning_field_keeps_the_object() {
                         "    let h: Holder;\n"
                         "    let a: box Box = new Box;\n"
                         "    a.n = 7;\n"
-                        "    h.b = move a;\n"
+                        "    h.b = a;\n"
                         "    return h.b.n;\n"
                         "}\n"
                         "let r: int = main();") == 7);
@@ -131,12 +131,11 @@ static void test_an_owning_field_refuses_a_value_another_slot_owns() {
                          "    let h: Holder;\n"
                          "    let a: box Box = new Box;\n"
                          "    h.b = a;\n"
-                         "    return 0;\n"
+                         "    return a.n;\n"
                          "}\n";
 
     assert(!test_compiles(source));
-    assert(test_diagnostic_mentions(source, "move"));
-    assert(test_diagnostic_mentions(source, "declares no 'clone'"));
+    assert(test_diagnostic_mentions(source, "no longer holds a value"));
 }
 
 // A struct moves whole or not at all. Moving one field would leave the rest
@@ -149,7 +148,7 @@ static void test_moving_a_field_is_refused() {
                          "    let g: Holder;\n"
                          "    let h: Holder;\n"
                          "    h.b = new Box;\n"
-                         "    g.b = move h.b;\n"
+                         "    g.b = h.b;\n"
                          "    return 0;\n"
                          "}\n";
 
@@ -165,7 +164,7 @@ static void test_a_whole_struct_still_moves() {
                         "    let h: Holder;\n"
                         "    h.b = new Box;\n"
                         "    h.b.n = 3;\n"
-                        "    let g: Holder = move h;\n"
+                        "    let g: Holder = h;\n"
                         "    return g.b.n;\n"
                         "}\n"
                         "let r: int = main();") == 3);

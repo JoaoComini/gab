@@ -191,13 +191,14 @@ static void test_an_owning_string_field_is_released() {
 }
 
 // An owning string is a unique owner like any other, so binding it to a second
-// name must say which one frees the characters.
-static void test_an_owning_string_needs_a_move_or_a_clone() {
-    assert(!test_compiles_on_vm(
-        "func f(v: ref str): int { let a: String = v.to_owned(); let b: String = a; return 0; }\n"));
+// name hands the characters over and leaves the first naming nothing.
+static void test_binding_an_owning_string_transfers_it() {
+    assert(!test_compiles_on_vm("func f(v: ref str): int { let a: String = v.to_owned(); let b: String = a; "
+                                "return a.len(); }\n"));
 
+    // The transfer itself is ordinary: only reading the emptied slot is not.
     assert(test_compiles_on_vm(
-        "func f(v: ref str): int { let a: String = v.to_owned(); let b: String = move a; return 0; }\n"));
+        "func f(v: ref str): int { let a: String = v.to_owned(); let b: String = a; return b.len(); }\n"));
 }
 
 static void test_reassigning_a_string_frees_the_old_characters() {
@@ -307,7 +308,7 @@ int main(void) {
     test_a_null_is_compared_like_any_character();
     test_strings_are_not_ordered();
     test_a_struct_field_borrows_its_characters();
-    test_an_owning_string_needs_a_move_or_a_clone();
+    test_binding_an_owning_string_transfers_it();
     test_an_owning_string_field_is_released();
     test_a_literal_is_not_released();
     test_reassigning_a_string_frees_the_old_characters();

@@ -278,7 +278,7 @@ static void test_a_temporary_register_is_reused() {
 }
 
 // 'x = x + 1' computes straight into x's register instead of into a temporary
-// that is then moved. The saved move is the whole point, so its absence is the
+// that is then moved. The instruction saved is the whole point, so its absence is the
 // assertion.
 static void test_assignment_computes_into_its_target() {
     TestProgram program = test_compile("func f() {\n"
@@ -394,7 +394,7 @@ static void test_a_method_counts_its_receiver() {
 }
 
 // A multi-slot value copies in one instruction. The interpreter's real cost is
-// the dispatch, not the four bytes a slot move writes, so a struct of N slots
+// the dispatch, not the four bytes a slot writes, so a struct of N slots
 // must not become N moves.
 static void test_a_struct_copy_is_one_instruction() {
     TestProgram program = test_compile("struct Point { x: int, y: int, z: int }\n"
@@ -416,7 +416,7 @@ static void test_a_struct_copy_is_one_instruction() {
 
 // The property the batching must not cost: a one-slot copy stays OP_MOVE.
 // OP_MOVE_N decodes a third operand and calls memmove, which is more work than
-// the single assignment a scalar needs -- widening every move would slow the
+// the single assignment a scalar needs -- widening every one would slow the
 // common case to speed the rare one.
 static void test_a_scalar_copy_stays_a_single_move() {
     TestProgram program = test_compile("func f(): int {\n"

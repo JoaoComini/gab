@@ -251,7 +251,7 @@ static bool codegen_slot_is_owned(const CodegenState *state, unsigned int slot);
 // pointer — and is skipped; pass VM_INVALID_REGISTER when nothing is moving.
 static void codegen_release_owned(CodegenState *state, unsigned int keep_depth, unsigned int moved);
 
-// Forgets that a slot owns, without emitting a release: for 'move', whose
+// Forgets that a slot owns, without emitting a release: for a transfer, whose
 // destination now holds the reference.
 static void codegen_disown_slot(CodegenState *state, unsigned int slot);
 
@@ -520,7 +520,7 @@ typedef enum {
     // Record it, so the block that declared it frees it.
     OWNING_SLOT_OWN,
 
-    // Forget it, for 'move': the destination holds the reference now.
+    // Forget it: the destination holds the reference now.
     OWNING_SLOT_DISOWN,
 } OwningSlotAction;
 
@@ -707,7 +707,7 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
 
     if (target_owns) {
         // The value stored is one nothing else owns: the resolver refuses a
-        // borrow here, naming the move or the duplicate that was meant.
+        // borrow here, naming the transfer or the duplicate that was meant.
         //
         // Read what the destination holds before overwriting it, and free it
         // after the store rather than before: freeing first would leave a
@@ -803,7 +803,7 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
     // A 'ref T' slot owns nothing, so it is a plain store however it is written.
     if (!target_is_ref && type_is_owned(ast->target->type) && codegen_slot_is_owned(state, rd)) {
         // The value is one nothing else owns: the resolver refuses a borrow
-        // here, naming the move or the duplicate that was meant.
+        // here, naming the transfer or the duplicate that was meant.
         // As wide as what is being replaced: a string is a header of several
         // slots, and saving only the first would release a pointer paired with
         // whatever length the new value wrote.
@@ -1449,6 +1449,18 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
 // ---- Expressions ----
 
 static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
+    // A value bound into something that frees it hands its reference over, so
+    // the slot it came from must not release it too. The value is produced
+    // exactly as it would be otherwise -- what the transfer changes is who
+    // frees it, not what is read.
+    if (ast->moves && ast->kind == EXPR_VARIABLE && ast->symbol) {
+        unsigned int reg = codegen_variable_expr(state, ast);
+
+        codegen_walk_owning_slots(state, ast->type, codegen_slot_of(state, ast->symbol), OWNING_SLOT_DISOWN);
+
+        return reg;
+    }
+
     switch (ast->kind) {
     case EXPR_LITERAL:
         return codegen_literal_expr(state, ast);
@@ -1460,19 +1472,6 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
         return codegen_call_expr(state, ast);
     case EXPR_FIELD:
         return codegen_field_expr(state, ast);
-    case EXPR_MOVE: {
-        // The value is produced exactly as it would be without the keyword.
-        // What the move changes is who frees it: the source slot gives up its
-        // reference, so its block must not release it.
-        unsigned int reg = codegen_expr(state, ast->unary.target);
-
-        if (ast->unary.target->kind == EXPR_VARIABLE && ast->unary.target->symbol) {
-            codegen_walk_owning_slots(state, ast->unary.target->type,
-                                      codegen_slot_of(state, ast->unary.target->symbol), OWNING_SLOT_DISOWN);
-        }
-
-        return reg;
-    }
     case EXPR_ADDR_OF:
         return codegen_addr_of_expr(state, ast);
     case EXPR_DEREF:
@@ -2766,7 +2765,7 @@ static void codegen_emit_loop(CodegenState *state, size_t target) {
 static bool expr_yields_owned(const ASTExpr *expr) {
     // Copyability is the same question inverted: a value carries ownership
     // exactly when it cannot be duplicated by copying its bytes. A struct
-    // qualifies through its fields -- 'move h' on a struct holding an owning
+    // qualifies through its fields -- binding a struct holding an owning
     // pointer hands that pointer over, though the struct is not one.
     if (!expr || type_is_copyable(expr->type)) {
         return false;
@@ -2777,14 +2776,17 @@ static bool expr_yields_owned(const ASTExpr *expr) {
     case EXPR_BIN_OP:
         return false;
 
+    // A fresh allocation and an owned return are each nobody else's already, so
+    // whatever they hand back is the destination's to free.
     case EXPR_NEW:
     case EXPR_CALL:
-
-    // A move hands the source's reference over, so the destination owns it
-    // exactly as it would a fresh one -- and the source has been disowned, so
-    // no second slot will free it.
-    case EXPR_MOVE:
         return true;
+
+    // A value read out of a named slot, where the bind transfers: the source
+    // has been disowned, so no second slot will free it.
+    case EXPR_VARIABLE:
+        return expr->moves;
+
     default:
         return false;
     }
@@ -2830,7 +2832,7 @@ static void codegen_own_slot(CodegenState *state, unsigned int slot, const Type 
     codegen_own_slot_at(state, slot, type, state->depth);
 }
 
-// Forgets that a slot owns, without emitting a release. For 'move': the
+// Forgets that a slot owns, without emitting a release. For a transfer: the
 // reference is now the destination's, so the source must not free it when its
 // block closes. The frame record stays, since the unwinder reads the slot
 // itself and the destination is what holds the reference now.

@@ -1,6 +1,6 @@
-// Copying is implicit and is the default; moving is explicit and is required
-// for anything that owns. What a type holds decides which it gets, and a slot
-// moved out of is dead.
+// Binding a value either copies it or hands its ownership over, and which one
+// happens is read off the type rather than written at the site. What a type
+// holds decides which it gets, and a slot moved out of is dead.
 
 #include "support/run.h"
 
@@ -21,14 +21,16 @@ static void test_a_type_owning_nothing_copies_implicitly() {
 }
 
 // Copyability is derived from the type, not declared: a struct holding an
-// owning pointer owns transitively, so it is not copyable.
-static void test_a_type_holding_an_owning_pointer_does_not_copy() {
+// owning pointer owns transitively, so binding it transfers rather than
+// duplicates -- and the slot it came from is dead.
+static void test_a_type_holding_an_owning_pointer_transfers() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "struct Holder { b: box Box }\n"
                           "func main(): int {\n"
                           "    let h: Holder;\n"
+                          "    h.b = new Box;\n"
                           "    let other = h;\n"
-                          "    return 0;\n"
+                          "    return h.b.n;\n"
                           "}\n"));
 }
 
@@ -43,13 +45,14 @@ static void test_a_type_holding_a_borrow_still_copies() {
                          "}\n"));
 }
 
-// Ownership transfers where 'move' says it does.
-static void test_move_transfers_ownership() {
+// Binding a value that owns hands the object over: what the new slot names is
+// what the old one held, rather than a second copy of it.
+static void test_binding_an_owning_value_transfers_it() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
                         "    let a: box Box = new Box;\n"
                         "    a.n = 7;\n"
-                        "    let b = move a;\n"
+                        "    let b = a;\n"
                         "    return b.n;\n"
                         "}\n"
                         "let r: int = main();") == 7);
@@ -61,7 +64,7 @@ static void test_a_moved_from_slot_is_dead() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
                           "    let a: box Box = new Box;\n"
-                          "    let b = move a;\n"
+                          "    let b = a;\n"
                           "    return a.n;\n"
                           "}\n"));
 }
@@ -72,7 +75,7 @@ static void test_assigning_to_a_dead_slot_revives_it() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
                         "    let a: box Box = new Box;\n"
-                        "    let b = move a;\n"
+                        "    let b = a;\n"
                         "    a = new Box;\n"
                         "    a.n = 5;\n"
                         "    return a.n;\n"
@@ -86,50 +89,50 @@ static void test_a_slot_moved_on_one_arm_is_dead_after_the_join() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
                           "    let a: box Box = new Box;\n"
-                          "    if 1 < 2 { let b = move a; } else { }\n"
+                          "    if 1 < 2 { let b = a; } else { }\n"
                           "    return a.n;\n"
                           "}\n"));
 }
 
-// Moving in a loop body would move the same slot on the second iteration, so
-// the back-edge makes the move itself the error.
-static void test_moving_the_same_slot_each_iteration_is_refused() {
+// Transferring out of a slot in a loop body would empty it again on the second
+// iteration, so the back-edge is what makes the bind an error.
+static void test_transferring_the_same_slot_each_iteration_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
                           "    let a: box Box = new Box;\n"
                           "    for let i = 0; i < 2; i = i + 1 {\n"
-                          "        let b = move a;\n"
+                          "        let b = a;\n"
                           "    }\n"
                           "    return 0;\n"
                           "}\n"));
 }
 
-// Writing an implicit copy of a non-copyable value is an error whose message
-// names the way out and says why the other one is unavailable.
-static void test_the_implicit_copy_error_names_the_remedies() {
+// Reading a slot after it has been bound elsewhere names what it no longer
+// holds, and the message says so rather than reporting the bind that emptied
+// it.
+static void test_reading_a_transferred_slot_names_the_slot() {
     const char *source = "struct Box { n: int }\n"
                          "func main(): int {\n"
                          "    let a: box Box = new Box;\n"
                          "    let b = a;\n"
-                         "    return 0;\n"
+                         "    return a.n;\n"
                          "}\n";
 
     assert(!test_compiles(source));
-    assert(test_diagnostic_mentions(source, "move"));
-    assert(test_diagnostic_mentions(source, "declares no 'clone'"));
+    assert(test_diagnostic_mentions(source, "no longer holds a value"));
 }
 
 int main(void) {
     test_a_type_owning_nothing_copies_implicitly();
-    test_a_type_holding_an_owning_pointer_does_not_copy();
+    test_a_type_holding_an_owning_pointer_transfers();
     test_a_type_holding_a_borrow_still_copies();
-    test_move_transfers_ownership();
+    test_binding_an_owning_value_transfers_it();
     test_a_moved_from_slot_is_dead();
     test_assigning_to_a_dead_slot_revives_it();
     test_a_slot_moved_on_one_arm_is_dead_after_the_join();
-    test_moving_the_same_slot_each_iteration_is_refused();
-    test_the_implicit_copy_error_names_the_remedies();
+    test_transferring_the_same_slot_each_iteration_is_refused();
+    test_reading_a_transferred_slot_names_the_slot();
 
-    printf("All move tests passed\n");
+    printf("All tests passed\n");
     return 0;
 }

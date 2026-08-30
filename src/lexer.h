@@ -66,7 +66,6 @@ typedef enum {
     TOKEN_NEW,         // 'new'
     TOKEN_REF,         // 'ref'
     TOKEN_BOX,         // 'box'
-    TOKEN_MOVE,        // 'move'
                        // END KEYWORDS
     TOKEN_IDENT,       // Variable and function names
 } TokenType;

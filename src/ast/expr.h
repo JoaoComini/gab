@@ -50,7 +50,6 @@ typedef enum {
 
     // '[a, b, c]'. The elements of a fixed array, written out.
     EXPR_ARRAY_LIT,
-    EXPR_MOVE,
 } ExprKind;
 
 typedef enum {
@@ -184,6 +183,18 @@ typedef struct ASTExpr {
 
     const Type *type; // Filled during type resolution
     Symbol *symbol;   // Filled during symbol resolution
+
+    // Whether binding this value hands its ownership over rather than
+    // duplicating it. Settled by the resolver at each site that binds -- a
+    // 'let', an assignment, a call's argument, an array's element -- since what
+    // the operand is worth is a property of that binding rather than of the
+    // expression: the same variable read into a 'ref' parameter transfers
+    // nothing.
+    //
+    // What the flow pass kills the source on, and what codegen disowns the
+    // source slot for. A value nothing owns is never marked, so a copy stays a
+    // copy.
+    bool moves;
 } ASTExpr;
 
 ASTExpr *ast_literal_expr_create(Span span, Literal value);
@@ -194,7 +205,6 @@ ASTExpr *ast_field_expr_create(Span span, ASTExpr *target, StringRef name);
 ASTExpr *ast_addr_of_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_deref_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_lend_expr_create(Span span, ASTExpr *target);
-ASTExpr *ast_move_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_neg_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_not_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_cast_expr_create(Span span, ASTExpr *operand);
