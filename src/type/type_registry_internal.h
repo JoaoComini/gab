@@ -12,16 +12,13 @@
 GAB_HASH_MAP(TypeInternTable, type_intern, const Type *, Type *)
 
 typedef struct MethodKey {
-    const TypeDef *def;
-
     const Type *type;
 
     const String *name;
 } MethodKey;
 
-#define method_key_hash(key) ((((size_t)(key).def * 31) ^ ((size_t)(key).type * 17)) ^ (size_t)(key).name)
-#define method_key_key_equals(key, other)                                                                    \
-    ((key).def == (other).def && (key).type == (other).type && (key).name == (other).name)
+#define method_key_hash(key) (((size_t)(key).type * 31) ^ (size_t)(key).name)
+#define method_key_key_equals(key, other) ((key).type == (other).type && (key).name == (other).name)
 #define method_key_key_dup(key) key
 #define method_key_entry_free(key, value)
 

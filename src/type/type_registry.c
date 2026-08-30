@@ -278,10 +278,24 @@ const Type *type_registry_declare_struct(TypeRegistry *registry, String *name, c
     return type_registry_declare(registry, &decl);
 }
 
-static MethodKey method_key_of(const Type *type, const String *name) {
+static const Type *generic_form_of(TypeRegistry *registry, const Type *type) {
     const TypeDef *def = type_decl(type);
 
-    return (MethodKey){.def = def, .type = def ? NULL : type, .name = name};
+    if (!def || def->param_count == 0) {
+        return type;
+    }
+
+    const Type *params[GAB_MAX_TYPE_PARAMS];
+
+    for (size_t i = 0; i < def->param_count; i++) {
+        params[i] = type_registry_param(registry, i);
+    }
+
+    return type_registry_apply(registry, def, params, def->param_count);
+}
+
+static MethodKey method_key_of(TypeRegistry *registry, const Type *type, const String *name) {
+    return (MethodKey){.type = generic_form_of(registry, type), .name = name};
 }
 
 bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method) {
@@ -296,7 +310,7 @@ bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *
         .symbol = method,
     };
 
-    return type_registry_declare_method_on_type(registry, type, &declared);
+    return type_registry_declare_method(registry, type, &declared);
 }
 
 static Symbol *instantiate_method(TypeRegistry *registry, const MethodDecl *method, const Type *const *args,
@@ -315,17 +329,22 @@ static bool declare_method(TypeRegistry *registry, MethodKey key, const MethodDe
     return true;
 }
 
-bool type_registry_declare_method_on_decl(TypeRegistry *registry, TypeDef *def, const MethodDecl *method) {
-    assert(def && method && method->name && "a method declared on a declaration is a name and a signature");
+const Type *type_registry_generic_form(TypeRegistry *registry, const TypeDef *def) {
+    assert(def && "a generic form names a declaration");
 
-    return declare_method(registry, (MethodKey){.def = def, .type = NULL, .name = method->name}, method);
+    const Type *params[GAB_MAX_TYPE_PARAMS];
+
+    for (size_t i = 0; i < def->param_count; i++) {
+        params[i] = type_registry_param(registry, i);
+    }
+
+    return type_registry_apply(registry, def, params, def->param_count);
 }
 
-bool type_registry_declare_method_on_type(TypeRegistry *registry, const Type *type,
-                                          const MethodDecl *method) {
-    assert(type && method && method->name && "a method declared on a type is a name and a signature");
+bool type_registry_declare_method(TypeRegistry *registry, const Type *type, const MethodDecl *method) {
+    assert(type && method && method->name && "a method is a type, a name and a signature");
 
-    return declare_method(registry, method_key_of(type, method->name), method);
+    return declare_method(registry, method_key_of(registry, type, method->name), method);
 }
 
 Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name) {
@@ -338,7 +357,7 @@ Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, cons
         return *cached;
     }
 
-    MethodDecl **declared = method_decl_key_lookup(registry->methods, method_key_of(type, name));
+    MethodDecl **declared = method_decl_key_lookup(registry->methods, method_key_of(registry, type, name));
     if (!declared) {
         return NULL;
     }

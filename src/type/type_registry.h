@@ -61,9 +61,9 @@ typedef struct Deref {
 
 bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method);
 
-bool type_registry_declare_method_on_decl(TypeRegistry *registry, TypeDef *def, const MethodDecl *method);
+const Type *type_registry_generic_form(TypeRegistry *registry, const TypeDef *def);
 
-bool type_registry_declare_method_on_type(TypeRegistry *registry, const Type *type, const MethodDecl *method);
+bool type_registry_declare_method(TypeRegistry *registry, const Type *type, const MethodDecl *method);
 
 Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name);
 

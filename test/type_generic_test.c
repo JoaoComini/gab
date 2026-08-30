@@ -219,7 +219,7 @@ static void test_a_declared_method_is_substituted_per_instantiation() {
         .result = param,
     };
 
-    type_registry_declare_method_on_decl(registry, &def, &method);
+    type_registry_declare_method(registry, type_registry_generic_form(registry, &def), &method);
 
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
     const Type *of_bool = type_registry_apply(registry, &def, &bool_type, 1);
@@ -264,7 +264,7 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
         .result = param,
     };
 
-    type_registry_declare_method_on_decl(registry, &def, &method);
+    type_registry_declare_method(registry, type_registry_generic_form(registry, &def), &method);
 
     const Symbol *found = type_registry_find_method(registry, of_int, at);
 
@@ -296,7 +296,7 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
         .result = param,
     };
 
-    type_registry_declare_method_on_decl(registry, &def, &method);
+    type_registry_declare_method(registry, type_registry_generic_form(registry, &def), &method);
 
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
 
@@ -367,7 +367,7 @@ static void test_a_substituted_signature_is_read_once_per_type() {
         .result = param,
     };
 
-    type_registry_declare_method_on_decl(registry, &def, &method);
+    type_registry_declare_method(registry, type_registry_generic_form(registry, &def), &method);
 
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
 
@@ -384,7 +384,34 @@ static void test_a_substituted_signature_is_read_once_per_type() {
     arena_destroy(ctx.arena);
 }
 
+static void test_two_instantiations_share_one_generic_form(void) {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    TypeRegistry *registry = type_registry_create(ctx.arena, &names);
+
+    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *bool_type = type_registry_get_primitive(registry, TYPE_BOOL);
+    const Type *param = type_registry_param(registry, 0);
+
+    TypeDef def = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
+
+    const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
+    const Type *of_bool = type_registry_apply(registry, &def, &bool_type, 1);
+    const Type *generic = type_registry_apply(registry, &def, &param, 1);
+
+    assert(of_int != of_bool);
+    assert(generic == type_registry_apply(registry, &def, &param, 1));
+    assert(generic != of_int && generic != of_bool);
+
+    type_registry_destroy(registry);
+    string_pool_free(&ctx.strings);
+    arena_destroy(ctx.arena);
+}
+
 int main(void) {
+    test_two_instantiations_share_one_generic_form();
     test_a_declared_field_nests_constructors();
     test_a_declaration_taking_no_parameters_is_its_own_instantiation();
     test_two_declarations_alike_are_two_types();
