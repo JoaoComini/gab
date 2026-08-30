@@ -176,11 +176,15 @@ void ast_expr_free(ASTExpr *expr) {
     free(expr);
 }
 
+Binding *ast_binding_of(const ASTExpr *expr) { return expr->binding; }
+
+void ast_bind(ASTExpr *expr, Binding *binding) { expr->binding = binding; }
+
 Binding *ast_root_local(const ASTExpr *expr) {
     while (expr) {
         switch (expr->kind) {
         case EXPR_VARIABLE:
-            return expr->binding;
+            return ast_binding_of(expr);
         case EXPR_FIELD:
             expr = expr->field.target;
             break;

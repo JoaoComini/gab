@@ -272,7 +272,7 @@ static void fold_bin_op(ASTExpr *expr) {
 static bool is_addressable(const ASTExpr *expr) {
     switch (expr->kind) {
     case EXPR_VARIABLE:
-        return expr->binding && expr->binding->kind == BINDING_VAR;
+        return ast_binding_of(expr) && ast_binding_of(expr)->kind == BINDING_VAR;
     case EXPR_FIELD:
         return is_addressable(expr->field.target);
     case EXPR_INDEX:
@@ -738,7 +738,7 @@ static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
 
     expr->kind = EXPR_CAST;
     expr->cast.operand = operand;
-    expr->binding = NULL;
+    ast_bind(expr, NULL);
 
     if (!operand) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "a conversion to %s takes one operand",
@@ -829,7 +829,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
                 break;
             }
 
-            expr->binding = entry;
+            ast_bind(expr, entry);
             expr->type = entry->var.type;
             break;
         }
@@ -1176,7 +1176,8 @@ static void mark_implicit_move(ResolverState *state, ASTExpr *value, const Type 
         return;
     }
 
-    if (value->kind != EXPR_VARIABLE || !value->binding || value->binding->kind != BINDING_VAR) {
+    if (value->kind != EXPR_VARIABLE || !ast_binding_of(value) ||
+        ast_binding_of(value)->kind != BINDING_VAR) {
         return;
     }
 
@@ -1947,10 +1948,10 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
             break;
         }
 
-        Binding *target = stmt->assign.target->binding;
+        Binding *target = ast_binding_of(stmt->assign.target);
 
         if (target && target->kind == BINDING_VAR) {
-            if (stmt->assign.value->kind == EXPR_VARIABLE && stmt->assign.value->binding == target &&
+            if (stmt->assign.value->kind == EXPR_VARIABLE && ast_binding_of(stmt->assign.value) == target &&
                 !type_registry_copies(state->current_scope->type_registry, target_type)) {
                 diag_error(state->diagnostics, GAB_ERR_LIFETIME, stmt->span,
                            "'%s' owns what it holds, so it cannot be assigned to itself",

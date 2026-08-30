@@ -45,15 +45,15 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
         return binding ? binding->scope_depth : 0;
     }
     case EXPR_VARIABLE:
-        if (!expr->binding) {
+        if (!ast_binding_of(expr)) {
             return 0;
         }
 
         if (type_registry_holds_its_memory_inline(pass->registry, expr->type)) {
-            return expr->binding->scope_depth;
+            return ast_binding_of(expr)->scope_depth;
         }
 
-        return flow_get(pass->flow, expr->binding).inner_depth;
+        return flow_get(pass->flow, ast_binding_of(expr)).inner_depth;
     case EXPR_NEW:
 
         return 0;
@@ -98,7 +98,7 @@ static bool owning_field_of_local(TypeRegistry *registry, const ASTExpr *expr, B
         return false;
     }
 
-    Binding *binding = expr->field.target->binding;
+    Binding *binding = ast_binding_of(expr->field.target);
     const Type *struct_type = expr->field.target->type;
 
     if (!binding || binding->kind != BINDING_VAR || !struct_type || type_kind(struct_type) != TYPE_STRUCT) {
@@ -144,8 +144,9 @@ static uint64_t initialized_fields(FlowPass *pass, ASTExpr *initializer) {
 
     ASTExpr *source = initializer;
 
-    if (source->kind == EXPR_VARIABLE && source->binding && source->binding->kind == BINDING_VAR) {
-        return flow_get(pass->flow, source->binding).written_fields;
+    if (source->kind == EXPR_VARIABLE && ast_binding_of(source) &&
+        ast_binding_of(source)->kind == BINDING_VAR) {
+        return flow_get(pass->flow, ast_binding_of(source)).written_fields;
     }
 
     return UINT64_MAX;
@@ -196,7 +197,7 @@ static void flow_pass_expr(FlowPass *pass, ASTExpr *expr) {
 
     switch (expr->kind) {
     case EXPR_VARIABLE: {
-        Binding *entry = expr->binding;
+        Binding *entry = ast_binding_of(expr);
 
         if (!entry || entry->kind != BINDING_VAR || pass->assigning) {
             break;
@@ -336,7 +337,7 @@ static void flow_pass_stmt(FlowPass *pass, ASTStmt *stmt) {
             break;
         }
 
-        Binding *target = stmt->assign.target->binding;
+        Binding *target = ast_binding_of(stmt->assign.target);
 
         if (target && target->kind == BINDING_VAR) {
             check_stored_lifetime(pass, stmt->assign.value, stmt->assign.target->type, target->scope_depth,

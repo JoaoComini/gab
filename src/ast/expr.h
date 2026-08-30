@@ -152,6 +152,9 @@ ASTExpr *ast_index_expr_create(Span span, ASTExpr *target, ASTExpr *index);
 const TypeField *ast_field_of(TypeRegistry *registry, const ASTExpr *expr);
 
 Binding *ast_root_local(const ASTExpr *expr);
+
+Binding *ast_binding_of(const ASTExpr *expr);
+void ast_bind(ASTExpr *expr, Binding *binding);
 void ast_expr_free(ASTExpr *node);
 
 #endif

@@ -504,7 +504,7 @@ static bool codegen_expr_into(CodegenState *state, ASTExpr *value, unsigned int 
         return true;
     }
     case EXPR_VARIABLE:
-        codegen_copy_slots(state, dest, codegen_slot_of(state, value->binding), 1);
+        codegen_copy_slots(state, dest, codegen_slot_of(state, ast_binding_of(value)), 1);
         return true;
 
     case EXPR_BIN_OP:
@@ -694,9 +694,9 @@ static bool stmt_may_assign(const ASTStmt *stmt, const Binding *binding) {
 
     switch (stmt->kind) {
     case STMT_ASSIGN:
-        return stmt->assign.target->binding == binding;
+        return ast_binding_of(stmt->assign.target) == binding;
     case STMT_COMPOUND_ASSIGN:
-        return stmt->compound_assign.target->binding == binding;
+        return ast_binding_of(stmt->compound_assign.target) == binding;
     case STMT_VAR_DECL:
         return stmt->var_decl.binding == binding;
     case STMT_BLOCK:
@@ -733,7 +733,7 @@ static bool for_step_is_one(const ASTStmt *post, const Binding *counter) {
         const ASTCompoundAssignStmt *step = &post->compound_assign;
 
         if (step->op != BIN_OP_ADD || step->target->kind != EXPR_VARIABLE ||
-            step->target->binding != counter) {
+            ast_binding_of(step->target) != counter) {
             return false;
         }
 
@@ -747,7 +747,7 @@ static bool for_step_is_one(const ASTStmt *post, const Binding *counter) {
     const ASTExpr *target = post->assign.target;
     const ASTExpr *value = post->assign.value;
 
-    if (target->kind != EXPR_VARIABLE || target->binding != counter) {
+    if (target->kind != EXPR_VARIABLE || ast_binding_of(target) != counter) {
         return false;
     }
 
@@ -758,11 +758,11 @@ static bool for_step_is_one(const ASTStmt *post, const Binding *counter) {
     const ASTExpr *lhs = value->bin_op.left;
     const ASTExpr *rhs = value->bin_op.right;
 
-    if (lhs->kind == EXPR_VARIABLE && lhs->binding == counter) {
+    if (lhs->kind == EXPR_VARIABLE && ast_binding_of(lhs) == counter) {
         return is_one(rhs);
     }
 
-    if (rhs->kind == EXPR_VARIABLE && rhs->binding == counter) {
+    if (rhs->kind == EXPR_VARIABLE && ast_binding_of(rhs) == counter) {
         return is_one(lhs);
     }
 
@@ -790,20 +790,21 @@ static bool for_is_countable(const ASTForStmt *ast, const Binding **counter, con
         return false;
     }
 
-    if (!for_step_is_one(ast->post, left->binding)) {
+    if (!for_step_is_one(ast->post, ast_binding_of(left))) {
         return false;
     }
 
-    if (left->binding->pinned || right->binding->pinned) {
+    if (ast_binding_of(left)->pinned || ast_binding_of(right)->pinned) {
         return false;
     }
 
-    if (stmt_may_assign(ast->body, left->binding) || stmt_may_assign(ast->body, right->binding)) {
+    if (stmt_may_assign(ast->body, ast_binding_of(left)) ||
+        stmt_may_assign(ast->body, ast_binding_of(right))) {
         return false;
     }
 
-    *counter = left->binding;
-    *bound = right->binding;
+    *counter = ast_binding_of(left);
+    *bound = ast_binding_of(right);
 
     return true;
 }
@@ -1103,10 +1104,11 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
 }
 
 static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
-    if (ast->moves && ast->kind == EXPR_VARIABLE && ast->binding) {
+    if (ast->moves && ast->kind == EXPR_VARIABLE && ast_binding_of(ast)) {
         unsigned int reg = codegen_variable_expr(state, ast);
 
-        codegen_walk_owning_slots(state, ast->type, codegen_slot_of(state, ast->binding), OWNING_SLOT_DISOWN);
+        codegen_walk_owning_slots(state, ast->type, codegen_slot_of(state, ast_binding_of(ast)),
+                                  OWNING_SLOT_DISOWN);
 
         return reg;
     }
@@ -1231,7 +1233,7 @@ static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node) {
 }
 
 static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node) {
-    return codegen_slot_of(state, node->binding);
+    return codegen_slot_of(state, ast_binding_of(node));
 }
 
 static void codegen_emit_call(CodegenState *state, unsigned int dest, Function *callee, Span span) {
