@@ -95,7 +95,6 @@ typedef struct MethodDecl {
     BodyKind body_kind;
     void *body;
 
-    const Type *receiver;
     const Type *result;
 
     const Type *const *params;

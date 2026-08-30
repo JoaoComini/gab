@@ -16,6 +16,8 @@ GAB_LIST(ASTImportList, ast_import_list, ASTImport)
 typedef struct ASTUnit {
     ASTStmtList statements;
 
+    ASTStmtList instances;
+
     StringRef module_name;
     Span module_span;
 

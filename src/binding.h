@@ -18,6 +18,8 @@ typedef enum {
     BINDING_FUNC,
 } BindingKind;
 
+typedef struct ASTStmt ASTStmt;
+
 typedef struct Function {
     const Type *return_type;
 
@@ -32,6 +34,11 @@ typedef struct Function {
     String *module;
 
     void *body;
+
+    const Type *const *type_args;
+    size_t type_arg_count;
+
+    struct ASTStmt *instance;
 } Function;
 
 static inline bool function_runs_native(const Function *function) { return function->body_kind != BODY_GAB; }

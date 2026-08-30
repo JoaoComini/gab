@@ -80,6 +80,8 @@ void scope_withdraw_type(Scope *scope, String *name);
 
 bool scope_bind_type(Scope *scope, String *name, const Type *type);
 
+bool scope_bind_argument(Scope *scope, String *name, const Type *type);
+
 bool scope_bind_decl(Scope *scope, String *name, const TypeDef *def);
 
 void scope_init_staging(Scope *scope, Arena *arena, StringPool *strings, Scope *target);

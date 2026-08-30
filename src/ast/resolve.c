@@ -1,5 +1,7 @@
 #include "ast/resolve.h"
 
+#include "ast/clone.h"
+
 #include "ast/flow_pass.h"
 #include "binding.h"
 #include "object.h"
@@ -51,6 +53,10 @@ typedef struct {
     StructDeclList struct_decls;
 
     StructDeclList resolving;
+
+    ASTUnit *unit;
+
+    unsigned int instantiating;
 
     Diagnostics *diagnostics;
 } ResolverState;
@@ -428,6 +434,55 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
 static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expected);
 static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr);
 
+#define GAB_MAX_INSTANTIATION_DEPTH 32
+
+static void resolve_func_body(ResolverState *state, ASTStmt *stmt);
+static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span);
+
+static void instantiate_body(ResolverState *state, Function *method, Span span) {
+    if (method->body_kind != BODY_GAB || method->instance || !method->body) {
+        return;
+    }
+
+    if (state->instantiating >= GAB_MAX_INSTANTIATION_DEPTH) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' instantiates itself without end",
+                   method->name->data);
+        return;
+    }
+
+    const ASTStmt *declaration = method->body;
+
+    ASTStmt *clone = ast_clone_stmt(declaration);
+
+    ast_stmt_list_add(&state->unit->instances, clone);
+    method->instance = clone;
+    clone->func_decl.function = method;
+
+    Scope *enclosing = state->current_scope;
+    Scope *params = scope_create(resolver_owner_arena(state), enclosing->strings, enclosing);
+
+    const TypeExpr *owner = clone->func_decl.owner;
+
+    for (size_t i = 0; i < method->type_arg_count && i < owner->apply.args.size; i++) {
+        const TypeExpr *param = owner->apply.args.data[i];
+
+        if (param->kind == TYPE_EXPR_NAME) {
+            scope_bind_argument(params, resolver_intern(state, param->name), method->type_args[i]);
+        }
+    }
+
+    state->current_scope = params;
+    state->instantiating++;
+
+    clone->func_decl.resolved_return_type =
+        resolve_type_expr(state, clone->func_decl.return_type, clone->span);
+
+    resolve_func_body(state, clone);
+
+    state->instantiating--;
+    state->current_scope = enclosing;
+}
+
 static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     ASTExpr *receiver = expr->call.target->field.target;
     StringRef name = expr->call.target->field.name;
@@ -477,6 +532,8 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         expr->type = resolver_error_type(state);
         return;
     }
+
+    instantiate_body(state, method, expr->span);
 
     const Type *declared_receiver = method->param_count > 0 ? method->params[0] : base;
 
@@ -1574,6 +1631,10 @@ static const Type *resolve_param_type(ResolverState *state, ASTField *param) {
     return type;
 }
 
+static bool func_decl_is_generic(const ASTStmt *stmt) {
+    return stmt->func_decl.owner && stmt->func_decl.owner->kind == TYPE_EXPR_APPLY;
+}
+
 static Scope *owner_param_scope(ResolverState *state, const TypeExpr *owner) {
     if (!owner || owner->kind != TYPE_EXPR_APPLY) {
         return NULL;
@@ -1651,7 +1712,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
     const MethodDecl method = {
         .name = name,
         .body_kind = BODY_GAB,
-        .receiver = param_count > 0 ? func->params[0] : owner,
+        .body = stmt,
         .result = return_type,
         .params = func->params,
         .param_count = param_count,
@@ -1762,10 +1823,6 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
             func->params[i] = resolve_param_type(state, param);
         }
     }
-}
-
-static bool func_decl_is_generic(const ASTStmt *stmt) {
-    return stmt->func_decl.owner && stmt->func_decl.owner->kind == TYPE_EXPR_APPLY;
 }
 
 static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
@@ -1902,8 +1959,6 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         }
 
         if (stmt->func_decl.body && func_decl_is_generic(stmt)) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
-                       "a function declared on a type that takes type parameters has no body yet");
             break;
         }
 
@@ -2097,6 +2152,7 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
             },
         .struct_decls = struct_decl_list_create(),
         .resolving = struct_decl_list_create(),
+        .unit = unit,
         .diagnostics = diagnostics,
     };
 

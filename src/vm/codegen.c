@@ -116,6 +116,8 @@ static void codegen_jump_stmt(CodegenState *state, ASTStmt *ast);
 static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast);
 static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast);
 static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt);
+static void codegen_emit_body(CodegenState *state, const ASTFieldList *params, ASTStmt *body,
+                              size_t func_index, Span span);
 
 static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast);
 static Constant value_from_literal(Literal lit);
@@ -247,8 +249,16 @@ Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, TypeRegi
         }
     }
 
+    for (size_t i = 0; i < ast->instances.size; i++) {
+        codegen_reserve_proto(&state, &ast->instances.data[i]->func_decl);
+    }
+
     for (size_t i = 0; i < ast->statements.size; i++) {
         codegen_stmt(&state, ast->statements.data[i]);
+    }
+
+    for (size_t i = 0; i < ast->instances.size; i++) {
+        codegen_func_decl_stmt(&state, ast->instances.data[i]);
     }
 
     OpCode last = state.chunk->instructions.size > 0
@@ -1022,6 +1032,15 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         return;
     }
 
+    if (ast->owner && ast->owner->kind == TYPE_EXPR_APPLY && ast->function->instance != stmt) {
+        return;
+    }
+
+    codegen_emit_body(state, &ast->params, ast->body, func_index, stmt->span);
+}
+
+static void codegen_emit_body(CodegenState *state, const ASTFieldList *params, ASTStmt *body,
+                              size_t func_index, Span span) {
     Chunk *func_chunk = chunk_create();
 
     unsigned int func_next_reg = 1;
@@ -1042,16 +1061,15 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         .failed = false,
     };
 
-    for (size_t i = 0; i < ast->params.size; i++) {
-        Binding *param = ast->params.data[i]->binding;
+    for (size_t i = 0; i < params->size; i++) {
+        Binding *param = params->data[i]->binding;
 
         codegen_set_slot(&func_state, param, func_next_reg);
         func_next_reg += type_slot_count(state->registry, param->var.type);
     }
 
     if (func_next_reg > VM_MAX_FRAME_SLOTS) {
-        diag_error(state->diagnostics, GAB_ERR_CODEGEN, stmt->span,
-                   "function signature is too large for a frame");
+        diag_error(state->diagnostics, GAB_ERR_CODEGEN, span, "function signature is too large for a frame");
 
         state->failed = true;
 
@@ -1069,8 +1087,8 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
 
     func_state.depth = 1;
 
-    for (size_t i = 0; i < ast->params.size; i++) {
-        Binding *param = ast->params.data[i]->binding;
+    for (size_t i = 0; i < params->size; i++) {
+        Binding *param = params->data[i]->binding;
 
         if (type_registry_owns(state->registry, param->var.type)) {
             codegen_own_slot(&func_state, codegen_slot_of(&func_state, param), param->var.type);
@@ -1079,7 +1097,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
 
     func_state.depth = 0;
 
-    codegen_stmt(&func_state, ast->body);
+    codegen_stmt(&func_state, body);
 
     state->failed = state->failed || func_state.failed;
 
@@ -1093,7 +1111,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
 
     *state->unit->prototypes.data[func_index] = (FuncPrototype){
         .chunk = func_chunk,
-        .arity = ast->params.size,
+        .arity = params->size,
         .max_registers = func_state.max_reg,
         .refs = func_state.frame_refs,
     };

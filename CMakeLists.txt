@@ -48,6 +48,7 @@ add_library(gab
     src/ast/flow.c
     src/ast/cfg.c
     src/ast/flow_pass.c
+    src/ast/clone.c
     src/ast/expr.c
     src/ast/type_expr.c
     src/ast/stmt.c

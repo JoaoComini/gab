@@ -216,10 +216,13 @@ static void test_a_declared_method_is_substituted_per_instantiation() {
 
     TypeDef def = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
 
+    const Type *receiver[] = {type_registry_apply(registry, &def, &param, 1)};
+
     MethodDecl method = {
         .name = at,
-        .receiver = type_registry_apply(registry, &def, &param, 1),
         .result = param,
+        .params = receiver,
+        .param_count = 1,
     };
 
     type_registry_declare_method(registry, type_registry_apply(registry, &def, &param, 1), &method);
@@ -261,10 +264,13 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
 
     assert(type_registry_find_method(registry, of_int, at) == NULL);
 
+    const Type *receiver[] = {type_registry_apply(registry, &def, &param, 1)};
+
     MethodDecl method = {
         .name = at,
-        .receiver = type_registry_apply(registry, &def, &param, 1),
         .result = param,
+        .params = receiver,
+        .param_count = 1,
     };
 
     type_registry_declare_method(registry, type_registry_apply(registry, &def, &param, 1), &method);
@@ -293,10 +299,13 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
 
     TypeDef def = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
 
+    const Type *receiver[] = {type_registry_apply(registry, &def, &param, 1)};
+
     MethodDecl method = {
         .name = at,
-        .receiver = type_registry_apply(registry, &def, &param, 1),
         .result = param,
+        .params = receiver,
+        .param_count = 1,
     };
 
     type_registry_declare_method(registry, type_registry_apply(registry, &def, &param, 1), &method);
@@ -365,10 +374,13 @@ static void test_a_substituted_signature_is_read_once_per_type() {
 
     TypeDef def = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
 
+    const Type *receiver[] = {type_registry_apply(registry, &def, &param, 1)};
+
     MethodDecl method = {
         .name = at,
-        .receiver = type_registry_apply(registry, &def, &param, 1),
         .result = param,
+        .params = receiver,
+        .param_count = 1,
     };
 
     type_registry_declare_method(registry, type_registry_apply(registry, &def, &param, 1), &method);
