@@ -103,97 +103,98 @@ struct Player {
     health: int,
     mana: int,
 
-    world: ref World,
+    world: &World,
 }
 
-func heal(p: ref Player, amount: int) {
+func heal(p: &Player, amount: int) {
     p.health = p.health + amount;
 }
 
-func Player::is_alive(p: ref Player): bool {
+func Player::is_alive(p: &Player): bool {
     return p.health > 0;
 }
 ```
 
 Field access reaches through a pointer the way `->` does in C, so `p.health`
-works whether `p` is a `Player`, a `box Player`, or a `ref Player`.
+works whether `p` is a `Player`, a `*Player`, or a `&Player`.
 
-A parameter spells ownership the way a local and a field do: bare `box T` owns what
-it is given and frees it when the call ends, `ref T` borrows and frees nothing,
+A parameter spells ownership the way a local and a field do: bare `*T` owns what
+it is given and frees it when the call ends, `&T` borrows and frees nothing,
 and `T` is by value, which copies. Ownership is therefore part of the signature,
-and a call site can tell from the declaration alone whether it must move:
+and the declaration alone decides what a call site does with its argument:
 
 ```
-func consume(b: box Box): int { ... }   // owns; freed when the call ends
-func peek(b: ref Box): int { ... }   // borrows; the caller goes on owning
+func consume(b: *Box): int { ... }   // owns; freed when the call ends
+func peek(b: &Box): int { ... }   // borrows; the caller goes on owning
 
-consume(move a);                     // required: 'a' is dead afterwards
-peek(a);                             // no move: nothing changes hands
+consume(a);                          // hands 'a' over: dead afterwards
+peek(a);                             // borrows: nothing changes hands
 ```
 
-Borrowing is implicit and moving is explicit, which is the reverse of Rust's
-rule. Where a `ref T` is expected, whatever is given is borrowed: an owned
-`box T` is lent without a move, and a plain `T` has its address taken. Nothing
-is spelled at the call site because nothing needs to be — a borrow is not
-destructive, so there is no reason to warn the reader. `move` stays explicit for
-exactly that reason: it is the operation that ends a variable's life.
+Nothing is written at the site either way. Where a `&T` is expected, whatever
+is given is borrowed: an owned `*T` is lent, and a plain `T` has its address
+taken. Where an owning slot is expected, whatever is given is handed over. Which
+one happens is read off the two types rather than spelled by a keyword, so there
+is no `move`: the destination says whether it owns, and that is already enough to
+say what the binding does.
 
 ```
-let b: ref Box = a;    // borrows 'a', whatever 'a' is
-peek(a);               // same, at a call
+let b: &Box = a;    // borrows 'a', whatever 'a' is
+let c: *Box = a;    // takes 'a' over; 'a' is dead from here
+peek(a);               // borrows, at a call
 ```
 
 Ownership moved into a parameter may be handed back out as an owned return — the
 caller gave it up, so returning it transfers rather than duplicating — while a
-`ref T` may not become a `box T` return, which would hand out ownership nobody
+`&T` may not become a `*T` return, which would hand out ownership nobody
 granted.
 
 A function a type owns is declared `func Type::name(...)`, and one whose first
 parameter is that type may also be called on a value: `p.is_alive()` is
 `Player::is_alive(p)`. The sugar borrows and derefs to reach parameter zero, but
-never moves — a function taking `box T` first consumes it, so it is called as
-`Type::name(move v)`, where the transfer is written.
+never hands ownership over — a function taking `*T` first consumes it, so it
+is called as `Type::name(v)`, where the argument is an argument like any other.
 
 Only something with a home in memory can be borrowed. A call result is a
 temporary with no address to name, so it must be bound to a variable first. A
 string literal is the exception: its characters live in the unit's arena, which
-outlives every value that reads them, so a literal *is* a `ref str`.
+outlives every value that reads them, so a literal *is* a `&str`.
 
 `str` is the characters themselves, and nothing holds one: how far a run of them
 goes is not in its type, so no slot, field or parameter has a width to reserve.
-What names them is a `ref str`, which carries the address and the count side by
+What names them is a `&str`, which carries the address and the count side by
 side — two words. It is what most code
 passes around; `String` is what you reach for when the characters have to
 outlive the expression that made them.
 
 This is the one place `ref` is more than an address. A reference carries
 whatever naming its pointee requires, which for characters is how many there
-are, and for everything else is nothing at all — so a `ref Player` stays one
-word and a `ref str` is two. What decides is the pointee, never the reference.
+are, and for everything else is nothing at all — so a `&Player` stays one
+word and a `&str` is two. What decides is the pointee, never the reference.
 
-A `ref String` is therefore a different thing again: `String` is sized, so a
+A `&String` is therefore a different thing again: `String` is sized, so a
 reference to one is the plain address of a slot holding a header. Nothing
-converts it to a `ref str` implicitly — deref it and the `String` lends from
+converts it to a `&str` implicitly — deref it and the `String` lends from
 there. A literal borrows the arena; `to_owned()` allocates a `String` that the
 slot it lands in frees:
 
 ```
-func greet(name: ref str): String {
+func greet(name: &str): String {
     let line: String = "hello, ".to_owned();
     line.append(name);            // grows in place; the caller owns the result
     return line;
 }
 
-let banner: ref str = "gab";      // borrows the arena, frees nothing
+let banner: &str = "gab";      // borrows the arena, frees nothing
 ```
 
 `to_owned()` copies the characters a borrow names into a string that owns them,
 which is how anything arena-backed becomes something a `String` slot may hold.
 It is named for what it produces rather than `clone`, since it does not hand
-back its own type: a `ref str` yields a `String`.
+back its own type: a `&str` yields a `String`.
 
 ```
-let borrowed: ref str = "ab";            // borrows the arena
+let borrowed: &str = "ab";            // borrows the arena
 let copied: String = "ab".to_owned();    // copies the arena's characters
 ```
 
@@ -201,7 +202,7 @@ A `String` owns a block of characters and counts how many of them are live, the
 same two fields a `Vec<T>` holds and freed by the same walk. The block carries a
 capacity beside the address, so a string has room past its length to grow into:
 `push` adds one character and `append` adds another string's, doubling the block
-when the live characters fill it. What it lends out is unchanged — a `ref str`
+when the live characters fill it. What it lends out is unchanged — a `&str`
 is where the characters are and how many, never the capacity they sit in.
 
 ```
@@ -210,38 +211,37 @@ mut.push(99);                            // 'abc'
 mut.append("de");                        // 'abcde'
 ```
 
-`new String` allocates a heap slot holding a header, which zeroed is the empty
-string — the same thing `new Player` does for a struct's layout. Only an owned
-value may be stored where a string owns, so a `box String` takes an owned copy
+`box String::from("")` allocates a heap slot holding a header. Only an owned
+value may be stored where a string owns, so a `*String` takes an owned copy
 and refuses a literal: the slot frees what it holds, and a borrow names
 characters it did not allocate.
 
-A host struct holds a `ref str`: the host allocated those characters and goes
+A host struct holds a `&str`: the host allocated those characters and goes
 on owning them, so the script reads them and frees nothing. That is what keeps a
 string field two words the host can lay out with `offsetof`, and it carries the
 same caveat every borrow does — the host must outlive the script's use of it.
 
-`ref` and `box` each qualify the one level they spell, so they nest in either
-order and to any depth. A `ref box T` is the interesting one: a borrow of the
+`&` and `*` each qualify the one level they spell, so they nest in either
+order and to any depth. A `&*T` is the interesting one: a borrow of the
 *slot* holding an owning pointer, rather than of the object. That is what an
 out-parameter needs, and assigning through one repoints the caller's slot —
 freeing what it held, since nothing names that object once the store lands:
 
 ```
-func replace(s: ref box Box): int { *s = new Box; return 0; }
+func replace(s: &*Box): int { *s = box Box { n: 0 }; return 0; }
 
-let o: box Box = new Box;
+let o: *Box = box Box { n: 0 };
 replace(o);            // 'o' now owns the new object; the old one is freed
 ```
 
-A `box T` satisfies both `ref T` and `ref box T`, and the declaration decides
+A `*T` satisfies both `&T` and `&*T`, and the declaration decides
 which: the first borrows the object, the second the slot. Lending walks the
 owning levels until one matches what the destination asked for and stops there,
 so the same argument reaches a different depth for each declaration.
 
 Field access and method calls reach through every pointer level until they find
 the struct, so the levels never have to be spelled: `s.n` and `s.bump()` work
-whether `s` is a `Box`, a `box Box`, or a `ref box Box`. Only `*` is explicit,
+whether `s` is a `Box`, a `*Box`, or a `&*Box`. Only `*` is explicit,
 for when the pointer itself is what you mean.
 
 An `[T; N]` is a run of N elements laid out inline, exactly as a C `T[N]` is.
@@ -257,7 +257,7 @@ let n: int = xs.len();
 
 No `new`: the elements are the array, so a slot holding one holds them. An
 array owns exactly what its elements do -- a run of ints owns nothing and
-copies freely, while a run of `box T` owns each of them and moves rather than
+copies freely, while a run of `*T` owns each of them and moves rather than
 copies.
 
 A `Vec<T>` is what grows. Its length is in the value rather than in its type, so
@@ -289,10 +289,10 @@ let q = Point { y: 2, x: 1 };   // the same value; order is the writer's
 ```
 
 Every field is named because a partial literal would have to invent a value for
-what it omits, and `ref T` has none — a zeroed borrow names nothing, and nothing
+what it omits, and `&T` has none — a zeroed borrow names nothing, and nothing
 tracks that. So a struct local is written as a literal rather than declared
 empty and filled in: `let p: Point;` is refused, and the fields a literal cannot
-spell are reached through what does spell them — `new T` for an owning field, a
+spell are reached through what does spell them — `box v` for an owning field, a
 borrow of a live value for a `ref`, `String::from` and `Vec<T>::new` for the
 library's types.
 
@@ -302,57 +302,50 @@ A generic struct names its arguments the way its type does, as
 An `if` or `for` header reads `Name {` as the block it opens rather than as a
 literal, so a literal in one is parenthesized: `if (Point { x: 1 }).x == 1 { }`.
 
-`new` allocates anything with a layout to fill — a struct, or an owning pointer:
+`box` allocates the value it is given, so what lands on the heap is spelled
+where it is allocated rather than filled in afterwards:
 
 ```
-let o: box box Box = new box Box;   // a heap slot that owns a pointer
-*o = new Box;
+let o: **Box = box (box Box { n: 0 });   // a heap slot that owns a pointer
 ```
 
-Not a borrow: a heap slot holding one would outlive what it borrows with nothing
-tracking that. Freeing a slot that owns a pointer frees what the pointer names,
+A borrow cannot be boxed: a heap slot holding one would outlive what it borrows
+with nothing tracking that. Freeing a slot that owns a pointer frees what the pointer names,
 so a chain frees all the way down.
 
-Memory is uniquely owned. `new T` yields a `box T` that exactly one slot owns and
+Memory is uniquely owned. `box v` yields a `*T` that exactly one slot owns and
 that is freed where that slot goes out of scope; freeing an object frees what
-its fields own. `ref T` is how something is named without being owned, as a
+its fields own. `&T` is how something is named without being owned, as a
 child names its parent.
 
-Copying is the default and is implicit, and a type is copyable exactly when
-nothing it holds transitively owns. That is derived from the type rather than
-declared on it: a struct of `int`s copies, and so does one holding a `ref`,
-while one holding a `box T` does not — the moment a field owns, the struct does.
-
-A non-copyable value needs an explicit `move`, which transfers ownership:
-
-```
-let b = move a;    // 'a' is dead from here; reading it is an error
-```
-
-Writing `let b = a;` for a non-copyable `a` is refused, since it would leave two
-slots believing they own one object. Assigning something new to a moved-from
-slot revives it — deadness is about what the slot holds, not a mark the name
-carries forever.
-
-A type may say how it is duplicated by declaring a `clone` function, which takes
-one of its own type and returns another. `String` ships
-with one; `ref str` does not, since a reference already copies by assignment and what
-it needs is `to_owned()`, which changes the type rather than duplicating it. A
-struct declares its own:
+Binding a value either copies it or hands it over, and the type decides which. A
+type copies exactly when nothing it holds transitively owns, which is derived
+from the type rather than declared on it: a struct of `int`s copies, and so does
+one holding a `ref`, while one holding a `*T` does not — the moment a field
+owns, the struct does.
 
 ```
-func Holder::clone(h: ref Holder): Holder { ... }
+let b = a;    // copies if 'a' copies; otherwise 'a' is dead from here
+```
 
+Nothing marks the transfer, because the alternative was never available: two
+slots cannot both own one object, so a binding that would duplicate an owning
+value hands it over instead. Reading the old slot afterwards is the error, and
+the diagnostic names the slot that no longer holds a value rather than the
+binding that emptied it. Assigning something new to it revives it — deadness is
+about what the slot holds, not a mark the name carries forever.
+
+Duplicating an owning value is a call, since it allocates. That is an ordinary
+method rather than a language rule: `String` declares `clone`, which returns a
+second `String` and leaves the receiver live, and a struct that wants the same
+declares its own.
+
+```
 let g = h.clone();   // 'h' is still live; 'g' owns a separate object
 ```
 
-`clone` is a reserved name: a `clone` returning some other type, or
-taking parameters, is refused where it is declared rather than surprising a
-caller. Declaring one does not make the type implicitly copyable — `let g = h;`
-stays refused — so duplicating an owning value is always visible at the point
-it happens, and the allocation is spelled as the call it is. The copy
-diagnostic names `clone()` as a remedy only for a type that declares one, and
-tells the others that they do not.
+`&str` has no `clone`, since a reference already copies by assignment; what it
+needs is `to_owned()`, which changes the type rather than duplicating it.
 
 Whether a struct lives on the heap or in a frame does not change what it owns:
 an owning field is freed when the struct holding it goes out of scope, wherever
@@ -367,20 +360,21 @@ an `if` is not readable after the join. This covers the fields a local's own
 declaration nulls; a field reached through a pointer is not tracked, since what
 it belongs to was not declared here.
 
-A struct moves whole or not at all. `move h.b` is refused — a half-moved struct
-would leave the rest of its fields in a state the language says nothing about —
-so `move h` is how ownership of what it holds changes hands.
+A struct moves whole or not at all. Binding an owning field out of one — `g.b =
+h.b` — is refused, since a half-moved struct would leave the rest of its fields
+in a state the language says nothing about; binding the struct itself is how
+ownership of what it holds changes hands.
 
 Whether a slot is dead follows control flow the way a borrow's lifetime does. A
 slot moved on one arm of an `if` is dead after the join, and moving in a loop
 body is refused because the back-edge would move the same slot twice.
 
-The rule behind all of this: **`box T` marks a slot that can free what it holds.**
+The rule behind all of this: **`*T` marks a slot that can free what it holds.**
 That is a `let`, a struct field, a parameter, and a return type — each is where
-a free may be emitted. A borrowed parameter is not one, so it takes `ref T`; a borrow is an
+a free may be emitted. A borrowed parameter is not one, so it takes `&T`; a borrow is an
 address rather than an allocation, so it yields one too.
 
-There is no reference count and no runtime liveness check: a `ref T` whose
+There is no reference count and no runtime liveness check: a `&T` whose
 object has been freed dangles, exactly as a C pointer would.
 
 What the compiler does catch is a borrow moved somewhere that outlives what it
@@ -424,14 +418,14 @@ more or less, and a second spelling would say nothing the first does not.
 
 | | |
 | --- | --- |
-| Types | `int` (32-bit), `float` (32-bit), `bool`, `String` and characters named by `ref str`, `[T; N]`, `Vec<T>`, structs, owning `box T`, borrows `ref T` |
+| Types | `int` (32-bit), `float` (32-bit), `bool`, `String` and characters named by `&str`, `[T; N]`, `Vec<T>`, structs, owning `*T`, borrows `&T` |
 | Declarations | `let` with inferred or annotated type, `func`, `struct`, `module`. A struct local is written as a literal |
 | Functions | Parameters and returns of any type, structs by value, functions a type owns, recursion, forward references |
 | Control flow | `if` / `else`, `for` in three forms, `break`, `continue`, `return`, nested blocks with shadowing |
 | Operators | `+` `-` `*` `/` `%`, unary `-` `!`, `==` `!=` `<` `>` `<=` `>=`, `&&` `||`, unary `*`, field access, indexing `xs[i]` |
 | Conversions | `int(x)` and `float(x)`; nothing converts implicitly |
 | Assignment | `=`, and compound `+=` `-=` `*=` `/=` `%=` on any assignable target |
-| Memory | Unique ownership, `new`, `ref` borrows, implicit copy, explicit `move`, user-declared `clone`, scope-based free. A top-level variable may not own: nothing closes over it to free what it holds |
+| Memory | Unique ownership, `box`, `&` borrows, binding that copies or transfers by type, scope-based free. A top-level variable may not own: nothing closes over it to free what it holds |
 | Modules | `module` names the namespace a unit declares into, `import` the ones it may name |
 | Externs | `extern func` declares a host body, bound by name at load |
 | Comments | `// line` and `/* block */`, which do not nest |

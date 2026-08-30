@@ -33,7 +33,7 @@ typedef enum {
     EXPR_NEG,
     EXPR_NOT,
     EXPR_CAST,
-    EXPR_NEW,
+    EXPR_BOX,
 
     EXPR_INDEX,
 
@@ -137,10 +137,10 @@ typedef struct ASTExpr {
         } cast;
 
         struct {
-            TypeExpr *type_expr;
+            ASTExpr *value;
 
             const Type *type;
-        } new_expr;
+        } box_expr;
     };
 
     Span span;
@@ -164,7 +164,7 @@ ASTExpr *ast_lend_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_neg_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_not_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_cast_expr_create(Span span, ASTExpr *operand);
-ASTExpr *ast_new_expr_create(Span span, TypeExpr *type_expr);
+ASTExpr *ast_box_expr_create(Span span, ASTExpr *value);
 ASTExpr *ast_array_lit_expr_create(Span span, ASTExprList elements);
 ASTExpr *ast_struct_lit_expr_create(Span span, TypeExpr *type_expr, ASTFieldInitList fields);
 void ast_field_init_list_destroy(ASTFieldInitList *fields);

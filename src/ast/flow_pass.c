@@ -54,7 +54,7 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
         }
 
         return flow_get(pass->flow, ast_binding_of(expr)).inner_depth;
-    case EXPR_NEW:
+    case EXPR_BOX:
 
         return 0;
     case EXPR_CALL: {

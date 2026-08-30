@@ -305,9 +305,8 @@ static void test_a_function_compiles_into_its_own_chunk() {
 }
 
 static void test_a_method_counts_its_receiver() {
-    TestProgram program =
-        test_compile("struct Point { x: int }\n"
-                     "func Point::scaled(v: ref Point, by: int): int { return v.x * by; }\n");
+    TestProgram program = test_compile("struct Point { x: int }\n"
+                                       "func Point::scaled(v: &Point, by: int): int { return v.x * by; }\n");
 
     assert(test_func_count(&program) == 1);
     assert(test_func_proto(&program, 0)->arity == 2);
@@ -348,7 +347,7 @@ static void test_a_scalar_copy_stays_a_single_move() {
 static void test_a_pointer_copy_batches_when_it_is_wide() {
     TestProgram program = test_compile("func f(): int {\n"
                                        "    let x: int = 1;\n"
-                                       "    let p: ref int = x;\n"
+                                       "    let p: &int = x;\n"
                                        "    return *p;\n"
                                        "}\n");
 
@@ -390,7 +389,7 @@ static void test_a_struct_read_through_a_pointer_is_one_instruction() {
     TestProgram program = test_compile("struct Point { x: int, y: int, z: int }\n"
                                        "func f() {\n"
                                        "    let a = Point { x: 0, y: 0, z: 0 };\n"
-                                       "    let p: ref Point = a;\n"
+                                       "    let p: &Point = a;\n"
                                        "    let b: Point = *p;\n"
                                        "}\n");
 
@@ -409,7 +408,7 @@ static void test_a_struct_write_through_a_pointer_is_one_instruction() {
                                        "func f() {\n"
                                        "    let a = Point { x: 0, y: 0, z: 0 };\n"
                                        "    let b = Point { x: 0, y: 0, z: 0 };\n"
-                                       "    let p: ref Point = a;\n"
+                                       "    let p: &Point = a;\n"
                                        "    *p = b;\n"
                                        "}\n");
 
@@ -426,7 +425,7 @@ static void test_a_struct_write_through_a_pointer_is_one_instruction() {
 static void test_a_release_names_what_it_frees() {
     TestProgram program = test_compile("struct Node { n: int }\n"
                                        "func f(): int {\n"
-                                       "    let p: box Node = new Node;\n"
+                                       "    let p: *Node = box Node { n: 0 };\n"
                                        "    return 0;\n"
                                        "}\n");
     Chunk *chunk = test_func_chunk(&program, 0);
@@ -434,7 +433,7 @@ static void test_a_release_names_what_it_frees() {
     long released = test_first_operand(chunk, OP_RELEASE);
 
     assert(released >= 0);
-    assert(released != test_first_operand(chunk, OP_NEW));
+    assert(released != test_first_operand(chunk, OP_BOX));
 
     const Type *type = program.vm->program.shape_types.data[released];
 
@@ -447,12 +446,12 @@ static void test_a_release_names_what_it_frees() {
 static void test_break_releases_what_the_body_owns() {
     TestProgram program = test_compile("struct Node { n: int }\n"
                                        "func f(): int {\n"
-                                       "    for { let p: box Node = new Node; break; }\n"
+                                       "    for { let p: *Node = box Node { n: 0 }; break; }\n"
                                        "    return 0;\n"
                                        "}\n");
     Chunk *chunk = test_func_chunk(&program, 0);
 
-    assert(test_count_opcode(chunk, OP_NEW) == 1);
+    assert(test_count_opcode(chunk, OP_BOX) == 1);
     assert(test_count_opcode(chunk, OP_RELEASE) == 2);
 
     test_program_free(&program);
@@ -546,16 +545,17 @@ static void test_a_chunk_past_the_index_bound_falls_back() {
     test_program_free(&program);
 }
 
-static void test_new_encodes_the_type_index_the_vm_holds() {
-    TestProgram program = test_compile("module M;\n"
-                                       "struct Wide { a: int, b: int, c: int, d: int }\n"
-                                       "func first(): int { let p: box Wide = new Wide; return p.a; }\n");
+static void test_box_encodes_the_type_index_the_vm_holds() {
+    TestProgram program = test_compile(
+        "module M;\n"
+        "struct Wide { a: int, b: int, c: int, d: int }\n"
+        "func first(): int { let p: *Wide = box Wide { a: 0, b: 0, c: 0, d: 0 }; return p.a; }\n");
 
     test_compile_next(&program, "module M;\n"
                                 "struct Narrow { a: int }\n"
                                 "func second(): int {\n"
-                                "    let n: box Narrow = new Narrow;\n"
-                                "    let w: box Wide = new Wide;\n"
+                                "    let n: *Narrow = box Narrow { a: 0 };\n"
+                                "    let w: *Wide = box Wide { a: 0, b: 0, c: 0, d: 0 };\n"
                                 "    return n.a + w.a;\n"
                                 "}\n");
 
@@ -564,7 +564,7 @@ static void test_new_encodes_the_type_index_the_vm_holds() {
 
     assert(narrow >= 0 && wide >= 0 && narrow != wide);
 
-    assert(test_first_operand(test_func_chunk(&program, 1), OP_NEW) == narrow);
+    assert(test_first_operand(test_func_chunk(&program, 1), OP_BOX) == narrow);
 
     test_program_free(&program);
 }
@@ -692,7 +692,7 @@ int main() {
     test_a_struct_read_through_a_pointer_is_one_instruction();
     test_a_struct_write_through_a_pointer_is_one_instruction();
 
-    test_new_encodes_the_type_index_the_vm_holds();
+    test_box_encodes_the_type_index_the_vm_holds();
 
     test_a_signature_too_wide_for_a_frame_is_refused();
 

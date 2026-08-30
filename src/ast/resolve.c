@@ -154,7 +154,7 @@ static const char *type_name(ResolverState *state, const Type *type) {
     }
 
     const char *inner = type_name(state, type_pointee(type));
-    const char *prefix = type_kind(type) == TYPE_REF ? "ref " : "box ";
+    const char *prefix = type_kind(type) == TYPE_REF ? "&" : "*";
     size_t length = strlen(prefix) + strlen(inner) + 1;
     char *out = arena_alloc(state->compile_arena, length);
 
@@ -691,7 +691,7 @@ static bool reject_unsized(ResolverState *state, const Type *type, Span span, co
     }
 
     diag_error(state->diagnostics, GAB_ERR_TYPE, span,
-               "nothing holds a '%s', so it cannot be %s; write 'ref %s'", type_name(state, type), held_as,
+               "nothing holds a '%s', so it cannot be %s; write '&%s'", type_name(state, type), held_as,
                type_name(state, type));
     return true;
 }
@@ -1115,19 +1115,12 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         expr->type = target_type;
         break;
     }
-    case EXPR_NEW: {
-        const Type *type = resolve_type_expr(state, expr->new_expr.type_expr, expr->span);
+    case EXPR_BOX: {
+        resolve_expr(state, expr->box_expr.value, NULL);
+
+        const Type *type = expr->box_expr.value->type;
 
         if (is_error_type(type)) {
-            expr->type = resolver_error_type(state);
-            break;
-        }
-
-        const TypeFields *type_fields_of = type_registry_fields_of(state->current_scope->type_registry, type);
-
-        if (type_fields_of->count == 0 && !type_is_indirect(type)) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                       "cannot allocate %s; 'new' takes a struct or a pointer", type_name(state, type));
             expr->type = resolver_error_type(state);
             break;
         }
@@ -1139,7 +1132,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             break;
         }
 
-        expr->new_expr.type = type;
+        expr->box_expr.type = type;
         expr->type = type_registry_box_to(state->current_scope->type_registry, type);
         break;
     }

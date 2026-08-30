@@ -39,8 +39,8 @@ static void test_an_index_outside_the_vec_fails_the_run() {
 static void test_an_owning_element_is_freed_with_the_vec() {
     assert(test_run_int("struct Cell { value: int }\n"
                         "func f(): int {\n"
-                        "    let xs: Vec<box Cell> = Vec<box Cell>::new(0);\n"
-                        "    for let i: int = 0; i < 10; i = i + 1 { xs.push(new Cell); }\n"
+                        "    let xs: Vec<*Cell> = Vec<*Cell>::new(0);\n"
+                        "    for let i: int = 0; i < 10; i = i + 1 { xs.push(box Cell { value: 0 }); }\n"
                         "    return xs.len();\n"
                         "}\n"
                         "let r: int = f();") == 10);

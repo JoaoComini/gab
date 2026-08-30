@@ -6,7 +6,7 @@
 static void test_reading_an_uninitialized_owning_pointer_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let a: box Box;\n"
+                          "    let a: *Box;\n"
                           "    return a.n;\n"
                           "}\n"));
 }
@@ -14,7 +14,7 @@ static void test_reading_an_uninitialized_owning_pointer_is_refused() {
 static void test_reading_an_uninitialized_borrow_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let b: ref Box;\n"
+                          "    let b: &Box;\n"
                           "    return b.n;\n"
                           "}\n"));
 }
@@ -22,8 +22,8 @@ static void test_reading_an_uninitialized_borrow_is_refused() {
 static void test_a_pointer_assigned_before_use_is_accepted() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
-                        "    let a: box Box;\n"
-                        "    a = new Box;\n"
+                        "    let a: *Box;\n"
+                        "    a = box Box { n: 0 };\n"
                         "    a.n = 5;\n"
                         "    return a.n;\n"
                         "}\n"
@@ -33,8 +33,8 @@ static void test_a_pointer_assigned_before_use_is_accepted() {
 static void test_a_pointer_assigned_on_one_arm_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let a: box Box;\n"
-                          "    if 1 < 2 { a = new Box; }\n"
+                          "    let a: *Box;\n"
+                          "    if 1 < 2 { a = box Box { n: 0 }; }\n"
                           "    return a.n;\n"
                           "}\n"));
 }
@@ -42,8 +42,8 @@ static void test_a_pointer_assigned_on_one_arm_is_refused() {
 static void test_a_pointer_assigned_on_both_arms_is_accepted() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
-                        "    let a: box Box;\n"
-                        "    if 1 < 2 { a = new Box; } else { a = new Box; }\n"
+                        "    let a: *Box;\n"
+                        "    if 1 < 2 { a = box Box { n: 0 }; } else { a = box Box { n: 0 }; }\n"
                         "    a.n = 6;\n"
                         "    return a.n;\n"
                         "}\n"

@@ -97,8 +97,8 @@ static ASTExpr *clone_expr(const ASTExpr *expr) {
     case EXPR_CAST:
         return ast_cast_expr_create(expr->span, clone_expr(expr->cast.operand));
 
-    case EXPR_NEW:
-        return ast_new_expr_create(expr->span, clone_type_expr(expr->new_expr.type_expr));
+    case EXPR_BOX:
+        return ast_box_expr_create(expr->span, clone_expr(expr->box_expr.value));
 
     case EXPR_INDEX:
         return ast_index_expr_create(expr->span, clone_expr(expr->index.target),

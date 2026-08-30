@@ -63,8 +63,6 @@ typedef enum {
     TOKEN_CONTINUE,
     TOKEN_TRUE,
     TOKEN_FALSE,
-    TOKEN_NEW,
-    TOKEN_REF,
     TOKEN_BOX,
 
     TOKEN_IDENT,

@@ -552,7 +552,7 @@ static void vm_run_loop(VM *vm) {
                 vm_conditionali(regs, instruction, vm_greater_equali);
                 VM_NEXT();
             }
-            VM_CASE(OP_NEW) {
+            VM_CASE(OP_BOX) {
                 unsigned int rd = VM_DECODE_I_RD(instruction);
                 size_t type_index = VM_DECODE_I_KX(instruction);
 

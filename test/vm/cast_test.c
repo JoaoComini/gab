@@ -109,7 +109,7 @@ static void test_a_struct_name_is_not_a_cast() {
 
 static void test_a_cast_is_a_temporary() {
     assert(!test_compiles("func f(): int { let a: float = 1.0; int(a) = 2; return 1; }\n"));
-    assert(!test_compiles("func f(): int { let a: float = 1.0; let p: ref int = int(a); return *p; }\n"));
+    assert(!test_compiles("func f(): int { let a: float = 1.0; let p: &int = int(a); return *p; }\n"));
 }
 
 int main() {

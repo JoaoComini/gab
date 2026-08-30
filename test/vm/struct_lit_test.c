@@ -96,16 +96,17 @@ static void test_a_loop_clause_is_not_read_as_a_literal() {
 }
 
 static void test_a_literal_takes_an_owning_field() {
-    assert(test_run_int("struct Box { n: int }\n"
-                        "struct Holder { b: box Box }\n"
-                        "func main(): int { let h = Holder { b: new Box }; h.b.n = 7; return h.b.n; }\n"
-                        "let r: int = main();") == 7);
+    assert(
+        test_run_int("struct Box { n: int }\n"
+                     "struct Holder { b: *Box }\n"
+                     "func main(): int { let h = Holder { b: box Box { n: 0 } }; h.b.n = 7; return h.b.n; }\n"
+                     "let r: int = main();") == 7);
 }
 
 static void test_a_literal_with_an_owning_field_is_returned() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "struct Holder { b: box Box }\n"
-                        "func make(): Holder { return Holder { b: new Box }; }\n"
+                        "struct Holder { b: *Box }\n"
+                        "func make(): Holder { return Holder { b: box Box { n: 0 } }; }\n"
                         "func main(): int { let h = make(); h.b.n = 4; return h.b.n; }\n"
                         "let r: int = main();") == 4);
 }
@@ -154,15 +155,15 @@ static void test_a_struct_local_is_refused_without_a_literal() {
 
 static void test_a_ref_cannot_borrow_a_literal() {
     assert(!test_compiles("struct V { x: int }\n"
-                          "func f(): int { let r: ref V = V { x: 1 }; return r.x; }\n"));
+                          "func f(): int { let r: &V = V { x: 1 }; return r.x; }\n"));
 
     assert(test_compiles("struct V { x: int }\n"
-                         "func f(): int { let v = V { x: 1 }; let r: ref V = v; return r.x; }\n"));
+                         "func f(): int { let v = V { x: 1 }; let r: &V = v; return r.x; }\n"));
 }
 
 static void test_a_pointer_local_still_needs_no_initializer() {
     assert(test_compiles("struct Box { n: int }\n"
-                         "func f(): int { let b: box Box; b = new Box; return b.n; }\n"));
+                         "func f(): int { let b: *Box; b = box Box { n: 0 }; return b.n; }\n"));
 
     assert(test_compiles("func f(): int { let n: int; return 0; }\n"));
 }

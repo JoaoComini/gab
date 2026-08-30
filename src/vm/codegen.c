@@ -132,7 +132,7 @@ static unsigned int codegen_deref_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_neg_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_not_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_cast_expr(CodegenState *state, ASTExpr *node);
-static unsigned int codegen_new_expr(CodegenState *state, ASTExpr *node);
+static unsigned int codegen_box_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_index_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_array_lit_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_struct_lit_expr(CodegenState *state, ASTExpr *node);
@@ -177,6 +177,7 @@ static bool codegen_slot_is_owned(const CodegenState *state, unsigned int slot);
 static void codegen_release_owned(CodegenState *state, unsigned int keep_depth, unsigned int moved);
 
 static void codegen_disown_slot(CodegenState *state, unsigned int slot);
+static void codegen_disown_range(CodegenState *state, unsigned int base, unsigned int slots);
 
 static void codegen_drop_temporary(CodegenState *state, unsigned int slot);
 
@@ -1162,8 +1163,8 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
         return codegen_not_expr(state, ast);
     case EXPR_CAST:
         return codegen_cast_expr(state, ast);
-    case EXPR_NEW:
-        return codegen_new_expr(state, ast);
+    case EXPR_BOX:
+        return codegen_box_expr(state, ast);
     case EXPR_INDEX:
         return codegen_index_expr(state, ast);
     case EXPR_ARRAY_LIT:
@@ -1742,14 +1743,33 @@ static void codegen_emit_release(CodegenState *state, unsigned int slot, const T
                         (Relocation){.chunk = state->chunk, .offset = offset});
 }
 
-static unsigned int codegen_new_expr(CodegenState *state, ASTExpr *node) {
+static unsigned int codegen_box_expr(CodegenState *state, ASTExpr *node) {
+    const Type *type = node->box_expr.type;
+
+    unsigned int slots = type_slot_count(state->registry, type);
+    unsigned int src = codegen_expr(state, node->box_expr.value);
+
     unsigned int rd = codegen_alloc_slots(state, VM_INDIRECT_SLOTS, VM_INDIRECT_SLOTS, node->span);
 
-    size_t offset = chunk_add_instruction(
-        state->chunk, VM_ENCODE_I(OP_NEW, rd, codegen_type_index(state, node->new_expr.type)));
+    size_t offset =
+        chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_BOX, rd, codegen_type_index(state, type)));
 
     relocation_list_add(&state->unit->type_relocations,
                         (Relocation){.chunk = state->chunk, .offset = offset});
+
+    /* A narrow value is stored at its own width; a slot-wide copy would run past what was allocated. */
+    size_t size = type_registry_size_of(state->registry, type);
+    bool ok;
+    OpCode op = field_opcode_for(size, false, true, &ok);
+
+    if (ok) {
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(op, rd, src, 0));
+    } else {
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(OP_STORE_PTR_N, rd, src, slots));
+    }
+
+    /* The heap copy owns what the operand held, so the registers it came from must not free it too. */
+    codegen_disown_range(state, src, slots);
 
     return rd;
 }
@@ -2216,7 +2236,7 @@ static bool expr_yields_owned(TypeRegistry *registry, const ASTExpr *expr) {
     case EXPR_BIN_OP:
         return false;
 
-    case EXPR_NEW:
+    case EXPR_BOX:
     case EXPR_CALL:
     case EXPR_STRUCT_LIT:
         return true;
@@ -2245,7 +2265,7 @@ static void codegen_record_frame_ref(CodegenState *state, unsigned int slot, con
 
 static void codegen_own_slot_at(CodegenState *state, unsigned int slot, const Type *type,
                                 unsigned int depth) {
-    assert(!(type && type_kind(type) == TYPE_REF) && "a 'ref T' slot never owns what it names");
+    assert(!(type && type_kind(type) == TYPE_REF) && "a '&T' slot never owns what it names");
 
     owned_list_add(&state->owned, (OwnedSlot){.slot = slot, .depth = depth, .type = type});
 
@@ -2254,6 +2274,23 @@ static void codegen_own_slot_at(CodegenState *state, unsigned int slot, const Ty
 
 static void codegen_own_slot(CodegenState *state, unsigned int slot, const Type *type) {
     codegen_own_slot_at(state, slot, type, state->depth);
+}
+
+/* A value copied into the heap leaves its registers non-owning, fields included. */
+static void codegen_disown_range(CodegenState *state, unsigned int base, unsigned int slots) {
+    size_t kept = 0;
+
+    for (size_t i = 0; i < state->owned.size; i++) {
+        unsigned int slot = state->owned.data[i].slot;
+
+        if (slot >= base && slot < base + slots) {
+            continue;
+        }
+
+        state->owned.data[kept++] = state->owned.data[i];
+    }
+
+    state->owned.size = kept;
 }
 
 static void codegen_disown_slot(CodegenState *state, unsigned int slot) {

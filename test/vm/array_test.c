@@ -120,9 +120,9 @@ static void test_an_array_too_wide_for_a_frame_is_refused() {
 static void test_an_owning_element_is_freed_with_the_array() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func f(): int {\n"
-                        "    let xs: [box Box; 2];\n"
-                        "    xs[0] = new Box;\n"
-                        "    xs[1] = new Box;\n"
+                        "    let xs: [*Box; 2];\n"
+                        "    xs[0] = box Box { n: 0 };\n"
+                        "    xs[1] = box Box { n: 0 };\n"
                         "    xs[1].n = 5;\n"
                         "    return xs[1].n;\n"
                         "}\n"
@@ -147,7 +147,7 @@ static void test_a_length_takes_no_argument() {
 }
 
 static void test_a_borrowed_array_knows_its_length() {
-    assert(test_run_int("func f(): int { let xs: [int; 4]; let r: ref [int; 4] = xs; return r.len(); }\n"
+    assert(test_run_int("func f(): int { let xs: [int; 4]; let r: &[int; 4] = xs; return r.len(); }\n"
                         "let r: int = f();") == 4);
 }
 
@@ -171,9 +171,9 @@ static void test_an_array_of_a_copyable_element_copies() {
 static void test_an_array_of_an_owning_element_transfers() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func f(): int {\n"
-                          "    let xs: [box Box; 1];\n"
-                          "    let ys: [box Box; 1] = xs;\n"
-                          "    let zs: [box Box; 1] = xs;\n"
+                          "    let xs: [*Box; 1];\n"
+                          "    let ys: [*Box; 1] = xs;\n"
+                          "    let zs: [*Box; 1] = xs;\n"
                           "    return 0;\n"
                           "}\n"));
 }
@@ -183,11 +183,11 @@ static void test_an_array_names_its_element_and_its_length() {
 
     assert(!test_compiles("func f(xs: int[]): int { return 0; }\n"));
 
-    assert(test_compiles("func f(xs: ref [int; 3]): int { return 0; }\n"));
+    assert(test_compiles("func f(xs: &[int; 3]): int { return 0; }\n"));
 }
 
 static void test_an_array_lends_to_a_borrow() {
-    assert(test_run_int("func g(xs: ref [int; 3]): int { return xs[0]; }\n"
+    assert(test_run_int("func g(xs: &[int; 3]): int { return xs[0]; }\n"
                         "func f(): int { let xs: [int; 3] = [4, 5, 6]; return g(xs); }\n"
                         "let r: int = f();") == 4);
 }
@@ -207,8 +207,8 @@ static void test_what_may_be_indexed_and_by_what() {
 static void test_the_brackets_say_what_the_length_counts() {
     assert(test_run_int("struct Cell { n: int }\n"
                         "func f(): int {\n"
-                        "    let xs: [box Cell; 2];\n"
-                        "    xs[0] = new Cell;\n"
+                        "    let xs: [*Cell; 2];\n"
+                        "    xs[0] = box Cell { n: 0 };\n"
                         "    xs[0].n = 5;\n"
                         "    return xs[0].n;\n"
                         "}\n"
@@ -226,13 +226,13 @@ static void test_the_bare_array_names_no_type() {
 static void test_indexing_an_array_given_up_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func f(): int {\n"
-                          "    let xs: [box Box; 1];\n"
-                          "    let ys: [box Box; 1] = xs;\n"
+                          "    let xs: [*Box; 1];\n"
+                          "    let ys: [*Box; 1] = xs;\n"
                           "    return xs[0].n;\n"
                           "}\n"));
 
     assert(!test_compiles("struct Box { n: int }\n"
-                          "struct Key { n: int, b: box Box }\n"
+                          "struct Key { n: int, b: *Box }\n"
                           "func f(): int {\n"
                           "    let xs: [int; 2];\n"
                           "    let k: Key;\n"
@@ -244,8 +244,8 @@ static void test_indexing_an_array_given_up_is_refused() {
 static void test_giving_up_one_element_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func f(): int {\n"
-                          "    let xs: [box Box; 2];\n"
-                          "    let b: box Box = xs[0];\n"
+                          "    let xs: [*Box; 2];\n"
+                          "    let b: *Box = xs[0];\n"
                           "    return 0;\n"
                           "}\n"));
 }
