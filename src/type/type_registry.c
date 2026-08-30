@@ -298,13 +298,7 @@ bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *
 static Symbol *substitute_signature(TypeRegistry *registry, const GenericMethod *method,
                                     const Type *const *args, size_t arg_count);
 
-static const GenericMethod *declared_method(const Type *type, const String *name) {
-    const TypeDef *def = type_decl(type);
-
-    if (!def) {
-        return NULL;
-    }
-
+static const GenericMethod *find_generic(const TypeDef *def, const String *name) {
     for (size_t i = 0; i < def->method_count; i++) {
         if (def->methods[i].name == name) {
             return &def->methods[i];
@@ -312,6 +306,37 @@ static const GenericMethod *declared_method(const Type *type, const String *name
     }
 
     return NULL;
+}
+
+bool type_registry_declare_generic(TypeRegistry *registry, TypeDef *def, const GenericMethod *method) {
+    assert(def && method && method->name && "a generic method is a declaration, a name and a signature");
+
+    if (find_generic(def, method->name)) {
+        return false;
+    }
+
+    GenericMethod *methods = arena_alloc(registry->arena, (def->method_count + 1) * sizeof(GenericMethod));
+
+    for (size_t i = 0; i < def->method_count; i++) {
+        methods[i] = def->methods[i];
+    }
+
+    methods[def->method_count] = *method;
+
+    def->methods = methods;
+    def->method_count++;
+
+    return true;
+}
+
+static const GenericMethod *declared_method(const Type *type, const String *name) {
+    const TypeDef *def = type_decl(type);
+
+    if (!def) {
+        return NULL;
+    }
+
+    return find_generic(def, name);
 }
 
 Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name) {

@@ -8,6 +8,7 @@
 #include "vm/link.h"
 #include "vm/vm.h"
 
+#include <assert.h>
 #include <stddef.h>
 
 const TypeDef *builtin_declare(VM *vm, const BuiltinTypeSpec *spec) {
@@ -84,14 +85,6 @@ void builtin_declare_method(VM *vm, const TypeDef *declared_on, const char *name
                             size_t param_count) {
     Arena *arena = vm->env.arena;
 
-    TypeDef *def = (TypeDef *)declared_on;
-
-    GenericMethod *methods = arena_alloc(arena, (def->method_count + 1) * sizeof(GenericMethod));
-
-    for (size_t i = 0; i < def->method_count; i++) {
-        methods[i] = def->methods[i];
-    }
-
     const Type **owned = NULL;
 
     if (param_count > 0) {
@@ -104,7 +97,7 @@ void builtin_declare_method(VM *vm, const TypeDef *declared_on, const char *name
         owned = copy;
     }
 
-    methods[def->method_count] = (GenericMethod){
+    const GenericMethod method = {
         .name = string_from_cstr(&vm->env.strings, name),
         .body = (void *)body,
         .receiver = receiver,
@@ -113,8 +106,11 @@ void builtin_declare_method(VM *vm, const TypeDef *declared_on, const char *name
         .param_count = param_count,
     };
 
-    def->methods = methods;
-    def->method_count++;
+    bool declared =
+        type_registry_declare_generic(vm->env.global_scope.type_registry, (TypeDef *)declared_on, &method);
+
+    assert(declared && "a builtin declares each of its methods once");
+    (void)declared;
 }
 
 void builtin_register_static(VM *vm, const Type *declared_on, const char *name, GabExternFn body,
