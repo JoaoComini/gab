@@ -123,7 +123,17 @@ static void test_an_instantiation_that_owns_frees_what_it_holds() {
                         "let r: int = f();") == 9);
 }
 
+static void test_an_instantiation_reached_from_another_is_emitted() {
+    assert(test_run_int("struct Holder<T> { value: T }\n"
+                        "struct Wrap<T> { inner: Holder<T> }\n"
+                        "func Holder<T>::get(h: ref Holder<T>): T { return h.value; }\n"
+                        "func Wrap<T>::unwrap(w: ref Wrap<T>): T { return w.inner.get(); }\n"
+                        "func f(): int { let w: Wrap<int>; w.inner.value = 6; return w.unwrap(); }\n"
+                        "let r: int = f();") == 6);
+}
+
 int main() {
+    test_an_instantiation_reached_from_another_is_emitted();
     test_an_instantiation_that_owns_frees_what_it_holds();
     test_each_instantiation_gets_its_own_body();
     test_a_method_on_a_declaration_serves_an_instantiation();
