@@ -29,9 +29,9 @@ static void test_a_declared_field_nests_constructors() {
 
     const Type *instance = type_registry_apply(registry, &def, &int_type, 1);
 
-    assert(type_field_count(instance) == 1);
+    assert(type_registry_fields_of(registry, instance)->count == 1);
 
-    const Type *data = type_fields(instance)[0].type;
+    const Type *data = type_registry_fields_of(registry, instance)->fields[0].type;
 
     assert(type_kind(data) == TYPE_BLOCK);
 
@@ -66,8 +66,8 @@ static void test_a_declaration_taking_no_parameters_is_its_own_instantiation() {
     const Type *type = type_registry_apply(registry, &def, NULL, 0);
 
     assert(type_kind(type) == TYPE_STRUCT);
-    assert(type_field_count(type) == 1);
-    assert(type_fields(type)[0].type == int_type);
+    assert(type_registry_fields_of(registry, type)->count == 1);
+    assert(type_registry_fields_of(registry, type)->fields[0].type == int_type);
 
     assert(type_registry_apply(registry, &def, NULL, 0) == type);
 
@@ -117,7 +117,7 @@ static void test_an_instantiation_reads_fields_declared_after_it() {
 
     const Type *type = type_registry_apply(registry, &def, NULL, 0);
 
-    assert(type_field_count(type) == 0);
+    assert(type_registry_fields_of(registry, type)->count == 0);
 
     TypeField field = {
         .name = string_from_cstr(&ctx.strings, "width"),
@@ -127,8 +127,9 @@ static void test_an_instantiation_reads_fields_declared_after_it() {
     def.fields = &field;
     def.field_count = 1;
 
-    assert(type_field_count(type) == 1);
-    assert(type_fields(type)[0].type == type_registry_get_primitive(registry, TYPE_INT));
+    assert(type_registry_fields_of(registry, type)->count == 1);
+    assert(type_registry_fields_of(registry, type)->fields[0].type ==
+           type_registry_get_primitive(registry, TYPE_INT));
 
     assert(type_registry_apply(registry, &def, NULL, 0) == type);
 
@@ -162,8 +163,10 @@ static void test_an_instantiation_does_not_share_the_declarations_fields() {
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
     const Type *of_bool = type_registry_apply(registry, &def, &bool_type, 1);
 
-    assert(type_fields(of_int)[0].type == type_registry_block_of(registry, int_type));
-    assert(type_fields(of_bool)[0].type == type_registry_block_of(registry, bool_type));
+    assert(type_registry_fields_of(registry, of_int)->fields[0].type ==
+           type_registry_block_of(registry, int_type));
+    assert(type_registry_fields_of(registry, of_bool)->fields[0].type ==
+           type_registry_block_of(registry, bool_type));
 
     assert(def.fields[0].type == type_registry_block_of(registry, type_registry_param(registry, 0)));
 
@@ -410,7 +413,34 @@ static void test_two_instantiations_share_one_generic_form(void) {
     arena_destroy(ctx.arena);
 }
 
+static void test_an_instantiation_reads_fields_declared_after_it_is_applied(void) {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    TypeRegistry *registry = type_registry_create(ctx.arena, &names);
+
+    const Type *param = type_registry_param(registry, 0);
+    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+
+    TypeDef def = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
+
+    const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
+
+    const TypeField fields[] = {{.name = string_from_cstr(&ctx.strings, "value"), .type = param}};
+    def.fields = fields;
+    def.field_count = 1;
+
+    assert(type_registry_fields_of(registry, of_int)->count == 1);
+    assert(type_registry_fields_of(registry, of_int)->fields[0].type == int_type);
+
+    type_registry_destroy(registry);
+    string_pool_free(&ctx.strings);
+    arena_destroy(ctx.arena);
+}
+
 int main(void) {
+    test_an_instantiation_reads_fields_declared_after_it_is_applied();
     test_two_instantiations_share_one_generic_form();
     test_a_declared_field_nests_constructors();
     test_a_declaration_taking_no_parameters_is_its_own_instantiation();

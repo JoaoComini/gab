@@ -142,7 +142,7 @@ bool block_reserve(Allocator allocator, GabBlockValue *block, int32_t extra, siz
 }
 
 const DropPlan *object_build_drop(Arena *arena, TypeRegistry *registry, const Type *type) {
-    if (!type_is_owned(type)) {
+    if (!type_registry_owns(registry, type)) {
         return NULL;
     }
 
@@ -173,8 +173,10 @@ const DropPlan *object_build_drop(Arena *arena, TypeRegistry *registry, const Ty
     default: {
         size_t owning = 0;
 
-        for (size_t i = 0; i < type_field_count(type); i++) {
-            if (type_registry_drop_of(registry, type_fields(type)[i].type)) {
+        const TypeFields *fields = type_registry_fields_of(registry, type);
+
+        for (size_t i = 0; i < fields->count; i++) {
+            if (type_registry_drop_of(registry, fields->fields[i].type)) {
                 owning++;
             }
         }
@@ -184,8 +186,8 @@ const DropPlan *object_build_drop(Arena *arena, TypeRegistry *registry, const Ty
 
         const TypeLayout *layout = type_registry_layout_of(registry, type);
 
-        for (size_t i = 0; i < type_field_count(type); i++) {
-            const DropPlan *inner = type_registry_drop_of(registry, type_fields(type)[i].type);
+        for (size_t i = 0; i < fields->count; i++) {
+            const DropPlan *inner = type_registry_drop_of(registry, fields->fields[i].type);
 
             if (!inner) {
                 continue;

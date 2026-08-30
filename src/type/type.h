@@ -47,6 +47,8 @@ typedef enum {
 
 typedef struct Type Type;
 
+typedef struct TypeRegistry TypeRegistry;
+
 typedef struct TypeArg {
     enum {
         TYPE_ARG_TYPE,
@@ -120,9 +122,6 @@ size_t type_param_index(const Type *type);
 
 bool type_has_param(const Type *type);
 
-const TypeField *type_fields(const Type *type);
-size_t type_field_count(const Type *type);
-
 Type *type_create(Arena *arena, TypeKind kind, String *name);
 
 Type type_init(TypeKind kind, String *name);
@@ -139,18 +138,8 @@ bool type_is_indirect(const Type *type);
 
 bool type_owns_through_an_address(const Type *type);
 
-bool type_holds_its_memory_inline(const Type *type);
-
 const Type *type_array_element(const Type *type);
 int32_t type_array_length(const Type *type);
-
-bool type_is_owned(const Type *type);
-
-bool type_is_copyable(const Type *type);
-
-const TypeField *type_find_field(const Type *type, const String *name);
-
-typedef struct TypeRegistry TypeRegistry;
 
 typedef struct LentPart {
     size_t offset;

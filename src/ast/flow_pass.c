@@ -12,6 +12,8 @@ typedef struct {
     Arena *arena;
     Diagnostics *diagnostics;
 
+    TypeRegistry *registry;
+
     const Type *return_type;
 
     bool reporting;
@@ -47,7 +49,7 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
             return 0;
         }
 
-        if (type_holds_its_memory_inline(expr->type)) {
+        if (type_registry_holds_its_memory_inline(pass->registry, expr->type)) {
             return expr->symbol->scope_depth;
         }
 
@@ -90,7 +92,8 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
     }
 }
 
-static bool owning_field_of_local(const ASTExpr *expr, Symbol **out_symbol, unsigned int *out_index) {
+static bool owning_field_of_local(TypeRegistry *registry, const ASTExpr *expr, Symbol **out_symbol,
+                                  unsigned int *out_index) {
     if (expr->kind != EXPR_FIELD || expr->field.target->kind != EXPR_VARIABLE) {
         return false;
     }
@@ -102,7 +105,7 @@ static bool owning_field_of_local(const ASTExpr *expr, Symbol **out_symbol, unsi
         return false;
     }
 
-    const TypeField *field = ast_field_of(expr);
+    const TypeField *field = ast_field_of(registry, expr);
 
     if (!field || type_kind(field->type) != TYPE_BOX) {
         return false;
@@ -110,8 +113,10 @@ static bool owning_field_of_local(const ASTExpr *expr, Symbol **out_symbol, unsi
 
     size_t index = 0;
 
-    for (size_t i = 0; i < type_field_count(struct_type); i++) {
-        const TypeField *other = &type_fields(struct_type)[i];
+    const TypeFields *fields = type_registry_fields_of(registry, struct_type);
+
+    for (size_t i = 0; i < fields->count; i++) {
+        const TypeField *other = &fields->fields[i];
 
         if (other == field) {
             break;
@@ -232,12 +237,12 @@ static void flow_pass_expr(FlowPass *pass, ASTExpr *expr) {
         Symbol *field_owner;
         unsigned int field_index;
 
-        if (!stored_into && owning_field_of_local(expr, &field_owner, &field_index)) {
+        if (!stored_into && owning_field_of_local(pass->registry, expr, &field_owner, &field_index)) {
             FlowSlot slot = flow_get(pass->flow, field_owner);
 
             if (!(slot.written_fields & ((uint64_t)1 << field_index))) {
                 flow_report(pass, expr->span, "'%s' is read before it is given a value",
-                            ast_field_of(expr)->name->data);
+                            ast_field_of(pass->registry, expr)->name->data);
             }
         }
         break;
@@ -322,7 +327,7 @@ static void flow_pass_stmt(FlowPass *pass, ASTStmt *stmt) {
             Symbol *field_owner;
             unsigned int field_index;
 
-            if (owning_field_of_local(stmt->assign.target, &field_owner, &field_index)) {
+            if (owning_field_of_local(pass->registry, stmt->assign.target, &field_owner, &field_index)) {
                 FlowSlot slot = flow_get(pass->flow, field_owner);
 
                 slot.written_fields |= (uint64_t)1 << field_index;
@@ -364,8 +369,8 @@ static void flow_pass_block(FlowPass *pass, CFGBlock *block) {
     }
 }
 
-void flow_pass_run(Arena *arena, ASTStmt *body, Symbol **params, size_t param_count, const Type *return_type,
-                   Diagnostics *diagnostics) {
+void flow_pass_run(Arena *arena, TypeRegistry *registry, ASTStmt *body, Symbol **params, size_t param_count,
+                   const Type *return_type, Diagnostics *diagnostics) {
     CFG *cfg = cfg_build(arena, body);
 
     Flow *entries = arena_alloc(arena, cfg->block_count * sizeof(Flow));
@@ -384,8 +389,11 @@ void flow_pass_run(Arena *arena, ASTStmt *body, Symbol **params, size_t param_co
         }
     }
 
-    FlowPass pass = {
-        .arena = arena, .diagnostics = diagnostics, .reporting = false, .return_type = return_type};
+    FlowPass pass = {.arena = arena,
+                     .diagnostics = diagnostics,
+                     .registry = registry,
+                     .reporting = false,
+                     .return_type = return_type};
 
     bool changed = true;
 

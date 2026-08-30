@@ -162,7 +162,7 @@ static CodegenLabel codegen_create_label(CodegenState *state);
 static void codegen_patch_jump(CodegenState *state, CodegenLabel label, OpCode op, unsigned int reg);
 static void codegen_emit_loop(CodegenState *state, size_t target);
 
-static bool expr_yields_owned(const ASTExpr *expr);
+static bool expr_yields_owned(TypeRegistry *registry, const ASTExpr *expr);
 
 static void codegen_own_slot(CodegenState *state, unsigned int slot, const Type *type);
 static void codegen_own_slot_at(CodegenState *state, unsigned int slot, const Type *type, unsigned int depth);
@@ -195,9 +195,9 @@ static unsigned int type_slot_count(TypeRegistry *registry, const Type *type);
 static unsigned int type_align_slots(TypeRegistry *registry, const Type *type);
 static bool type_is_struct(const Type *type);
 
-static bool type_owns_through_members(const Type *type);
+static bool type_owns_through_members(TypeRegistry *registry, const Type *type);
 
-static bool type_moves_as_slots(const Type *type);
+static bool type_moves_as_slots(TypeRegistry *registry, const Type *type);
 static OpCode field_opcode_for(size_t size, bool load, bool indirect, bool *ok);
 
 Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, TypeRegistry *registry,
@@ -305,7 +305,7 @@ static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
     case STMT_EXPR: {
         unsigned int reg = codegen_expr(state, ast->expr.value);
 
-        if (expr_yields_owned(ast->expr.value)) {
+        if (expr_yields_owned(state->registry, ast->expr.value)) {
             codegen_emit_release(state, reg, ast->expr.value->type);
         }
         break;
@@ -412,7 +412,7 @@ static void codegen_walk_owning_slots(CodegenState *state, const Type *type, uns
     }
 
     if (type && type_kind(type) == TYPE_ARRAY) {
-        if (!type_is_owned(type)) {
+        if (!type_registry_owns(state->registry, type)) {
             return;
         }
 
@@ -431,14 +431,16 @@ static void codegen_walk_owning_slots(CodegenState *state, const Type *type, uns
         return;
     }
 
-    if (!type || type_field_count(type) == 0) {
+    const TypeFields *fields = type_registry_fields_of(state->registry, type);
+
+    if (!type || fields->count == 0) {
         return;
     }
 
     const TypeLayout *layout = type_registry_layout_of(state->registry, type);
 
-    for (size_t i = 0; i < type_field_count(type); i++) {
-        codegen_walk_owning_slots(state, type_fields(type)[i].type,
+    for (size_t i = 0; i < fields->count; i++) {
+        codegen_walk_owning_slots(state, fields->fields[i].type,
                                   base + (unsigned int)(layout->offsets[i] / VM_SLOT_SIZE), action);
     }
 }
@@ -457,7 +459,7 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
 
             codegen_walk_owning_slots(state, ast->symbol->var.type, slot, OWNING_SLOT_NULL);
 
-            if (type_owns_through_members(ast->symbol->var.type)) {
+            if (type_owns_through_members(state->registry, ast->symbol->var.type)) {
                 codegen_walk_owning_slots(state, ast->symbol->var.type, slot, OWNING_SLOT_OWN);
             }
         }
@@ -469,7 +471,7 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
 
     unsigned int slot = codegen_slot_of(state, ast->symbol);
 
-    if (!is_ref && !type_is_owned(ast->symbol->var.type) &&
+    if (!is_ref && !type_registry_owns(state->registry, ast->symbol->var.type) &&
         codegen_expr_into(state, ast->initializer, slot)) {
         codegen_release_registers(state, saved);
         return;
@@ -479,7 +481,7 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
 
     codegen_copy_slots(state, slot, r1, type_slot_count(state->registry, ast->symbol->var.type));
 
-    if (!is_ref && expr_yields_owned(ast->initializer)) {
+    if (!is_ref && expr_yields_owned(state->registry, ast->initializer)) {
         codegen_walk_owning_slots(state, ast->symbol->var.type, slot, OWNING_SLOT_OWN);
 
         codegen_drop_temporary(state, r1);
@@ -489,7 +491,8 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
 }
 
 static bool codegen_expr_into(CodegenState *state, ASTExpr *value, unsigned int dest) {
-    if (type_slot_count(state->registry, value->type) != 1 || type_is_owned(value->type)) {
+    if (type_slot_count(state->registry, value->type) != 1 ||
+        type_registry_owns(state->registry, value->type)) {
         return false;
     }
 
@@ -519,7 +522,7 @@ static bool codegen_expr_into(CodegenState *state, ASTExpr *value, unsigned int 
 static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
     bool target_owns = (ast->target->kind == EXPR_FIELD || ast->target->kind == EXPR_DEREF ||
                         ast->target->kind == EXPR_INDEX) &&
-                       type_is_owned(ast->target->type);
+                       type_registry_owns(state->registry, ast->target->type);
 
     if (target_owns) {
         unsigned int held;
@@ -579,7 +582,7 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
 
     unsigned int rd = codegen_expr(state, ast->target);
 
-    if (!type_is_owned(ast->target->type) && codegen_expr_into(state, ast->value, rd)) {
+    if (!type_registry_owns(state->registry, ast->target->type) && codegen_expr_into(state, ast->value, rd)) {
         return;
     }
 
@@ -587,7 +590,8 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
 
     bool target_is_ref = ast->target->type && type_kind(ast->target->type) == TYPE_REF;
 
-    if (!target_is_ref && type_is_owned(ast->target->type) && codegen_slot_is_owned(state, rd)) {
+    if (!target_is_ref && type_registry_owns(state->registry, ast->target->type) &&
+        codegen_slot_is_owned(state, rd)) {
         unsigned int width = type_slot_count(state->registry, ast->target->type);
         unsigned int old = codegen_alloc_slots(
             state, width, type_align_slots(state->registry, ast->target->type), ast->target->span);
@@ -603,7 +607,8 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
 
     codegen_copy_slots(state, rd, r1, type_slot_count(state->registry, ast->target->type));
 
-    if (!target_is_ref && type_is_owned(ast->target->type) && expr_yields_owned(ast->value)) {
+    if (!target_is_ref && type_registry_owns(state->registry, ast->target->type) &&
+        expr_yields_owned(state->registry, ast->value)) {
         Symbol *target = ast->target->symbol;
 
         codegen_own_slot_at(state, rd, ast->target->type,
@@ -1065,7 +1070,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
     for (size_t i = 0; i < ast->params.size; i++) {
         Symbol *param = ast->params.data[i]->symbol;
 
-        if (type_is_owned(param->var.type)) {
+        if (type_registry_owns(state->registry, param->var.type)) {
             codegen_own_slot(&func_state, codegen_slot_of(&func_state, param), param->var.type);
         }
     }
@@ -1266,14 +1271,14 @@ static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symb
     }
 }
 
-static bool param_owns(const Symbol *callee, size_t index) {
+static bool param_owns(TypeRegistry *registry, const Symbol *callee, size_t index) {
     if (!callee || callee->kind != SYMBOL_FUNC || index >= callee->func.param_count) {
         return false;
     }
 
     const Type *param = callee->func.params[index];
 
-    return type_is_owned(param);
+    return type_registry_owns(registry, param);
 }
 
 static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
@@ -1310,7 +1315,7 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
 
         codegen_copy_slots(state, dest + offset, arg_reg, slots);
 
-        if (expr_yields_owned(arg) && !param_owns(node->symbol, i)) {
+        if (expr_yields_owned(state->registry, arg) && !param_owns(state->registry, node->symbol, i)) {
             assert(owned_arg_count < VM_MAX_FRAME_SLOTS && "more owned arguments than a frame has slots");
 
             unsigned int owner = dest + offset;
@@ -1434,7 +1439,7 @@ static FieldTarget codegen_index_target(CodegenState *state, ASTExpr *node) {
 static unsigned int codegen_index_expr(CodegenState *state, ASTExpr *node) {
     FieldTarget target = codegen_index_target(state, node);
 
-    if (type_moves_as_slots(node->type)) {
+    if (type_moves_as_slots(state->registry, node->type)) {
         return codegen_load_indirect_struct(state, node, node->type, target,
                                             type_slot_count(state->registry, node->type));
     }
@@ -1456,7 +1461,7 @@ static unsigned int codegen_index_expr(CodegenState *state, ASTExpr *node) {
 static void codegen_store_index(CodegenState *state, ASTExpr *node, unsigned int src) {
     FieldTarget target = codegen_index_target(state, node);
 
-    if (type_moves_as_slots(node->type)) {
+    if (type_moves_as_slots(state->registry, node->type)) {
         codegen_store_indirect(state, node, target, src, type_slot_count(state->registry, node->type));
         return;
     }
@@ -1474,7 +1479,7 @@ static void codegen_store_index(CodegenState *state, ASTExpr *node, unsigned int
 static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node) {
     FieldTarget target = codegen_resolve_field_target(state, node, true);
 
-    if (type_moves_as_slots(node->type)) {
+    if (type_moves_as_slots(state->registry, node->type)) {
         if (target.indirect) {
             return codegen_load_indirect_struct(state, node, node->type, target,
                                                 type_slot_count(state->registry, node->type));
@@ -1484,8 +1489,9 @@ static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node) {
     }
 
     bool ok;
-    OpCode op = field_opcode_for(type_registry_size_of(state->registry, ast_field_of(node)->type), true,
-                                 target.indirect, &ok);
+    OpCode op =
+        field_opcode_for(type_registry_size_of(state->registry, ast_field_of(state->registry, node)->type),
+                         true, target.indirect, &ok);
 
     if (!codegen_field_access_fits(state, node, ok, target.offset)) {
         return 0;
@@ -1728,7 +1734,7 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
 
     unsigned int base = codegen_expr(state, node);
 
-    if (expr_yields_owned(node)) {
+    if (expr_yields_owned(state->registry, node)) {
         owned_list_add(&state->temporaries,
                        (OwnedSlot){.slot = base, .depth = state->depth, .type = node->type});
         codegen_record_frame_ref(state, base, node->type);
@@ -1829,7 +1835,7 @@ static void codegen_store_indirect(CodegenState *state, ASTExpr *node, FieldTarg
 static void codegen_store_field(CodegenState *state, ASTExpr *node, unsigned int src) {
     FieldTarget target = codegen_resolve_field_target(state, node, true);
 
-    if (type_moves_as_slots(node->type)) {
+    if (type_moves_as_slots(state->registry, node->type)) {
         if (target.indirect) {
             codegen_store_indirect(state, node, target, src, type_slot_count(state->registry, node->type));
             return;
@@ -1841,8 +1847,9 @@ static void codegen_store_field(CodegenState *state, ASTExpr *node, unsigned int
     }
 
     bool ok;
-    OpCode op = field_opcode_for(type_registry_size_of(state->registry, ast_field_of(node)->type), false,
-                                 target.indirect, &ok);
+    OpCode op =
+        field_opcode_for(type_registry_size_of(state->registry, ast_field_of(state->registry, node)->type),
+                         false, target.indirect, &ok);
 
     if (!codegen_field_access_fits(state, node, ok, target.offset)) {
         return;
@@ -2118,8 +2125,8 @@ static void codegen_emit_loop(CodegenState *state, size_t target) {
     chunk_patch_instruction(state->chunk, position, VM_ENCODE_I(OP_JMP, 0, offset));
 }
 
-static bool expr_yields_owned(const ASTExpr *expr) {
-    if (!expr || type_is_copyable(expr->type)) {
+static bool expr_yields_owned(TypeRegistry *registry, const ASTExpr *expr) {
+    if (!expr || type_registry_copies(registry, expr->type)) {
         return false;
     }
 
@@ -2305,13 +2312,14 @@ static unsigned int type_align_slots(TypeRegistry *registry, const Type *type) {
 
 static bool type_is_struct(const Type *type) { return type && type_kind(type) == TYPE_STRUCT; }
 
-static bool type_owns_through_members(const Type *type) {
-    return type_is_owned(type) && !type_is_indirect(type);
+static bool type_owns_through_members(TypeRegistry *registry, const Type *type) {
+    return type_registry_owns(registry, type) && !type_is_indirect(type);
 }
 
-static bool type_moves_as_slots(const Type *type) {
-    return type_is_indirect(type) || type_owns_through_an_address(type) ||
-           (type && type_field_count(type) > 0);
+static bool type_moves_as_slots(TypeRegistry *registry, const Type *type) {
+    const TypeFields *fields = type_registry_fields_of(registry, type);
+
+    return type_is_indirect(type) || type_owns_through_an_address(type) || fields->count > 0;
 }
 
 static OpCode field_opcode_for(size_t size, bool load, bool indirect, bool *ok) {

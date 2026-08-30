@@ -47,17 +47,19 @@ static void test_a_string_is_one_owning_field() {
 
     const Type *string_type = scope_type_lookup(scope_ptr, string_from_cstr(&vm->env.strings, "String"));
 
-    assert(type_field_count(string_type) == 1);
+    assert(type_registry_fields_of(scope_ptr->type_registry, string_type)->count == 1);
 
-    const TypeField *data = type_find_field(string_type, string_from_cstr(&vm->env.strings, "data"));
+    const TypeField *data = type_registry_find_field(scope_ptr->type_registry, string_type,
+                                                     string_from_cstr(&vm->env.strings, "data"));
 
     assert(data);
 
     const TypeLayout *layout = type_registry_layout_of(scope_ptr->type_registry, string_type);
 
-    assert(layout->offsets[data - type_fields(string_type)] == offsetof(GabStringValue, block));
+    assert(layout->offsets[data - type_registry_fields_of(scope_ptr->type_registry, string_type)->fields] ==
+           offsetof(GabStringValue, block));
 
-    assert(type_is_owned(data->type));
+    assert(type_registry_owns(scope_ptr->type_registry, data->type));
 
     test_context_free(&ctx);
     vm_free(vm);

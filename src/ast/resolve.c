@@ -957,7 +957,8 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         }
 
         String *field_name = resolver_intern(state, expr->field.name);
-        const TypeField *field = type_find_field(target_type, field_name);
+        const TypeField *field =
+            type_registry_find_field(state->current_scope->type_registry, target_type, field_name);
 
         if (!field) {
             diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "'%s' has no field '%s'",
@@ -967,7 +968,9 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         }
 
         expr->field.owner = target_type;
-        expr->field.index = (size_t)(field - type_fields(target_type));
+        expr->field.index =
+            (size_t)(field -
+                     type_registry_fields_of(state->current_scope->type_registry, target_type)->fields);
 
         expr->type = field->type;
 
@@ -1078,7 +1081,9 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             break;
         }
 
-        if (type_field_count(type) == 0 && !type_is_indirect(type)) {
+        const TypeFields *type_fields_of = type_registry_fields_of(state->current_scope->type_registry, type);
+
+        if (type_fields_of->count == 0 && !type_is_indirect(type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "cannot allocate %s; 'new' takes a struct or a pointer", type_name(state, type));
             expr->type = resolver_error_type(state);
@@ -1166,11 +1171,11 @@ static void mark_implicit_move(ResolverState *state, ASTExpr *value, const Type 
         return;
     }
 
-    if (type_is_copyable(value->type)) {
+    if (type_registry_copies(state->current_scope->type_registry, value->type)) {
         return;
     }
 
-    if (destination && !type_is_owned(destination)) {
+    if (destination && !type_registry_owns(state->current_scope->type_registry, destination)) {
         return;
     }
 
@@ -1780,8 +1785,8 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
             params[count++] = stmt->func_decl.params.data[i]->symbol;
         }
 
-        flow_pass_run(state->compile_arena, stmt->func_decl.body, params, count,
-                      stmt->func_decl.resolved_return_type, state->diagnostics);
+        flow_pass_run(state->compile_arena, state->current_scope->type_registry, stmt->func_decl.body, params,
+                      count, stmt->func_decl.resolved_return_type, state->diagnostics);
     }
 
     resolver_exit_scope(state);
@@ -1843,7 +1848,8 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
             type = resolver_error_type(state);
         }
 
-        if (state->current_scope == state->global_scope && type_is_owned(type)) {
+        if (state->current_scope == state->global_scope &&
+            type_registry_owns(state->current_scope->type_registry, type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                        "a top-level variable may not own, since no scope closes to free it; %s belongs in a "
                        "function body",
@@ -1916,7 +1922,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
 
         if (target && target->kind == SYMBOL_VAR) {
             if (stmt->assign.value->kind == EXPR_VARIABLE && stmt->assign.value->symbol == target &&
-                !type_is_copyable(target_type)) {
+                !type_registry_copies(state->current_scope->type_registry, target_type)) {
                 diag_error(state->diagnostics, GAB_ERR_LIFETIME, stmt->span,
                            "'%s' owns what it holds, so it cannot be assigned to itself",
                            type_name_of(target_type) ? type_name_of(target_type)->data : "a value");

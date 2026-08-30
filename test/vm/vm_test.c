@@ -120,7 +120,7 @@ static void test_types_survive_a_later_compile() {
     assert(player);
 
     size_t size = type_registry_size_of(vm->env.global_scope.type_registry, player);
-    size_t field_count = type_field_count(player);
+    size_t field_count = type_registry_fields_of(vm->env.global_scope.type_registry, player)->count;
 
     compile_and_run(vm,
                     "module test;\n"
@@ -129,7 +129,7 @@ static void test_types_survive_a_later_compile() {
 
     assert(strcmp(type_name_of(player)->data, "Player") == 0);
     assert(type_registry_size_of(vm->env.global_scope.type_registry, player) == size);
-    assert(type_field_count(player) == field_count);
+    assert(type_registry_fields_of(vm->env.global_scope.type_registry, player)->count == field_count);
 
     vm_free(vm);
 }

@@ -307,8 +307,10 @@ bool gab_field_offset(GabVM *handle, const GabType *type_handle, const char *fie
     const Type *type = (const Type *)type_handle;
     const TypeLayout *layout = type_registry_layout_of(gab_registry(handle), type);
 
-    for (size_t i = 0; i < type_field_count(type); i++) {
-        const TypeField *candidate = &type_fields(type)[i];
+    const TypeFields *fields = type_registry_fields_of(gab_registry(handle), type);
+
+    for (size_t i = 0; i < fields->count; i++) {
+        const TypeField *candidate = &fields->fields[i];
 
         if (candidate->name && strcmp(candidate->name->data, field) == 0) {
             if (out_offset) {

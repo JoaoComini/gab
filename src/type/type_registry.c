@@ -90,8 +90,10 @@ static void layout_of_fields(TypeRegistry *registry, const Type *type, size_t *o
 
     *alignment = 1;
 
-    for (size_t i = 0; i < type_field_count(type); i++) {
-        const TypeLayout *field = type_registry_layout_of(registry, type_fields(type)[i].type);
+    const TypeFields *fields = type_registry_fields_of(registry, type);
+
+    for (size_t i = 0; i < fields->count; i++) {
+        const TypeLayout *field = type_registry_layout_of(registry, fields->fields[i].type);
 
         offset = align_up(offset, field->alignment);
         offsets[i] = offset;
@@ -134,7 +136,7 @@ const TypeLayout *type_registry_layout_of(TypeRegistry *registry, const Type *ty
             break;
 
         default: {
-            size_t count = type_field_count(type);
+            size_t count = type_registry_fields_of(registry, type)->count;
             size_t *offsets = count > 0 ? arena_alloc(registry->arena, count * sizeof(size_t)) : NULL;
 
             layout_of_fields(registry, type, offsets, &layout->size, &layout->alignment);
@@ -506,6 +508,150 @@ static Symbol *instantiate_method(TypeRegistry *registry, const MethodDecl *meth
     return symbol;
 }
 
+static const TypeFields no_fields = {.fields = NULL, .count = 0};
+
+const TypeFields *type_registry_fields_of(TypeRegistry *registry, const Type *type) {
+    if (!type || type_kind(type) != TYPE_STRUCT) {
+        return &no_fields;
+    }
+
+    const TypeDef *def = type_decl(type);
+
+    if (type_arg_count(type) == 0) {
+        TypeFields *plain = arena_alloc(registry->arena, sizeof(TypeFields));
+        *plain = (TypeFields){.fields = def->fields, .count = def->field_count};
+
+        return plain;
+    }
+
+    if (type->record.substituted) {
+        return type->record.substituted;
+    }
+
+    TypeFields *result = arena_alloc(registry->arena, sizeof(TypeFields));
+
+    const Type *args[GAB_MAX_TYPE_PARAMS];
+
+    for (size_t i = 0; i < type_arg_count(type); i++) {
+        assert(type_args(type)[i].kind == TYPE_ARG_TYPE && "a record's parameters are types");
+
+        args[i] = type_args(type)[i].type;
+    }
+
+    TypeField *fields = arena_alloc(registry->arena, def->field_count * sizeof(TypeField));
+
+    for (size_t i = 0; i < def->field_count; i++) {
+        fields[i] = (TypeField){
+            .name = def->fields[i].name,
+            .type = substitute(registry, def->fields[i].type, args, type_arg_count(type)),
+        };
+    }
+
+    *result = (TypeFields){.fields = fields, .count = def->field_count};
+
+    ((Type *)type)->record.substituted = result;
+
+    return result;
+}
+
+bool type_registry_holds_its_memory_inline(TypeRegistry *registry, const Type *type) {
+    const TypeFields *fields = type_registry_fields_of(registry, type);
+
+    for (size_t i = 0; i < fields->count; i++) {
+        if (fields->fields[i].type && fields->fields[i].type->kind == TYPE_BLOCK) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool type_registry_owns(TypeRegistry *registry, const Type *type) {
+    if (!type) {
+        return false;
+    }
+
+    switch (type->kind) {
+    case TYPE_BOX:
+        return true;
+    case TYPE_REF:
+        return false;
+
+    case TYPE_BLOCK:
+        return true;
+
+    case TYPE_PTR:
+        return false;
+
+    case TYPE_ARRAY:
+        return type_registry_owns(registry, type_array_element(type));
+
+    case TYPE_STR:
+        return false;
+
+    default:
+        break;
+    }
+
+    const TypeFields *fields = type_registry_fields_of(registry, type);
+
+    for (size_t i = 0; i < fields->count; i++) {
+        if (type_registry_owns(registry, fields->fields[i].type)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool type_registry_copies(TypeRegistry *registry, const Type *type) {
+    if (!type) {
+        return true;
+    }
+
+    switch (type->kind) {
+    case TYPE_BOX:
+        return false;
+    case TYPE_REF:
+    case TYPE_PTR:
+        return true;
+
+    case TYPE_BLOCK:
+        return false;
+
+    case TYPE_ARRAY:
+        return type_registry_copies(registry, type_array_element(type));
+
+    case TYPE_STR:
+        return true;
+
+    default:
+        break;
+    }
+
+    const TypeFields *fields = type_registry_fields_of(registry, type);
+
+    for (size_t i = 0; i < fields->count; i++) {
+        if (!type_registry_copies(registry, fields->fields[i].type)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+const TypeField *type_registry_find_field(TypeRegistry *registry, const Type *type, const String *name) {
+    const TypeFields *fields = type_registry_fields_of(registry, type);
+
+    for (size_t i = 0; i < fields->count; i++) {
+        if (fields->fields[i].name == name) {
+            return &fields->fields[i];
+        }
+    }
+
+    return NULL;
+}
+
 const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDef *def, const TypeArg *args,
                                       size_t arg_count) {
     assert(def && "an instantiation names a declaration");
@@ -531,39 +677,7 @@ const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDef *def
 
     key.args = owned;
 
-    Type *type = intern(registry, &key);
-
-    if (arg_count == 0) {
-        return type;
-    }
-
-    const Type *type_args[GAB_MAX_TYPE_PARAMS];
-
-    for (size_t i = 0; i < arg_count; i++) {
-        assert(args[i].kind == TYPE_ARG_TYPE && "a record's parameters are types");
-
-        type_args[i] = args[i].type;
-    }
-
-    TypeFields *substituted = arena_alloc(registry->arena, sizeof(TypeFields));
-    TypeField *fields = arena_alloc(registry->arena, def->field_count * sizeof(TypeField));
-
-    *substituted = (TypeFields){.fields = fields, .count = 0};
-
-    type->record.substituted = substituted;
-
-    for (size_t i = 0; i < def->field_count; i++) {
-        fields[i] = (TypeField){
-            .name = def->fields[i].name,
-            .type = substitute(registry, def->fields[i].type, type_args, arg_count),
-        };
-
-        substituted->count++;
-    }
-
-    type_registry_drop_of(registry, type);
-
-    return type;
+    return intern(registry, &key);
 }
 
 const Type *type_registry_block_of(TypeRegistry *registry, const Type *element) {

@@ -32,19 +32,6 @@ Type *type_create(Arena *arena, TypeKind kind, String *name) {
     return type;
 }
 
-const TypeField *type_find_field(const Type *type, const String *name) {
-    const TypeField *fields = type_fields(type);
-    size_t count = type_field_count(type);
-
-    for (size_t i = 0; i < count; i++) {
-        if (fields[i].name == name) {
-            return &fields[i];
-        }
-    }
-
-    return NULL;
-}
-
 TypeMetadata type_metadata_of(const Type *type) {
     if (!type) {
         return TYPE_META_NONE;
@@ -98,48 +85,10 @@ const Type *type_pointee(const Type *type) {
     }
 }
 
-const TypeField *type_fields(const Type *type) {
-    if (!type) {
-        return NULL;
-    }
-
-    switch (type->kind) {
-    case TYPE_STRUCT:
-        return type->record.substituted ? type->record.substituted->fields : type->decl->fields;
-
-    default:
-        return NULL;
-    }
-}
-
-size_t type_field_count(const Type *type) {
-    if (!type) {
-        return 0;
-    }
-
-    switch (type->kind) {
-    case TYPE_STRUCT:
-        return type->record.substituted ? type->record.substituted->count : type->decl->field_count;
-
-    default:
-        return 0;
-    }
-}
-
 bool type_is_indirect(const Type *type) { return type && (type->kind == TYPE_BOX || type->kind == TYPE_REF); }
 
 bool type_owns_through_an_address(const Type *type) {
     return type && (type->kind == TYPE_BOX || type->kind == TYPE_BLOCK);
-}
-
-bool type_holds_its_memory_inline(const Type *type) {
-    for (size_t i = 0; i < type_field_count(type); i++) {
-        if (type_fields(type)[i].type && type_fields(type)[i].type->kind == TYPE_BLOCK) {
-            return true;
-        }
-    }
-
-    return false;
 }
 
 const Type *type_array_element(const Type *type) {
@@ -152,76 +101,6 @@ int32_t type_array_length(const Type *type) {
     assert(type && type->kind == TYPE_ARRAY && "only an array has a length");
 
     return type->array.length;
-}
-
-bool type_is_owned(const Type *type) {
-    if (!type) {
-        return false;
-    }
-
-    switch (type->kind) {
-    case TYPE_BOX:
-        return true;
-    case TYPE_REF:
-        return false;
-
-    case TYPE_BLOCK:
-        return true;
-
-    case TYPE_PTR:
-        return false;
-
-    case TYPE_ARRAY:
-        return type_is_owned(type_array_element(type));
-
-    case TYPE_STR:
-        return false;
-
-    default:
-        break;
-    }
-
-    for (size_t i = 0; i < type_field_count(type); i++) {
-        if (type_is_owned(type_fields(type)[i].type)) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-bool type_is_copyable(const Type *type) {
-    if (!type) {
-        return true;
-    }
-
-    switch (type->kind) {
-    case TYPE_BOX:
-        return false;
-    case TYPE_REF:
-    case TYPE_PTR:
-        return true;
-
-    case TYPE_BLOCK:
-        return false;
-
-    case TYPE_ARRAY:
-        return type_is_copyable(type_array_element(type));
-
-    case TYPE_STR:
-        return true;
-
-    default:
-        break;
-    }
-
-    for (size_t i = 0; i < type_field_count(type); i++) {
-        if (!type_is_copyable(type_fields(type)[i].type)) {
-            return false;
-        }
-    }
-
-    return true;
 }
 
 TypeKind type_kind(const Type *type) { return type->kind; }

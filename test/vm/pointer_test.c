@@ -21,7 +21,7 @@ static Symbol *lookup(TestContext *ctx, Scope *scope, const char *name) {
 static const Type *field_type(TestContext *ctx, Scope *scope, const char *struct_name, const char *field) {
     const Type *type = scope_type_lookup(scope, string_from_cstr(&ctx->strings, struct_name));
 
-    return type_find_field(type, string_from_cstr(&ctx->strings, field))->type;
+    return type_registry_find_field(scope->type_registry, type, string_from_cstr(&ctx->strings, field))->type;
 }
 
 static void test_pointer_types_are_interned() {

@@ -175,10 +175,10 @@ void ast_expr_free(ASTExpr *expr) {
     free(expr);
 }
 
-const TypeField *ast_field_of(const ASTExpr *expr) {
+const TypeField *ast_field_of(TypeRegistry *registry, const ASTExpr *expr) {
     if (!expr->field.owner) {
         return NULL;
     }
 
-    return &type_fields(expr->field.owner)[expr->field.index];
+    return &type_registry_fields_of(registry, expr->field.owner)->fields[expr->field.index];
 }

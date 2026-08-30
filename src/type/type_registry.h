@@ -65,6 +65,16 @@ Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, cons
 
 void type_registry_complete(TypeRegistry *registry, const Type *type);
 
+const TypeFields *type_registry_fields_of(TypeRegistry *registry, const Type *type);
+
+const TypeField *type_registry_find_field(TypeRegistry *registry, const Type *type, const String *name);
+
+bool type_registry_holds_its_memory_inline(TypeRegistry *registry, const Type *type);
+
+bool type_registry_owns(TypeRegistry *registry, const Type *type);
+
+bool type_registry_copies(TypeRegistry *registry, const Type *type);
+
 const DropPlan *type_registry_drop_of(TypeRegistry *registry, const Type *type);
 
 const TypeLayout *type_registry_layout_of(TypeRegistry *registry, const Type *type);

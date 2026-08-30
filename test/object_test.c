@@ -226,8 +226,10 @@ static void test_freeing_reaches_an_owning_field_at_its_offset() {
     const Type *outer_types[] = {int_type, int_type, type_registry_box_to(registry, inner)};
     const Type *outer = make_struct(&ctx, registry, "Outer", outer_names, outer_types, 3);
 
-    const TypeField *child_field = type_find_field(outer, string_from_cstr(&ctx.strings, "child"));
-    size_t offset = type_registry_layout_of(registry, outer)->offsets[child_field - type_fields(outer)];
+    const TypeField *child_field =
+        type_registry_find_field(registry, outer, string_from_cstr(&ctx.strings, "child"));
+    size_t offset = type_registry_layout_of(registry, outer)
+                        ->offsets[child_field - type_registry_fields_of(registry, outer)->fields];
 
     assert(offset > 0);
 
@@ -312,11 +314,11 @@ static void test_a_string_owns_and_a_reference_to_one_does_not() {
 
     assert(type_registry_size_of(registry, owning) == type_registry_size_of(registry, borrowing));
 
-    assert(type_is_owned(owning));
-    assert(!type_is_owned(borrowing));
+    assert(type_registry_owns(registry, owning));
+    assert(!type_registry_owns(registry, borrowing));
 
-    assert(!type_is_copyable(owning));
-    assert(type_is_copyable(borrowing));
+    assert(!type_registry_copies(registry, owning));
+    assert(type_registry_copies(registry, borrowing));
 
     assert(!type_is_sized(type_registry_get_primitive(registry, TYPE_STR)));
     assert(type_is_sized(borrowing));
@@ -329,12 +331,12 @@ static void test_a_string_owns_and_a_reference_to_one_does_not() {
     const Type *ints = type_registry_array_of(registry, type_registry_get_primitive(registry, TYPE_INT), 4);
 
     assert(type_registry_drop_of(registry, ints) == NULL);
-    assert(!type_is_owned(ints));
+    assert(!type_registry_owns(registry, ints));
 
     const Type *strings = type_registry_array_of(registry, owning, 2);
 
     assert(type_registry_drop_of(registry, strings) != NULL);
-    assert(type_is_owned(strings));
+    assert(type_registry_owns(registry, strings));
 
     test_context_free(&ctx);
     vm_free(vm);
@@ -377,19 +379,19 @@ static void test_an_array_owns_exactly_when_its_element_does() {
 
     const Type *ints = type_registry_array_of(registry, type_registry_get_primitive(registry, TYPE_INT), 4);
 
-    assert(!type_is_owned(ints));
-    assert(type_is_copyable(ints));
+    assert(!type_registry_owns(registry, ints));
+    assert(type_registry_copies(registry, ints));
 
     const Type *boxes = type_registry_array_of(registry, type_registry_box_to(registry, ints), 2);
 
-    assert(type_is_owned(boxes));
-    assert(!type_is_copyable(boxes));
+    assert(type_registry_owns(registry, boxes));
+    assert(!type_registry_copies(registry, boxes));
 
     const Type *nested = type_registry_array_of(registry, boxes, 3);
 
-    assert(type_is_owned(nested));
+    assert(type_registry_owns(registry, nested));
 
-    assert(type_is_owned(type_array_element(nested)));
+    assert(type_registry_owns(registry, type_array_element(nested)));
 
     test_context_free(&ctx);
 }
@@ -407,15 +409,15 @@ static void test_a_type_carries_only_what_its_kind_has() {
     const Type *box = type_registry_box_to(registry, int_type);
 
     assert(type_pointee(box) == int_type);
-    assert(type_field_count(box) == 0);
-    assert(type_fields(box) == NULL);
+    assert(type_registry_fields_of(registry, box)->count == 0);
+    assert(type_registry_fields_of(registry, box)->fields == NULL);
 
     const TypeFieldSpec health = {.name = string_from_cstr(&ctx.strings, "health"), .type = int_type};
 
     const Type *player =
         type_registry_declare_struct(registry, string_from_cstr(&ctx.strings, "Player"), &health, 1);
 
-    assert(type_field_count(player) == 1);
+    assert(type_registry_fields_of(registry, player)->count == 1);
     assert(type_pointee(player) == NULL);
 
     const Type *ints = type_registry_array_of(registry, int_type, 3);
@@ -423,10 +425,10 @@ static void test_a_type_carries_only_what_its_kind_has() {
     assert(type_array_element(ints) == int_type);
     assert(type_array_length(ints) == 3);
     assert(type_pointee(ints) == NULL);
-    assert(type_field_count(ints) == 0);
+    assert(type_registry_fields_of(registry, ints)->count == 0);
 
     assert(type_pointee(int_type) == NULL);
-    assert(type_field_count(int_type) == 0);
+    assert(type_registry_fields_of(registry, int_type)->count == 0);
 
     test_context_free(&ctx);
 }

@@ -68,11 +68,12 @@ static const Type *resolve_struct(TestContext *ctx, const char *source, const ch
 }
 
 static size_t offset_of(TestContext *ctx, TypeRegistry *registry, const Type *type, const char *field) {
-    const TypeField *found = type_find_field(type, string_from_cstr(&ctx->strings, field));
+    const TypeField *found = type_registry_find_field(registry, type, string_from_cstr(&ctx->strings, field));
 
     assert(found);
 
-    return type_registry_layout_of(registry, type)->offsets[found - type_fields(type)];
+    return type_registry_layout_of(registry, type)
+        ->offsets[found - type_registry_fields_of(registry, type)->fields];
 }
 
 static void test_homogeneous_struct() {
@@ -85,7 +86,7 @@ static void test_homogeneous_struct() {
 
     assert(type != NULL);
     assert(type_kind(type) == TYPE_STRUCT);
-    assert(type_field_count(type) == 3);
+    assert(type_registry_fields_of(registry, type)->count == 3);
 
     assert(type_registry_size_of(registry, type) == sizeof(Vec3C));
     assert(type_registry_align_of(registry, type) == _Alignof(Vec3C));
@@ -143,7 +144,8 @@ static void test_nested_struct() {
     assert(offset_of(&ctx, registry, type, "flag") == offsetof(NestedC, flag));
     assert(offset_of(&ctx, registry, type, "position") == offsetof(NestedC, position));
 
-    const TypeField *position = type_find_field(type, string_from_cstr(&ctx.strings, "position"));
+    const TypeField *position =
+        type_registry_find_field(registry, type, string_from_cstr(&ctx.strings, "position"));
     assert(type_kind(position->type) == TYPE_STRUCT);
     assert(type_registry_size_of(registry, position->type) == sizeof(Vec3C));
 
@@ -172,7 +174,7 @@ static void test_empty_struct() {
     const Type *type = resolve_struct(&ctx, "struct Empty { }", "Empty", &registry);
 
     assert(type != NULL);
-    assert(type_field_count(type) == 0);
+    assert(type_registry_fields_of(registry, type)->count == 0);
     assert(type_registry_size_of(registry, type) == 0);
     assert(type_registry_align_of(registry, type) == 1);
 
@@ -187,7 +189,7 @@ static void test_trailing_comma_allowed() {
     const Type *type =
         resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float, }", "Vec3", &registry);
 
-    assert(type_field_count(type) == 3);
+    assert(type_registry_fields_of(registry, type)->count == 3);
     assert(type_registry_size_of(registry, type) == sizeof(Vec3C));
 
     test_context_free(&ctx);
@@ -224,7 +226,7 @@ static void test_field_lookup_misses() {
     const Type *type =
         resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float }", "Vec3", &registry);
 
-    assert(type_find_field(type, string_from_cstr(&ctx.strings, "w")) == NULL);
+    assert(type_registry_find_field(registry, type, string_from_cstr(&ctx.strings, "w")) == NULL);
 
     test_context_free(&ctx);
 }
@@ -268,8 +270,8 @@ static void test_raw_pointer_owns_nothing() {
 
     assert(type_registry_ptr_to(registry, int_type) == ptr);
 
-    assert(!type_is_owned(ptr));
-    assert(type_is_copyable(ptr));
+    assert(!type_registry_owns(registry, ptr));
+    assert(type_registry_copies(registry, ptr));
     assert(type_registry_drop_of(registry, ptr) == NULL);
 
     assert(ptr != type_registry_box_to(registry, int_type));
@@ -306,11 +308,11 @@ static void test_a_borrow_and_a_box_are_distinct_constructors() {
     assert(box != ref);
     assert(box != int_type && ref != int_type);
 
-    assert(type_is_owned(box));
-    assert(!type_is_owned(ref));
+    assert(type_registry_owns(registry, box));
+    assert(!type_registry_owns(registry, ref));
 
-    assert(!type_is_copyable(box));
-    assert(type_is_copyable(ref));
+    assert(!type_registry_copies(registry, box));
+    assert(type_registry_copies(registry, ref));
 
     test_context_free(&ctx);
 }
@@ -325,7 +327,7 @@ static void test_mutually_recursive_structs() {
                                    "struct B { a: box A }\n",
                                    "A", &registry);
 
-    const TypeField *field = type_find_field(a, string_from_cstr(&ctx.strings, "b"));
+    const TypeField *field = type_registry_find_field(registry, a, string_from_cstr(&ctx.strings, "b"));
 
     assert(field);
     assert(type_name_of(type_pointee(field->type)) == string_from_cstr(&ctx.strings, "B"));

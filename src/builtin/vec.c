@@ -48,8 +48,10 @@ static size_t vec_stride(Args *args) {
     const Type *receiver = NULL;
     args_address(args, 0, &receiver);
 
-    return type_registry_size_of(args->vm->env.global_scope.type_registry,
-                                 type_pointee(type_fields(type_pointee(receiver))[0].type));
+    TypeRegistry *registry = args->vm->env.global_scope.type_registry;
+
+    return type_registry_size_of(
+        registry, type_pointee(type_registry_fields_of(registry, type_pointee(receiver))->fields[0].type));
 }
 
 static void vec_push(Args *args) {
