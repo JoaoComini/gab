@@ -11,8 +11,6 @@
 #include <stdio.h>
 #include <string.h>
 
-// Equivalents the C compiler lays out, so every expectation below is checked
-// against sizeof/offsetof rather than hand-computed numbers.
 typedef struct {
     float x, y, z;
 } Vec3C;
@@ -99,8 +97,6 @@ static void test_homogeneous_struct() {
     test_context_free(&ctx);
 }
 
-// A bool followed by an int needs three bytes of padding; a naive layout that
-// just sums sizes gets this wrong.
 static void test_interior_padding() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -117,7 +113,6 @@ static void test_interior_padding() {
     test_context_free(&ctx);
 }
 
-// The struct is rounded up to its own alignment, so this is 8 rather than 5.
 static void test_trailing_padding() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -132,7 +127,6 @@ static void test_trailing_padding() {
     test_context_free(&ctx);
 }
 
-// Alignment propagates from the nested type itself, not from its fields.
 static void test_nested_struct() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -216,7 +210,6 @@ static void test_unknown_field_type_is_not_registered() {
 
     assert(diagnostics_count(&ctx.diagnostics) == 1);
 
-    // A struct that failed to resolve must not become usable as a type.
     assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "Broken")) == NULL);
 
     ast_unit_destroy(unit);
@@ -258,11 +251,6 @@ static void test_builtin_widths() {
     test_context_free(&ctx);
 }
 
-// A 'ptr T' names an address and nothing more: it is interned on its pointee
-// like every other constructed type, and it neither owns what it names nor
-// stops a value holding one from copying. That is what separates it from both
-// spellings of an indirection -- a 'box T' owns, and a 'ref T' borrows, while
-// this makes no claim at all.
 static void test_raw_pointer_owns_nothing() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -284,7 +272,6 @@ static void test_raw_pointer_owns_nothing() {
     assert(type_is_copyable(ptr));
     assert(type_registry_drop_of(registry, ptr) == NULL);
 
-    // A 'box int' owns and a 'ref int' borrows; neither is this type.
     assert(ptr != type_registry_box_to(registry, int_type));
     assert(ptr != type_registry_ref_to(registry, int_type));
 
@@ -294,9 +281,6 @@ static void test_raw_pointer_owns_nothing() {
     test_context_free(&ctx);
 }
 
-// A borrow and an ownership are separate constructors, each carrying what it
-// names. Neither is the pointee, and neither is the other: what a slot must
-// free is read off the kind rather than off a flag beside it.
 static void test_a_borrow_and_a_box_are_distinct_constructors() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -316,14 +300,12 @@ static void test_a_borrow_and_a_box_are_distinct_constructors() {
     assert(type_pointee(box) == int_type);
     assert(type_pointee(ref) == int_type);
 
-    // Interned on the pointee, so a second mention is the same Type.
     assert(type_registry_box_to(registry, int_type) == box);
     assert(type_registry_ref_to(registry, int_type) == ref);
 
     assert(box != ref);
     assert(box != int_type && ref != int_type);
 
-    // The whole difference between them: one frees what it names, one does not.
     assert(type_is_owned(box));
     assert(!type_is_owned(ref));
 
@@ -333,8 +315,6 @@ static void test_a_borrow_and_a_box_are_distinct_constructors() {
     test_context_free(&ctx);
 }
 
-// A 'box T' needs T's declaration, not its layout, so two structs may each
-// point at the other however they are ordered in the file.
 static void test_mutually_recursive_structs() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -353,9 +333,6 @@ static void test_mutually_recursive_structs() {
     test_context_free(&ctx);
 }
 
-// A struct whose field failed has no layout, and neither has anything holding
-// it: a width derived from a type that has none would be wrong rather than
-// missing.
 static void test_a_failed_field_poisons_what_holds_it() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -379,8 +356,6 @@ static void test_a_failed_field_poisons_what_holds_it() {
     test_context_free(&ctx);
 }
 
-// An array's element is held by value, so naming one demands its layout -- and
-// gets it, however far down the file the element was declared.
 static void test_array_of_a_struct_declared_below() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -396,8 +371,6 @@ static void test_array_of_a_struct_declared_below() {
     test_context_free(&ctx);
 }
 
-// A ring through a 'box' is finite: the indirection is a machine word whatever
-// it names, so neither struct's width waits on the other's.
 static void test_a_ring_through_a_box_is_laid_out() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -415,8 +388,6 @@ static void test_a_ring_through_a_box_is_laid_out() {
     test_context_free(&ctx);
 }
 
-// An array is a run of its element, so a struct holding an array of itself is
-// as infinite as one holding itself directly.
 static void test_rejects_an_array_of_the_struct_declaring_it() {
     TestContext ctx;
     test_context_init(&ctx);

@@ -1,7 +1,3 @@
-// Logical not: '!b'. It is the only prefix whose operand and result are bool,
-// so what is worth checking is that it rejects everything else and that its
-// place among the other prefixes and the binary operators is the one '!'
-// conventionally has.
 #include "support/run.h"
 #include "vm/vm.h"
 
@@ -19,8 +15,6 @@ static void test_negates_a_variable() {
                          "let r: bool = f();\n") == true);
 }
 
-// The fold is a compile-time path of its own, so a bool that only exists at
-// runtime is checked apart from the literal above.
 static void test_negates_a_comparison() {
     assert(test_run_bool("func f(): bool { let x: int = 1; return !(x < 2); }\n"
                          "let r: bool = f();\n") == false);
@@ -37,21 +31,16 @@ static void test_negates_through_a_deref() {
                          "let r: bool = f();\n") == false);
 }
 
-// Two prefixes stack, because parse_unary recurses into itself.
 static void test_double_negation_cancels() {
     assert(test_run_bool("func f(): bool { let b: bool = true; return !!b; }\n"
                          "let r: bool = f();\n") == true);
 }
 
-// '!' binds tighter than any binary operator, so this is (!a) && b rather than
-// !(a && b). Those disagree exactly when a is false and b is false.
 static void test_binds_tighter_than_a_binary_operator() {
     assert(test_run_bool("func f(): bool { let a: bool = false; let b: bool = false; return !a && b; }\n"
                          "let r: bool = f();\n") == false);
 }
 
-// ...but looser than a postfix, so this negates the field rather than trying
-// to reach through a negated struct.
 static void test_binds_looser_than_a_postfix() {
     assert(test_run_bool("struct Flags { on: bool }\n"
                          "func f(): bool { let g: Flags; g.on = false; return !g.on; }\n"
@@ -66,7 +55,6 @@ static void test_not_is_typed_boolean() {
     assert(!test_compiles("func f(): bool { let x: int = 1; let p: ref int = x; return !p; }\n"));
 }
 
-// '!b' is a fresh value, so it has no address and no home to assign into.
 static void test_not_is_a_temporary() {
     assert(!test_compiles("func f(): bool { let b: bool = true; !b = false; return b; }\n"));
     assert(!test_compiles("func f(): bool { let b: bool = true; let p: ref bool = !b; return *p; }\n"));

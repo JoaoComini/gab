@@ -11,19 +11,9 @@
 #include <stdint.h>
 #include <string.h>
 
-// The 'Vec' declaration: a block of the element it is given.
-//
-// A declaration, so no width is settled here -- what a vector is laid out as
-// follows from the element, and that is not known until one is applied.
 static const TypeDef *vec_declare_type(VM *vm) {
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
-    // The block owns the memory and carries both the capacity it was taken at
-    // and how far into it anything was written, so freeing it asks nothing
-    // else -- which is the whole of what a vector is.
-    //
-    // Written over parameter zero, which is what makes this a declaration: what
-    // a vector holds is not known until a mention supplies an element.
     const TypeFieldSpec fields[] = {
         {
             .name = string_from_cstr(&vm->env.strings, "data"),
@@ -41,17 +31,10 @@ static const TypeDef *vec_declare_type(VM *vm) {
     return builtin_declare(vm, &spec);
 }
 
-// A vector's header: the block it owns, which carries how far into it anything
-// was written.
-//
-// Copied in and out rather than pointed at. A frame slot is aligned to the slot
-// width, which is narrower than this struct asks for, so reading one in place
-// is undefined however well it happens to work.
 typedef struct {
     GabBlockValue block;
 } VecHeader;
 
-// The receiver's header, read out of the slots the pointer names.
 static VecHeader vec_load(Args *args) {
     VecHeader vec;
     memcpy(&vec, args_pointer(args, 0), sizeof(vec));
@@ -59,13 +42,8 @@ static VecHeader vec_load(Args *args) {
     return vec;
 }
 
-// Writes a header back where it was read from. Only the methods that change one
-// call this: 'at' and 'len' leave the vector as they found it.
 static void vec_store(Args *args, const VecHeader *vec) { memcpy(args_pointer(args, 0), vec, sizeof(*vec)); }
 
-// How wide one element of the receiver's vector is. Read off the declared
-// parameter rather than passed in: the signature was substituted for this
-// instantiation, so what 'push' takes is exactly what the block strides by.
 static size_t vec_stride(Args *args) {
     const Type *receiver = NULL;
     args_address(args, 0, &receiver);
@@ -74,12 +52,6 @@ static size_t vec_stride(Args *args) {
                                  type_pointee(type_fields(type_pointee(receiver))[0].type));
 }
 
-// 'v.push(x)'. Writes one element past the live ones, growing first if there is
-// no room.
-//
-// The element is copied in as bytes, which is what makes pushing something that
-// owns a move: the caller's slot and this one would otherwise both free it, and
-// the resolver is what refuses the copy that would.
 static void vec_push(Args *args) {
     VecHeader vec = vec_load(args);
     size_t stride = vec_stride(args);
@@ -99,11 +71,6 @@ static void vec_push(Args *args) {
     vec_store(args, &vec);
 }
 
-// 'v.at(i)'. The element at an index.
-//
-// An index outside the live elements fails the run rather than answering: the
-// slots past them hold whatever the block was zeroed to, and there is no value
-// that could mean 'no element' without a caller mistaking it for one.
 static void vec_at(Args *args) {
     VecHeader vec = vec_load(args);
     int32_t index = args_int(args, 1);
@@ -118,24 +85,13 @@ static void vec_at(Args *args) {
     args_return_struct(args, (const char *)vec.block.data + (size_t)index * stride, stride);
 }
 
-// 'v.len()'. How many elements have been pushed, which the block carries.
 static void vec_len(Args *args) { args_return_int(args, vec_load(args).block.length); }
 
 void builtin_register_vec(VM *vm) {
-    // Declared here and held as a local: what a provider gets back is its
-    // handle to the declaration, and one VM's types are not another's.
     const TypeDef *vec_def = vec_declare_type(vm);
 
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
-    // Every method reaches the header in place, so each takes a pointer to it:
-    // a receiver by value would copy a vector, which owns its block and so
-    // cannot be copied at all.
-    //
-    // Written as a reference to the declaration applied to its own parameter,
-    // which is what 'Vec<T>' is from inside the declaration. Substituting it
-    // finds the instantiation being built, so no receiver needs naming a self
-    // the declaration could not otherwise say.
     const Type *element = type_registry_param(registry, 0);
     const Type *self = type_registry_apply(registry, vec_def, &element, 1);
     const Type *receiver = type_registry_ref_to(registry, self);
@@ -145,8 +101,6 @@ void builtin_register_vec(VM *vm) {
     const Type *const push_params[] = {element};
     const Type *const at_params[] = {an_int};
 
-    // Nothing comes back from a push: it is done for what it leaves in the
-    // vector, and a NULL result is what returning nothing is everywhere.
     builtin_declare_method(vm, vec_def, "push", vec_push, receiver, NULL, push_params, 1);
     builtin_declare_method(vm, vec_def, "at", vec_at, receiver, element, at_params, 1);
     builtin_declare_method(vm, vec_def, "len", vec_len, receiver, an_int, NULL, 0);

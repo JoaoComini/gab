@@ -23,15 +23,15 @@ typedef struct {
 typedef struct {
     DiagKind kind;
     Span span;
-    char *message; // owned by the sink's arena
+    char *message;
 } Diagnostic;
 
 #define diagnostic_list_item_free(item) (void)(item)
 GAB_LIST(DiagnosticList, diagnostic_list, Diagnostic)
 
 typedef struct {
-    Arena *arena;       // messages are allocated here
-    const char *module; // filename, for display
+    Arena *arena;
+    const char *module;
     DiagnosticList items;
 } Diagnostics;
 

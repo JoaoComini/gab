@@ -1,5 +1,3 @@
-// An 'extern' function: declared in a script, defined by the host. Written
-// against gab.h alone, because binding one is something a host does.
 #include "gab.h"
 
 #include <assert.h>
@@ -23,8 +21,6 @@ static void scale(GabArgs *args) { gab_return_float(args, gab_arg_get_float(args
 
 static void negate(GabArgs *args) { gab_return_bool(args, !gab_arg_get_bool(args, 0)); }
 
-// A struct crosses by value in both directions, reading and writing the
-// frame's slots in place.
 static void heal(GabArgs *args) {
     Player p;
     gab_arg_get_struct(args, 0, &p, sizeof p);
@@ -34,8 +30,6 @@ static void heal(GabArgs *args) {
     gab_return_struct(args, &p, sizeof p);
 }
 
-// A 'ref T' parameter is the caller's object, so a write through it is visible
-// after the call returns.
 static void boost(GabArgs *args) {
     Player *p = gab_arg_get_pointer(args, 0);
 
@@ -44,7 +38,6 @@ static void boost(GabArgs *args) {
 
 static void refuse(GabArgs *args) { gab_error(args, "the host refused"); }
 
-// The value a host computes comes back to the script that called it.
 static void test_an_extern_returns_to_its_caller(void) {
     GabVM *vm = gab_vm_new();
 
@@ -69,8 +62,6 @@ static void test_an_extern_returns_to_its_caller(void) {
     gab_vm_free(vm);
 }
 
-// An extern returning nothing still runs, and what it did is visible to the
-// host that bound it.
 static void test_an_extern_may_return_nothing(void) {
     GabVM *vm = gab_vm_new();
 
@@ -95,7 +86,6 @@ static void test_an_extern_may_return_nothing(void) {
     gab_vm_free(vm);
 }
 
-// Each scalar type survives the round trip with its own width.
 static void test_scalars_cross_the_boundary(void) {
     GabVM *vm = gab_vm_new();
 
@@ -126,8 +116,6 @@ static void test_scalars_cross_the_boundary(void) {
     gab_vm_free(vm);
 }
 
-// A struct argument and a struct return are the script's own layout, read and
-// written in place.
 static void test_a_struct_crosses_by_value(void) {
     GabVM *vm = gab_vm_new();
 
@@ -156,8 +144,6 @@ static void test_a_struct_crosses_by_value(void) {
     gab_vm_free(vm);
 }
 
-// A 'ref T' parameter borrows, so the host writes through it to the object the
-// caller still owns.
 static void test_a_borrow_is_written_through(void) {
     GabVM *vm = gab_vm_new();
 
@@ -187,8 +173,6 @@ static void test_a_borrow_is_written_through(void) {
     gab_vm_free(vm);
 }
 
-// A script naming an extern nothing registered does not load, and the message
-// says which name is missing.
 static void test_an_unbound_extern_fails_the_load(void) {
     GabVM *vm = gab_vm_new();
 
@@ -199,16 +183,12 @@ static void test_an_unbound_extern_fails_the_load(void) {
                      "extern func missing(x: int): int;\n",
                      &err));
 
-    // The declaration is what failed, so the message names it and points at the
-    // line it was written on.
     assert(strstr(err.message, "missing"));
     assert(err.line == 3);
 
     gab_vm_free(vm);
 }
 
-// Binding happens before the script that declares the name is loaded, so a
-// registration afterwards is too late to rescue it.
 static void test_an_extern_must_be_registered_before_the_load(void) {
     GabVM *vm = gab_vm_new();
 
@@ -234,8 +214,6 @@ static void test_an_extern_must_be_registered_before_the_load(void) {
     gab_vm_free(vm);
 }
 
-// An extern is callable from a host exactly as a script function is: the
-// prototype it binds to is a prototype like any other.
 static void test_a_host_may_call_an_extern_directly(void) {
     GabVM *vm = gab_vm_new();
 
@@ -260,8 +238,6 @@ static void test_a_host_may_call_an_extern_directly(void) {
     gab_vm_free(vm);
 }
 
-// An extern that reports an error unwinds the run rather than returning, and
-// the host sees the message it gave.
 static void test_an_extern_may_fail_the_run(void) {
     GabVM *vm = gab_vm_new();
 
@@ -284,8 +260,6 @@ static void test_an_extern_may_fail_the_run(void) {
     gab_vm_free(vm);
 }
 
-// An extern declared with a body is not an extern: the two spellings state
-// different things about where the code lives.
 static void test_an_extern_may_not_have_a_body(void) {
     GabVM *vm = gab_vm_new();
 
@@ -299,8 +273,6 @@ static void test_an_extern_may_not_have_a_body(void) {
     gab_vm_free(vm);
 }
 
-// A plain 'func' still requires one, so the body is what the keyword governs
-// rather than something newly optional everywhere.
 static void test_a_plain_func_still_needs_a_body(void) {
     GabVM *vm = gab_vm_new();
 
@@ -313,8 +285,6 @@ static void test_a_plain_func_still_needs_a_body(void) {
     gab_vm_free(vm);
 }
 
-// An extern belongs to the module that declared it, exactly as a function
-// does.
 static void test_an_extern_lives_in_its_module(void) {
     GabVM *vm = gab_vm_new();
 
@@ -332,8 +302,6 @@ static void test_an_extern_lives_in_its_module(void) {
     gab_vm_free(vm);
 }
 
-// A host that reports failure without a message still fails, and the run says
-// so: the reason reaches the host either way.
 static void refuse_silently(GabArgs *args) { gab_error(args, NULL); }
 
 static void test_an_extern_may_fail_without_a_message(void) {
@@ -358,8 +326,6 @@ static void test_an_extern_may_fail_without_a_message(void) {
     gab_vm_free(vm);
 }
 
-// A message longer than the buffer is truncated rather than overrunning it, and
-// what fits still reaches the host.
 static void refuse_at_length(GabArgs *args) {
     char message[512];
 
@@ -394,10 +360,6 @@ static void test_a_long_extern_message_is_truncated(void) {
     gab_vm_free(vm);
 }
 
-// A call reaches the body its name declares, whichever kind that is. Externs
-// and script functions are numbered in separate spaces, so a unit that
-// interleaves them has two indices for every position: a call carrying the
-// wrong one would land on whatever shares its number in the other space.
 static void test_a_call_reaches_the_body_its_name_declares(void) {
     GabVM *vm = gab_vm_new();
 
@@ -419,7 +381,6 @@ static void test_a_call_reaches_the_body_its_name_declares(void) {
     GabCall *call = gab_call_init(fn, &err);
     assert(gab_arg_int(call, 0, 2));
 
-    // 2 * 3 = 6, + 1 = 7, doubled = 14.
     int32_t out = 0;
     assert(gab_call(vm, call, &out, &err) == GAB_OK);
     assert(out == 14);

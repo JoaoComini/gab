@@ -14,17 +14,9 @@
 struct Symbol;
 struct Type;
 
-// unwind jumps past every free codegen emitted, so the frames have to be told
-// what to drop.
-//
-// A 'ref T' slot is never listed: it borrows, so there is nothing to free.
 typedef struct {
     unsigned int slot;
 
-    // What freeing the slot does, so the unwinder frees it by the same plan the
-    // ordinary release uses, and how much of the slot to clear afterwards. Held
-    // directly rather than by index: this rides on the prototype rather than in
-    // an instruction, so nothing relocates it and nothing has to look it up.
     const DropPlan *drop;
     size_t release_width;
 } FrameRef;
@@ -32,113 +24,48 @@ typedef struct {
 #define frame_ref_list_item_free(item) ((void)(item))
 GAB_LIST(FrameRefList, frame_ref_list, FrameRef)
 
-// An 'extern' function's host body. Takes the frame it was called with, so it
-// reads its arguments and writes its result through the slots already in
-// place — the same layout a script function's frame has, which is what keeps
-// the boundary free of marshalling.
 typedef struct GabArgs GabArgs;
 typedef void (*GabExternFn)(GabArgs *args);
 
-// What the VM calls the same struct. The tag is the host's because gab.h
-// declares it opaque under that name and must stay self-contained; the
-// accessors a host reaches it through are the checked tier over the VM's own.
 typedef struct GabArgs Args;
 
-// A function whose body is C rather than bytecode: a host extern, and a
-// builtin type's method, which the VM registers the same way.
-//
-// Separate from FuncPrototype because the two share nothing a call needs. This
-// has no chunk to interpret, no registers to reserve, and no frame to push --
-// its arguments are already laid out where a callee's would be, so it runs in
-// the caller's frame. Keeping them apart is what lets OP_CALL_EXTERN index
-// straight to a body instead of testing which kind it found.
 typedef struct {
     GabExternFn body;
 
-    // The declaration the body was written against, which is what turns a
-    // parameter index into a slot and says how wide the return value is.
-    // Points into the environment's arena, so it outlives every compile.
     const struct Symbol *symbol;
 } ExternProto;
 
 #define extern_proto_list_item_free(item) ((void)(item))
 GAB_LIST(ExternProtoList, extern_proto_list, ExternProto)
 
-// One function compiled to bytecode. A unit's top level is one of these too,
-// with an arity of zero: it runs as frame zero, so the interpreter has a single
-// path and OP_RETURN means the same thing everywhere.
-//
-// A function whose body is C is an ExternProto instead, in its own table.
 typedef struct {
     Chunk *chunk;
 
     int arity;
     int max_registers;
 
-    // Every slot this function ever owns a reference in. Walked only on an
-    // abnormal unwind, where the ordinary releases are skipped — so it costs
-    // nothing on the path that matters, and the alternative is leaking whatever
-    // the stack held when the run failed.
-    //
-    // A slot may appear here and hold something else by the time a failure
-    // happens, since sibling blocks reuse slots. That is why the runtime clears
-    // a slot when it releases it: a slot listed here either holds a live
-    // reference or holds NULL, and NULL is what both release paths tolerate.
     FrameRefList refs;
 } FuncPrototype;
 
 void func_proto_free(FuncPrototype *proto);
 
-// Prototypes are held by pointer, not by value: a frame addresses its prototype
-// for as long as it runs, and this list grows whenever a unit loads. Each
-// prototype comes from the environment's arena, so the list frees what a prototype owns
-// and not the prototype itself.
 #define func_proto_list_item_free(item) func_proto_free(item)
 GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype *)
 
-/*
-    What allocating or releasing one value costs, for the types OP_NEW and
-    OP_RELEASE name.
-
-    Not a type. Everything either instruction needs is a number settled where
-    the layout was -- how many bytes to allocate, what freeing has to do, how
-    much of the slot to clear -- so the table carries those rather than a handle
-    the VM would have to ask. That is what keeps a Type out of the run: layout
-    is a fact the compiler spends, not one the interpreter consults.
-
-    Interned on the type all the same, since two mentions of one type must share
-    an entry; the type is the key and never the payload.
-*/
 typedef struct HeapShape {
-    // What OP_NEW allocates, and what a plan-less release still clears.
     size_t size;
 
-    // What freeing a value of the type does, or NULL when it owns nothing.
     const DropPlan *drop;
 
-    // The bytes a release clears so the slot is safe to visit again. A decision
-    // codegen made about the slot rather than a fact about the type, carried
-    // here because the release instruction has no operand bits left to hold it.
     size_t release_width;
 } HeapShape;
 
-// The shapes OP_NEW allocates and OP_RELEASE frees. Plans are owned by the
-// scope arena and outlive every compile, so the list holds borrowed pointers
-// and frees none.
 #define heap_shape_list_item_free(item) ((void)(item))
 GAB_LIST(HeapShapeList, heap_shape_list, HeapShape)
 
-// The literals OP_LOAD_STR can load. Interned in the VM's pool, so equal text
-// is one String * and the list holds borrowed pointers.
 #define string_list_item_free(item) ((void)(item))
 GAB_LIST(StringList, string_list, String *)
 
-// One operand a unit must rewrite once linking tells it where its indices
-// landed. A unit numbers what it declares from zero, so an operand it encoded
-// means nothing until the unit's base is added to it.
-//
-// A reference to something an earlier unit declared is already absolute and is
-// never recorded here: only what this unit numbered itself gets rebased.
 typedef struct {
     Chunk *chunk;
     size_t offset;
@@ -147,13 +74,6 @@ typedef struct {
 #define relocation_list_item_free(item) ((void)(item))
 GAB_LIST(RelocationList, relocation_list, Relocation)
 
-// A function this unit declared, and the symbol to stamp with its index once
-// linking makes that index absolute. Stamping at link rather than during
-// codegen is what keeps a compile that fails from leaving a symbol pointing at
-// a function nothing installed.
-//
-// Which table the index is into is the symbol's own 'is_extern': a declaration
-// is one kind or the other before codegen reserves anything for it.
 typedef struct {
     struct Symbol *symbol;
     size_t local_index;
@@ -162,9 +82,6 @@ typedef struct {
 #define proto_binding_list_item_free(item) ((void)(item))
 GAB_LIST(ProtoBindingList, proto_binding_list, ProtoBinding)
 
-// An 'extern' declaration awaiting a host body. Resolved at link, so a unit
-// that names a body nothing supplied installs nothing rather than leaving a
-// prototype behind that a call could reach unbound.
 typedef struct {
     size_t local_index;
     const struct Symbol *symbol;
@@ -174,22 +91,12 @@ typedef struct {
 #define extern_request_list_item_free(item) ((void)(item))
 GAB_LIST(ExternRequestList, extern_request_list, ExternRequest)
 
-// What a compile produces, before any of it belongs to a VM.
-//
-// Everything here is numbered from zero and owned by the unit, so a compile
-// that fails is discarded by freeing this and nothing else. Linking appends the
-// unit's prototypes and types to the program's, rebases every operand the unit
-// recorded, resolves its externs, and only then stamps the symbols -- so the program
-// either gains the whole unit or is untouched by it.
 typedef struct {
-    // The unit's top level, which the caller keeps once the rest has linked.
-    // Everything below is consumed by the link and gone with the unit.
     FuncPrototype top_level;
 
     FuncProtoList prototypes;
     ExternProtoList extern_protos;
-    // The types this unit named, and the shape of each. Parallel: the type is
-    // what interning is keyed on, the shape is what the VM runs on.
+
     TypeList types;
     HeapShapeList type_shapes;
     StringList strings;
@@ -202,27 +109,17 @@ typedef struct {
     ProtoBindingList bindings;
     ExternRequestList externs;
 
-    // The arena the unit allocates from, held so that anything the link needs
-    // can be allocated after codegen has finished.
     Arena *arena;
 
-    // Where each of the unit's types landed in the program's list, filled in by the
-    // link check so that installing has nothing left that can fail.
     size_t *type_map;
     size_t *string_map;
 } Unit;
 
 void unit_free(Unit *unit);
 
-// The top level of every unit the program has loaded, kept only so its chunk
-// is freed with the program. Nothing looks one up: a unit is reached through
-// the names it declared, never through the file it came from.
 #define top_level_list_item_free(item) func_proto_free(&(item))
 GAB_LIST(TopLevelList, top_level_list, FuncPrototype)
 
-// A host body bound to a name, waiting for a script to declare it 'extern'.
-// Registrations outlive every load, so one made before any unit loads is still
-// there for the last of them.
 typedef struct {
     String *module;
     String *name;
@@ -232,58 +129,24 @@ typedef struct {
 #define extern_binding_list_item_free(item) ((void)(item))
 GAB_LIST(ExternBindingList, extern_binding_list, ExternBinding)
 
-// What has been loaded and can be run: the image a link installs into and an
-// instruction indexes. Everything here is named by index from bytecode, which
-// is why it is one table per kind rather than per module -- an operand carries
-// no module, so the numbering has to be program-wide.
-//
-// Allocated out of Environment::arena, so a Program never outlives the
-// Environment that compiled it.
 typedef struct {
-    // Function prototypes are program-wide because a prototype index is baked
-    // into OP_CALL operands. Top-level variables are not here: they are
-    // frame-zero locals on the stack, so top-level state lives and dies with a
-    // run.
     FuncProtoList prototypes;
 
-    // The bodies OP_CALL_EXTERN indexes, numbered in their own space. A unit's
-    // externs and its script functions are counted separately, so neither
-    // numbering leaves gaps for the other -- and the builtin methods the VM
-    // registers before any unit loads sit at the bottom of this one without
-    // displacing a single script function's index.
     ExternProtoList extern_protos;
 
-    // The types OP_NEW allocates, indexed from the instruction. A handle is 8
-    // bytes and the constant pool holds 4-byte Values, so an allocation names
-    // its type by index the same way a call names its prototype. Interning is
-    // by pointer identity, which the type system already guarantees.
     HeapShapeList heap_shapes;
 
-    // The type each shape came from, parallel to heap_shapes. Only linking
-    // reads it, to intern a shape on the type that produced it; nothing at run
-    // time does.
     TypeList shape_types;
 
-    // The literals OP_LOAD_STR loads, indexed from the instruction. A String *
-    // is 8 bytes, so a literal names itself by index the way an allocation
-    // names its type.
     StringList strings;
 
-    // Every loaded unit's top level. See TopLevelList.
     TopLevelList top_levels;
 
-    // Host bodies bound by name, resolved against a unit's 'extern'
-    // declarations as it loads. See ExternBinding.
     ExternBindingList extern_bindings;
 } Program;
 
-// Whether this unit could be installed. Reports through the diagnostics sink if
-// an index would not fit its operand field once rebased, or an "extern" names a
-// body nothing registered. Touches nothing on the program, so a caller may ask and
-// then discard the unit.
 bool link_check(Program *program, Unit *unit, Diagnostics *diagnostics);
 
-// Installs a unit that link_check has accepted. Cannot fail.
 void link_install(Program *program, Unit *unit);
 
 #endif

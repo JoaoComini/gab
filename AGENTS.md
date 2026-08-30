@@ -73,6 +73,12 @@ exercise that has since concluded, such as a sample written to measure how
 often some construct is needed: once the question is answered the file is not
 a suite, and what it leaves behind duplicates whatever it was measuring.
 
+**A test states behaviour by being a test, not by being commented.** The name
+says which rule, the program says what it means, the assertion says what must
+hold. A comment above a test is a fourth statement of the same thing, and the
+one that rots first. If a test needs prose to be understood, the test is wrong:
+shrink the program until the rule is visible in it.
+
 Assert on behaviour by default. Assert on emitted instructions only for claims
 behaviour cannot make — a folded constant, a reclaimed register, a multi-slot
 copy that stays one instruction. Those belong in `test/vm/codegen_test.c`.
@@ -88,6 +94,28 @@ load-bearing literal or encoding choice.
 
 Do not narrate mechanics, restate a signature, or label a section the name
 already describes.
+
+**A comment is one line.** If it needs a paragraph, the code is what needs the
+work.
+
+**Load-bearing means the code breaks without it, not that it is interesting.**
+The test is mechanical: delete the comment, and ask whether a competent reader
+editing that line would now plausibly break something. An ordering whose breach
+is silent, a constant that must match a value elsewhere, an encoding the line
+depends on but does not show — those survive. Everything else goes.
+
+Rationale is not load-bearing. Why a field lives in a side table rather than on
+the struct, why one representation was chosen over another, what a design
+protects against — this is real knowledge and it does not go in the code. It
+goes in the commit message, where `git log -S` and `git blame` will find it and
+where it cannot rot against the code it describes. A comment explaining a choice
+is a comment that will outlive the choice.
+
+**Comments are rare, not regular.** Most functions warrant none, and a function
+whose every block carries a header comment is asking to be read as an outline
+instead of as code. If a block needs a label to be followed, give it a name by
+extracting it. Density is itself a smell: when a file grows a comment per
+section, the comments are carrying structure the code should carry.
 
 **Comments and test names describe the present, never the repository's
 history.** No "the regression", "used to", "did in fact", "still works", "no

@@ -21,26 +21,13 @@ typedef struct {
 
     const Instruction *return_ip;
 
-    // Byte offset into the stack, not a slot index.
     size_t base;
     unsigned int dest;
 } CallFrame;
 
-// Every GabFunc this VM has handed out. A handle points into the VM's arena, so
-// it cannot outlive the VM in any case; owning them here makes that the actual
-// rule rather than a lifetime the host has to manage, and is why there is no
-// way to release one early.
-//
-// Held as void * because GabFunc is the embedding API's type and opaque here.
-// gab.c does the freeing, which is why the item_free hook is empty.
 #define func_handle_list_item_free(item) ((void)(item))
 GAB_LIST(FuncHandleList, func_handle_list, void *)
 
-// One module naming another, recorded as each unit links. The graph a host
-// would otherwise have to keep for itself: what a unit depends on is what it
-// imported, and this is where that becomes something the VM can be asked.
-//
-// Both names are interned, so identity is the comparison.
 typedef struct {
     String *from;
     String *to;
@@ -49,10 +36,6 @@ typedef struct {
 #define module_import_list_item_free(item) ((void)(item))
 GAB_LIST(ModuleImportList, module_import_list, ModuleImport)
 
-// StringList comes from link.h, which the program's literal table also uses.
-
-// Why a run stopped. A run that completed normally leaves VM_RUN_OK; anything
-// else means the interpreter unwound early, and the frames are already gone.
 typedef enum {
     VM_RUN_OK,
     VM_RUN_ERR_CALL_DEPTH,
@@ -61,138 +44,57 @@ typedef enum {
     VM_RUN_ERR_DIVIDE_BY_ZERO,
     VM_RUN_ERR_DIVIDE_OVERFLOW,
 
-    // An index outside the array it indexed, or a negative length given to one.
     VM_RUN_ERR_BOUNDS,
 
-    // An 'extern' function reported failure, or none was ever bound to the
-    // prototype a call named.
     VM_RUN_ERR_EXTERN,
 } VmRunStatus;
 
-// The interpreter's failure channel. A run cannot report through a return value
-// because it unwinds from inside the loop, so the reason is left here for
-// whoever started the run to read.
-//
-// The message is copied rather than pointed at. Most are literals, but an
-// extern's comes from the host and may be a local of the call that reported it,
-// so one rule for all of them beats a pointer whose lifetime depends on which
-// status it carries. Sized to match GabError::message, which is where a host
-// eventually reads it.
 typedef struct {
     VmRunStatus status;
     char message[256];
 } VmError;
 
-// Arenas are named for what owns them, and the rule that follows from that is
-// the whole lifetime model: allocate from the arena of the thing that will own
-// the result. A Type published into the registry is owned by the VM; an AST
-// node is owned by the compile that built it.
-//
-// A third, module-scoped lifetime belongs between these two — long enough to
-// outlive a compile, short enough to be freed by gab_module_free. It does not
-// exist yet because every compile shares one global scope and type registry,
-// so a module's types are reachable from the next module and freeing them
-// would dangle. It becomes real alongside per-module scopes.
-//
-// The compile-time world a unit resolves against: every name that exists, the
-// scopes they live in, and which module may see which. A run never reads any of
-// it -- what a run needs, codegen has already turned into an index.
 typedef struct {
-    // Lives until vm_free: interned strings, global symbols, and every Type.
-    // Also backs the prototypes in Program, which is why neither outlives this.
     Arena *arena;
 
-    // Reset at the start of every compile: the AST, diagnostics, and the scopes
-    // of blocks, none of which anything holds once codegen is done. Kept here
-    // rather than created per compile so its blocks are recycled instead of
-    // returned to malloc between compiles.
     Arena *compile_arena;
 
-    StringPool strings; // must outlive global_scope
+    StringPool strings;
 
-    // The builtins, and nothing else: no unit declares into this scope. Every
-    // module scope parents to it, so 'int' and its siblings resolve from
-    // anywhere and the type registry is shared.
     Scope global_scope;
 
-    // One scope per declared module name, created on first use and living as
-    // long as the VM. A module accumulates across compiles: a second unit
-    // naming the same module compiles against the scope the first one filled.
     ModuleScopeMap *module_scopes;
 
-    // Which module imports which. See ModuleImport.
     ModuleImportList module_imports;
 } Environment;
 
-// The machine: a stack, a frame array, and where in the bytecode it is. Holds
-// the Environment and Program by value for now, because one arena backs all
-// three and vm_free is the single lifetime -- but the interpreter reads only
-// 'program', so what it takes to run is already separable from what it took to
-// compile.
 typedef struct VM {
     Environment env;
     Program program;
 
-    // The handles this VM has handed out. See FuncHandleList.
     FuncHandleList func_handles;
 
-    // The stack is byte-addressed and 8-byte aligned at the base, so a value
-    // wider than a slot can sit at its natural alignment. Capacity is still
-    // counted in slots; a slot is VM_SLOT_SIZE bytes.
     uint8_t *stack;
     size_t stack_capacity;
 
     CallFrame frames[VM_MAX_CALL_DEPTH];
     size_t frame_count;
 
-    // Where in its chunk the running frame is, as a pointer: the loop holds one
-    // too, so the two need no conversion at the boundary between them.
     const Instruction *instruction_pointer;
 
-    // Why the last run stopped. Cleared at the start of every run.
     VmError error;
 } VM;
 
-// One C body's view of the frame it was called with, shared by a builtin
-// method and a host extern. Opaque to a host, which reaches its arguments
-// through the gab_arg_get_* accessors; the VM's own bodies read the same slots
-// through the args_* ones.
 struct GabArgs {
     VM *vm;
 
-    // The declaration this call was made against, which is what turns a
-    // parameter index into a slot and says how wide the return value is.
     const struct Symbol *symbol;
 
-    // Byte offset of the frame's slot 0, which is where the return value goes;
-    // the arguments follow it, laid out exactly as a script callee's would be.
     size_t base;
 };
 
-// Where slot i of the stack begins. Bytes, because a slot is a size rather than
-// a type: what lives there is whatever the static types said, and only the
-// accessors below name a width.
 static inline uint8_t *vm_slot_at(const VM *vm, size_t i) { return vm->stack + i * VM_SLOT_SIZE; }
 
-// Scalar reads and writes. Every one goes through memcpy, which is the only
-// way to move bytes into a typed object without assuming the alignment or the
-// effective type of what they came from -- and which every compiler folds into
-// the single load or store it describes.
-//
-// The pointer pair is the same operation over two slots, and sits here rather
-// than apart so that every access to a slot reads alike.
-/*
-    Each takes where the frame's registers begin rather than the VM, because
-    the interpreter holds that as a local and a register access must not reload
-    it. A field could not stay in a register across a handler: the slots are
-    bytes and the field naming them is a pointer to bytes, so a store into a
-    slot may, as far as the compiler knows, be a store to the field -- and every
-    access after a write reloads it. A local has no address for such a store to
-    have written through. Lua's 'StkId base' is a local for this reason.
-
-    Somewhere with no such local -- a frame being set up, a host reading a
-    result -- passes vm_registers(vm).
-*/
 static inline int32_t vm_read_i32_at(const uint8_t *regs, size_t r) {
     int32_t value;
     memcpy(&value, regs + r * VM_SLOT_SIZE, sizeof(value));
@@ -226,9 +128,6 @@ static inline void vm_write_ptr_at(uint8_t *regs, size_t r, uint8_t *address) {
     memcpy(regs + r * VM_SLOT_SIZE, &address, sizeof(address));
 }
 
-// Where the running frame's registers begin. Derived rather than stored: it is
-// the stack plus that frame's base, and a field holding the same thing would be
-// a second statement of it to keep in step.
 static inline uint8_t *vm_registers(const VM *vm) {
     return vm->stack + (vm->frame_count > 0 ? vm->frames[vm->frame_count - 1].base : 0);
 }
@@ -236,8 +135,6 @@ static inline uint8_t *vm_registers(const VM *vm) {
 VM *vm_create();
 void vm_free(VM *vm);
 
-// The scope holding a module's declarations, created on first mention and
-// living as long as the VM. NULL names the default module.
 Scope *environment_module_scope(Environment *env, String *name);
 
 #endif

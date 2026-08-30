@@ -18,32 +18,24 @@ static void test_call_with_no_arguments() {
                         "let r: int = main();") == 42);
 }
 
-// An argument that is itself a call must not allocate registers in the middle
-// of the outer call's argument slots.
 static void test_nested_call_arguments() {
     assert(test_run_int("func add(a: int, b: int): int { return a + b; }\n"
                         "func main(): int { return add(add(1, 2), add(3, 4)); }\n"
                         "let r: int = main();") == 10);
 }
 
-// The case a flat register file cannot express: each invocation needs its own
-// copy of n, so this only works once frames exist.
 static void test_recursion() {
     assert(test_run_int("func fact(n: int): int { if n <= 1 { return 1; } return n * fact(n - 1); }\n"
                         "func main(): int { return fact(5); }\n"
                         "let r: int = main();") == 120);
 }
 
-// Two recursive calls per level, so a frame that leaked registers into its
-// caller would corrupt the pending addition.
 static void test_tree_recursion() {
     assert(test_run_int("func fib(n: int): int { if n < 2 { return n; } return fib(n - 1) + fib(n - 2); }\n"
                         "func main(): int { return fib(10); }\n"
                         "let r: int = main();") == 55);
 }
 
-// The callee's own locals live above its parameters; they must not reach back
-// into the caller's frame.
 static void test_callee_locals_do_not_clobber_caller() {
     assert(test_run_int("func inner(x: int): int { let a = 100; let b = 200; return x + a + b; }\n"
                         "func outer(y: int): int { let keep = 7; return inner(y) + keep; }\n"
@@ -52,16 +44,11 @@ static void test_callee_locals_do_not_clobber_caller() {
 }
 
 static void test_deep_recursion_grows_the_stack() {
-    // Deep enough to force the stack past its initial capacity while staying
-    // under the call-depth limit.
     assert(test_run_int("func down(n: int): int { if n <= 0 { return 0; } return 1 + down(n - 1); }\n"
                         "func main(): int { return down(100); }\n"
                         "let r: int = main();") == 100);
 }
 
-// Exceeding the depth limit must unwind cleanly rather than corrupt memory,
-// and must say why. interp_run_top_level is used rather than compile_and_run so the failure is
-// read from the status instead of being printed.
 static void test_call_depth_limit() {
     VM *vm = vm_create();
 
@@ -84,16 +71,12 @@ static void test_call_depth_limit() {
 
     assert(vm->frame_count == 0);
 
-    // The VM is still usable: a later run reports its own outcome rather than
-    // the stale failure.
     assert(interp_run_top_level(vm, &script) == VM_RUN_ERR_CALL_DEPTH);
 
     func_proto_free(&script);
     vm_free(vm);
 }
 
-// A recursive function that is not prototype 0, so its recursive call has to
-// encode a non-zero index that codegen only knows before the body is built.
 static void test_recursion_from_a_later_prototype() {
     assert(test_run_int("func unused_a(x: int): int { return x; }\n"
                         "func unused_b(x: int): int { return x; }\n"
@@ -102,8 +85,6 @@ static void test_recursion_from_a_later_prototype() {
                         "let r: int = main();") == 120);
 }
 
-// Mutual-looking chains still have to resolve to the right prototypes when
-// several functions are declared before the ones doing the calling.
 static void test_calls_across_several_prototypes() {
     assert(test_run_int("func double_it(x: int): int { return x * 2; }\n"
                         "func triple_it(x: int): int { return x * 3; }\n"
@@ -112,17 +93,12 @@ static void test_calls_across_several_prototypes() {
                         "let r: int = main();") == 20);
 }
 
-// Declarations are hoisted, so a function may call one written below it. Every
-// other statically-typed language with top-level functions works this way, and
-// methods need it: a receiver names a struct that may be declared further down.
 static void test_call_a_function_declared_below() {
     assert(test_run_int("func main(): int { return helper(7); }\n"
                         "func helper(n: int): int { return n * 3; }\n"
                         "let r: int = main();") == 21);
 }
 
-// Mutual recursion is the case that a single ordered pass cannot express at
-// all: whichever of the two comes first would call an undeclared name.
 static void test_mutual_recursion() {
     assert(test_run_int("func is_even(n: int): bool { if n == 0 { return true; } return is_odd(n - 1); }\n"
                         "func is_odd(n: int): bool { if n == 0 { return false; } return is_even(n - 1); }\n"
@@ -130,8 +106,6 @@ static void test_mutual_recursion() {
                         "let r: int = main();") == 1);
 }
 
-// A signature may name a struct declared below it, which is why types are
-// declared before functions rather than in one interleaved pass.
 static void test_signature_names_a_struct_declared_below() {
     assert(test_run_int("func health_of(p: Player): int { return p.health; }\n"
                         "struct Player { health: int }\n"
@@ -143,13 +117,7 @@ static void test_signature_names_a_struct_declared_below() {
                         "let r: int = main();") == 42);
 }
 
-// A prototype index rides in OP_CALL's 17-bit field, not in a register-sized
-// one. An 8-bit field would cap a single VM at 255 functions across every
-// module it loads, far too few for a real project: this builds past that and
-// calls the last one, so narrowing the field fails here rather than in
-// someone's game.
 static void test_more_functions_than_an_8_bit_index_holds() {
-    // 300 trivial functions, then one that calls the last of them.
     char source[64 * 1024];
     size_t used = 0;
 

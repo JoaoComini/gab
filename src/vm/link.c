@@ -11,12 +11,6 @@
 
 #include <stdlib.h>
 
-// Frees what a prototype allocated. The prototype itself is arena-owned and is
-// reclaimed with the VM.
-//
-// A cleared chunk means there is nothing to free, which is how a unit hands its
-// top level to the caller: compile_unit clears the chunk it gave away, so
-// unit_free walks the same prototype and drops none of it.
 void func_proto_free(FuncPrototype *proto) {
     if (!proto->chunk) {
         return;
@@ -27,9 +21,6 @@ void func_proto_free(FuncPrototype *proto) {
     proto->chunk = NULL;
 }
 
-// Frees a unit nothing linked. The prototypes come from an arena and are not
-// freed here; what each one allocated is, because a unit that never linked is
-// the only owner those chunks ever had.
 void unit_free(Unit *unit) {
     if (!unit) {
         return;
@@ -51,7 +42,6 @@ void unit_free(Unit *unit) {
     free(unit);
 }
 
-// Rewrites one I-type operand to what it means now the unit has a base.
 static void relocate(const RelocationList *relocations, size_t base) {
     for (size_t i = 0; i < relocations->size; i++) {
         const Relocation *reloc = &relocations->data[i];
@@ -63,10 +53,6 @@ static void relocate(const RelocationList *relocations, size_t base) {
     }
 }
 
-// Rewrites each index operand to the index the program gave what it names.
-// Unlike a prototype the mapping is not a single base: something an earlier unit
-// already registered keeps that unit's index, so a unit's entries can land out
-// of order and each one is looked up.
 static void remap_indices(const RelocationList *relocations, const size_t *index_map) {
     for (size_t i = 0; i < relocations->size; i++) {
         const Relocation *reloc = &relocations->data[i];
@@ -78,8 +64,6 @@ static void remap_indices(const RelocationList *relocations, const size_t *index
     }
 }
 
-// The host body bound to a name, or NULL if none is. Both are interned, so
-// identity is the comparison.
 static GabExternFn find_extern(const Program *program, const Symbol *symbol) {
     for (size_t i = 0; i < program->extern_bindings.size; i++) {
         const ExternBinding *binding = &program->extern_bindings.data[i];
@@ -92,12 +76,6 @@ static GabExternFn find_extern(const Program *program, const Symbol *symbol) {
     return NULL;
 }
 
-// Whether this unit could be installed: the indices fit their operand fields
-// once rebased, and every extern names a host body that exists.
-//
-// Answers without touching the program, which is what lets a caller compile a unit
-// to find out whether it would load and then walk away. The externs it resolves
-// are written into the unit's own prototypes, not the program's.
 bool link_check(Program *program, Unit *unit, Diagnostics *diagnostics) {
     if (program->prototypes.size + unit->prototypes.size > VM_MAX_PROTOTYPES) {
         diag_error(diagnostics, GAB_ERR_CODEGEN, (Span){0}, "too many functions in one program");
@@ -109,15 +87,11 @@ bool link_check(Program *program, Unit *unit, Diagnostics *diagnostics) {
         return false;
     }
 
-    // An upper bound: interning may add fewer than the unit declared, never
-    // more.
     if (program->heap_shapes.size + unit->types.size > VM_MAX_HEAP_TYPES) {
         diag_error(diagnostics, GAB_ERR_CODEGEN, (Span){0}, "too many allocated types in one program");
         return false;
     }
 
-    // Allocated here rather than while installing, so that installing has
-    // nothing left in it that can fail.
     if (unit->types.size && !unit->type_map) {
         unit->type_map = arena_alloc(unit->arena, unit->types.size * sizeof(size_t));
 
@@ -155,10 +129,6 @@ bool link_check(Program *program, Unit *unit, Diagnostics *diagnostics) {
     return true;
 }
 
-// Installs a unit the caller has already checked with link_check.
-//
-// Nothing here can fail, which is the point: by the time anything is appended,
-// every question that could have refused the unit has been asked.
 void link_install(Program *program, Unit *unit) {
     size_t proto_base = program->prototypes.size;
     size_t extern_base = program->extern_protos.size;
@@ -171,17 +141,10 @@ void link_install(Program *program, Unit *unit) {
         extern_proto_list_add(&program->extern_protos, unit->extern_protos.data[i]);
     }
 
-    // Interned against what the program already holds, so a type two units both
-    // allocate is registered once. A prototype cannot be shared this way --
-    // each declaration is a distinct function -- which is why only types are
-    // looked up rather than appended outright.
     for (size_t i = 0; i < unit->types.size; i++) {
         const Type *type = unit->types.data[i];
         size_t found = program->heap_shapes.size;
 
-        // Keyed on the type even though the entry holds none: two mentions of
-        // one type must share an entry, and pointer identity is what says they
-        // are one type.
         for (size_t j = 0; j < program->heap_shapes.size; j++) {
             if (program->shape_types.data[j] == type) {
                 found = j;
@@ -198,8 +161,6 @@ void link_install(Program *program, Unit *unit) {
         unit->type_map[i] = found;
     }
 
-    // Interned in the pool already, so equality is pointer identity and a
-    // literal two units share is registered once.
     for (size_t i = 0; i < unit->strings.size; i++) {
         size_t found = program->strings.size;
 
@@ -222,12 +183,6 @@ void link_install(Program *program, Unit *unit) {
     remap_indices(&unit->type_relocations, unit->type_map);
     remap_indices(&unit->string_relocations, unit->string_map);
 
-    // Last, because a symbol stamped with an index is a symbol a later compile
-    // will call through: nothing may carry one until the function it names is
-    // installed.
-    //
-    // Which base applies is the declaration's own kind, the same thing that
-    // decided which table codegen reserved in.
     for (size_t i = 0; i < unit->bindings.size; i++) {
         const ProtoBinding *binding = &unit->bindings.data[i];
         size_t base = binding->symbol->func.is_extern ? extern_base : proto_base;

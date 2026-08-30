@@ -17,10 +17,6 @@ unsigned int args_type_slots(TypeRegistry *registry, const Type *type) {
     return (unsigned int)((type_registry_size_of(registry, type) + VM_SLOT_SIZE - 1) / VM_SLOT_SIZE);
 }
 
-// The registry the frame's types were interned in, which is the one every
-// layout a C body asks about was computed in. Reached through the VM because a
-// call carries no registry of its own: a run needs no types, and this path is
-// the one place where a host asks a width of one.
 static TypeRegistry *args_registry(Args *args) { return args->vm->env.global_scope.type_registry; }
 
 uint8_t *args_address(Args *args, int index, const Type **out_type) {
@@ -50,10 +46,6 @@ uint8_t *args_return_address(Args *args) {
     return args->vm->stack + args->base;
 }
 
-// The parameter's address, having asserted that it is the type being read. A
-// slot carries no tag, so reading an int as a float reinterprets the bytes
-// rather than converting them -- which is why the declaration is what says
-// whether a read is the right one.
 static uint8_t *args_address_of_kind(Args *args, int index, TypeKind kind) {
     const Type *type = NULL;
     uint8_t *at = args_address(args, index, &type);
@@ -85,9 +77,6 @@ bool args_bool(Args *args, int index) {
     return value != 0;
 }
 
-// The characters a borrowed string names, read from the reference itself: a
-// 'ref str' is the address and the count side by side, which is the same two
-// words an owning header holds and the same two the host reads.
 GabStrRef args_string(Args *args, int index) {
     const Type *type = NULL;
     uint8_t *at = args_address(args, index, &type);
@@ -95,18 +84,12 @@ GabStrRef args_string(Args *args, int index) {
     assert(type_is_str_ref(type) &&
            "a C body read a parameter as a borrowed string when it was not declared one");
 
-    // Read as what a reference is, never as the header it may have been lent
-    // from: a header carrying more than the reference does still lends exactly
-    // these two words.
     GabStrRef value;
     memcpy(&value, at, sizeof(value));
 
     return value;
 }
 
-// The header a pointer parameter names. A 'ref String' is an address like any
-// other indirection, so the slots it occupies hold no characters of their own
-// and the header is read from where it points.
 GabStringValue args_string_at(Args *args, int index) {
     const uint8_t *at = args_pointer(args, index);
 
@@ -129,8 +112,6 @@ void *args_pointer(Args *args, int index) {
     const Type *type = NULL;
     uint8_t *at = args_address(args, index, &type);
 
-    // Either constructor: a C body is handed an address, and whether the script
-    // owns what it names is the script's business rather than this read's.
     assert(type && type_is_indirect(type) && "a C body read a parameter as a type it was not declared");
 
     void *pointer;
@@ -166,14 +147,8 @@ void args_return_pointer(Args *args, void *pointer) {
 }
 
 bool args_return_string_copy(Args *args, const char *data, int32_t length) {
-    // A capacity of at least one, so that the empty string still names memory
-    // the free path can hand back: a block is freed at its capacity, and a null
-    // one would have to be told apart from a real allocation everywhere.
     int32_t capacity = length == 0 ? 1 : length;
 
-    // Typed as characters rather than as a string: the bytes are what is
-    // allocated, and they own nothing further. The header naming them is the
-    // value below.
     char *characters = DEFAULT_ALLOCATOR.alloc(DEFAULT_ALLOCATOR.ctx, (size_t)capacity);
 
     if (!characters) {

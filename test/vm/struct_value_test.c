@@ -14,8 +14,6 @@ static void test_read_back_what_was_written() {
                           "let r: float = f();") == 1.5f);
 }
 
-// Each field must be independently addressable: writing one must not disturb
-// the others.
 static void test_every_field_is_independent() {
     const char *body = "struct Vec3 { x: float, y: float, z: float }\n"
                        "func f(): float { let v: Vec3;\n"
@@ -34,14 +32,10 @@ static void test_every_field_is_independent() {
     snprintf(source, sizeof(source), body, "v.z");
     assert(test_run_float(source) == 4.0f);
 
-    // And all three at once, so a clobber that happens to preserve one field
-    // still shows up.
     snprintf(source, sizeof(source), body, "v.x + v.y + v.z");
     assert(test_run_float(source) == 7.0f);
 }
 
-// Four bools share a single slot. This is the case a slot-granular store gets
-// wrong: writing one field would blank its three neighbours.
 static void test_sub_word_fields_do_not_clobber() {
     const char *body = "struct Flags { a: bool, b: bool, c: bool, d: bool }\n"
                        "func f(): bool { let v: Flags;\n"
@@ -64,8 +58,6 @@ static void test_sub_word_fields_do_not_clobber() {
     assert(test_run_int(source) == 1);
 }
 
-// A field wider than the one before it starts on the next boundary: 'value'
-// sits there, not immediately after the bool.
 static void test_mixed_widths() {
     assert(test_run_int("struct M { flag: bool, value: int }\n"
                         "func f(): bool { let v: M; v.flag = true; v.value = 77; return v.flag; }\n"
@@ -75,15 +67,11 @@ static void test_mixed_widths() {
                         "func f(): int { let v: M; v.flag = true; v.value = 77; return v.value; }\n"
                         "let r: int = f();") == 77);
 
-    // Writing the wide field must not disturb the narrow one sharing the
-    // struct, in either order.
     assert(test_run_int("struct M { flag: bool, value: int }\n"
                         "func f(): bool { let v: M; v.value = 77; v.flag = true; return v.flag; }\n"
                         "let r: bool = f();") == 1);
 }
 
-// A nested struct is stored inline, so the chain resolves to one base slot plus
-// a summed byte offset.
 static void test_nested_field_access() {
     assert(test_run_int("struct In { x: int, y: int }\n"
                         "struct Out { a: int, inner: In }\n"
@@ -93,8 +81,6 @@ static void test_nested_field_access() {
                         "let r: int = f();") == 15);
 }
 
-// Whole-struct assignment copies every field and leaves the source alone: the
-// by-value guarantee.
 static void test_whole_struct_assignment() {
     assert(test_run_int("struct V { x: int, y: int }\n"
                         "func f(): int { let b: V; b.x = 3; b.y = 4;\n"
@@ -102,7 +88,6 @@ static void test_whole_struct_assignment() {
                         "return a.x + a.y; }\n"
                         "let r: int = f();") == 7);
 
-    // Mutating the copy must not reach back into the original.
     assert(test_run_int("struct V { x: int, y: int }\n"
                         "func f(): int { let b: V; b.x = 3; b.y = 4;\n"
                         "let a: V = b; a.x = 99;\n"
@@ -110,8 +95,6 @@ static void test_whole_struct_assignment() {
                         "let r: int = f();") == 3);
 }
 
-// Each frame owns its slots, so a struct local in a recursive function must not
-// be shared between invocations.
 static void test_struct_local_is_per_frame() {
     assert(test_run_int("struct Acc { total: int }\n"
                         "func sum(n: int): int {\n"
@@ -132,8 +115,6 @@ static void test_struct_parameter() {
                         "let r: int = main();") == 7);
 }
 
-// The by-value guarantee on the way in: the callee gets its own copy, so
-// mutating the parameter must not reach the caller's struct.
 static void test_struct_parameter_is_by_value() {
     assert(test_run_int("struct V { x: int, y: int }\n"
                         "func bump(v: V): int { v.x = 999; return v.x; }\n"
@@ -150,9 +131,6 @@ static void test_struct_return() {
                         "let r: int = main();") == 33);
 }
 
-// The overlap case: the callee's parameters and its return slots share the
-// space above dest. Safe only because the parameters are dead by the time
-// OP_RETURN copies the result down to r0.
 static void test_function_takes_and_returns_structs() {
     assert(test_run_int("struct V { x: int, y: int }\n"
                         "func twice(v: V): V { let o: V; o.x = v.x + v.x; o.y = v.y + v.y; return o; }\n"
@@ -162,8 +140,6 @@ static void test_function_takes_and_returns_structs() {
                         "let r: int = main();") == 14);
 }
 
-// A return wider than the argument block must still fit what the caller
-// reserved at dest, which is why the reservation takes the max of the two.
 static void test_struct_return_larger_than_arguments() {
     assert(test_run_int("struct Big { a: int, b: int, c: int, d: int }\n"
                         "func make(n: int): Big { let v: Big;\n"
@@ -173,8 +149,6 @@ static void test_struct_return_larger_than_arguments() {
                         "let r: int = main();") == 46);
 }
 
-// Several arguments of different widths: each must land at its own running
-// offset rather than at a fixed one-slot-per-argument stride.
 static void test_mixed_scalar_and_struct_arguments() {
     assert(test_run_int("struct V { x: int, y: int }\n"
                         "func f(n: int, v: V, m: int): int { return n + v.x + v.y + m; }\n"
@@ -189,8 +163,6 @@ static void test_mixed_scalar_and_struct_arguments() {
                         "let r: int = main();") == 33);
 }
 
-// A struct handed down and back up a recursion: every frame needs its own copy
-// on both legs.
 static void test_struct_round_trip_through_recursion() {
     assert(test_run_int("struct V { x: int, y: int }\n"
                         "func go(n: int, v: V): V {\n"
@@ -203,10 +175,6 @@ static void test_struct_round_trip_through_recursion() {
                         "let r: int = main();") == 306);
 }
 
-// Finds the struct's slots in the stack and compares them, byte for byte, with
-// the equivalent C value. The function's frame is based at stack[0] with r0 as
-// the return slot, so a single struct local starts at slot 1; searching rather
-// than hard-coding keeps the test from pinning the allocator's exact choices.
 static bool slots_match(VM *vm, const void *expected, size_t size) {
     size_t slots = (size + VM_SLOT_SIZE - 1) / VM_SLOT_SIZE;
 
@@ -223,9 +191,6 @@ static void assert_slots_match(VM *vm, const void *expected, size_t size) {
     assert(slots_match(vm, expected, size) && "no run of slots matches the equivalent C struct");
 }
 
-// The whole point of untagged slots: a struct spread over consecutive slots is
-// byte-identical to what C lays out, so gab_struct_data can hand a host a
-// pointer into the stack with no marshalling at all.
 static void test_layout_agrees_with_c() {
     struct Vec3 {
         float x;
@@ -248,8 +213,6 @@ static void test_layout_agrees_with_c() {
     vm_free(vm);
 }
 
-// The padding case: C puts 'value' on the next 4-byte boundary, leaving three
-// bytes of padding after 'flag'. The Gab slots must agree, padding included.
 static void test_mixed_width_layout_agrees_with_c() {
     struct Mixed {
         bool flag;
@@ -258,8 +221,6 @@ static void test_mixed_width_layout_agrees_with_c() {
 
     VM *vm = vm_create();
 
-    // The padding bytes are whatever the zeroed stack left them, so the C value
-    // is zeroed first to match rather than carrying stack garbage.
     compile_and_run(vm, "module test;\n"
                         "struct M { flag: bool, value: int }\n"
                         "func f(): int { let v: M;\n"
@@ -277,8 +238,6 @@ static void test_mixed_width_layout_agrees_with_c() {
     vm_free(vm);
 }
 
-// The positive layout tests only mean something if the search discriminates:
-// a struct whose bytes differ from Gab's must match nowhere in the stack.
 static void test_layout_comparison_rejects_wrong_layouts() {
     struct Shuffled {
         float z;
@@ -302,11 +261,9 @@ static void test_layout_comparison_rejects_wrong_layouts() {
                         "return v.x; }\n"
                         "let r: float = f();");
 
-    // Same three values, wrong field order.
     struct Shuffled shuffled = {.z = 7.0f, .x = 1.5f, .y = 2.25f};
     assert(!slots_match(vm, &shuffled, sizeof shuffled));
 
-    // Same two values, no padding after 'flag'.
     struct Packed packed;
     memset(&packed, 0, sizeof packed);
     packed.flag = true;
@@ -317,11 +274,6 @@ static void test_layout_comparison_rejects_wrong_layouts() {
     vm_free(vm);
 }
 
-// A struct assigned from a struct that shares its slots. Batching the copy into
-// one instruction makes the source and destination ranges overlap, which a
-// memcpy is free to get wrong; this is why OP_MOVE_N uses memmove. The nested
-// copy walks the same slots in both directions, so a wrong one shears the value
-// rather than failing outright.
 static void test_an_overlapping_struct_copy_is_exact() {
     assert(test_run_int("struct Inner { a: int, b: int, c: int }\n"
                         "struct Outer { head: int, inner: Inner }\n"

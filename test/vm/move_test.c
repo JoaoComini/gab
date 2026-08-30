@@ -1,14 +1,8 @@
-// Binding a value either copies it or hands its ownership over, and which one
-// happens is read off the type rather than written at the site. What a type
-// holds decides which it gets, and a slot moved out of is dead.
-
 #include "support/run.h"
 
 #include <assert.h>
 #include <stdio.h>
 
-// A type holding nothing that owns is copyable, so a second binding of it is
-// an ordinary implicit copy.
 static void test_a_type_owning_nothing_copies_implicitly() {
     assert(test_run_int("struct Point { x: int, y: int }\n"
                         "func main(): int {\n"
@@ -20,9 +14,6 @@ static void test_a_type_owning_nothing_copies_implicitly() {
                         "let r: int = main();") == 3);
 }
 
-// Copyability is derived from the type, not declared: a struct holding an
-// owning pointer owns transitively, so binding it transfers rather than
-// duplicates -- and the slot it came from is dead.
 static void test_a_type_holding_an_owning_pointer_transfers() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "struct Holder { b: box Box }\n"
@@ -34,7 +25,6 @@ static void test_a_type_holding_an_owning_pointer_transfers() {
                           "}\n"));
 }
 
-// A borrow owns nothing, so a struct holding one stays copyable.
 static void test_a_type_holding_a_borrow_still_copies() {
     assert(test_compiles("struct Box { n: int }\n"
                          "struct Watcher { b: ref Box }\n"
@@ -45,8 +35,6 @@ static void test_a_type_holding_a_borrow_still_copies() {
                          "}\n"));
 }
 
-// Binding a value that owns hands the object over: what the new slot names is
-// what the old one held, rather than a second copy of it.
 static void test_binding_an_owning_value_transfers_it() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
@@ -58,8 +46,6 @@ static void test_binding_an_owning_value_transfers_it() {
                         "let r: int = main();") == 7);
 }
 
-// The slot moved out of is dead: it no longer names anything, so reading it is
-// an error rather than a second owner of the same object.
 static void test_a_moved_from_slot_is_dead() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
@@ -69,8 +55,6 @@ static void test_a_moved_from_slot_is_dead() {
                           "}\n"));
 }
 
-// Assigning something longer-lived to a dead slot brings it back: deadness is
-// about what the slot holds, not a mark the name carries forever.
 static void test_assigning_to_a_dead_slot_revives_it() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
@@ -83,8 +67,6 @@ static void test_assigning_to_a_dead_slot_revives_it() {
                         "let r: int = main();") == 5);
 }
 
-// A slot moved on only one arm of an 'if' is dead after the join: it is live
-// only if it is live on every path reaching the use.
 static void test_a_slot_moved_on_one_arm_is_dead_after_the_join() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
@@ -94,8 +76,6 @@ static void test_a_slot_moved_on_one_arm_is_dead_after_the_join() {
                           "}\n"));
 }
 
-// Transferring out of a slot in a loop body would empty it again on the second
-// iteration, so the back-edge is what makes the bind an error.
 static void test_transferring_the_same_slot_each_iteration_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
@@ -107,9 +87,6 @@ static void test_transferring_the_same_slot_each_iteration_is_refused() {
                           "}\n"));
 }
 
-// Reading a slot after it has been bound elsewhere names what it no longer
-// holds, and the message says so rather than reporting the bind that emptied
-// it.
 static void test_reading_a_transferred_slot_names_the_slot() {
     const char *source = "struct Box { n: int }\n"
                          "func main(): int {\n"

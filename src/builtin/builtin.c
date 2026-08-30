@@ -19,8 +19,6 @@ const TypeDef *builtin_declare(VM *vm, const BuiltinTypeSpec *spec) {
         fields[i] = (TypeField){.name = spec->fields[i].name, .type = spec->fields[i].type};
     }
 
-    // In the VM's arena, not the caller's frame: every instantiation reads
-    // these, and the declaration outlives the call that states it.
     TypeDef *def = arena_alloc(arena, sizeof(TypeDef));
 
     *def = (TypeDef){
@@ -41,15 +39,11 @@ const TypeDef *builtin_declare(VM *vm, const BuiltinTypeSpec *spec) {
 
     type_registry_declare(scope->type_registry, &decl);
 
-    // The name binds to what it declares, whatever its arity: one taking no
-    // parameters is the type it was just instantiated into, and one taking them
-    // becomes a type where a mention supplies them.
     scope_decl_type_def(scope, def->name, def);
 
     return def;
 }
 
-// The Symbol a method is, whichever of the two it is registered against.
 static Symbol *method_symbol(VM *vm, const Type *receiver, const char *name, GabExternFn body,
                              const Type *return_type, const Type *const *params, size_t param_count) {
     Arena *arena = vm->env.arena;
@@ -63,8 +57,6 @@ static Symbol *method_symbol(VM *vm, const Type *receiver, const char *name, Gab
     symbol->func.name = string_from_cstr(&vm->env.strings, name);
     symbol->func.module = NULL;
 
-    // The receiver is parameter zero, by value: a string is a header that
-    // copies, and a method that only reads it wants no indirection.
     symbol->func.params[0] = receiver;
 
     for (size_t i = 0; i < param_count; i++) {
@@ -92,13 +84,7 @@ void builtin_declare_method(VM *vm, const TypeDef *declared_on, const char *name
                             size_t param_count) {
     Arena *arena = vm->env.arena;
 
-    // Const to every reader, since what a declaration says is settled once it
-    // is stated; this is the one writer, and it is what states the methods.
     TypeDef *def = (TypeDef *)declared_on;
-
-    // Grown one at a time rather than sized up front: a provider states its
-    // methods one per call, and nothing knows how many there will be until it
-    // stops. Copied because the old array is the arena's and cannot be resized.
 
     GenericMethod *methods = arena_alloc(arena, (def->method_count + 1) * sizeof(GenericMethod));
 
@@ -106,8 +92,6 @@ void builtin_declare_method(VM *vm, const TypeDef *declared_on, const char *name
         methods[i] = def->methods[i];
     }
 
-    // In the arena for the same reason the declaration is: an instantiation
-    // reads this signature whenever one is first named, long after this call.
     const Type **owned = NULL;
 
     if (param_count > 0) {
@@ -133,9 +117,6 @@ void builtin_declare_method(VM *vm, const TypeDef *declared_on, const char *name
     def->method_count++;
 }
 
-// As builtin_register_method, for a function the type owns rather than one a
-// value reaches: 'params' are every parameter, since there is no receiver to be
-// parameter zero.
 void builtin_register_static(VM *vm, const Type *declared_on, const char *name, GabExternFn body,
                              const Type *return_type, const Type *const *params, size_t param_count) {
     Arena *arena = vm->env.arena;
@@ -161,9 +142,6 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
                              string_from_cstr(&vm->env.strings, name), symbol);
 }
 
-// These land at the bottom of the extern table, before any unit loads. That
-// costs a unit's own externs nothing: the two tables are numbered apart, so a
-// script function's index is unaffected by how many builtins exist.
 void builtin_register_all(VM *vm) {
     builtin_register_string(vm);
     builtin_register_vec(vm);

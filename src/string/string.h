@@ -7,14 +7,12 @@
 #include <stddef.h>
 
 typedef struct {
-    char *data;    // Pointer to the string data
-    size_t length; // Length of the string (excluding null terminator)
+    char *data;
+    size_t length;
 } String;
 
 typedef struct StringPool StringPool;
 
-// Interning: equal text always yields the same pointer within a pool, so
-// String* can be compared and hashed by identity.
 String *string_from_cstr(StringPool *pool, const char *str);
 String *string_from_ref(StringPool *pool, StringRef ref);
 

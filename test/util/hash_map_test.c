@@ -46,7 +46,7 @@ static void test_duplicate_insert() {
     assert(table->size == 1);
 
     assert(test_map_insert(table, 0, 0) == NULL);
-    assert(table->size == 1); // Size shouldn't change
+    assert(table->size == 1);
 
     int *x = test_map_lookup(table, 0);
     assert(*x == 0);

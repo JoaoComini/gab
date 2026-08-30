@@ -15,10 +15,6 @@ void scope_init(Scope *scope, Arena *arena, StringPool *strings, Scope *parent) 
     scope_init_at_depth(scope, arena, strings, parent, parent ? parent->depth + 1 : 0);
 }
 
-// The builtin type names, declared into the root scope so that 'int' resolves
-// by the ordinary chain walk from wherever it is written, with no special case
-// in the resolver. The registry still owns the Types themselves; this only
-// gives them names to be found by.
 static void scope_declare_primitives(Scope *scope) {
     TypeRegistry *registry = scope->type_registry;
 
@@ -29,14 +25,6 @@ static void scope_declare_primitives(Scope *scope) {
 
         scope_decl_type(scope, type_name_of(type), type);
     }
-
-    // No 'Array' among them. Every array is written '[T; N]', a shape the
-    // language spells rather than a name it looks up -- so nothing declares one
-    // and no scope names one, and a unit may call a struct of its own 'Array'.
-    //
-    // And nothing else. What a standard library provides is named where it is
-    // declared -- see builtin_declare -- which is what keeps 'String' out
-    // of the language and in the library that provides it.
 }
 
 void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope *parent, int depth) {
@@ -48,15 +36,11 @@ void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope 
     scope->depth = depth;
     scope->declares_module = false;
 
-    // One registry for the whole chain: it interns, and interning must be
-    // single however deep the scope is.
     if (parent && parent->type_registry) {
         scope->type_registry = parent->type_registry;
         return;
     }
 
-    // Interned here rather than by the registry, which holds no pool: what
-    // names a type is the same pool that names everything else in this scope.
     const TypePrimitiveNames names = type_primitive_names(strings);
 
     scope->type_registry = type_registry_create(arena, &names);
@@ -72,8 +56,6 @@ void scope_init_over(Scope *scope, Arena *arena, StringPool *strings, TypeRegist
     scope->depth = 0;
     scope->declares_module = false;
 
-    // The registry it was given, never one of its own: interning must be single
-    // for the whole chain, and this one already holds what a library registered.
     scope->type_registry = registry;
 
     scope_declare_primitives(scope);
@@ -82,33 +64,19 @@ void scope_init_over(Scope *scope, Arena *arena, StringPool *strings, TypeRegist
 void scope_init_module(Scope *scope, Arena *arena, StringPool *strings, Scope *parent) {
     assert(parent && "a module scope hangs off the root scope");
 
-    // Depth 0 despite being nested: its declarations are a unit's top level,
-    // not a block. Depth drives the pointer-lifetime rule, where 0 means
-    // 'outlives everything'.
     scope_init_at_depth(scope, arena, strings, parent, 0);
 
     scope->declares_module = true;
 }
 
-// A scope a compile declares into instead of the one it is for, so nothing it
-// declares is visible until the compile has wholly succeeded.
-//
-// Parented to the target, which is what lets the compile still see everything
-// already declared there and further out. The depth is the target's, not one
-// deeper: a staging scope stands in for its target rather than nesting inside
-// it, and depth drives the pointer-lifetime rule.
 void scope_init_staging(Scope *scope, Arena *arena, StringPool *strings, Scope *target) {
     assert(target && "a staging scope stands in for a scope that exists");
 
     scope_init_at_depth(scope, arena, strings, target, target->depth);
 
-    // Stands in for the target, so a declaration searches the two together.
     scope->declares_module = target->declares_module;
 }
 
-// Moves everything a staging scope declared into the scope it stood in for.
-// Cannot collide: a name the module already holds was refused where the unit
-// declared it, so nothing here can fail.
 void scope_merge_staged(Scope *target, Scope *staged) {
     for (size_t i = 0; i < staged->symbol_table->capacity; i++) {
         for (SymbolTableEntry *entry = staged->symbol_table->buckets[i]; entry; entry = entry->next) {
@@ -145,11 +113,6 @@ Resolution scope_resolve(Scope *scope, String *name) {
         TypeBinding *bound = type_map_lookup(s->types, name);
 
         if (bound) {
-            // Told apart by which way the name was bound, never by asking what
-            // the type is: scope_decl_type binds a type that stands for itself
-            // and carries no declaration to apply, so the name answers with
-            // that type. Everything nominal answers with its declaration,
-            // whose arity is what a mention of it owes.
             if (!bound->def) {
                 return (Resolution){.kind = RESOLUTION_SELF_NAMED, .self_named = bound->type};
             }
@@ -172,8 +135,6 @@ const Type *resolution_type(TypeRegistry *registry, Resolution resolution) {
     case RESOLUTION_SELF_NAMED:
         return resolution.self_named;
 
-    // A declaration taking none is its own instantiation, which the registry
-    // interned the first time anything named it.
     case RESOLUTION_TYPE_DECL:
         return resolution.def->param_count == 0 ? type_registry_apply(registry, resolution.def, NULL, 0)
                                                 : NULL;
@@ -187,14 +148,6 @@ TypeBinding *scope_binding_lookup_local(Scope *scope, String *name) {
     return type_map_lookup(scope->types, name);
 }
 
-// A type declaration clashes with this scope, with the module scope a staging
-// scope stands in for, and with the root -- so a unit may not name a struct
-// 'int'. A builtin is reachable from every module and there is no qualified
-// syntax to reach past a shadow, so shadowing one would put it out of reach for
-// the rest of the module, including in a signature a host resolves through.
-// Whether the name is bound at all rather than what it is bound to: a
-// declaration still owed arguments names no type, and a unit redeclaring 'Vec'
-// is as much a clash as one redeclaring 'int'.
 bool scope_declares_type(Scope *scope, String *name) {
     for (Scope *s = scope; s; s = s->parent) {
         if (type_map_lookup(s->types, name)) {
@@ -228,9 +181,6 @@ bool scope_decl_type(Scope *scope, String *name, const Type *type) {
 
     assert(type_names_itself(type) && "a nominal name binds to what it declares");
 
-    // No declaration, which is what makes the binding the whole answer: a type
-    // standing for itself was interned from none, and a lookup reads the
-    // absence rather than asking the type what it is.
     type_map_insert(scope->types, name, (TypeBinding){.type = type});
 
     return true;

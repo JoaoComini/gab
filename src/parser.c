@@ -53,13 +53,6 @@ void parser_next_token(Parser *parser) { parser->current = lexer_next(parser->le
 
 static Span parser_span(Parser *parser) { return token_span(parser->current); }
 
-// 'module Name;' — the unit's namespace. Required, and before any declaration,
-// so this runs once before the declaration loop rather than as one more case
-// inside it.
-//
-// Required because a declaration has to belong to a module that can be named:
-// one that could not be would be reachable only by the host, and unreachable
-// from any other unit.
 static void parse_module_directive(Parser *parser, ASTUnit *unit) {
     Span span = parser_span(parser);
 
@@ -73,12 +66,7 @@ static void parse_module_directive(Parser *parser, ASTUnit *unit) {
 
     parser_next_token(parser);
 
-    // A nested name has to mean either a hierarchy or a longer flat name, and
-    // both readings are worse than an error until something needs one. Rejecting
-    // it keeps a qualified name unambiguous: one '::', module then symbol.
     if (parser->current.type == TOKEN_COLON_COLON) {
-        // The whole attempted name, so the message shows what was written
-        // rather than just the first segment.
         const char *begin = name.data;
         size_t length = name.length;
 
@@ -107,13 +95,6 @@ static void parse_module_directive(Parser *parser, ASTUnit *unit) {
     }
 }
 
-// 'import Name;' — a module this unit may name. Several may appear, and all of
-// them come after the module directive and before any declaration, so they read
-// as one block at the top of the unit.
-//
-// A module is named the same way here as in a qualified reference, so the same
-// single-identifier rule applies: 'import A::B;' names nothing this language
-// has.
 static void parse_import_directive(Parser *parser, ASTUnit *unit) {
     Span span = parser_span(parser);
 
@@ -164,17 +145,10 @@ bool parser_parse(Parser *parser, ASTUnit *unit) {
             continue;
         }
 
-        // Reachable only after a declaration, since the first token was handled
-        // above: a directive here is either a second one or a late one, and
-        // both are the same mistake — it is not where the module is named.
-        // Parsed into a throwaway so a misplaced directive cannot change the
-        // namespace, but still consumed so it does not cascade.
         if (parser->current.type == TOKEN_IMPORT) {
             diag_error(parser->diagnostics, GAB_ERR_SYNTAX, parser_span(parser),
                        "'import' must appear before any declaration");
 
-            // Parsed into a throwaway so a misplaced import cannot widen what
-            // this unit may name, but still consumed so it does not cascade.
             ASTUnit discarded = *unit;
             parse_import_directive(parser, &discarded);
             continue;
@@ -191,15 +165,11 @@ bool parser_parse(Parser *parser, ASTUnit *unit) {
 
         ASTStmt *stmt = parse_decl_statement(parser);
         if (!stmt) {
-            // Recover to the next statement boundary so a unit with several
-            // syntax errors reports all of them rather than just the first.
             TokenType before = parser->current.type;
             int before_pos = parser->lexer->pos;
 
             parser_synchronize(parser);
 
-            // Synchronizing stops at '}' without consuming it, which at the top
-            // level would leave us stuck on a stray brace. Always make progress.
             if (parser->current.type == before && parser->lexer->pos == before_pos) {
                 parser_next_token(parser);
             }
@@ -213,8 +183,6 @@ bool parser_parse(Parser *parser, ASTUnit *unit) {
     return diagnostics_count(parser->diagnostics) == errors_before;
 }
 
-// Skip tokens until just past a statement boundary, so parsing can resume at
-// something that plausibly starts a new statement.
 static void parser_synchronize(Parser *parser) {
     while (parser->current.type != TOKEN_EOF) {
         if (parser->current.type == TOKEN_SEMICOLON) {
@@ -222,8 +190,6 @@ static void parser_synchronize(Parser *parser) {
             return;
         }
 
-        // Leave '}' for the enclosing block to consume; eating it here would
-        // strand that block and produce a spurious "expected '}'".
         if (parser->current.type == TOKEN_RBRACE) {
             return;
         }
@@ -297,16 +263,8 @@ static ASTStmt *parse_statement(Parser *parser) {
         break;
     }
     case TOKEN_FUNC: {
-        // Reserved rather than merely unimplemented. A nested function today
-        // could not capture anything, so it would be a free function with a
-        // narrower name — and once closures exist this same syntax has to mean
-        // a capturing one. Allowing the weaker meaning now would silently
-        // change what already-written code means later, so the syntax is kept
-        // unclaimed until closures can define it.
         parser_error(parser, "a function cannot be declared inside another; declare it at module level");
 
-        // Consumed anyway, so the body does not cascade into a second error at
-        // every statement it contains.
         ast_stmt_destroy(parse_func_decl_stmt(parser));
 
         return NULL;
@@ -363,7 +321,7 @@ static ASTStmt *parse_statement(Parser *parser) {
 static ASTStmt *parse_var_decl_stmt(Parser *parser) {
     Span span = parser_span(parser);
 
-    parser_next_token(parser); // eat "let"
+    parser_next_token(parser);
 
     if (!parser_expect(parser, TOKEN_IDENT, "expected a variable name after 'let'")) {
         return NULL;
@@ -371,11 +329,11 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser) {
 
     Token name = parser->current;
 
-    parser_next_token(parser); // eat identifier
+    parser_next_token(parser);
 
     TypeExpr *spec = NULL;
     if (parser->current.type == TOKEN_COLON) {
-        parser_next_token(parser); // eat ':'
+        parser_next_token(parser);
 
         spec = parse_type_expr(parser);
         if (!spec) {
@@ -399,7 +357,7 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser) {
         return NULL;
     }
 
-    parser_next_token(parser); // eat '='
+    parser_next_token(parser);
 
     ASTExpr *initializer = parse_expression(parser);
     if (!initializer) {
@@ -415,7 +373,7 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser) {
 static ASTStmt *parse_if_stmt(Parser *parser) {
     Span span = parser_span(parser);
 
-    parser_next_token(parser); // eat "if"
+    parser_next_token(parser);
 
     ASTExpr *condition = parse_expression(parser);
     if (!condition) {
@@ -432,7 +390,7 @@ static ASTStmt *parse_if_stmt(Parser *parser) {
         return ast_if_stmt_create(span, condition, then_block, NULL);
     }
 
-    parser_next_token(parser); // eat "else"
+    parser_next_token(parser);
     ASTStmt *else_block = parse_block_stmt(parser);
     if (!else_block) {
         ast_expr_free(condition);
@@ -443,9 +401,6 @@ static ASTStmt *parse_if_stmt(Parser *parser) {
     return ast_if_stmt_create(span, condition, then_block, else_block);
 }
 
-// Parses one clause of the three-clause form: a 'let' or an assignment, never
-// a declaration that would escape the loop header. The clause is optional in
-// every position, so an immediate terminator yields no statement and no error.
 static ASTStmt *parse_for_clause(Parser *parser, TokenType terminator) {
     if (parser->current.type == terminator) {
         return NULL;
@@ -458,18 +413,10 @@ static ASTStmt *parse_for_clause(Parser *parser, TokenType terminator) {
     return parse_expr_stmt(parser);
 }
 
-// 'for' spells all three loop forms, told apart by what follows the keyword:
-// '{' is the infinite loop, a single expression before '{' is the condition
-// form, and anything followed by ';' is the three-clause form. An absent
-// condition means the same in each form -- loop forever -- so the node holds
-// NULL rather than a synthesized 'true'.
-//
-// A '{' after the condition can only open the body, since the language has no
-// struct literal for it to begin instead.
 static ASTStmt *parse_for_stmt(Parser *parser) {
     Span span = parser_span(parser);
 
-    parser_next_token(parser); // eat "for"
+    parser_next_token(parser);
 
     if (parser->current.type == TOKEN_LBRACE) {
         ASTStmt *body = parse_block_stmt(parser);
@@ -484,8 +431,6 @@ static ASTStmt *parse_for_stmt(Parser *parser) {
     ASTExpr *condition = NULL;
     ASTStmt *post = NULL;
 
-    // The condition form and the clause form share this first clause: it is a
-    // condition until a ';' proves it was the initializer.
     ASTStmt *first = parse_for_clause(parser, TOKEN_SEMICOLON);
 
     if (parser->current.type != TOKEN_SEMICOLON) {
@@ -500,8 +445,6 @@ static ASTStmt *parse_for_stmt(Parser *parser) {
             return NULL;
         }
 
-        // Unwrapped from its statement: the condition form has no initializer,
-        // and what was parsed as one is really the condition.
         condition = first->expr.value;
         first->expr.value = NULL;
         ast_stmt_destroy(first);
@@ -517,7 +460,7 @@ static ASTStmt *parse_for_stmt(Parser *parser) {
 
     init = first;
 
-    parser_next_token(parser); // eat ';'
+    parser_next_token(parser);
 
     if (parser->current.type != TOKEN_SEMICOLON) {
         condition = parse_expression(parser);
@@ -533,7 +476,7 @@ static ASTStmt *parse_for_stmt(Parser *parser) {
         return NULL;
     }
 
-    parser_next_token(parser); // eat ';'
+    parser_next_token(parser);
 
     post = parse_for_clause(parser, TOKEN_LBRACE);
 
@@ -552,7 +495,7 @@ static ASTStmt *parse_jump_stmt(Parser *parser) {
     Span span = parser_span(parser);
     bool is_break = parser->current.type == TOKEN_BREAK;
 
-    parser_next_token(parser); // eat "break" or "continue"
+    parser_next_token(parser);
 
     return ast_jump_stmt_create(span, is_break);
 }
@@ -564,7 +507,7 @@ static ASTStmt *parse_block_stmt(Parser *parser) {
         return NULL;
     }
 
-    parser_next_token(parser); // eat '{'
+    parser_next_token(parser);
 
     ASTStmtList list = ast_stmt_list_create();
     while (parser->current.type != TOKEN_RBRACE) {
@@ -577,7 +520,6 @@ static ASTStmt *parse_block_stmt(Parser *parser) {
         ASTStmt *stmt = parse_statement(parser);
 
         if (!stmt) {
-            // Recover within the block so later statements still get checked.
             parser_synchronize(parser);
             continue;
         }
@@ -585,7 +527,7 @@ static ASTStmt *parse_block_stmt(Parser *parser) {
         ast_stmt_list_add(&list, stmt);
     }
 
-    parser_next_token(parser); // eat '}'
+    parser_next_token(parser);
 
     return ast_block_stmt_create(span, list);
 }
@@ -597,13 +539,13 @@ static ASTField *parse_field(Parser *parser, const char *name_message) {
 
     Span span = parser_span(parser);
     StringRef name = parser->current.lexeme;
-    parser_next_token(parser); // eat name
+    parser_next_token(parser);
 
     if (!parser_expect(parser, TOKEN_COLON, "expected ':' after name")) {
         return NULL;
     }
 
-    parser_next_token(parser); // eat ':'
+    parser_next_token(parser);
 
     TypeExpr *type = parse_type_expr(parser);
     if (!type) {
@@ -613,19 +555,9 @@ static ASTField *parse_field(Parser *parser, const char *name_message) {
     return ast_field_create(span, name, type);
 }
 
-// A type position: any number of 'box' or 'ref', then a name, then the
-// arguments a constructor takes.
-//
-// Built outward-in, which is the order it reads: each wrapper is made once its
-// inner is parsed, so the tree's shape is the spelling's own and nothing counts
-// levels or records which of them borrow.
 static TypeExpr *parse_type_expr(Parser *parser) {
-    // '[T; N]' is a run of N of T. The element is delimited rather than
-    // prefixed, so what the length counts is exactly what the brackets hold:
-    // '[box Box; 2]' is two pointers, and 'box [Box; 2]' is one pointer to two
-    // Boxes. A suffix would have had to answer which of those it meant.
     if (parser->current.type == TOKEN_LBRACKET) {
-        parser_next_token(parser); // eat '['
+        parser_next_token(parser);
 
         TypeExpr *element = parse_type_expr(parser);
 
@@ -638,10 +570,8 @@ static TypeExpr *parse_type_expr(Parser *parser) {
             return NULL;
         }
 
-        parser_next_token(parser); // eat ';'
+        parser_next_token(parser);
 
-        // A literal and only a literal: interning a type on its length means
-        // the length has to be known where the type is named.
         if (parser->current.type != TOKEN_INT) {
             parser_error(parser, "an array's length must be an integer literal");
             type_expr_destroy(element);
@@ -650,28 +580,22 @@ static TypeExpr *parse_type_expr(Parser *parser) {
 
         int32_t length = parser->current.value.as_int;
 
-        parser_next_token(parser); // eat the length
+        parser_next_token(parser);
 
         if (!parser_expect(parser, TOKEN_RBRACKET, "expected ']' after an array's length")) {
             type_expr_destroy(element);
             return NULL;
         }
 
-        parser_next_token(parser); // eat ']'
+        parser_next_token(parser);
 
-        // Its own node rather than a synthesized name: the language spells this
-        // shape, so nothing has to be in scope for it to mean what it means.
         return type_expr_array(element, length);
     }
 
-    // 'ref T' is a borrow: a pointer that does not own what it names. It stands
-    // in place of the 'box', not before it -- 'ref T' and 'box T' are both one
-    // pointer deep, and differ only in who frees the inner. The two nest in any
-    // order, so each is its own wrapper around whatever follows it.
     if (parser->current.type == TOKEN_REF || parser->current.type == TOKEN_BOX) {
         TypeExprKind kind = parser->current.type == TOKEN_REF ? TYPE_EXPR_REF : TYPE_EXPR_BOX;
 
-        parser_next_token(parser); // eat 'ref' or 'box'
+        parser_next_token(parser);
 
         TypeExpr *inner = parse_type_expr(parser);
 
@@ -687,13 +611,10 @@ static TypeExpr *parse_type_expr(Parser *parser) {
     }
 
     StringRef name = parser->current.lexeme;
-    parser_next_token(parser); // eat the type name
+    parser_next_token(parser);
 
-    // 'Module::Type' names a type in another module. The whole thing is kept
-    // as one ref over the source, so the resolver sees the qualified name
-    // exactly as the registry stores it and needs no rejoining.
     if (parser->current.type == TOKEN_COLON_COLON) {
-        parser_next_token(parser); // eat '::'
+        parser_next_token(parser);
 
         if (!parser_expect(parser, TOKEN_IDENT, "expected a type name after '::'")) {
             return NULL;
@@ -702,10 +623,8 @@ static TypeExpr *parse_type_expr(Parser *parser) {
         StringRef member = parser->current.lexeme;
         name.length = (size_t)(member.data - name.data) + member.length;
 
-        parser_next_token(parser); // eat the type name
+        parser_next_token(parser);
 
-        // One '::' only: a module name is a single identifier, so a second
-        // would have nothing left to qualify.
         if (parser->current.type == TOKEN_COLON_COLON) {
             parser_error(parser, "a qualified type name has one '::', as 'Module::Type'");
             return NULL;
@@ -714,18 +633,10 @@ static TypeExpr *parse_type_expr(Parser *parser) {
 
     TypeExpr *base = type_expr_name(name);
 
-    // A type name followed by '<' applies it to what the delimiters hold:
-    // 'Vec<int>', 'Map<K,V>'. One rule for every constructor that takes type
-    // arguments, so a generic declaration added later parses here without a
-    // rule of its own.
-    //
-    // Delimited rather than juxtaposed. Where an argument simply followed the
-    // name, a type ending one construct and an identifier beginning the next
-    // could not be told from an application.
     TypeExpr *type = base;
 
     if (parser->current.type == TOKEN_LESS) {
-        parser_next_token(parser); // eat '<'
+        parser_next_token(parser);
 
         TypeExpr *apply = type_expr_apply(base);
 
@@ -743,7 +654,7 @@ static TypeExpr *parse_type_expr(Parser *parser) {
                 break;
             }
 
-            parser_next_token(parser); // eat ','
+            parser_next_token(parser);
         }
 
         if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after a type's arguments")) {
@@ -751,7 +662,7 @@ static TypeExpr *parse_type_expr(Parser *parser) {
             return NULL;
         }
 
-        parser_next_token(parser); // eat '>'
+        parser_next_token(parser);
 
         type = apply;
     }
@@ -762,23 +673,20 @@ static TypeExpr *parse_type_expr(Parser *parser) {
 static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
     Span span = parser_span(parser);
 
-    parser_next_token(parser); // eat "struct"
+    parser_next_token(parser);
 
     if (!parser_expect(parser, TOKEN_IDENT, "expected a struct name")) {
         return NULL;
     }
 
     StringRef name = parser->current.lexeme;
-    parser_next_token(parser); // eat struct name
+    parser_next_token(parser);
 
-    // The names this declaration takes, spelled where a mention spells its
-    // arguments. A struct writing none is the same declaration applied to
-    // nothing, so there is no second rule for the plain case.
     StringRef params[GAB_MAX_TYPE_PARAMS];
     size_t param_count = 0;
 
     if (parser->current.type == TOKEN_LESS) {
-        parser_next_token(parser); // eat '<'
+        parser_next_token(parser);
 
         for (;;) {
             if (!parser_expect(parser, TOKEN_IDENT, "expected a type parameter name")) {
@@ -792,27 +700,27 @@ static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
             }
 
             params[param_count++] = parser->current.lexeme;
-            parser_next_token(parser); // eat the parameter name
+            parser_next_token(parser);
 
             if (parser->current.type != TOKEN_COMMA) {
                 break;
             }
 
-            parser_next_token(parser); // eat ','
+            parser_next_token(parser);
         }
 
         if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after a struct's type parameters")) {
             return NULL;
         }
 
-        parser_next_token(parser); // eat '>'
+        parser_next_token(parser);
     }
 
     if (!parser_expect(parser, TOKEN_LBRACE, "expected '{' after struct name")) {
         return NULL;
     }
 
-    parser_next_token(parser); // eat '{'
+    parser_next_token(parser);
 
     ASTFieldList fields = ast_field_list_create();
     while (parser->current.type != TOKEN_RBRACE) {
@@ -837,47 +745,41 @@ static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
         }
 
         if (parser->current.type == TOKEN_COMMA) {
-            parser_next_token(parser); // eat ','
+            parser_next_token(parser);
         }
     }
 
-    parser_next_token(parser); // eat '}'
+    parser_next_token(parser);
 
     return ast_struct_decl_stmt_create(span, name, params, param_count, fields);
 }
 
-// 'extern func f(x: int): int;' declares a signature whose body the host
-// supplies. The keyword is what makes a missing body a declaration rather than
-// an error, so the two spellings never have to be told apart by guessing.
 static ASTStmt *parse_func_decl_stmt(Parser *parser) {
     Span span = parser_span(parser);
 
     bool is_extern = parser->current.type == TOKEN_EXTERN;
 
     if (is_extern) {
-        parser_next_token(parser); // eat "extern"
+        parser_next_token(parser);
 
         if (!parser_expect(parser, TOKEN_FUNC, "expected 'func' after 'extern'")) {
             return NULL;
         }
     }
 
-    parser_next_token(parser); // eat "func"
+    parser_next_token(parser);
 
     if (!parser_expect(parser, TOKEN_IDENT, "expected a function name")) {
         return NULL;
     }
 
     StringRef func_name = parser->current.lexeme;
-    parser_next_token(parser); // eat func name
+    parser_next_token(parser);
 
-    // 'func Vec::new(...)' declares a function on a type that no value reaches:
-    // what was read as the name is the owning type, and the name follows.
-    // The type this attaches to, named before '::'.
     TypeExpr *owner = NULL;
 
     if (parser->current.type == TOKEN_COLON_COLON) {
-        parser_next_token(parser); // eat '::'
+        parser_next_token(parser);
 
         if (!parser_expect(parser, TOKEN_IDENT, "expected a function name after '::'")) {
             return NULL;
@@ -886,10 +788,8 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
         owner = type_expr_name(func_name);
         func_name = parser->current.lexeme;
 
-        parser_next_token(parser); // eat the function name
+        parser_next_token(parser);
 
-        // One '::', as everywhere else it is written: the owner is a type in
-        // this module, so a second has nothing left to qualify.
         if (parser->current.type == TOKEN_COLON_COLON) {
             parser_error(parser, "a function owned by a type has one '::', as 'Type::name'");
             type_expr_destroy(owner);
@@ -901,7 +801,7 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
         return NULL;
     }
 
-    parser_next_token(parser); // eat '(';
+    parser_next_token(parser);
 
     ASTFieldList func_params = ast_field_list_create();
     while (parser->current.type != TOKEN_RPAREN) {
@@ -919,17 +819,17 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
         }
 
         if (parser->current.type == TOKEN_COMMA) {
-            parser_next_token(parser); // eat ','
+            parser_next_token(parser);
         }
 
         ast_field_list_add(&func_params, param);
     }
 
-    parser_next_token(parser); // eat ')'
+    parser_next_token(parser);
 
     TypeExpr *func_type = NULL;
     if (parser->current.type == TOKEN_COLON) {
-        parser_next_token(parser); // eat ':'
+        parser_next_token(parser);
 
         func_type = parse_type_expr(parser);
         if (!func_type) {
@@ -938,8 +838,6 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
         }
     }
 
-    // An extern states a signature and stops there; the ';' is consumed by
-    // parse_decl_statement, which stmt_needs_terminator sends it to.
     if (is_extern) {
         if (parser->current.type == TOKEN_LBRACE) {
             parser_error(parser, "an 'extern' function is defined by the host and cannot have a body");
@@ -959,9 +857,6 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
     ASTStmt *func_body = parse_block_stmt(parser);
     if (!func_body) {
-        // The return type is parsed before the body, so a body that fails to
-        // parse leaves it owned by nobody: the node that would have taken it is
-        // never created. The receiver is in the same position.
         type_expr_destroy(func_type);
         ast_field_list_free(&func_params);
 
@@ -977,7 +872,7 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 static ASTStmt *parse_return_stmt(Parser *parser) {
     Span span = parser_span(parser);
 
-    parser_next_token(parser); // eat "return"
+    parser_next_token(parser);
 
     ASTExpr *result = parse_expression(parser);
     if (!result) {
@@ -987,8 +882,6 @@ static ASTStmt *parse_return_stmt(Parser *parser) {
     return ast_return_stmt_create(span, result);
 }
 
-// Whether a token is a compound assignment operator, and which binary
-// operation it assigns the result of. 'op' may be NULL to ask only the former.
 static bool compound_assign_op(TokenType type, BinOp *op) {
     BinOp found;
 
@@ -1043,7 +936,7 @@ static ASTStmt *parse_expr_stmt(Parser *parser) {
     BinOp op = BIN_OP_ADD;
     compound_assign_op(parser->current.type, &op);
 
-    parser_next_token(parser); // eat '=' or a compound assignment operator
+    parser_next_token(parser);
 
     ASTExpr *value = parse_expression(parser);
     if (!value) {
@@ -1051,9 +944,6 @@ static ASTStmt *parse_expr_stmt(Parser *parser) {
         return NULL;
     }
 
-    // The target is kept as one expression rather than copied onto both sides
-    // of an expansion, so that whatever it names -- a call included -- is
-    // evaluated once. Codegen is what reads it and writes it back.
     if (compound) {
         return ast_compound_assign_stmt_create(span, expr, op, value);
     }
@@ -1068,8 +958,7 @@ static bool stmt_needs_terminator(ASTStmt *stmt) {
     case STMT_BLOCK:
     case STMT_STRUCT_DECL:
         return false;
-    // A body closes itself with '}'. An extern has none, so it ends the way
-    // every other bodyless declaration does.
+
     case STMT_FUNC_DECL:
         return stmt->func_decl.body == NULL;
     default:
@@ -1087,11 +976,10 @@ static void ast_expr_list_destroy(ASTExprList *list) {
     ast_expr_list_free(list);
 }
 
-// Parses the argument list of a call, with the '(' already current.
 static ASTExpr *parse_field_expr(Parser *parser, ASTExpr *target) {
     Span span = parser_span(parser);
 
-    parser_next_token(parser); // eat '.'
+    parser_next_token(parser);
 
     if (!parser_expect(parser, TOKEN_IDENT, "expected a field name after '.'")) {
         ast_expr_free(target);
@@ -1100,10 +988,8 @@ static ASTExpr *parse_field_expr(Parser *parser, ASTExpr *target) {
 
     Token name = parser->current;
 
-    parser_next_token(parser); // eat identifier
+    parser_next_token(parser);
 
-    // A '.name' followed by '(' is a method call, not a field holding a
-    // function: Gab has no function values, so the two can never be confused.
     if (parser->current.type == TOKEN_LPAREN) {
         return parse_method_call_expr(parser, target, name.lexeme, span);
     }
@@ -1111,11 +997,8 @@ static ASTExpr *parse_field_expr(Parser *parser, ASTExpr *target) {
     return ast_field_expr_create(span, target, name.lexeme);
 }
 
-// The comma-separated arguments between '(' and ')', with the '(' already
-// current and consumed here. Shared by a plain call and a method call, which
-// differ only in what they do with the list.
 static bool parse_call_args(Parser *parser, ASTExprList *out) {
-    parser_next_token(parser); // eat '('
+    parser_next_token(parser);
 
     ASTExprList args = ast_expr_list_create();
     bool ok = true;
@@ -1142,7 +1025,7 @@ static bool parse_call_args(Parser *parser, ASTExprList *out) {
         }
 
         if (parser->current.type == TOKEN_COMMA) {
-            parser_next_token(parser); // eat ','
+            parser_next_token(parser);
         }
     }
 
@@ -1151,7 +1034,7 @@ static bool parse_call_args(Parser *parser, ASTExprList *out) {
         return false;
     }
 
-    parser_next_token(parser); // eat ')'
+    parser_next_token(parser);
 
     *out = args;
     return true;
@@ -1169,15 +1052,6 @@ static ASTExpr *parse_call_expr(Parser *parser, ASTExpr *target) {
     return ast_call_expr_create(span, target, args);
 }
 
-// 'recv.name(args)'. Collapsed here rather than left as a call over a field
-// access, because this is where the difference between the two is cheapest to
-// see: a '.name' followed by '(' is a method call and nothing else.
-// 'recv.name(args)' parses as a call whose target is the field expression
-// 'recv.name'. There is no separate method-call node: a method is a function
-// whose parameter zero is the receiver, and resolution is where that becomes
-// true of the tree — it rewrites this into a call with the receiver as argument
-// zero. Until then the receiver is simply the field target, which is where the
-// parser already put it.
 static ASTExpr *parse_method_call_expr(Parser *parser, ASTExpr *receiver, StringRef name, Span span) {
     ASTExpr *target = ast_field_expr_create(span, receiver, name);
 
@@ -1190,12 +1064,10 @@ static ASTExpr *parse_method_call_expr(Parser *parser, ASTExpr *receiver, String
     return ast_call_expr_create(span, target, args);
 }
 
-// 'xs[i]'. A postfix like a call, so it chains: 'a.b[i].c' and 'xs[i][j]' both
-// fall out of the loop that reads it.
 static ASTExpr *parse_index_expr(Parser *parser, ASTExpr *target) {
     Span span = parser_span(parser);
 
-    parser_next_token(parser); // eat '['
+    parser_next_token(parser);
 
     ASTExpr *index = parse_expression(parser);
 
@@ -1210,21 +1082,16 @@ static ASTExpr *parse_index_expr(Parser *parser, ASTExpr *target) {
         return NULL;
     }
 
-    parser_next_token(parser); // eat ']'
+    parser_next_token(parser);
 
     return ast_index_expr_create(span, target, index);
 }
 
-// A primary with its postfixes, or a prefix form over one of those. Prefix '&'
-// and '*' bind tighter than any binary operator but looser than a postfix, so
-// 'ref p.x' takes the address of the field and '*p.x' dereferences it.
 static ASTExpr *parse_unary(Parser *parser) {
     Span span = parser_span(parser);
 
-    // 'new T' names a type rather than taking an operand, so it is handled
-    // before the operand-taking prefixes below.
     if (parser->current.type == TOKEN_NEW) {
-        parser_next_token(parser); // eat 'new'
+        parser_next_token(parser);
 
         TypeExpr *spec = parse_type_expr(parser);
         if (!spec) {
@@ -1234,10 +1101,8 @@ static ASTExpr *parse_unary(Parser *parser) {
         return ast_new_expr_create(span, spec);
     }
 
-    // '[a, b, c]' writes out an array's elements. A prefix '[' is unambiguous:
-    // the postfix one indexes, and that only ever follows an operand.
     if (parser->current.type == TOKEN_LBRACKET) {
-        parser_next_token(parser); // eat '['
+        parser_next_token(parser);
 
         ASTExprList elements = ast_expr_list_create();
 
@@ -1261,7 +1126,7 @@ static ASTExpr *parse_unary(Parser *parser) {
                 break;
             }
 
-            parser_next_token(parser); // eat ','
+            parser_next_token(parser);
         }
 
         if (!parser_expect(parser, TOKEN_RBRACKET, "expected ']' after an array's elements")) {
@@ -1269,20 +1134,16 @@ static ASTExpr *parse_unary(Parser *parser) {
             return NULL;
         }
 
-        parser_next_token(parser); // eat ']'
+        parser_next_token(parser);
 
         return ast_array_lit_expr_create(span, elements);
     }
 
-    // Some of these share a token with a binary operator -- '*' with
-    // multiplication, '-' with subtraction -- and only its position tells the
-    // two apart. Recursing into parse_unary is what makes them stack, so
-    // '--x' and '-*p' both parse.
     if (parser->current.type == TOKEN_MUL || parser->current.type == TOKEN_MINUS ||
         parser->current.type == TOKEN_NOT) {
         TokenType prefix = parser->current.type;
 
-        parser_next_token(parser); // eat '*', '-' or '!'
+        parser_next_token(parser);
 
         ASTExpr *target = parse_unary(parser);
         if (!target) {
@@ -1304,8 +1165,6 @@ static ASTExpr *parse_unary(Parser *parser) {
         return NULL;
     }
 
-    // Postfixes bind tighter than any binary operator and chain, so 'a.b.c' and
-    // 'f().x' both fall out of looping here.
     while (parser->current.type == TOKEN_LPAREN || parser->current.type == TOKEN_DOT ||
            parser->current.type == TOKEN_LBRACKET) {
         if (parser->current.type == TOKEN_LPAREN) {
@@ -1337,7 +1196,7 @@ static ASTExpr *parse_precedence(Parser *parser, int min_precedence) {
             break;
         }
 
-        parser_next_token(parser); // eat op
+        parser_next_token(parser);
 
         BinOp op = parse_bin_op(token.type);
         ASTExpr *rhs = parse_precedence(parser, precedence + 1);
@@ -1356,25 +1215,24 @@ static ASTExpr *parse_precedence(Parser *parser, int min_precedence) {
 static ASTExpr *parse_primary(Parser *parser) {
     Span span = parser_span(parser);
     switch (parser->current.type) {
-
     case TOKEN_INT: {
         int32_t value = parser->current.value.as_int;
 
-        parser_next_token(parser); // eat integer
+        parser_next_token(parser);
 
         return ast_literal_expr_create(span, (Literal){.kind = TYPE_INT, .as_int = value});
     }
     case TOKEN_FLOAT: {
         float value = parser->current.value.as_float;
 
-        parser_next_token(parser); // eat float
+        parser_next_token(parser);
 
         return ast_literal_expr_create(span, (Literal){.kind = TYPE_FLOAT, .as_float = value});
     }
     case TOKEN_STRING: {
         String *text = parser->current.value.as_string;
 
-        parser_next_token(parser); // eat string
+        parser_next_token(parser);
 
         return ast_literal_expr_create(span, (Literal){.kind = TYPE_STR, .as_string = text});
     }
@@ -1392,14 +1250,10 @@ static ASTExpr *parse_primary(Parser *parser) {
         Token name = parser->current;
         StringRef lexeme = name.lexeme;
 
-        parser_next_token(parser); // eat identifier
+        parser_next_token(parser);
 
-        // 'Module::name' and 'Type::name' are one qualified name, kept as one
-        // ref over the source the way a qualified type name is: which of the
-        // two the first half names is the resolver's question, not the
-        // grammar's.
         if (parser->current.type == TOKEN_COLON_COLON) {
-            parser_next_token(parser); // eat '::'
+            parser_next_token(parser);
 
             if (!parser_expect(parser, TOKEN_IDENT, "expected a name after '::'")) {
                 return NULL;
@@ -1408,7 +1262,7 @@ static ASTExpr *parse_primary(Parser *parser) {
             StringRef member = parser->current.lexeme;
             lexeme.length = (size_t)(member.data - lexeme.data) + member.length;
 
-            parser_next_token(parser); // eat the member name
+            parser_next_token(parser);
 
             if (parser->current.type == TOKEN_COLON_COLON) {
                 parser_error(parser, "a qualified name has one '::', as 'Module::name'");
@@ -1419,7 +1273,7 @@ static ASTExpr *parse_primary(Parser *parser) {
         return ast_variable_expr_create(span, lexeme);
     }
     case TOKEN_LPAREN: {
-        parser_next_token(parser); // eat '('
+        parser_next_token(parser);
 
         ASTExpr *node = parse_expression(parser);
 
@@ -1432,7 +1286,7 @@ static ASTExpr *parse_primary(Parser *parser) {
             return NULL;
         }
 
-        parser_next_token(parser); // eat ')'
+        parser_next_token(parser);
 
         return node;
     }
@@ -1463,7 +1317,7 @@ static int get_precedence(TokenType type) {
     case TOKEN_MOD:
         return 6;
     default:
-        return 0; // Not a binary operator
+        return 0;
     }
 }
 
@@ -1505,8 +1359,6 @@ static BinOp parse_bin_op(TokenType type) {
 
 static bool parser_expect(Parser *parser, TokenType token, const char *message) {
     if (parser->current.type != token) {
-        // The caller says what was expected; only the parser knows what is
-        // actually there, so it supplies the second half.
         diag_error(parser->diagnostics, GAB_ERR_SYNTAX, parser_span(parser), "%s, found %s", message,
                    token_description(parser->current.type));
         return false;
@@ -1519,8 +1371,6 @@ static void parser_error(Parser *parser, const char *message) {
     diag_error(parser->diagnostics, GAB_ERR_SYNTAX, parser_span(parser), "%s", message);
 }
 
-// For the cases that reject the current token without a specific expected type,
-// so they read the same as parser_expect's.
 static void parser_error_found(Parser *parser, const char *message) {
     diag_error(parser->diagnostics, GAB_ERR_SYNTAX, parser_span(parser), "%s, found %s", message,
                token_description(parser->current.type));

@@ -42,8 +42,6 @@ static void assert_parse_error(const char *code, const char *expected_error) {
 
     assert(diagnostics_has_errors(diagnostics));
 
-    // The expected message need not be the first: a bad character is reported
-    // by the lexer before the parser reports what it could not parse.
     bool found = false;
     for (size_t i = 0; i < diagnostics_count(diagnostics); i++) {
         if (strcmp(diagnostics_get(diagnostics, i)->message, expected_error) == 0) {
@@ -71,7 +69,6 @@ static const char *func_wrap(const char *code) {
 
 static ASTStmtList func_unwrap(ASTUnit *unit) { return unit->statements.data[0]->func_decl.body->block.list; }
 
-// --- Test Cases ---
 static void test_single_number() {
     ASTUnit *unit = assert_parse(func_wrap("42;"));
 
@@ -136,7 +133,6 @@ static void test_operator_precedence() {
 
     ASTExpr *expr = stmt->expr.value;
 
-    // Expect: 3 + (4 * 2)
     assert(expr->kind == EXPR_BIN_OP);
     assert(expr->bin_op.op == BIN_OP_ADD);
     assert(expr->bin_op.left->kind == EXPR_LITERAL);
@@ -161,7 +157,6 @@ static void test_parentheses() {
 
     ASTExpr *expr = stmt->expr.value;
 
-    // Expect: (3 + 4) * 2
     assert(expr->kind == EXPR_BIN_OP);
     assert(expr->bin_op.op == BIN_OP_MUL);
 
@@ -438,8 +433,6 @@ static void test_expression_not_assignable() {
     assert_parse_error(func_wrap("2 = 1"), "expression is not assignable");
 }
 
-// The directive names the unit's namespace. It is optional, and its absence is
-// what keeps every unit written before modules existed parsing unchanged.
 static void test_module_directive() {
     ASTUnit *unit = assert_parse("module Player;\nfunc f(): int { return 1; }\n");
 
@@ -448,15 +441,11 @@ static void test_module_directive() {
     assert(strncmp(unit->module_name.data, "Player", 6) == 0);
     assert(unit->module_span.line == 1);
 
-    // The directive is not a statement; it names the unit.
     assert(unit->statements.size == 1);
 
     ast_unit_destroy(unit);
 }
 
-// A unit must name its module. Built here rather than through assert_parse_error
-// because the helpers supply a directive to snippets that lack one, and this is
-// the one test whose subject is a snippet lacking one.
 static void test_a_unit_must_name_its_module() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -481,9 +470,6 @@ static void test_module_directive_alone() {
     ast_unit_destroy(unit);
 }
 
-// Nested names are rejected rather than given a meaning: a '::' would have to
-// imply either a hierarchy or a longer flat name, and both readings cost more
-// than an error until something needs one.
 static void test_module_name_cannot_be_nested() {
     assert_parse_error("module Player::Movement;\nfunc f(): int { return 1; }\n",
                        "module names cannot be nested; 'Player::Movement' must be a single identifier");
@@ -508,9 +494,6 @@ static void test_module_needs_a_semicolon() {
                        "expected ';' after the module name, found 'func'");
 }
 
-// Reserved for closures rather than merely unimplemented: a nested function
-// today could capture nothing, and letting the syntax mean that now would
-// change what it means once closures define it.
 static void test_function_cannot_be_declared_inside_another() {
     assert_parse_error("func outer(): int {\n"
                        "    func inner(): int { return 1; }\n"
@@ -519,7 +502,6 @@ static void test_function_cannot_be_declared_inside_another() {
                        "a function cannot be declared inside another; declare it at module level");
 }
 
-// A method body is a function body, so the same rule holds inside one.
 static void test_function_cannot_be_declared_inside_a_method() {
     assert_parse_error("struct P { n: int }\n"
                        "func P::m(p: ref P): int {\n"
@@ -529,7 +511,6 @@ static void test_function_cannot_be_declared_inside_a_method() {
                        "a function cannot be declared inside another; declare it at module level");
 }
 
-// 'for' with no clauses is the infinite form, and holds only a body.
 static void test_for_infinite() {
     ASTUnit *unit = assert_parse(func_wrap("for { 10; }"));
 
@@ -544,7 +525,6 @@ static void test_for_infinite() {
     ast_unit_destroy(unit);
 }
 
-// A single expression before the body is the condition, not an initializer.
 static void test_for_condition() {
     ASTUnit *unit = assert_parse(func_wrap("for 2 < 1 { 10; }"));
 
@@ -558,7 +538,6 @@ static void test_for_condition() {
     ast_unit_destroy(unit);
 }
 
-// The three-clause form fills all three, and each is optional.
 static void test_for_clauses() {
     ASTUnit *unit = assert_parse(func_wrap("for let i: int = 0; i < 3; i = i + 1 { 10; }"));
 
@@ -595,9 +574,6 @@ static void test_break_and_continue() {
     ast_unit_destroy(unit);
 }
 
-// A constructor's arguments are delimited, so a list of them is bounded by what
-// closes it rather than by what follows the last one. Two types is the shape a
-// map takes, and it parses without a rule of its own.
 static void test_a_type_takes_several_arguments() {
     ASTUnit *unit = assert_parse("struct Holder { a: Map<int,float> }");
 
@@ -612,8 +588,6 @@ static void test_a_type_takes_several_arguments() {
     ast_unit_destroy(unit);
 }
 
-// An argument is a type like any other, so an application is one of its own
-// arguments. The delimiters are what bound each level.
 static void test_an_argument_may_be_an_application() {
     ASTUnit *unit = assert_parse("struct Holder { a: Vec<Vec<int>> }");
 
@@ -631,27 +605,18 @@ static void test_an_argument_may_be_an_application() {
     ast_unit_destroy(unit);
 }
 
-// A type position parses into a tree: each 'box' or 'ref' wraps what follows
-// it, and an application holds its arguments. Nesting is what the shape says
-// rather than what a fixed-width encoding can count, so a spelling deeper than
-// any such width still parses.
 static void test_a_type_is_a_tree() {
     ASTUnit *unit = assert_parse("struct Holder { a: ref box [int; 3] }");
 
     ASTStmt *stmt = unit->statements.data[0];
     ASTFieldList fields = stmt->struct_decl.fields;
 
-    // 'ref box [int; 3]' reads outermost first: a borrow of an owning
-    // pointer to an array of ints.
     TypeExpr *ref = fields.data[0]->type_expr;
     assert(ref->kind == TYPE_EXPR_REF);
 
     TypeExpr *box = ref->indirect.inner;
     assert(box->kind == TYPE_EXPR_BOX);
 
-    // A shape the language spells, so it is its own node rather than a name
-    // that would have to be in scope. The length rides beside the element: it
-    // is not a type, so nothing resolves it.
     TypeExpr *array = box->indirect.inner;
     assert(array->kind == TYPE_EXPR_ARRAY);
     assert(array->array.element->kind == TYPE_EXPR_NAME);
@@ -662,7 +627,6 @@ static void test_a_type_is_a_tree() {
 }
 
 int main() {
-
     test_function_cannot_be_declared_inside_another();
     test_function_cannot_be_declared_inside_a_method();
     test_module_directive();

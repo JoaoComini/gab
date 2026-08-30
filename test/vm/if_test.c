@@ -1,6 +1,3 @@
-// What 'if' requires of its condition, and that it branches on it correctly.
-// The parser tests cover the syntax; the rule that the condition must be a
-// bool is a resolver rule, and lives here.
 #include "support/run.h"
 #include "vm/vm.h"
 
@@ -39,8 +36,6 @@ static void test_a_non_bool_condition_is_rejected() {
                           "func f(): int { let v: V; if v { return 1; } return 0; }\n"));
 }
 
-// A condition that is already an error must not produce a second complaint
-// about not being a bool: one mistake should report once.
 static void test_a_poisoned_condition_reports_once() {
     assert(!test_compiles("func f(): int { if undefined_name { return 1; } return 0; }\n"));
 }

@@ -37,8 +37,6 @@ Token token_create_ref(Lexer *lexer, TokenType type, StringRef ref) {
 
 Span token_span(Token token) { return (Span){.line = token.line, .column = token.column}; }
 
-// How a token is named in a diagnostic. Punctuation and keywords are quoted so
-// they read as source text; the rest get a descriptive noun.
 const char *token_description(TokenType type) {
     switch (type) {
     case TOKEN_INVALID:
@@ -168,9 +166,6 @@ static Token lexer_number(Lexer *lexer) {
 
     TokenType type = TOKEN_INT;
 
-    // Not when the dot begins a '..': the join would otherwise be swallowed as
-    // this number's decimal point and the next one's, leaving two floats where
-    // the source wrote an operator between two ints.
     if (lexer_peek(lexer) == '.' && lexer->source[lexer->pos + 1] != '.') {
         lexer_eat(lexer);
 
@@ -181,9 +176,6 @@ static Token lexer_number(Lexer *lexer) {
         type = TOKEN_FLOAT;
     }
 
-    // strtol and strtod read up to the first character that cannot continue the
-    // number, and the scan above has already found where that is -- so the
-    // digits are converted in place rather than copied out to be terminated.
     if (type == TOKEN_FLOAT) {
         return token_create_value(lexer, type, (TokenValue){.as_float = strtof(begin, NULL)});
     }
@@ -191,9 +183,6 @@ static Token lexer_number(Lexer *lexer) {
     errno = 0;
     long value = strtol(begin, NULL, 10);
 
-    // Checked here because a run of digits always denotes an int today, so the
-    // lexer can answer it. A type error rather than a syntax one: the literal is
-    // well formed, and what it denotes is what has no representation.
     if (errno == ERANGE || value > INT32_MAX) {
         diag_error(lexer->diagnostics, GAB_ERR_TYPE, opened, "integer literal is out of range");
 
@@ -202,8 +191,7 @@ static Token lexer_number(Lexer *lexer) {
 
     return token_create_value(lexer, type, (TokenValue){.as_int = (int32_t)value});
 }
-// Grows the scratch buffer to hold at least 'needed' bytes. The buffer is
-// reused across literals, so it settles at the longest one in the file.
+
 static bool lexer_reserve(Lexer *lexer, size_t needed) {
     if (needed <= lexer->scratch_capacity) {
         return true;
@@ -221,8 +209,6 @@ static bool lexer_reserve(Lexer *lexer, size_t needed) {
         return false;
     }
 
-    // Only when there is something to carry over: the first growth has no
-    // buffer yet, and memcpy may not be handed a null even for zero bytes.
     if (lexer->scratch) {
         memcpy(grown, lexer->scratch, lexer->scratch_capacity);
     }
@@ -233,7 +219,6 @@ static bool lexer_reserve(Lexer *lexer, size_t needed) {
     return true;
 }
 
-// The character an escape denotes, or -1 if the language defines none for it.
 static int escape_value(char ch) {
     switch (ch) {
     case 'n':
@@ -251,22 +236,16 @@ static int escape_value(char ch) {
     }
 }
 
-// A literal's characters, decoded and interned. The lexeme is what the string
-// denotes rather than the source between the quotes, so an escape has already
-// become the one character it stands for and a '\0' escape is a character like
-// any other -- which is why the length travels with it.
 static Token lexer_string(Lexer *lexer) {
     Span opened = {.line = lexer->start_line, .column = lexer->start_column};
 
-    lexer_eat(lexer); // the opening quote
+    lexer_eat(lexer);
 
     size_t length = 0;
 
     while (lexer_peek(lexer) != '"') {
         char ch = lexer_peek(lexer);
 
-        // A literal stops at the end of its line, so a missing quote is
-        // reported where it opened rather than swallowing the rest of the file.
         if (ch == '\0' || ch == '\n') {
             diag_error(lexer->diagnostics, GAB_ERR_SYNTAX, opened, "unterminated string literal");
 
@@ -300,7 +279,7 @@ static Token lexer_string(Lexer *lexer) {
         lexer_eat(lexer);
     }
 
-    lexer_eat(lexer); // the closing quote
+    lexer_eat(lexer);
 
     String *text = string_from_ref(lexer->strings, (StringRef){.data = lexer->scratch, .length = length});
 
@@ -406,8 +385,6 @@ Lexer lexer_create(const char *source, Arena *arena, StringPool *strings, Diagno
     };
 }
 
-// An invalid character is reported here rather than passed on, so the parser
-// never has to reason about a token that means nothing.
 static Token lexer_invalid(Lexer *lexer, char ch) {
     Token token = token_create(lexer, TOKEN_INVALID);
 
@@ -429,8 +406,6 @@ Token lexer_handle_op_eq(Lexer *lexer, TokenType base_tok, TokenType eq_tok, cha
     if (ch == '=') {
         lexer_eat(lexer);
 
-        // TOKEN_INVALID means there is no such compound operator, so it is
-        // reported rather than handed to the parser as a silent invalid token.
         if (eq_tok == TOKEN_INVALID) {
             return lexer_invalid(lexer, op_ch);
         }
@@ -450,8 +425,6 @@ Token lexer_handle_op_eq(Lexer *lexer, TokenType base_tok, TokenType eq_tok, cha
     return token_create(lexer, base_tok);
 }
 
-// Comments are trivia: they are skipped alongside whitespace so that a comment
-// between two tokens separates them and is otherwise invisible to the parser.
 static void lexer_skip_trivia(Lexer *lexer) {
     for (;;) {
         while (isspace(lexer_peek(lexer))) {
@@ -472,15 +445,12 @@ static void lexer_skip_trivia(Lexer *lexer) {
         }
 
         if (next == '*') {
-            // The opening delimiter is where an unterminated comment is
-            // reported, so the span points at the comment rather than at EOF.
             int line = lexer->line;
             int column = lexer->column;
 
             lexer_eat(lexer);
             lexer_eat(lexer);
 
-            // Nesting is not supported: the first '*/' closes the comment.
             while (!(lexer_peek(lexer) == '*' && lexer->source[lexer->pos + 1] == '/')) {
                 if (lexer_peek(lexer) == '\0') {
                     diag_error(lexer->diagnostics, GAB_ERR_SYNTAX, (Span){.line = line, .column = column},
@@ -506,14 +476,12 @@ Token lexer_next(Lexer *lexer) {
     lexer->start_line = lexer->line;
     lexer->start_column = lexer->column;
 
-    // A leading '.' still starts a float, but only when a digit follows it;
-    // otherwise it is field access.
     if (isdigit(lexer_peek(lexer)) ||
         (lexer_peek(lexer) == '.' && isdigit((unsigned char)lexer->source[lexer->pos + 1]))) {
         return lexer_number(lexer);
     }
 
-    if (isalpha(lexer_peek(lexer)) || lexer_peek(lexer) == '_') { // Start with a letter or '_'
+    if (isalpha(lexer_peek(lexer)) || lexer_peek(lexer) == '_') {
         return lexer_identifier(lexer);
     }
 
@@ -521,8 +489,6 @@ Token lexer_next(Lexer *lexer) {
         return lexer_string(lexer);
     }
 
-    // Not eaten: advancing past the terminator would read out of bounds on any
-    // further call.
     if (lexer_peek(lexer) == '\0') {
         return token_create(lexer, TOKEN_EOF);
     }
@@ -568,7 +534,7 @@ Token lexer_next(Lexer *lexer) {
     case ';':
         return token_create(lexer, TOKEN_SEMICOLON);
     case ':':
-        // '::' qualifies a name by its module; a lone ':' annotates a type.
+
         return lexer_handle_op_eq(lexer, TOKEN_COLON, TOKEN_INVALID, ':', TOKEN_COLON_COLON);
     case ',':
         return token_create(lexer, TOKEN_COMMA);

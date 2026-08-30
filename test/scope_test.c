@@ -30,7 +30,6 @@ static void test_var_declaration() {
     Symbol *sym = scope_decl_var(scope, name, type);
     assert(sym != NULL);
 
-    // Check lookup
     Symbol *found = scope_symbol_lookup(scope, name);
     assert(found == sym);
 }
@@ -42,20 +41,14 @@ static void test_shadowing() {
     const Type *int_type = type_registry_get_primitive(parent->type_registry, TYPE_INT);
     const Type *float_type = type_registry_get_primitive(parent->type_registry, TYPE_FLOAT);
 
-    // Declare in parent
     Symbol *parent_sym = scope_decl_var(parent, name, int_type);
 
     Scope *child = scope_create(arena, &ctx.strings, parent);
 
-    // Declare same name in child
     Symbol *child_sym = scope_decl_var(child, name, float_type);
 
-    // Lookup in child should find child's version
     assert(scope_symbol_lookup(child, name) == child_sym);
 
-    // Shadowing hides the parent's symbol without replacing it: the parent
-    // still resolves the name to its own, which is what makes the shadow end
-    // at the closing brace.
     assert(child_sym != parent_sym);
     assert(scope_symbol_lookup(parent, name) == parent_sym);
 }

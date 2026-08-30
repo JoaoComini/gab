@@ -7,8 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// The frame size codegen settled on for the given function, which is the number
-// register reuse is supposed to hold flat as a function grows.
 static int func_max_registers(VM *vm, size_t index) {
     assert(index < vm->program.prototypes.size);
 
@@ -27,8 +25,6 @@ static int compile_max_registers(const char *source, size_t index) {
     return result;
 }
 
-// Statement temporaries are reclaimed, so frame size is set by the widest
-// single statement rather than by the statement count.
 static void test_frame_size_is_flat_in_statement_count() {
     int few = compile_max_registers("func f(n: int): int {\n"
                                     "let a = n + 1;\n"
@@ -50,20 +46,12 @@ static void test_frame_size_is_flat_in_statement_count() {
                                      "}\n",
                                      0);
 
-    // r0 return, r1 parameter, one slot per live local, plus the widest
-    // statement's temporaries. Without reuse these were 9 and 27; one lower
-    // than that again since 'n + 1' takes its literal as an immediate operand
-    // rather than loading it into a register.
     assert(few == 5);
     assert(many == 11);
 
-    // Six more locals cost six more slots, not three per statement.
     assert(many - few == 6);
 }
 
-// A monotonically rising floor gets this wrong: b and c are dead at the closing
-// brace, so d must land back in the slot b used. Widening the dead block must
-// therefore not widen the frame.
 static void test_block_locals_are_reclaimed() {
     const char *two_inner = "func f(n: int): int {\n"
                             "let a = n + 1;\n"
@@ -89,19 +77,11 @@ static void test_block_locals_are_reclaimed() {
                              "return a + d;\n"
                              "}\n";
 
-    // The second arm's locals reuse the first arm's slots, so the two functions
-    // need the same frame. Under a monotonic floor the second would need more.
     assert(compile_max_registers(two_inner, 0) == compile_max_registers(four_inner, 0));
 
-    // And d reuses a slot the dead arm held rather than stacking on top of it.
-    // Lower than the register-only encoding would need: the arithmetic and the
-    // 'n > 0' condition both take their literal as an immediate operand, and
-    // each initialiser is generated straight into its variable's slot.
     assert(compile_max_registers(two_inner, 0) == 6);
 }
 
-// Statements reclaim the slots they used, so a function long enough to spend
-// the whole 127-slot frame at three slots a statement still fits.
 static void test_a_long_function_fits_in_the_frame() {
     assert(test_run_int("func f(n: int): int {\n"
                         "let s01 = n + 1; let s02 = n + 1; let s03 = n + 1; let s04 = n + 1;\n"
@@ -121,8 +101,6 @@ static void test_a_long_function_fits_in_the_frame() {
                         "let r: int = main();") == 42);
 }
 
-// A statement made only of temporaries reuses the same slots every time, so a
-// hundred of them cost no more than one.
 static void test_expression_statements_reuse_slots() {
     int one = compile_max_registers("func f(n: int): int { n + 1; return n; }\n", 0);
     int several = compile_max_registers("func f(n: int): int { n + 1; n + 2; n + 3; n + 4; return n; }\n", 0);
@@ -130,24 +108,18 @@ static void test_expression_statements_reuse_slots() {
     assert(one == several);
 }
 
-// The call's dest holds its result and must survive the reclamation that frees
-// the argument block, or the surrounding expression reads a recycled slot.
 static void test_call_result_survives_in_larger_expression() {
     assert(test_run_int("func add(a: int, b: int): int { return a + b; }\n"
                         "func main(): int { return add(1, 2) * 10 + add(3, 4); }\n"
                         "let r: int = main();") == 37);
 }
 
-// Nested calls as arguments: each inner call's dest is part of the outer call's
-// argument block and must not be reclaimed before the outer call runs.
 static void test_nested_call_results_survive() {
     assert(test_run_int("func add(a: int, b: int): int { return a + b; }\n"
                         "func main(): int { return add(add(add(1, 2), add(3, 4)), add(5, 6)); }\n"
                         "let r: int = main();") == 21);
 }
 
-// Builds a function of 'count' sequential 'let' statements and reports the
-// frame codegen settled on, or -1 if the frame could not hold them.
 static int compile_sequential_lets(unsigned int count) {
     size_t capacity = 64 + (size_t)count * 24;
     char *source = malloc(capacity);
@@ -157,8 +129,6 @@ static int compile_sequential_lets(unsigned int count) {
         used += (size_t)snprintf(source + used, capacity - used, "let s%u = n + 1;\n", i);
     }
 
-    // The script runs f so that a codegen failure is observable: a rejected
-    // program never executes, leaving the result slot at its zeroed value.
     snprintf(source + used, capacity - used, "return n;\n}\nlet r: int = f(7);\n");
 
     VM *vm = vm_create();
@@ -175,20 +145,10 @@ static int compile_sequential_lets(unsigned int count) {
     return result;
 }
 
-// A function's frame is capped by the width of the register field. Each local
-// costs one slot on top of r0 (the return slot) and r1 (the parameter), so the
-// ceiling shows up directly in the count of locals that fit.
-//
-// 'n + 1' takes its literal as an immediate operand and is generated straight
-// into the variable's slot, so neither the constant nor the sum needs a
-// register of its own.
 static void test_frame_capacity() {
-    // 253 locals fill the 255-slot frame exactly; 254 do not fit.
     assert(compile_sequential_lets(253) == 255);
     assert(compile_sequential_lets(254) == -1);
 
-    // Under the previous 7-bit fields the ceiling was 127 slots. All three now
-    // compile.
     assert(compile_sequential_lets(123) == 125);
     assert(compile_sequential_lets(124) == 126);
     assert(compile_sequential_lets(200) == 202);

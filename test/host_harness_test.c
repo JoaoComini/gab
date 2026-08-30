@@ -1,7 +1,3 @@
-// A host driving the API the way an embedder does: it owns a world, exposes it
-// to script through externs, and calls script back every tick. Includes gab.h
-// and nothing else, as gab_api_test.c does -- what this file cannot say is what
-// the embedding API cannot do.
 #include "gab.h"
 
 #include <assert.h>
@@ -14,8 +10,6 @@ typedef struct {
     int32_t mana;
 } Player;
 
-// The host's own state, reached by the externs. A script never names this: it
-// asks for the parts it needs through calls the host supplies.
 typedef struct {
     int32_t tick;
     int32_t spawned;
@@ -34,7 +28,6 @@ static void host_spawn(GabArgs *args) {
     gab_return_int(args, world.spawned);
 }
 
-// A struct crossing into a host body, and one crossing back out.
 static void host_buff(GabArgs *args) {
     Player p;
     gab_arg_get_struct(args, 0, &p, sizeof p);
@@ -44,8 +37,6 @@ static void host_buff(GabArgs *args) {
     gab_return_struct(args, &p, sizeof p);
 }
 
-// A borrowed string reaching the host: characters the script lends, counted
-// rather than NUL-terminated.
 static void host_log(GabArgs *args) {
     int32_t length = 0;
     const char *text = gab_arg_get_string(args, 0, &length);
@@ -54,8 +45,6 @@ static void host_log(GabArgs *args) {
     world.logged += length;
 }
 
-// A host body that fails the run, which is how an extern reports a condition
-// the script cannot recover from.
 static void host_refuse(GabArgs *args) { gab_error(args, "refused by the host"); }
 
 static const char *const SOURCE = "module game;\n"
@@ -91,8 +80,6 @@ static GabVM *harness_vm(void) {
     return vm;
 }
 
-// The layout the script settled on is the host's own, which is what lets a
-// Player cross the boundary as bytes.
 static void test_script_layout_matches_the_host_struct(void) {
     GabVM *vm = harness_vm();
 
@@ -108,8 +95,6 @@ static void test_script_layout_matches_the_host_struct(void) {
     gab_vm_free(vm);
 }
 
-// One resolve, many calls: the host stages arguments once and re-sets only what
-// changes, which is the shape a per-frame update loop has.
 static void test_a_frame_loop_calls_script_which_calls_back(void) {
     GabVM *vm = harness_vm();
     GabError err;
@@ -133,7 +118,6 @@ static void test_a_frame_loop_calls_script_which_calls_back(void) {
         int32_t result = 0;
         assert(gab_call(vm, call, &result, &err) == GAB_OK);
 
-        // health + tick, plus however many have been spawned by now.
         assert(result == 100 + frame + (frame + 1));
     }
 
@@ -144,8 +128,6 @@ static void test_a_frame_loop_calls_script_which_calls_back(void) {
     gab_vm_free(vm);
 }
 
-// A host body that calls gab_error fails the run rather than returning, and the
-// message reaches the host that started it.
 static void test_an_extern_can_fail_the_run(void) {
     GabVM *vm = harness_vm();
     GabError err;

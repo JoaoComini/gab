@@ -8,10 +8,6 @@ typedef struct Allocator {
     void *(*alloc)(void *ctx, size_t size);
     void (*free)(void *ctx, void *ptr);
 
-    // Frees a block whose size the caller kept. A raw block carries no header,
-    // so nothing at the address says how big it was -- the header that says so
-    // for an object is exactly what a block does without. A pooling allocator
-    // wants the size back; one built on malloc ignores it.
     void (*free_sized)(void *ctx, void *ptr, size_t size);
 
     void *ctx;

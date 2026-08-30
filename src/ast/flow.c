@@ -29,8 +29,6 @@ void flow_set(Flow *flow, Symbol *symbol, FlowSlot slot) {
     flow_map_insert(flow->slots, symbol, slot);
 }
 
-// Walks every entry of a FlowMap. The map exposes buckets rather than an
-// iterator, and three of the operations here need one.
 #define flow_for_each(map, entry)                                                                            \
     for (size_t _i = 0; _i < (map)->capacity; _i++)                                                          \
         for (FlowMapEntry *entry = (map)->buckets[_i]; entry; entry = entry->next)
@@ -43,8 +41,6 @@ void flow_copy(Flow *into, const Flow *from) {
     flow_for_each(from->slots, entry) { flow_set(into, entry->key, entry->value); }
 }
 
-// A slot's two facts merge in opposite directions, each toward the answer that
-// holds on every path: the deeper inner, and the weaker initialized-ness.
 static FlowSlot slot_merge(FlowSlot a, FlowSlot b) {
     if (a.init == FLOW_UNREACHED) {
         return b;
@@ -54,10 +50,6 @@ static FlowSlot slot_merge(FlowSlot a, FlowSlot b) {
         return a;
     }
 
-    // A slot is usable after the join only if it is usable on both paths, so
-    // anything short of INIT on either side wins. Between the two unusable
-    // answers MOVED is kept: a slot moved on one path and merely uninitialized
-    // on the other is best reported as moved, which names where it went.
     FlowInit init;
 
     if (a.init == FLOW_INIT && b.init == FLOW_INIT) {
@@ -72,8 +64,6 @@ static FlowSlot slot_merge(FlowSlot a, FlowSlot b) {
         .init = init,
         .inner_depth = a.inner_depth > b.inner_depth ? a.inner_depth : b.inner_depth,
 
-        // A field is written after the join only where both paths wrote it,
-        // which is the intersection.
         .written_fields = a.written_fields & b.written_fields,
     };
 }
@@ -88,9 +78,6 @@ void flow_merge(Flow *flow, const Flow *other) {
         return;
     }
 
-    // Every slot either side mentions, not just the ones both do: a slot
-    // written on one path only still has to merge against the other path's
-    // absent -- UNREACHED -- state.
     flow_for_each(other->slots, entry) {
         flow_set(flow, entry->key, slot_merge(flow_get(flow, entry->key), entry->value));
     }

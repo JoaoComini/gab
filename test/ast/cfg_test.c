@@ -1,18 +1,9 @@
-// The shape of the control flow graph built for a function body. These assert
-// on edges rather than on any analysis over them: whether a 'break' reaches
-// what follows its loop is a property of the graph, and an analysis that reads
-// a wrong graph is wrong for a reason no dataflow test would localize.
-
 #include "ast/cfg.h"
 #include "support/run.h"
 
 #include <assert.h>
 #include <stdio.h>
 
-// A resolved unit and the arena its nodes live in. The graph points at AST
-// nodes, so both have to outlive the inspection -- which is why this is not
-// built on TestProgram: a full compile is done with the tree by the time it
-// returns.
 typedef struct {
     TestContext ctx;
     Scope *scope;
@@ -35,7 +26,6 @@ static void resolved_script_free(ResolvedScript *resolved) {
     test_context_free(&resolved->ctx);
 }
 
-// The graph of the first function the unit declares.
 static CFG *first_func_cfg(ResolvedScript *resolved) {
     for (size_t i = 0; i < resolved->unit->statements.size; i++) {
         ASTStmt *stmt = resolved->unit->statements.data[i];
@@ -50,9 +40,6 @@ static CFG *first_func_cfg(ResolvedScript *resolved) {
     return NULL;
 }
 
-// Whether 'to' is reachable from 'from' by following edges. The dataflow
-// propagates along exactly these, so reachability is what the tests below mean
-// by an edge existing.
 static bool reaches(const CFGBlock *from, const CFGBlock *to, const CFG *cfg, bool *seen) {
     if (!from) {
         return false;
@@ -79,9 +66,6 @@ static bool block_reaches(const CFG *cfg, const CFGBlock *from, const CFGBlock *
     return reaches(from, to, cfg, seen);
 }
 
-// The block holding a statement of this kind, or NULL. Tests name the
-// statement they care about rather than a block index, which would pin the
-// builder's allocation order rather than the graph's shape.
 static CFGBlock *block_holding(const CFG *cfg, StmtKind kind) {
     for (size_t i = 0; i < cfg->block_count; i++) {
         CFGBlock *block = cfg->blocks[i];
@@ -96,9 +80,6 @@ static CFGBlock *block_holding(const CFG *cfg, StmtKind kind) {
     return NULL;
 }
 
-// A 'break' leaves its loop, so what follows the loop is reachable from the
-// block the 'break' sits in -- without passing through the loop's condition
-// again.
 static void test_a_break_reaches_what_follows_its_loop() {
     ResolvedScript resolved;
     resolved_script_init(&resolved, "func main(): int {\n"
@@ -120,8 +101,6 @@ static void test_a_break_reaches_what_follows_its_loop() {
     resolved_script_free(&resolved);
 }
 
-// A 'continue' goes back around rather than out, so it reaches the loop's
-// header and not what follows the loop.
 static void test_a_continue_reaches_the_header_and_not_the_exit() {
     ResolvedScript resolved;
     resolved_script_init(&resolved, "func main(): int {\n"
@@ -142,9 +121,6 @@ static void test_a_continue_reaches_the_header_and_not_the_exit() {
     resolved_script_free(&resolved);
 }
 
-// The loop header is re-entered from the body, which is the back-edge the
-// analysis needs in order to check what one iteration leaves against what the
-// next one reads.
 static void test_a_loop_body_reaches_its_header_again() {
     ResolvedScript resolved;
     resolved_script_init(&resolved, "func main(): int {\n"
@@ -166,8 +142,6 @@ static void test_a_loop_body_reaches_its_header_again() {
     resolved_script_free(&resolved);
 }
 
-// Both arms of an 'if' reach what follows it, which is the join the merge
-// happens at.
 static void test_both_arms_of_an_if_reach_the_join() {
     ResolvedScript resolved;
     resolved_script_init(&resolved, "func main(): int {\n"
@@ -189,9 +163,6 @@ static void test_both_arms_of_an_if_reach_the_join() {
     resolved_script_free(&resolved);
 }
 
-// A loop with no condition is left only by a 'break', so its header does not
-// branch out. Without this the analysis would treat the code after an infinite
-// loop as reachable by falling out of it.
 static void test_a_loop_without_a_condition_does_not_leave_by_its_header() {
     ResolvedScript resolved;
     resolved_script_init(&resolved, "func main(): int {\n"

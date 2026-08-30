@@ -8,8 +8,6 @@
 #include <stdio.h>
 #include <string.h>
 
-// The property everything else relies on: symbol tables and the type registry
-// hash and compare String* by identity.
 static void test_interning_returns_same_pointer() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -30,7 +28,6 @@ static void test_distinct_text_differs() {
 
     assert(string_from_cstr(&ctx.strings, "x") != string_from_cstr(&ctx.strings, "y"));
 
-    // A prefix must not collide with the longer string it is a prefix of.
     assert(string_from_cstr(&ctx.strings, "pos") != string_from_cstr(&ctx.strings, "position"));
 
     test_context_free(&ctx);
@@ -40,7 +37,6 @@ static void test_from_ref_and_cstr_agree() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    // StringRef is not null-terminated and may point into a larger buffer.
     StringRef ref = {.data = "positionXX", .length = 8};
 
     assert(string_from_ref(&ctx.strings, ref) == string_from_cstr(&ctx.strings, "position"));
@@ -48,8 +44,6 @@ static void test_from_ref_and_cstr_agree() {
     test_context_free(&ctx);
 }
 
-// Interned data is null-terminated so it can be used directly as a C string,
-// which diagnostics rely on (see type_name in ast.c).
 static void test_data_is_null_terminated() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -64,8 +58,6 @@ static void test_data_is_null_terminated() {
     test_context_free(&ctx);
 }
 
-// The bug this step fixes: two pools are fully independent, and tearing one
-// down leaves the other's strings intact.
 static void test_pools_are_independent() {
     TestContext a;
     TestContext b;
@@ -75,11 +67,9 @@ static void test_pools_are_independent() {
     String *from_a = string_from_cstr(&a.strings, "shared");
     String *from_b = string_from_cstr(&b.strings, "shared");
 
-    // Equal text, different pools: distinct objects.
     assert(from_a != from_b);
     assert(strcmp(from_a->data, from_b->data) == 0);
 
-    // Tearing down one pool must not disturb the other.
     test_context_free(&a);
 
     assert(strcmp(from_b->data, "shared") == 0);
@@ -88,8 +78,6 @@ static void test_pools_are_independent() {
     test_context_free(&b);
 }
 
-// Pointer stability across a resize is what CLAUDE.md calls critical: strings
-// interned before the table grows must keep their addresses.
 static void test_pointers_survive_resize() {
     TestContext ctx;
     test_context_init(&ctx);

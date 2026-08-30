@@ -18,100 +18,41 @@
 #include <stdlib.h>
 #include <string.h>
 
-// GabVM is the existing VM under another name: the handle is a cast, not a
-// wrapper, so there is no second object and no second lifetime to track. The
-// tag is only here to give the header something opaque to point at.
 struct GabVM;
 
-// A handle is the signature and call layout of one function, shared by every
-// caller and never written to once bound. What a caller stages for a call is
-// per-caller and lives in a GabCall instead.
-//
-// Sized for the signature it was built against rather than for the largest one
-// the VM could express: VM_MAX_FRAME_SLOTS is 255 because that is what an 8-bit
-// operand addresses — a bound on a frame's slots, not on a function's
-// parameters — so sizing these arrays by it made every handle 4632 bytes to
-// hold a signature that is almost always three or four entries. The
-// per-parameter arrays therefore trail the struct in one allocation, laid out
-// by gab_func_alloc.
 struct GabFunc {
     const Symbol *symbol;
 
-    // The registry the signature's types were interned in, captured at lookup.
-    // What a parameter occupies is a layout question, and this is what answers
-    // it: a call carries no VM, so the handle is where the registry has to be.
     TypeRegistry *registry;
 
-    // The signature this handle was built against, captured at lookup. Every
-    // cached field below is derived from it, which is what lets the call path
-    // build a frame without walking the symbol again.
     size_t sig_param_count;
     const Type **sig_params;
 
-    // Slot layout of the call block, mirroring what codegen emits for a call:
-    // slot 0 is the return slot and the arguments tile from slot 1.
     unsigned int arg_slots;
 
-    // Where each parameter starts within the call block.
     unsigned int *param_slot;
 
-    // The one allocation sig_params and param_slot point into.
     void *params_block;
 
-    // The return type's size, resolved at bind time: fixed by the signature, so
-    // the call path does not chase symbol->func->return_type to find it.
     size_t return_size;
 };
 
-// One caller's arguments for one function. Separate from the handle because the
-// handle is shared: two systems calling the same function through one handle
-// would otherwise overwrite each other's half-staged arguments, and the call
-// path cannot notice — once every parameter has been set it does no checking at
-// all.
-//
-// The staging buffer and the set flags trail the struct in one allocation, as
-// they did in the handle, sized for the signature at init.
 struct GabCall {
     GabFunc *fn;
 
-    // Arguments are staged here rather than on the live stack: gab_arg_* runs
-    // before there is a frame to write into, and an abandoned call then leaves
-    // nothing behind. Indexed by slot, and slot 0 is the return slot, so this
-    // holds arg_slots + 1 of them.
     uint8_t *args;
 
-    // Which parameters have ever been given a value. Staged arguments persist
-    // across calls on purpose — that is what makes a per-frame call
-    // allocation-free, and a host holding one argument constant should not have
-    // to re-set it. So this is not "set since the last call": it is "set at
-    // all", checked until every parameter has been, after which the call path
-    // does no checking whatsoever.
     bool *arg_set;
     size_t args_pending;
 
-    // The one allocation args and arg_set point into, and its size.
     void *block;
     size_t capacity;
 };
 
-// A handle is only as valid as the VM that produced it, which is why the VM
-// owns every one it hands out and frees them all with itself.
-
-// Builds the handle's cached call layout from its symbol's signature.
 static void gab_func_bind(GabFunc *fn);
 
-// The slots a call block needs for this signature: one per parameter's worth of
-// slots, plus slot 0 for the return value.
 static unsigned int gab_signature_slots(TypeRegistry *registry, const Symbol *symbol);
 
-// The handle's per-parameter arrays, in one allocation separate from the
-// struct, so that the struct itself never moves under the pointer gab_lookup
-// handed out.
-//
-// Laid out widest-aligned first — pointers, then 4-byte — so each lands on its
-// natural alignment without padding arithmetic. Sized exactly for the
-// signature, since growing is possible rather than something slack must
-// pre-empt.
 static bool gab_func_alloc_params(GabFunc *fn, size_t param_count) {
     size_t sig_params_at = 0;
     size_t bytes = param_count * sizeof(const Type *);
@@ -119,8 +60,6 @@ static bool gab_func_alloc_params(GabFunc *fn, size_t param_count) {
     size_t param_slot_at = bytes;
     bytes += param_count * sizeof(unsigned int);
 
-    // A zero-arity function has nothing to index, and calloc(1, 0) may return
-    // NULL without that being a failure.
     if (bytes == 0) {
         free(fn->params_block);
 
@@ -165,8 +104,6 @@ static void gab_error_set(GabError *err, int line, int column, const char *messa
     err->column = column;
 }
 
-// Copies the first error out of a diagnostics sink. The message is copied
-// because the sink's arena is reclaimed by the next compile.
 static void gab_error_from_diagnostics(GabError *err, const Diagnostics *diagnostics) {
     if (!err) {
         return;
@@ -191,9 +128,6 @@ void gab_vm_free(GabVM *handle) {
 
     VM *vm = (VM *)handle;
 
-    // Every handle this VM handed out. Freed here rather than in vm_free
-    // because a GabFunc is this file's type: the VM tracked the pointers
-    // without ever knowing what they were.
     for (size_t i = 0; i < vm->func_handles.size; i++) {
         GabFunc *fn = vm->func_handles.data[i];
 
@@ -205,13 +139,6 @@ void gab_vm_free(GabVM *handle) {
 
     vm_free(vm);
 }
-
-// --- Extern functions ------------------------------------------------------
-
-// Every accessor below is the host's name for one in vm/args.h. A host body and
-// a builtin read the same slots through the same code: what a host declares in
-// script and what it implements in C are one signature, so an access that does
-// not match it is the host's bug rather than a condition to report back.
 
 int32_t gab_arg_get_int(GabArgs *args, int index) { return args_int(args, index); }
 
@@ -263,8 +190,6 @@ bool gab_extern(GabVM *handle, const char *module, const char *name, GabExternFn
 
     VM *vm = (VM *)handle;
 
-    // Interned rather than copied: the binding is matched against a declared
-    // name, which is interned in the same pool, so identity is the comparison.
     String *interned_name = string_from_cstr(&vm->env.strings, name);
     String *interned_module =
         (module && module[0] != '\0') ? string_from_cstr(&vm->env.strings, module) : NULL;
@@ -305,14 +230,10 @@ bool gab_load(GabVM *handle, const char *name, const char *src, GabError *err) {
     Diagnostics diagnostics;
     diagnostics_init(&diagnostics, vm->env.compile_arena, unit_name);
 
-    // Compiled into a local: a failed load must leave whatever is already
-    // loaded intact and running.
     FuncPrototype compiled = {0};
     bool ok = compile_unit(vm, src, &compiled, &diagnostics);
 
     if (!ok) {
-        // Nothing is printed: a host reports through its own console, and the
-        // message is copied out before the sink goes.
         gab_error_from_diagnostics(err, &diagnostics);
         diagnostics_free(&diagnostics);
 
@@ -321,9 +242,6 @@ bool gab_load(GabVM *handle, const char *name, const char *src, GabError *err) {
 
     diagnostics_free(&diagnostics);
 
-    // The top level declares the unit's functions and types and initialises
-    // whatever it sets up, so a load that did not run it would leave the unit
-    // half present.
     if (interp_run_top_level(vm, &compiled) != VM_RUN_OK) {
         gab_error_set(err, 0, 0, vm->error.message);
         func_proto_free(&compiled);
@@ -331,22 +249,11 @@ bool gab_load(GabVM *handle, const char *name, const char *src, GabError *err) {
         return false;
     }
 
-    // Kept only so its chunk is freed with the program. A unit is never looked
-    // up again: what it declared is reached by name, and the name it loaded
-    // under was a diagnostic label.
     top_level_list_add(&vm->program.top_levels, compiled);
 
     return true;
 }
 
-// --- Types -----------------------------------------------------------------
-
-// The scope a module's names live in. NULL or "" is the default module; an
-// unknown module name is a miss, reported as NULL rather than falling back to
-// the root, so a typo'd module does not silently resolve to a root symbol.
-//
-// Types and functions both come through here: the namespace is the scope, and
-// the only difference downstream is which of the scope's two tables is read.
 static Scope *gab_namespace(VM *vm, const char *module) {
     if (!module || module[0] == '\0') {
         return NULL;
@@ -370,21 +277,14 @@ const GabType *gab_find_type(GabVM *handle, const char *module, const char *name
         return NULL;
     }
 
-    // Interning is a lookup, not an insert-if-missing, only because the name
-    // of a type that exists is already in the pool.
     String *interned = string_from_cstr(&vm->env.strings, name);
     if (!interned) {
         return NULL;
     }
 
-    // Walks outward on a miss, so a module sees root-namespace types and
-    // builtins — the same visibility a script inside that module has, and the
-    // same walk gab_lookup does for symbols.
     return (const GabType *)scope_type_lookup(scope, interned);
 }
 
-// The registry every type a host can name was interned in, and whose layouts
-// therefore describe them.
 static TypeRegistry *gab_registry(GabVM *handle) {
     VM *vm = (VM *)handle;
 
@@ -407,8 +307,6 @@ bool gab_field_offset(GabVM *handle, const GabType *type_handle, const char *fie
     const Type *type = (const Type *)type_handle;
     const TypeLayout *layout = type_registry_layout_of(gab_registry(handle), type);
 
-    // Field names are interned, but this compares text so that a host can ask
-    // about a name the pool has never seen without inserting it.
     for (size_t i = 0; i < type_field_count(type); i++) {
         const TypeField *candidate = &type_fields(type)[i];
 
@@ -424,8 +322,6 @@ bool gab_field_offset(GabVM *handle, const GabType *type_handle, const char *fie
     return false;
 }
 
-// --- Calling ---------------------------------------------------------------
-
 GabFunc *gab_lookup(GabVM *handle, const char *module, const char *name, GabError *err) {
     gab_error_clear(err);
 
@@ -436,9 +332,6 @@ GabFunc *gab_lookup(GabVM *handle, const char *module, const char *name, GabErro
 
     VM *vm = (VM *)handle;
 
-    // A module scope parents to the root, so a bare lookup in a module also
-    // finds root declarations — the same visibility a script inside that
-    // module has.
     Scope *scope = gab_namespace(vm, module);
 
     if (!scope) {
@@ -468,8 +361,6 @@ GabFunc *gab_lookup(GabVM *handle, const char *module, const char *name, GabErro
         return NULL;
     }
 
-    // A parameter list cannot outgrow the slots a frame addresses. Refused here
-    // so the fill loops below cannot run past their arrays.
     if (symbol->func.param_count > VM_MAX_FRAME_SLOTS) {
         char message[256];
         snprintf(message, sizeof(message), "'%s' has more parameters than a frame can hold", name);
@@ -496,9 +387,6 @@ GabFunc *gab_lookup(GabVM *handle, const char *module, const char *name, GabErro
 
     gab_func_bind(fn);
 
-    // The VM owns it from here, for good: a handle cannot be released early.
-    // A host looks a function up once and calls it for the life of the VM, so
-    // the handles a program accumulates are bounded by the functions it calls.
     func_handle_list_add(&vm->func_handles, fn);
 
     return fn;
@@ -516,16 +404,11 @@ static unsigned int gab_signature_slots(TypeRegistry *registry, const Symbol *sy
     return slots;
 }
 
-// Builds the cached call layout from the symbol's signature.
-//
-// The caller guarantees the trailing arrays hold the parameter count.
 static void gab_func_bind(GabFunc *fn) {
     const Symbol *symbol = fn->symbol;
 
     fn->sig_param_count = symbol->func.param_count;
 
-    // Slot 0 of the call block is the return slot, so parameters start at 1 —
-    // the same layout codegen_call_expr emits.
     unsigned int offset = 1;
 
     for (size_t i = 0; i < symbol->func.param_count; i++) {
@@ -538,13 +421,9 @@ static void gab_func_bind(GabFunc *fn) {
     fn->return_size = type_registry_size_of(fn->registry, symbol->func.return_type);
 }
 
-// Sizes a call's staging buffer for its function's signature and clears
-// whatever was in it.
 static bool gab_call_stage(GabCall *call, GabError *err) {
     const GabFunc *fn = call->fn;
 
-    // Slot 0 is the return slot, so the buffer holds one more than the
-    // arguments do.
     size_t slots = (size_t)fn->arg_slots + 1;
     size_t bytes = slots * VM_SLOT_SIZE + fn->sig_param_count * sizeof(bool);
 
@@ -561,8 +440,6 @@ static bool gab_call_stage(GabCall *call, GabError *err) {
         call->capacity = bytes;
     }
 
-    // Laid out afresh either way: a signature that changed shape moves the set
-    // flags even when the total still fits what was already allocated.
     memset(call->block, 0, call->capacity);
 
     call->args = (uint8_t *)call->block;
@@ -606,12 +483,6 @@ void gab_call_free(GabCall *call) {
     free(call);
 }
 
-// Validates an argument index and that the parameter has the expected kind,
-// returning where to write it or NULL if it may not be written.
-// Claims the slot for one staged argument, once the parameter is one this
-// setter may write. 'accepts' answers that: a kind comparison for most setters,
-// and for a pointer the pair of constructors, since a host stages an address
-// without saying whether the script owns what it names.
 static uint8_t *gab_arg_slot_where(GabCall *call, int index, bool (*accepts)(const Type *, TypeKind),
                                    TypeKind expected) {
     if (!call) {
@@ -630,8 +501,6 @@ static uint8_t *gab_arg_slot_where(GabCall *call, int index, bool (*accepts)(con
         return NULL;
     }
 
-    // Only a setter that got this far counts: a rejected one leaves the
-    // parameter as unset as it was.
     if (!call->arg_set[index]) {
         call->arg_set[index] = true;
         call->args_pending--;
@@ -688,10 +557,6 @@ bool gab_arg_bool(GabCall *call, int index, bool value) {
 }
 
 bool gab_arg_struct(GabCall *call, int index, const void *data, size_t size) {
-    // The size is the one thing a host can get wrong that the type system
-    // cannot catch, so it is checked rather than trusted — and before the slot
-    // is claimed, so a rejected struct leaves the parameter unset rather than
-    // counting as supplied.
     if (call && index >= 0 && (size_t)index < call->fn->sig_param_count) {
         const Type *param = call->fn->sig_params[index];
 
@@ -712,9 +577,6 @@ bool gab_arg_struct(GabCall *call, int index, const void *data, size_t size) {
 }
 
 bool gab_arg_pointer(GabCall *call, int index, void *pointer, const GabType *inner) {
-    // The inner is checked before the slot is claimed, so a rejected pointer
-    // leaves the parameter unset rather than counting as supplied. Pointer types
-    // are interned, so this is a pointer compare rather than a structural one.
     if (call && index >= 0 && (size_t)index < call->fn->sig_param_count) {
         const Type *param = call->fn->sig_params[index];
 
@@ -728,8 +590,6 @@ bool gab_arg_pointer(GabCall *call, int index, void *pointer, const GabType *inn
         return false;
     }
 
-    // A pointer tiles over two slots, which is the only reason this moves more
-    // than the others do.
     memcpy(slot, &pointer, sizeof(pointer));
 
     return true;
@@ -746,10 +606,6 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
     VM *vm = (VM *)handle;
     GabFunc *fn = call->fn;
 
-    // An argument never set would otherwise pass whatever the buffer held —
-    // zero on the first call, the previous frame's value on every one after.
-    // Once every parameter has been supplied this is skipped for good, so the
-    // per-frame path stays free.
     if (call->args_pending > 0) {
         for (size_t i = 0; i < fn->sig_param_count; i++) {
             if (call->arg_set[i]) {
@@ -764,13 +620,6 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
         }
     }
 
-    // Which table the index is into is the declaration's own kind, the same
-    // thing codegen reserved against.
-    //
-    // Neither the index nor the body is checked. A unit whose function has no
-    // body, or whose extern nothing bound, is refused as it loads -- so a
-    // symbol reachable through gab_lookup was installed, and an installed index
-    // names a body in the table its kind selects.
     bool is_extern = fn->symbol->func.is_extern;
     size_t func_index = fn->symbol->func.func_index;
 
@@ -778,17 +627,11 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
     assert(func_index < (is_extern ? vm->program.extern_protos.size : vm->program.prototypes.size) &&
            "an installed index names a body in its own table");
 
-    // The call block goes above anything a module run left in frame zero, so a
-    // host call never overwrites top-level state it might want to read after.
     size_t base_slot = vm->stack_capacity / 2;
     size_t base = base_slot * VM_SLOT_SIZE;
 
-    // Frame zero is not on the stack during a host call; the callee's frame is
-    // the only one, and it returns into its own slot 0.
     vm->frame_count = 0;
 
-    // Arguments start at slot 1 of the block, matching where the callee's
-    // frame — based here — expects its parameters.
     memcpy(vm->stack + base + VM_SLOT_SIZE, call->args + VM_SLOT_SIZE, fn->arg_slots * VM_SLOT_SIZE);
 
     VmRunStatus status = is_extern ? interp_run_extern(vm, &vm->program.extern_protos.data[func_index], base)
@@ -800,8 +643,6 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
     }
 
     if (ret) {
-        // The return value lands in the frame's slot 0, which is the base of
-        // the block, and is as wide as the declared return type.
         memcpy(ret, vm->stack + base, fn->return_size);
     }
 

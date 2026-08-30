@@ -185,8 +185,6 @@ ASTField *ast_field_create(Span span, StringRef name, TypeExpr *type_expr) {
 }
 
 void ast_field_destroy(ASTField *field) {
-    // NULL-tolerant, since an absent receiver is a NULL field and every error
-    // path in the function parser frees one whether or not it was there.
     if (!field) {
         return;
     }

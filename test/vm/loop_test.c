@@ -1,6 +1,3 @@
-// What 'for' iterates over and when it stops. The parser tests cover the
-// syntax of the three forms; the rules that the condition must be a bool and
-// that 'break' and 'continue' need an enclosing loop live here.
 #include "support/run.h"
 #include "vm/vm.h"
 
@@ -71,9 +68,6 @@ static void test_break_outside_a_loop_is_rejected() {
     assert(!test_compiles("func f(): int { if true { break; } return 0; }\n"));
 }
 
-// 'break' is a way of arriving after the loop, so what it carries reaches the
-// post-loop state: a slot moved before one is dead there, exactly as it is
-// after an 'if' arm that moved it.
 static void test_a_slot_moved_before_a_break_is_dead_after_the_loop() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
@@ -85,11 +79,6 @@ static void test_a_slot_moved_before_a_break_is_dead_after_the_loop() {
                           "}\n"));
 }
 
-// A transfer in an inner loop is one on the outer loop's back-edge too, so
-// the second iteration of either would empty the same slot twice. Seeing this
-// needs
-// the state to go round until it stops changing rather than a fixed number of
-// passes over the body.
 static void test_a_transfer_in_a_nested_loop_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
@@ -103,9 +92,6 @@ static void test_a_transfer_in_a_nested_loop_is_refused() {
                           "}\n"));
 }
 
-// The two spellings of a counting step run the same loop, which is what lets
-// codegen fuse either into one instruction. Checked as behaviour because the
-// fusion is only sound if the two really are the same.
 static void test_both_spellings_of_a_step_count_alike() {
     assert(test_run_int("func run(n: int): int {\n"
                         "    let acc: int = 0;\n"
@@ -129,8 +115,6 @@ static void test_both_spellings_of_a_step_count_alike() {
                         "let r: int = run(5);\n") == 10);
 }
 
-// A body that steps the counter itself is not the fused shape, and must still
-// run as written: the extra step is what the loop does.
 static void test_a_body_that_steps_the_counter_still_runs_as_written() {
     assert(test_run_int("func run(n: int): int {\n"
                         "    let acc: int = 0;\n"

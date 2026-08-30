@@ -27,7 +27,6 @@ static String *string_from_cstr_len(StringPool *pool, const char *cstr, size_t l
 
     string->data = arena_alloc(pool->arena, length + 1);
 
-    // An empty string has no characters to copy, and its data may be null.
     if (length) {
         memcpy(string->data, cstr, length);
     }

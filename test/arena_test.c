@@ -6,8 +6,6 @@
 #include <stdio.h>
 #include <string.h>
 
-// Small enough that a handful of allocations forces the arena to grow, which is
-// where the interesting behaviour is.
 #define TEST_BLOCK_SIZE 64
 
 static size_t block_count(const Arena *arena) {
@@ -23,8 +21,6 @@ static size_t block_count(const Arena *arena) {
 static void test_allocations_are_aligned() {
     Arena *arena = arena_create(TEST_BLOCK_SIZE);
 
-    // Odd sizes, so every allocation after the first starts from a misaligned
-    // offset unless the arena realigns it.
     for (int i = 0; i < 16; i++) {
         void *p = arena_alloc(arena, 1 + (size_t)i);
 
@@ -34,25 +30,18 @@ static void test_allocations_are_aligned() {
     arena_destroy(arena);
 }
 
-// An allocation larger than the block size still has to be served, so the block
-// is sized to the request rather than to the arena's default.
 static void test_allocation_larger_than_a_block() {
     Arena *arena = arena_create(TEST_BLOCK_SIZE);
 
     unsigned char *p = arena_alloc(arena, TEST_BLOCK_SIZE * 4);
     assert(p);
 
-    // Writing the whole span proves the block really is that large.
     memset(p, 0xAB, TEST_BLOCK_SIZE * 4);
     assert(p[0] == 0xAB && p[TEST_BLOCK_SIZE * 4 - 1] == 0xAB);
 
     arena_destroy(arena);
 }
 
-// Reset rewinds the arena without releasing its blocks, so a second round of
-// the same allocations reuses them instead of allocating more. Growing after a
-// reset must keep current_block->next intact: overwriting it orphans every
-// block chained past it, a leak that only shows on the second round.
 static void test_reset_reuses_blocks_instead_of_leaking_them() {
     Arena *arena = arena_create(TEST_BLOCK_SIZE);
 
@@ -73,13 +62,9 @@ static void test_reset_reuses_blocks_instead_of_leaking_them() {
         assert(block_count(arena) == after_first_round);
     }
 
-    // Whatever is still chained has to be reachable from first_block, or
-    // arena_destroy cannot free it. LeakSanitizer is what actually checks this.
     arena_destroy(arena);
 }
 
-// A reset arena that then needs a block bigger than the one it recycled must
-// still serve the request rather than overrun the smaller block.
 static void test_reset_then_allocate_larger_than_the_recycled_block() {
     Arena *arena = arena_create(TEST_BLOCK_SIZE);
 
@@ -98,8 +83,6 @@ static void test_reset_then_allocate_larger_than_the_recycled_block() {
     arena_destroy(arena);
 }
 
-// Reset hands the same space out again, so the bytes a caller gets must not be
-// assumed to carry anything over.
 static void test_reset_hands_back_the_same_space() {
     Arena *arena = arena_create(TEST_BLOCK_SIZE);
 

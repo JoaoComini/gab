@@ -18,17 +18,12 @@ static Symbol *lookup(TestContext *ctx, Scope *scope, const char *name) {
     return scope_symbol_lookup(scope, string_from_cstr(&ctx->strings, name));
 }
 
-// The type a struct's field was declared with. A field carries a type without
-// owning anything at run time, which is what lets these ask what the registry
-// interned without declaring a top-level variable that owns.
 static const Type *field_type(TestContext *ctx, Scope *scope, const char *struct_name, const char *field) {
     const Type *type = scope_type_lookup(scope, string_from_cstr(&ctx->strings, struct_name));
 
     return type_find_field(type, string_from_cstr(&ctx->strings, field))->type;
 }
 
-// The whole type system compares types by pointer identity, so two mentions of
-// 'box Player' must yield the same type.
 static void test_pointer_types_are_interned() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -55,7 +50,6 @@ static void test_pointer_types_are_interned() {
     test_context_free(&ctx);
 }
 
-// 'box box T' is a pointer to the interned 'box T', not a second flavour of pointer.
 static void test_pointer_depth_nests() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -76,8 +70,6 @@ static void test_pointer_depth_nests() {
     test_context_free(&ctx);
 }
 
-// A pointer is a raw address: 8 bytes wanting 8-byte alignment, whatever it
-// points at.
 static void test_pointer_is_a_word() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -104,8 +96,6 @@ static void test_pointer_is_a_word() {
     test_context_free(&ctx);
 }
 
-// 'ref T' and 'box T' are different types, so that freeing an object can tell from
-// a field's type alone whether it owns what the field names.
 static void test_ref_is_a_distinct_type() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -126,8 +116,6 @@ static void test_ref_is_a_distinct_type() {
     assert(type_kind(owning) == TYPE_BOX);
     assert(type_kind(borrow) == TYPE_REF);
 
-    // Same inner, and both are still ordinary addresses: a borrow is the same
-    // address, differing only in who frees the inner.
     assert(type_pointee(owning) == type_pointee(borrow));
     assert(type_registry_size_of(scope->type_registry, borrow) == sizeof(void *));
 
@@ -135,7 +123,6 @@ static void test_ref_is_a_distinct_type() {
     test_context_free(&ctx);
 }
 
-// Interned like every other type, so two mentions of 'ref Node' are one Type.
 static void test_ref_pointers_are_interned() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -158,8 +145,6 @@ static void test_ref_pointers_are_interned() {
     test_context_free(&ctx);
 }
 
-// The address is a real address into the stack, so writing through it must be
-// visible to the variable itself.
 static void test_scalar_read_and_write_through_a_pointer() {
     assert(test_run_int("func f(): int { let x: int = 7; let p: ref int = x; return *p; }\n"
                         "let r: int = f();") == 7);
@@ -172,8 +157,6 @@ static void test_scalar_read_and_write_through_a_pointer() {
                        "let r: float = f();") == 2.5f);
 }
 
-// A field write through a pointer must land in the inner and disturb nothing
-// beside it.
 static void test_field_write_through_a_pointer() {
     assert(test_run_int("struct Player { health: int, mana: int }\n"
                         "func f(): int { let p: Player; p.health = 1; p.mana = 2;\n"
@@ -182,8 +165,6 @@ static void test_field_write_through_a_pointer() {
                         "let r: int = f();") == 1002);
 }
 
-// A pointer to a field addresses that field alone, so writing through it must
-// not touch its neighbours.
 static void test_pointer_to_a_struct_field() {
     assert(test_run_int("struct Point { x: int, y: int }\n"
                         "func f(): int { let v: Point; v.x = 1; v.y = 2;\n"
@@ -192,8 +173,6 @@ static void test_pointer_to_a_struct_field() {
                         "let r: int = f();") == 109);
 }
 
-// Sub-word fields share a slot, so a pointer to one must still write only its
-// own byte.
 static void test_pointer_to_a_sub_word_field() {
     assert(test_run_int("struct Flags { a: bool, b: bool, c: bool, d: bool }\n"
                         "func f(): int { let v: Flags;\n"
@@ -208,8 +187,6 @@ static void test_pointer_to_a_sub_word_field() {
                         "let r: int = f();") == 1011);
 }
 
-// Dereferencing a whole struct copies its slots out, so the copy is independent
-// of the original.
 static void test_dereferencing_a_whole_struct() {
     assert(test_run_int("struct Point { x: int, y: int }\n"
                         "func f(): int { let v: Point; v.x = 3; v.y = 4;\n"
@@ -220,7 +197,6 @@ static void test_dereferencing_a_whole_struct() {
                         "let r: int = f();") == 34);
 }
 
-// A pointer to a pointer still resolves to one address at the end of the chain.
 static void test_pointer_to_a_pointer() {
     assert(test_run_int("func f(): int { let x: int = 5;\n"
                         "let p: ref int = x;\n"
@@ -230,9 +206,6 @@ static void test_pointer_to_a_pointer() {
                         "let r: int = f();") == 11);
 }
 
-// Addresses point into a buffer that realloc may move. Recursing deep enough to
-// force the growth while a pointer to an outer frame is live is what catches a
-// missing rebase.
 static void test_a_pointer_survives_a_stack_growth() {
     assert(test_run_int("func deep(n: int, p: ref int): int {\n"
                         "if n > 0 { return deep(n - 1, p); }\n"
@@ -241,8 +214,6 @@ static void test_a_pointer_survives_a_stack_growth() {
                         "func f(): int { let x: int = 77; return deep(200, x); }\n"
                         "let r: int = f();") == 77);
 
-    // And writing through it, so the frame the address came from is what
-    // actually changed.
     assert(test_run_int("func deep(n: int, p: ref int): int {\n"
                         "if n > 0 { return deep(n - 1, p); }\n"
                         "*p = 88;\n"
@@ -252,8 +223,6 @@ static void test_a_pointer_survives_a_stack_growth() {
                         "let r: int = f();") == 88);
 }
 
-// 'p.health' where p is a 'box Player' reaches through the pointer, the way Go
-// and C's '->' do. A 'box T' method receiver relies on this to read naturally.
 static void test_field_access_auto_derefs() {
     assert(test_run_int("struct Player { health: int, mana: int }\n"
                         "func f(): int { let p: Player; p.health = 1; p.mana = 2;\n"
@@ -267,8 +236,6 @@ static void test_field_access_auto_derefs() {
                         "let r: int = f();") == 10);
 }
 
-// Auto-deref composes with the inline layout of a nested struct: one address
-// plus a summed offset still reaches the innermost field.
 static void test_auto_deref_reaches_a_nested_field() {
     assert(test_run_int("struct Inner { v: int }\n"
                         "struct Outer { a: int, inner: Inner }\n"
@@ -277,8 +244,6 @@ static void test_auto_deref_reaches_a_nested_field() {
                         "let r: int = f();") == 7);
 }
 
-// Taking the address of a field reached through a pointer adds the offset to
-// the address rather than to a slot index.
 static void test_address_of_a_field_through_a_pointer() {
     assert(test_run_int("struct Player { health: int, mana: int }\n"
                         "func f(): int { let p: Player; p.mana = 2;\n"
@@ -288,15 +253,11 @@ static void test_address_of_a_field_through_a_pointer() {
                         "let r: int = f();") == 902);
 }
 
-// A pointer type is spelled with a keyword, and the sigils that once spelled it
-// mean only multiplication and bitwise-and now.
 static void test_a_pointer_type_is_spelled_box() {
     assert(test_compiles("func f(): int { let p: box int; return 0; }\n"));
     assert(!test_compiles("func f(): int { let p: *int; return 0; }\n"));
 }
 
-// A borrow is produced by the destination asking for one, so no operator spells
-// an address and neither sigil that once did still parses.
 static void test_a_borrow_has_no_operator() {
     assert(test_compiles("func f(): int { let x: int = 1; let p: ref int = x; return *p; }\n"));
     assert(!test_compiles("func f(): int { let x: int = 1; let p: ref int = &x; return *p; }\n"));

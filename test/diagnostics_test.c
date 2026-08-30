@@ -12,9 +12,6 @@
 #include <stdio.h>
 #include <string.h>
 
-// Runs the full front end over a source string on a VM, so what its standard
-// library declares is in scope. For a rule stated with a 'String': that is a
-// declared type, and a scope built without a VM has never heard the name.
 static void compile_with_library(TestContext *ctx, const char *source) {
     VM *vm = vm_create();
 
@@ -32,8 +29,6 @@ static void compile_with_library(TestContext *ctx, const char *source) {
     vm_free(vm);
 }
 
-// Runs the full front end (parse + resolve) over a source string. Diagnostics
-// land in the context's sink, whose arena keeps the messages alive.
 static void compile(TestContext *ctx, const char *source) {
     Arena *arena = ctx->arena;
     Diagnostics *diagnostics = &ctx->diagnostics;
@@ -105,8 +100,6 @@ static void test_accumulates_in_source_order() {
     test_context_free(&ctx);
 }
 
-// The point of the poison type: one root cause yields one diagnostic, not one
-// per check that later touches the poisoned value.
 static void test_poison_suppresses_cascades() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -132,8 +125,6 @@ static void test_reports_multiple_semantic_errors() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    // Two independent undeclared variables: resolution keeps going after the
-    // first, so both are reported.
     compile(&ctx, "func test() { let a: int = first; let b: int = second; }");
 
     assert(diagnostics_count(diagnostics) == 2);
@@ -160,8 +151,6 @@ static void test_reports_type_mismatch() {
     test_context_free(&ctx);
 }
 
-// A binary operator names itself and the type it was given, so the message
-// says which rule was broken rather than that something was wrong.
 static void test_reports_a_bad_binary_operand() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -178,8 +167,6 @@ static void test_reports_a_bad_binary_operand() {
     test_context_free(&ctx);
 }
 
-// A compound assignment reports against the bare operator, which is the rule
-// it actually inherits: '%=' is refused because '%' is int-only.
 static void test_reports_a_bad_compound_assignment_operand() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -196,7 +183,6 @@ static void test_reports_a_bad_compound_assignment_operand() {
     test_context_free(&ctx);
 }
 
-// Mismatched sides name the compound spelling, since that is what was written.
 static void test_reports_a_mismatched_compound_assignment() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -213,8 +199,6 @@ static void test_reports_a_mismatched_compound_assignment() {
     test_context_free(&ctx);
 }
 
-// A conversion the language does not have names both types, so the message
-// says what was asked for rather than that a call went wrong.
 static void test_reports_an_illegal_conversion() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -231,8 +215,6 @@ static void test_reports_an_illegal_conversion() {
     test_context_free(&ctx);
 }
 
-// A conversion reports as a conversion, not as a call with the wrong number of
-// arguments: 'int' never named a function.
 static void test_reports_a_conversion_with_the_wrong_operand_count() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -256,8 +238,6 @@ static void test_reports_unknown_type() {
 
     compile(&ctx, "func test() { let v: Vec3 = 1; }");
 
-    // The unknown type poisons the declaration, so the initializer mismatch
-    // that follows is suppressed.
     assert(diagnostics_count(diagnostics) == 1);
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
@@ -381,9 +361,6 @@ static void test_reports_duplicate_struct_name() {
     test_context_free(&ctx);
 }
 
-// A builtin is reachable from every module, and nothing can name it past a
-// shadow, so declaring a struct over one is refused rather than allowed to hide
-// it for the rest of the unit.
 static void test_rejects_shadowing_a_builtin() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -397,8 +374,6 @@ static void test_rejects_shadowing_a_builtin() {
     test_context_free(&ctx);
 }
 
-// A struct holding itself by value has no finite width, so its layout cannot be
-// computed at all.
 static void test_reports_self_referential_struct() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -415,9 +390,6 @@ static void test_reports_self_referential_struct() {
     test_context_free(&ctx);
 }
 
-// Containment is a cycle over by-value fields, not a name match against the
-// struct being declared: a ring of any length is as infinite as a self-holding
-// field is.
 static void test_reports_mutual_containment_cycle() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -436,9 +408,6 @@ static void test_reports_mutual_containment_cycle() {
     test_context_free(&ctx);
 }
 
-// A ring names every declaration it passes through, in the order the fields
-// were followed, so that the one field a reader could remove to break it is
-// visible without opening each declaration in turn.
 static void test_reports_the_path_a_containment_ring_takes() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -454,15 +423,11 @@ static void test_reports_the_path_a_containment_ring_takes() {
     assert(strcmp(diagnostic->message,
                   "struct 'A' cannot contain itself: 'A' contains 'B' contains 'C' contains 'A'") == 0);
 
-    // The field that closes the ring, which is the edge that breaks it.
     assert(diagnostic->span.line == 4);
 
     test_context_free(&ctx);
 }
 
-// Two rings in one unit are two independent paths: what the first traced must
-// not appear in the second, so the stack the path is read off has to unwind as
-// each declaration finishes rather than only growing.
 static void test_a_second_ring_traces_only_its_own_path() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -483,9 +448,6 @@ static void test_a_second_ring_traces_only_its_own_path() {
     test_context_free(&ctx);
 }
 
-// The ring is what the path names, not the walk that reached it. 'X' holds the
-// first of three that hold each other, and is no part of the cycle -- so it is
-// absent from the message even though resolving it is what found one.
 static void test_a_ring_reached_from_outside_names_only_the_ring() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -502,8 +464,6 @@ static void test_a_ring_reached_from_outside_names_only_the_ring() {
     test_context_free(&ctx);
 }
 
-// A ring longer than the message can name ends at the last hop written whole,
-// so what is reported is never a half-written name.
 static void test_a_ring_too_long_to_name_is_elided_at_a_hop() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -558,9 +518,6 @@ static void test_a_ring_too_long_to_name_is_elided_at_a_hop() {
     test_context_free(&ctx);
 }
 
-// '[T; N]' is a shape the language spells, not a name it looks up, so nothing
-// called 'Array' is in scope for it to collide with: a unit may declare that
-// name for itself.
 static void test_a_unit_may_declare_a_struct_called_array() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -573,8 +530,6 @@ static void test_a_unit_may_declare_a_struct_called_array() {
     test_context_free(&ctx);
 }
 
-// Arguments apply to a declaration. A primitive is declared by nothing, so
-// there is nothing for them to be applied to.
 static void test_rejects_type_arguments_on_a_primitive() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -587,8 +542,6 @@ static void test_rejects_type_arguments_on_a_primitive() {
     test_context_free(&ctx);
 }
 
-// An array has no name, so a diagnostic builds one from what it is: the element
-// and how many, spelled the way the source spells the type.
 static void test_an_array_is_named_by_its_shape() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -664,8 +617,6 @@ static void test_reports_calling_a_non_function() {
     test_context_free(&ctx);
 }
 
-// Statement-level recovery: without it the parser would stop at the first bad
-// statement and the second would never be reported.
 static void test_parser_recovers_across_statements() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -682,7 +633,6 @@ static void test_parser_recovers_across_statements() {
     test_context_free(&ctx);
 }
 
-// Syntax errors name the offending token, not just what was expected.
 static void test_syntax_errors_name_the_found_token() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -719,14 +669,11 @@ static void test_lexer_reports_invalid_character() {
     test_context_free(&ctx);
 }
 
-// Positions must survive newlines, or multi-line scripts report nonsense.
 static void test_spans_track_lines_and_columns() {
     TestContext ctx;
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    // Writes its own directive, so the line numbers asserted below are the ones
-    // in the string rather than the ones after a helper prepended anything.
     compile(&ctx, "module test;\nfunc test() {\n    let x: int = 1;\n    let y: int = nope;\n}");
 
     assert(diagnostics_count(diagnostics) == 1);
@@ -755,8 +702,6 @@ static void test_reports_borrowing_a_temporary() {
     test_context_free(&ctx);
 }
 
-// A call returns a value with no home in memory, so there is nothing to borrow
-// from either.
 static void test_reports_borrowing_a_call_result() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -787,8 +732,6 @@ static void test_reports_dereferencing_a_non_pointer() {
     test_context_free(&ctx);
 }
 
-// Field access reaches through one pointer, so a pointer to a non-struct still
-// has no fields — and the message names what was written, not the inner.
 static void test_reports_field_access_through_a_non_struct_pointer() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -805,8 +748,6 @@ static void test_reports_field_access_through_a_non_struct_pointer() {
     test_context_free(&ctx);
 }
 
-// A returned pointer outlives the whole frame, so nothing declared inside the
-// function may be pointed at.
 static void test_reports_returning_a_pointer_to_a_local() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -823,9 +764,6 @@ static void test_reports_returning_a_pointer_to_a_local() {
     test_context_free(&ctx);
 }
 
-// Register reuse reclaims slots at the closing brace, so a pointer into an
-// inner block dangles into a reused slot the moment that block ends. The rule
-// is block-scoped for exactly this reason.
 static void test_reports_a_pointer_escaping_its_block() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -843,9 +781,6 @@ static void test_reports_a_pointer_escaping_its_block() {
     test_context_free(&ctx);
 }
 
-// A string borrow names characters some slot owns, so it is bound by that
-// slot's life exactly as a pointer is: returning one whose characters die with
-// the frame hands the caller a borrow of freed memory.
 static void test_reports_returning_a_string_borrow_of_a_local() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -862,8 +797,6 @@ static void test_reports_returning_a_string_borrow_of_a_local() {
     test_context_free(&ctx);
 }
 
-// A string borrow assigned outward from an inner block names characters that
-// die at the closing brace, so the outer name would read freed memory.
 static void test_reports_a_string_borrow_escaping_its_block() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -881,8 +814,6 @@ static void test_reports_a_string_borrow_escaping_its_block() {
     test_context_free(&ctx);
 }
 
-// A heap object outlives every frame, so a borrowing string field of one may
-// not name characters a frame slot owns.
 static void test_reports_a_string_borrow_stored_into_a_heap_object() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -902,9 +833,6 @@ static void test_reports_a_string_borrow_stored_into_a_heap_object() {
     test_context_free(&ctx);
 }
 
-// A heap object outlives every frame, so storing a stack address into one is
-// the escape the rule exists to catch: nothing can save a pointer whose inner
-// is a frame slot that has already gone.
 static void test_reports_a_stack_pointer_stored_into_a_heap_object() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -924,8 +852,6 @@ static void test_reports_a_stack_pointer_stored_into_a_heap_object() {
     test_context_free(&ctx);
 }
 
-// The restriction is only on outliving the inner. A pointer that stays at or
-// below its inner's depth is fine, including one passed to a callee.
 static void test_accepts_pointers_that_do_not_outlive_their_pointee() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -944,7 +870,6 @@ static void test_accepts_pointers_that_do_not_outlive_their_pointee() {
 }
 
 int main(void) {
-
     test_empty_sink_has_no_errors();
     test_records_kind_and_position();
     test_accumulates_in_source_order();

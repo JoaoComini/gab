@@ -5,51 +5,6 @@
 
 #include "vm/opcode.h"
 
-/*
-    Dispatch. Two spellings of the same interpreter: a jump through a table of
-    label addresses where the compiler has the extension for it, and a switch
-    everywhere else.
-
-    The table costs one indirect jump per instruction where the switch costs a
-    bounds check and then the same jump. What actually makes it faster is the
-    branch predictor: the switch has a single indirect jump that every opcode
-    shares, so one history entry has to predict the whole instruction stream,
-    while a jump at the end of each case is predicted on what tends to follow
-    that opcode -- and bytecode is full of pairs that follow each other.
-
-    The two must stay in step. Every opcode needs a label in the table and a
-    case in the body, which _Static_assert on OP__COUNT and -Wswitch
-    respectively enforce.
-
-    The interpreter is written once, and carries no #if of its own:
-
-        for (;;) {
-            VM_FETCH();
-
-            VM_DISPATCH(op) {
-                VM_CASE(OP_...) { ...; VM_NEXT(); }
-            }
-        }
-
-    In the goto form VM_DISPATCH is a jump and the braces after it are an
-    ordinary block only ever entered by that jump; in the switch form it is the
-    switch itself. Either way the handlers indent and brace-match as ordinary
-    code.
-
-    These macros read and write locals of the function that uses them --
-    'vm', 'chunk', 'pc', 'instruction' and 'op' -- and
-    the goto form also needs a 'vm_dispatch_table' of label addresses and a
-    'vm_done' label. That is the contract: a function spelling its interpreter
-    with these declares all of them. Only vm_run_loop does.
-*/
-
-// Builds the switch interpreter even where the computed-goto extension is
-// available, for testing that the portable spelling still works:
-//
-//   cmake -S . -B build-switch -DCMAKE_C_FLAGS=-DGAB_FORCE_SWITCH
-//
-// Prefixed GAB_ because it is set from outside the source, as GAB_SANITIZE is.
-// The VM_ names below are the interpreter's own vocabulary and are not knobs.
 #if defined(GAB_FORCE_SWITCH)
 #define VM_COMPUTED_GOTO 0
 #elif defined(__GNUC__) || defined(__clang__)
@@ -58,33 +13,13 @@
 #define VM_COMPUTED_GOTO 0
 #endif
 
-// The instruction pointer lives in a local for the length of the loop, because
-// a field of *vm has to be reloaded and stored on every instruction: nothing
-// tells the compiler that the writes a handler makes through 'vm' cannot be the
-// pointer itself. Read once where a frame starts running and written back where
-// one stops, which is the only place anything else can observe it.
-//
-// 'pc' is the local, and it is a pointer rather than an index: the fetch is
-// then one load with the increment folded into it, where an index puts an
-// address computation between the step and the load -- on the dependency chain
-// every dispatch waits for. The frame keeps an index, which is what survives a
-// chunk being reached again, so the two forms are converted at the boundary.
 #define VM_SAVE_IP() (vm->instruction_pointer = pc)
 #define VM_LOAD_IP() (pc = vm->instruction_pointer)
 
-// Where the running frame's registers begin, for the same reason the pointer
-// lives in a local: a handler writing through 'vm' could be writing this field,
-// so every register access would reload it. It changes only where a frame does,
-// which is where VM_RELOAD already runs.
 #define VM_LOAD_REGS() (regs = vm->stack + (vm->frame_count > 0 ? vm->frames[vm->frame_count - 1].base : 0))
 
-// Where register r of the running frame begins, read from the local above.
 #define VM_REG(r) (regs + (r) * VM_SLOT_SIZE)
 
-// Reloads what the running frame's bytecode is, for the handlers that change
-// which frame that is: a call, a return, or an unwind. The pointer comes back
-// with it, and so does the register base: the frame that is running now is not
-// the one whose pointer the local held.
 #define VM_RELOAD()                                                                                          \
     do {                                                                                                     \
         if (vm->frame_count > 0) {                                                                           \
@@ -95,14 +30,6 @@
         VM_LOAD_IP();                                                                                        \
     } while (0)
 
-// Reads the instruction the pointer names, leaving the loop once no frame is
-// left to run.
-//
-// Where the pointer landed is not asked at run time: a jump offset comes from
-// an instruction codegen emitted, and every chunk ends in a return, so a
-// pointer outside the chunk is a compiler bug rather than something a run
-// recovers from. Checked in a debug build against the chunk the frame names,
-// which is why no bound has to be held in a register to compare against.
 #define VM_FETCH()                                                                                           \
     do {                                                                                                     \
         if (vm->frame_count == 0) {                                                                          \
@@ -116,18 +43,6 @@
         op = VM_DECODE_OPCODE(instruction);                                                                  \
     } while (0)
 
-// As VM_FETCH, for a step that cannot have left the chunk: the pointer moved by
-// one within a frame nothing changed, and every chunk ends in a return, so the
-// instruction it lands on is always one of that chunk's.
-//
-// Worth spelling apart because every instruction pays what VM_FETCH costs and
-// almost all of them are this case. The three conditions it drops are each
-// somewhere else: a frame change goes through VM_RETRY, a jump through
-// VM_JUMPED, and the end of a chunk through the return that codegen guarantees.
-//
-// Asserted rather than assumed in a debug build, so a handler that moves the
-// pointer and reaches here anyway is caught where it happens rather than
-// reading whatever follows the chunk.
 #define VM_FETCH_NEXT()                                                                                      \
     do {                                                                                                     \
         assert(vm->frame_count > 0 && pc >= chunk->instructions.data &&                                      \
@@ -143,30 +58,16 @@
 #define VM_DISPATCH(o) goto *vm_dispatch_table[o];
 #define VM_CASE(name) name##_label:
 
-// An enum member that is not an opcode, so no instruction ever decodes to it.
-// It carries its own exit rather than a body at the call site: reaching it at
-// all means a decoded opcode outside the enum, and the run has to stop there.
-// Falling out of the switch instead would re-fetch the same instruction and
-// spin.
-//
-// The switch form needs the case because -Wswitch counts every member. The
-// goto form has no table entry to name, so this is unreachable code the
-// compiler drops rather than an unused label.
 #define VM_CASE_UNREACHABLE(name)                                                                            \
     if (0)                                                                                                   \
         goto vm_done;
 
-// Reaches the next handler by jumping straight to it, so the enclosing loop is
-// never gone back around.
 #define VM_NEXT()                                                                                            \
     do {                                                                                                     \
         VM_FETCH_NEXT();                                                                                     \
         VM_DISPATCH(op)                                                                                      \
     } while (0)
 
-// For a handler that has already moved the pointer somewhere of its own
-// choosing: the offset comes from the instruction, so where it lands is not
-// something this loop can assume.
 #define VM_JUMPED()                                                                                          \
     do {                                                                                                     \
         VM_FETCH();                                                                                          \
@@ -188,19 +89,11 @@
     case name:                                                                                               \
         goto vm_done;
 
-// 'break' leaves the switch and the enclosing loop fetches the next
-// instruction. It must not be wrapped in a do-while: the break would leave
-// that instead, and the handler would fall through into the case below it.
-//
-// The step is the fetch's, not this macro's: VM_FETCH reads through the pointer
-// and advances it in one go, so a handler runs with 'pc' already naming the
-// instruction after its own. Advancing again here would skip that one.
 #define VM_NEXT()                                                                                            \
     {                                                                                                        \
         break;                                                                                               \
     }
 
-// The loop's own fetch is the checked one, so a jump has nothing to add here.
 #define VM_JUMPED()                                                                                          \
     {                                                                                                        \
         break;                                                                                               \
@@ -214,14 +107,6 @@
 
 #endif
 
-// Opens the interpreter loop. In the goto form this also declares the table of
-// label addresses the dispatch jumps through, which is why it is a macro rather
-// than a bare 'for': '&&label' is only valid inside the function that declares
-// the label, so the table cannot live in a file of its own.
-//
-// One entry per opcode, in enum order: the index is the opcode itself. An
-// opcode with no VM_CASE in the body fails the build here, where the entry
-// names a label that does not exist.
 #if VM_COMPUTED_GOTO
 
 #define VM_LOOP()                                                                                            \
@@ -314,9 +199,6 @@
 
 #endif
 
-// Where every exit from the interpreter lands: the loop running past the end
-// of a frame's code, and an opcode that decoded to something no case names.
-// Same in both spellings, since only the ways of reaching a handler differ.
 #define VM_EXIT()                                                                                            \
     vm_done:;
 

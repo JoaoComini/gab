@@ -58,15 +58,6 @@
                                                                                                              \
     static inline ItemType Alias##_back(Name *list) { return list->data[list->size - 1]; }                   \
                                                                                                              \
-    /* Removes by moving the last item into the hole, so removal is O(1) and    */                           \
-    /* order is not preserved. The removed item is returned rather than freed:  */                           \
-    /* this hands ownership back to the caller, unlike _free and _emplace which */                           \
-    /* dispose of what they displace.                                           */                           \
-    /*                                                                          */                           \
-    /* A caller keeping an index into the list has to fix up the moved item,    */                           \
-    /* which is why the index it moved from is reported through 'moved_from'.   */                           \
-    /* It is set to the removed index when nothing moved — removing the last    */                           \
-    /* item — so a caller can compare the two rather than special-case it.      */                           \
     static inline ItemType Alias##_swap_remove(Name *list, size_t index, size_t *moved_from) {               \
         assert(index < list->size);                                                                          \
                                                                                                              \

@@ -17,23 +17,19 @@
 #define string_map_entry_free(key, value)
 
 typedef struct {
-    const char *data; // Shared with String
+    const char *data;
     size_t length;
 } StringKey;
 
 GAB_HASH_MAP(StringMap, string_map, StringKey, String *)
 
-// Interned strings live as long as the pool's arena, so the pool carries it and
-// callers never have to know where payloads come from.
 typedef struct StringPool {
-    StringMap map; // buckets are malloc'd; the map resizes
-    Arena *arena;  // String structs and their characters
+    StringMap map;
+    Arena *arena;
 } StringPool;
 
 void string_pool_init(StringPool *pool, Arena *arena);
 
-// Releases the bucket array only. Payloads go when the arena goes, so this must
-// run before that arena is destroyed.
 void string_pool_free(StringPool *pool);
 
 #endif

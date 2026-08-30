@@ -37,14 +37,12 @@ static void test_basic_add_and_get() {
 static void test_auto_resize() {
     ConstantPool *pool = constpool_create(100);
 
-    // Fill initial capacity
     Constant v = {.as_float = 1.0f};
     for (size_t i = 0; i < 4; i++) {
         constpool_add(pool, v);
     }
     assert(pool->capacity == 4);
 
-    // Trigger resize
     constpool_add(pool, v);
     assert(pool->capacity == 8);
     assert(pool->count == 5);

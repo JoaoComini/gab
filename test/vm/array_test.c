@@ -1,7 +1,5 @@
 #include "support/run.h"
 
-// A fixed array's length is part of its type: it is written where the type is,
-// and every element lives in the array itself.
 static void test_a_fixed_array_holds_its_length_in_its_type() {
     assert(test_run_int("func f(): int {\n"
                         "    let xs: [int; 3];\n"
@@ -11,7 +9,6 @@ static void test_a_fixed_array_holds_its_length_in_its_type() {
                         "let r: int = f();") == 7);
 }
 
-// Each element is its own slot: writing one leaves its neighbours alone.
 static void test_elements_are_distinct() {
     assert(test_run_int("func f(): int {\n"
                         "    let xs: [int; 3];\n"
@@ -23,8 +20,6 @@ static void test_elements_are_distinct() {
                         "let r: int = f();") == 321);
 }
 
-// A declaration with nothing written into it is zeroed, as every allocation of
-// a layout is.
 static void test_an_array_starts_zeroed() {
     assert(test_run_int("func f(): int {\n"
                         "    let xs: [int; 3];\n"
@@ -33,7 +28,6 @@ static void test_an_array_starts_zeroed() {
                         "let r: int = f();") == 0);
 }
 
-// The elements may be written out, and there must be as many as the type says.
 static void test_the_elements_may_be_written_out() {
     assert(test_run_int("func f(): int {\n"
                         "    let xs: [int; 3] = [1, 20, 300];\n"
@@ -52,8 +46,6 @@ static void test_the_elements_may_be_written_out() {
                           "}\n"));
 }
 
-// Wherever the destination's type is known, the elements may be written out:
-// what an array literal must be is what it is being stored into.
 static void test_elements_may_be_written_wherever_the_type_is_known() {
     assert(test_run_int("func g(xs: [int; 2]): int { return xs[1]; }\n"
                         "func f(): int { return g([7, 8]); }\n"
@@ -71,8 +63,6 @@ static void test_elements_may_be_written_wherever_the_type_is_known() {
                         "let r: int = f();") == 6);
 }
 
-// A list of values says nothing about how many an array holds, so the type has
-// to be written where one is used.
 static void test_elements_need_the_arrays_type() {
     assert(!test_compiles("func f(): int {\n"
                           "    let xs = [1, 2, 3];\n"
@@ -80,8 +70,6 @@ static void test_elements_need_the_arrays_type() {
                           "}\n"));
 }
 
-// An index outside the array fails the run rather than reading whatever lies
-// past it.
 static void test_an_index_outside_the_array_fails_the_run() {
     assert(test_run_status("func f(): int {\n"
                            "    let xs: [int; 2];\n"
@@ -98,7 +86,6 @@ static void test_an_index_outside_the_array_fails_the_run() {
                            "let r: int = f();") == VM_RUN_ERR_BOUNDS);
 }
 
-// The bound is the type's, so a computed index is checked against it.
 static void test_a_computed_index_is_checked_too() {
     assert(test_run_int("func f(): int {\n"
                         "    let xs: [int; 4];\n"
@@ -110,7 +97,6 @@ static void test_a_computed_index_is_checked_too() {
                         "let r: int = f();") == 9);
 }
 
-// A length that describes no array is refused where it is written.
 static void test_a_length_must_be_a_positive_literal() {
     assert(!test_compiles("func f(): int {\n"
                           "    let xs: [int; 0];\n"
@@ -124,8 +110,6 @@ static void test_a_length_must_be_a_positive_literal() {
                           "}\n"));
 }
 
-// The elements have to be reachable by the operand that addresses one, so a run
-// wider than that is refused where the type is written.
 static void test_an_array_too_wide_for_a_frame_is_refused() {
     assert(!test_compiles("func f(): int {\n"
                           "    let xs: [int; 1000];\n"
@@ -133,7 +117,6 @@ static void test_an_array_too_wide_for_a_frame_is_refused() {
                           "}\n"));
 }
 
-// An element that owns is freed with the array, one element at a time.
 static void test_an_owning_element_is_freed_with_the_array() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func f(): int {\n"
@@ -146,8 +129,6 @@ static void test_an_owning_element_is_freed_with_the_array() {
                         "let r: int = f();") == 5);
 }
 
-// A struct element is stored and read whole, at its own stride, so writing one
-// leaves its neighbour's fields alone.
 static void test_a_struct_element_keeps_its_own_slot() {
     assert(test_run_int("struct Point { x: int, y: int }\n"
                         "func f(): int {\n"
@@ -160,17 +141,11 @@ static void test_a_struct_element_keeps_its_own_slot() {
                         "let r: int = f();") == 31);
 }
 
-// How many elements an array holds is what its type says, so the call answers
-// without reading anything.
-// A length answers what its type says and takes nothing, so an argument written
-// to it is as wrong as one written to any other call.
 static void test_a_length_takes_no_argument() {
     assert(!test_compiles("func f(): int { let xs: [int; 4]; return xs.len(1); }\n"
                           "let r: int = f();"));
 }
 
-// A borrow of an array reaches the length the same way, since what answers it
-// is the type the borrow names rather than anything held beside the elements.
 static void test_a_borrowed_array_knows_its_length() {
     assert(test_run_int("func f(): int { let xs: [int; 4]; let r: ref [int; 4] = xs; return r.len(); }\n"
                         "let r: int = f();") == 4);
@@ -184,8 +159,6 @@ static void test_an_array_knows_its_length() {
                         "let r: int = f();") == 4);
 }
 
-// An array of a copyable element copies, since it owns nothing that two slots
-// could both free.
 static void test_an_array_of_a_copyable_element_copies() {
     assert(test_run_int("func f(): int {\n"
                         "    let xs: [int; 2] = [9, 8];\n"
@@ -195,8 +168,6 @@ static void test_an_array_of_a_copyable_element_copies() {
                         "let r: int = f();") == 9);
 }
 
-// An array of an owning element does not: a second binding would leave two
-// slots believing they free the same objects.
 static void test_an_array_of_an_owning_element_transfers() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func f(): int {\n"
@@ -207,8 +178,6 @@ static void test_an_array_of_an_owning_element_transfers() {
                           "}\n"));
 }
 
-// 'Array' names a shape rather than a type: what it holds and how many have to
-// be written.
 static void test_an_array_names_its_element_and_its_length() {
     assert(!test_compiles("func f(xs: Array): int { return 0; }\n"));
 
@@ -217,15 +186,12 @@ static void test_an_array_names_its_element_and_its_length() {
     assert(test_compiles("func f(xs: ref [int; 3]): int { return 0; }\n"));
 }
 
-// An array lends to a borrow like anything else, and the borrow indexes what
-// the caller holds.
 static void test_an_array_lends_to_a_borrow() {
     assert(test_run_int("func g(xs: ref [int; 3]): int { return xs[0]; }\n"
                         "func f(): int { let xs: [int; 3] = [4, 5, 6]; return g(xs); }\n"
                         "let r: int = f();") == 4);
 }
 
-// Only an array is indexed, and only by an int.
 static void test_what_may_be_indexed_and_by_what() {
     assert(!test_compiles("func f(): int {\n"
                           "    let n: int = 1;\n"
@@ -238,9 +204,6 @@ static void test_what_may_be_indexed_and_by_what() {
                           "}\n"));
 }
 
-// The element is what the brackets hold, so a prefix inside them is part of the
-// element and one outside them is applied to the run: '[box T; n]' is a run of
-// pointers, and 'box [T; n]' is a pointer to a run.
 static void test_the_brackets_say_what_the_length_counts() {
     assert(test_run_int("struct Cell { n: int }\n"
                         "func f(): int {\n"
@@ -252,8 +215,6 @@ static void test_the_brackets_say_what_the_length_counts() {
                         "let r: int = f();") == 5);
 }
 
-// 'Array' names a declaration rather than a type: what it takes is what makes
-// it one, so a mention supplying nothing has no type to be.
 static void test_the_bare_array_names_no_type() {
     assert(!test_compiles("func f(): int {\n"
                           "    let xs: Array;\n"
@@ -262,9 +223,6 @@ static void test_the_bare_array_names_no_type() {
                           "let r: int = f();"));
 }
 
-// Indexing reads through the array rather than out of it, so it names what the
-// array holds -- and an array whose ownership has been handed over holds
-// nothing to read.
 static void test_indexing_an_array_given_up_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func f(): int {\n"
@@ -273,7 +231,6 @@ static void test_indexing_an_array_given_up_is_refused() {
                           "    return xs[0].n;\n"
                           "}\n"));
 
-    // The index is read too, so a slot given up cannot say which element.
     assert(!test_compiles("struct Box { n: int }\n"
                           "struct Key { n: int, b: box Box }\n"
                           "func f(): int {\n"
@@ -284,9 +241,6 @@ static void test_indexing_an_array_given_up_is_refused() {
                           "}\n"));
 }
 
-// An element cannot be given up on its own. Taking one out would leave the rest
-// of the array behind, and what a half-emptied array holds is not something the
-// language says -- the same reason a field cannot be given up alone.
 static void test_giving_up_one_element_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func f(): int {\n"

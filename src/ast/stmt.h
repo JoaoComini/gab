@@ -12,9 +12,9 @@ typedef struct ASTField {
     StringRef name;
     TypeExpr *type_expr;
 
-    Span span; // Source position, for diagnostics
+    Span span;
 
-    Symbol *symbol; // Filled during symbol/type resolution
+    Symbol *symbol;
 } ASTField;
 
 ASTField *ast_field_create(Span span, StringRef name, TypeExpr *type_expr);
@@ -52,17 +52,12 @@ typedef struct {
     TypeExpr *type_expr;
     ASTExpr *initializer;
 
-    Symbol *symbol; // Filled during symbol/type resolution
+    Symbol *symbol;
 } ASTVarDecl;
 
 typedef struct {
     StringRef name;
 
-    // 'func Vec::new(...)' -- the type whose set this is declared into. NULL
-    // for a free function, which is declared into a scope instead.
-    //
-    // A TypeExpr rather than a name so that resolving it is the same walk every
-    // other written type goes through.
     TypeExpr *owner;
 
     TypeExpr *return_type;
@@ -71,14 +66,8 @@ typedef struct {
 
     Symbol *symbol;
 
-    // Filled by the resolver's declaration pass. The return type is held here
-    // and not only on the Symbol because a duplicate name leaves no Symbol,
-    // and the body still has to be checked against what it declared.
     const Type *resolved_return_type;
 
-    // Whether the declaration pass has already run over this. A nested
-    // function, which nothing above it could have seen, is declared by the
-    // body walk instead.
     bool declared;
 } ASTFuncDecl;
 
@@ -86,13 +75,9 @@ typedef struct {
     StringRef name;
     ASTFieldList fields;
 
-    // The names this declaration takes, in the order a mention supplies them.
-    // Empty for a plain struct, which is therefore a declaration applied to no
-    // arguments rather than a shape of its own.
     StringRef params[GAB_MAX_TYPE_PARAMS];
     size_t param_count;
 
-    // As ASTFuncDecl::declared.
     bool declared;
 } ASTStructDecl;
 
@@ -101,10 +86,6 @@ typedef struct {
     ASTExpr *value;
 } ASTAssignStmt;
 
-// 'a += b'. Distinct from ASTAssignStmt rather than a flag on it: the target
-// is arithmetic, so none of the ownership and lifetime rules a plain
-// assignment carries apply, and a separate node leaves them out by shape
-// instead of by a condition each site has to remember.
 typedef struct {
     ASTExpr *target;
     ASTExpr *value;
@@ -117,24 +98,15 @@ typedef struct {
     struct ASTStmt *else_block;
 } ASTIfStmt;
 
-// Every loop form is this one node. 'for { }' leaves all three clauses NULL,
-// 'for cond { }' fills only the condition, and the three-clause form fills what
-// it was given -- so an omitted condition means the same thing in each: loop
-// forever.
 typedef struct {
     struct ASTStmt *init;
     ASTExpr *condition;
     struct ASTStmt *post;
     struct ASTStmt *body;
 
-    // The scope holding the initializer's declarations, kept for the same
-    // reason a block keeps its own: a rechecked loop looks its names up where
-    // the first walk declared them.
     struct Scope *scope;
 } ASTForStmt;
 
-// 'break' and 'continue'. They differ only in which end of the loop they jump
-// to, so they share a node rather than duplicating one.
 typedef struct {
     bool is_break;
 } ASTJumpStmt;
@@ -142,9 +114,6 @@ typedef struct {
 typedef struct {
     ASTStmtList list;
 
-    // The scope this block's declarations went into, kept so that a second
-    // walk over the same block -- a loop body rechecked against its back-edge
-    // -- looks names up where the first walk put them.
     struct Scope *scope;
 } ASTBlockStmt;
 
@@ -169,7 +138,7 @@ typedef struct ASTStmt {
         ASTReturnStmt ret;
     };
 
-    Span span; // Source position, for diagnostics
+    Span span;
 } ASTStmt;
 
 ASTStmt *ast_expr_stmt_create(Span span, ASTExpr *value);

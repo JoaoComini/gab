@@ -11,8 +11,6 @@ void diagnostics_init(Diagnostics *diagnostics, Arena *arena, const char *module
 
 void diagnostics_free(Diagnostics *diagnostics) { diagnostic_list_free(&diagnostics->items); }
 
-// Formats into the sink's arena. Messages use printf-style formatting, so they
-// cannot be the string literals the parser used before.
 static char *diag_format(Arena *arena, const char *fmt, va_list args) {
     va_list measure;
     va_copy(measure, args);

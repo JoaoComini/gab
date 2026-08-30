@@ -26,16 +26,8 @@
 
 #define ARENA_BLOCK_SIZE 2048
 
-// The stack never moves, so it is sized for the worst case up front: every
-// frame to the call-depth limit addressing every register it can name. That is
-// a few hundred kilobytes, and it is what makes 'ref local' sound — an address
-// into a buffer realloc could move would dangle, and untagged slots give the
-// VM no way to find live pointers and rebase them.
 #define VM_STACK_SIZE (VM_MAX_CALL_DEPTH * VM_MAX_REGISTERS)
 
-// The base must hold an 8-byte value at its natural alignment. malloc already
-// guarantees at least alignof(max_align_t), which covers this on every platform
-// with an 8-byte scalar type; the assertion fails the build anywhere it would not.
 #define VM_STACK_ALIGNMENT 8
 
 _Static_assert(_Alignof(max_align_t) >= VM_STACK_ALIGNMENT,
@@ -45,8 +37,6 @@ static void environment_init(Environment *env) {
     env->arena = arena_create(ARENA_BLOCK_SIZE);
     env->compile_arena = arena_create(ARENA_BLOCK_SIZE);
 
-    // The pool must be live before the global scope: scope_init builds the
-    // TypeRegistry, which interns the builtin type names.
     string_pool_init(&env->strings, env->arena);
 
     scope_init(&env->global_scope, env->arena, &env->strings, NULL);
@@ -58,11 +48,8 @@ static void environment_init(Environment *env) {
 static void environment_free(Environment *env) {
     module_import_list_free(&env->module_imports);
 
-    // Frees the bucket arrays; the Scopes themselves are arena-owned.
     module_scope_map_destroy(env->module_scopes);
 
-    // Frees the bucket array, which walks entries — must happen before the
-    // arena holding the string payloads is destroyed.
     string_pool_free(&env->strings);
 
     arena_destroy(env->arena);
@@ -79,8 +66,6 @@ static void program_init(Program *program) {
     program->extern_protos = extern_proto_list_create();
 }
 
-// Frees only what the program allocated for itself. The prototypes and types it
-// indexes come from the environment's arena and go with it.
 static void program_free(Program *program) {
     func_proto_list_free(&program->prototypes);
     heap_shape_list_free(&program->heap_shapes);
@@ -89,7 +74,6 @@ static void program_free(Program *program) {
     extern_binding_list_free(&program->extern_bindings);
     extern_proto_list_free(&program->extern_protos);
 
-    // Frees each loaded unit's top-level chunk through the item_free hook.
     top_level_list_free(&program->top_levels);
 }
 
@@ -107,19 +91,14 @@ VM *vm_create() {
     vm->instruction_pointer = NULL;
     vm->error = (VmError){.status = VM_RUN_OK};
 
-    // After the program exists: a method's entry goes in its table.
     builtin_register_all(vm);
 
     return vm;
 }
 
 void vm_free(VM *vm) {
-    // The handles themselves are gab.c's to free, and gab_vm_free has done so
-    // by now; this releases only the array that tracked them.
     func_handle_list_free(&vm->func_handles);
 
-    // Program before environment: what a prototype allocated is freed here,
-    // and the prototype itself lives in the environment's arena.
     program_free(&vm->program);
     environment_free(&vm->env);
 
@@ -127,12 +106,6 @@ void vm_free(VM *vm) {
     free(vm);
 }
 
-// The scope a module's declarations live in, created on first mention. A
-// module accumulates across compiles, so a second unit naming the same module
-// gets the scope the first one filled rather than a fresh one.
-//
-// The scope is parented to the root for builtin lookup but stays at depth 0:
-// its declarations are a unit's top level, not a nested block.
 Scope *environment_module_scope(Environment *env, String *name) {
     assert(name && "every unit names a module");
 

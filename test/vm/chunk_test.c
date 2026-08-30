@@ -6,7 +6,6 @@
 static void test_chunk_creation() {
     Chunk *chunk = chunk_create();
 
-    // Verify initial state
     assert(chunk != NULL);
     assert(chunk->instructions.size == 0);
     assert(chunk->const_pool != NULL);
