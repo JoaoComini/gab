@@ -302,7 +302,7 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
 
     Symbol other = {0};
 
-    assert(!type_registry_add_method(registry, of_int, at, &other));
+    assert(!type_registry_declare_method(registry, of_int, &(MethodDecl){.name = at, .symbol = &other}));
 
     assert(type_registry_find_method(registry, of_int, at)->func.return_type == int_type);
 
@@ -330,11 +330,11 @@ static void test_a_method_declared_on_one_instantiation_answers_on_every_one() {
 
     Symbol method = {0};
 
-    assert(type_registry_add_method(registry, of_int, name, &method));
+    assert(type_registry_declare_method(registry, of_int, &(MethodDecl){.name = name, .symbol = &method}));
 
     assert(type_registry_find_method(registry, of_bool, name) == &method);
 
-    assert(!type_registry_add_method(registry, of_bool, name, &method));
+    assert(!type_registry_declare_method(registry, of_bool, &(MethodDecl){.name = name, .symbol = &method}));
 
     TypeDef other = {.name = string_from_cstr(&ctx.strings, "Other"), .param_count = 1};
 

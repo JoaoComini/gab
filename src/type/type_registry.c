@@ -298,21 +298,6 @@ static MethodKey method_key_of(TypeRegistry *registry, const Type *type, const S
     return (MethodKey){.type = generic_form_of(registry, type), .name = name};
 }
 
-bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method) {
-    assert(type && name && method && "a method is a type, a name and a body");
-
-    const MethodDecl declared = {
-        .name = name,
-        .receiver = method->func.param_count > 0 ? method->func.params[0] : type,
-        .result = method->func.return_type,
-        .params = method->func.params,
-        .param_count = method->func.param_count,
-        .symbol = method,
-    };
-
-    return type_registry_declare_method(registry, type, &declared);
-}
-
 static Symbol *instantiate_method(TypeRegistry *registry, const MethodDecl *method, const Type *const *args,
                                   size_t arg_count);
 

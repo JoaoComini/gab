@@ -97,8 +97,19 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
     symbol->func.func_index = SYMBOL_FUNC_NO_BODY;
     symbol->func.body = (void *)body;
 
-    type_registry_add_method(vm->env.global_scope.type_registry, declared_on,
-                             string_from_cstr(&vm->env.strings, name), symbol);
+    const MethodDecl declared = {
+        .name = symbol->func.name,
+        .body = (void *)body,
+        .result = return_type,
+        .params = symbol->func.params,
+        .param_count = param_count,
+        .symbol = symbol,
+    };
+
+    bool ok = type_registry_declare_method(vm->env.global_scope.type_registry, declared_on, &declared);
+
+    assert(ok && "a builtin declares each of its functions once");
+    (void)ok;
 }
 
 void builtin_register_all(VM *vm) {
