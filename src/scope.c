@@ -220,17 +220,22 @@ Binding *scope_decl_func(Scope *scope, String *name, const Type *return_type) {
         return NULL;
     }
 
-    Binding *sym = arena_alloc(scope->arena, sizeof(Binding));
-    sym->kind = BINDING_FUNC;
-    sym->scope_depth = scope->depth;
-    sym->pinned = false;
-    sym->func.return_type = return_type;
-    sym->func.params = NULL;
-    sym->func.param_count = 0;
-    sym->func.func_index = FUNCTION_NO_BODY;
-    sym->func.is_extern = false;
+    Binding *binding = arena_alloc(scope->arena, sizeof(Binding));
+    binding->kind = BINDING_FUNC;
+    binding->scope_depth = scope->depth;
+    binding->pinned = false;
 
-    Binding **decl = binding_table_insert(scope->bindings, name, sym);
+    binding->func = arena_alloc(scope->arena, sizeof(Function));
+
+    *binding->func = (Function){
+        .return_type = return_type,
+        .params = NULL,
+        .param_count = 0,
+        .func_index = FUNCTION_NO_BODY,
+        .is_extern = false,
+    };
+
+    Binding **decl = binding_table_insert(scope->bindings, name, binding);
     if (!decl) {
         return NULL;
     }

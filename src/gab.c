@@ -21,7 +21,7 @@
 struct GabVM;
 
 struct GabFunc {
-    const Binding *binding;
+    const Function *function;
 
     TypeRegistry *registry;
 
@@ -51,7 +51,7 @@ struct GabCall {
 
 static void gab_func_bind(GabFunc *fn);
 
-static unsigned int gab_signature_slots(TypeRegistry *registry, const Binding *binding);
+static unsigned int gab_signature_slots(TypeRegistry *registry, const Function *function);
 
 static bool gab_func_alloc_params(GabFunc *fn, size_t param_count) {
     size_t sig_params_at = 0;
@@ -363,7 +363,9 @@ GabFunc *gab_lookup(GabVM *handle, const char *module, const char *name, GabErro
         return NULL;
     }
 
-    if (binding->func.param_count > VM_MAX_FRAME_SLOTS) {
+    const Function *function = binding->func;
+
+    if (function->param_count > VM_MAX_FRAME_SLOTS) {
         char message[256];
         snprintf(message, sizeof(message), "'%s' has more parameters than a frame can hold", name);
         gab_error_set(err, 0, 0, message);
@@ -377,14 +379,14 @@ GabFunc *gab_lookup(GabVM *handle, const char *module, const char *name, GabErro
         return NULL;
     }
 
-    if (!gab_func_alloc_params(fn, binding->func.param_count)) {
+    if (!gab_func_alloc_params(fn, function->param_count)) {
         free(fn);
         gab_error_set(err, 0, 0, "out of memory");
 
         return NULL;
     }
 
-    fn->binding = binding;
+    fn->function = binding->func;
     fn->registry = gab_registry(handle);
 
     gab_func_bind(fn);
@@ -396,31 +398,31 @@ GabFunc *gab_lookup(GabVM *handle, const char *module, const char *name, GabErro
 
 int gab_func_arity(const GabFunc *fn) { return fn ? (int)fn->sig_param_count : 0; }
 
-static unsigned int gab_signature_slots(TypeRegistry *registry, const Binding *binding) {
+static unsigned int gab_signature_slots(TypeRegistry *registry, const Function *function) {
     unsigned int slots = 1;
 
-    for (size_t i = 0; i < binding->func.param_count; i++) {
-        slots += args_type_slots(registry, binding->func.params[i]);
+    for (size_t i = 0; i < function->param_count; i++) {
+        slots += args_type_slots(registry, function->params[i]);
     }
 
     return slots;
 }
 
 static void gab_func_bind(GabFunc *fn) {
-    const Binding *binding = fn->binding;
+    const Function *function = fn->function;
 
-    fn->sig_param_count = binding->func.param_count;
+    fn->sig_param_count = function->param_count;
 
     unsigned int offset = 1;
 
-    for (size_t i = 0; i < binding->func.param_count; i++) {
-        fn->sig_params[i] = binding->func.params[i];
+    for (size_t i = 0; i < function->param_count; i++) {
+        fn->sig_params[i] = function->params[i];
         fn->param_slot[i] = offset;
-        offset += args_type_slots(fn->registry, binding->func.params[i]);
+        offset += args_type_slots(fn->registry, function->params[i]);
     }
 
     fn->arg_slots = offset - 1;
-    fn->return_size = type_registry_size_of(fn->registry, binding->func.return_type);
+    fn->return_size = type_registry_size_of(fn->registry, function->return_type);
 }
 
 static bool gab_call_stage(GabCall *call, GabError *err) {
@@ -622,8 +624,8 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
         }
     }
 
-    bool is_extern = fn->binding->func.is_extern;
-    size_t func_index = fn->binding->func.func_index;
+    bool is_extern = fn->function->is_extern;
+    size_t func_index = fn->function->func_index;
 
     assert(func_index != FUNCTION_NO_BODY && "a loaded function has a body");
     assert(func_index < (is_extern ? vm->program.extern_protos.size : vm->program.prototypes.size) &&

@@ -64,7 +64,7 @@ typedef struct {
     ASTFieldList params;
     struct ASTStmt *body;
 
-    Binding *binding;
+    Function *function;
 
     const Type *resolved_return_type;
 

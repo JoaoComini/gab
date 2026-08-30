@@ -978,11 +978,11 @@ static size_t codegen_reserve_function(CodegenState *state, Function *function) 
 }
 
 static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast) {
-    if (!ast->binding || proto_map_lookup(state->local_protos, &ast->binding->func)) {
+    if (!ast->function || proto_map_lookup(state->local_protos, ast->function)) {
         return;
     }
 
-    codegen_reserve_function(state, &ast->binding->func);
+    codegen_reserve_function(state, ast->function);
 }
 
 static const size_t *codegen_reserve_instantiated(CodegenState *state, Function *function) {
@@ -999,11 +999,11 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
 
     codegen_reserve_proto(state, ast);
 
-    if (!ast->binding) {
+    if (!ast->function) {
         return;
     }
 
-    const size_t *local = proto_map_lookup(state->local_protos, &ast->binding->func);
+    const size_t *local = proto_map_lookup(state->local_protos, ast->function);
 
     if (!local) {
         return;
@@ -1011,12 +1011,12 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
 
     size_t func_index = *local;
 
-    if (ast->binding->func.is_extern) {
-        state->unit->extern_protos.data[func_index] = (ExternProto){.function = &ast->binding->func};
+    if (ast->function->is_extern) {
+        state->unit->extern_protos.data[func_index] = (ExternProto){.function = ast->function};
 
         extern_request_list_add(
             &state->unit->externs,
-            (ExternRequest){.local_index = func_index, .function = &ast->binding->func, .span = stmt->span});
+            (ExternRequest){.local_index = func_index, .function = ast->function, .span = stmt->span});
 
         return;
     }

@@ -145,17 +145,17 @@ static void test_function_signatures_survive_a_later_compile() {
         scope_binding_lookup(environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "test")),
                              string_from_cstr(&vm->env.strings, "on_update"));
     assert(on_update && on_update->kind == BINDING_FUNC);
-    assert(on_update->func.param_count == 2);
+    assert(on_update->func->param_count == 2);
 
     compile_and_run(vm,
                     "module test;\n"
                     "func a(x: int, y: int): int { let q: int = x + y; let w: int = q * q; return w; }\n"
                     "func b(x: int, y: int): int { let q: int = x - y; let w: int = q * q; return w; }\n");
 
-    assert(on_update->func.param_count == 2);
-    assert(strcmp(type_name_of(on_update->func.params[0])->data, "Player") == 0);
-    assert(strcmp(type_name_of(on_update->func.params[1])->data, "float") == 0);
-    assert(strcmp(type_name_of(on_update->func.return_type)->data, "int") == 0);
+    assert(on_update->func->param_count == 2);
+    assert(strcmp(type_name_of(on_update->func->params[0])->data, "Player") == 0);
+    assert(strcmp(type_name_of(on_update->func->params[1])->data, "float") == 0);
+    assert(strcmp(type_name_of(on_update->func->return_type)->data, "int") == 0);
 
     vm_free(vm);
 }

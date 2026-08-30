@@ -825,7 +825,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
 
         if (entry) {
             if (entry->kind == BINDING_FUNC) {
-                expr->callee = &entry->func;
+                expr->callee = entry->func;
                 break;
             }
 
@@ -1606,38 +1606,32 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
 
     String *name = resolver_intern(state, stmt->func_decl.name);
 
-    Binding *func = arena_alloc(resolver_owner_arena(state), sizeof(Binding));
-    *func = (Binding){
-        .kind = BINDING_FUNC,
-        .scope_depth = state->current_scope->depth,
-        .pinned = false,
-        .func =
-            {
-                .return_type = return_type,
-                .params = NULL,
-                .param_count = 0,
-                .func_index = FUNCTION_NO_BODY,
-            },
+    Function *func = arena_alloc(resolver_owner_arena(state), sizeof(Function));
+    *func = (Function){
+        .return_type = return_type,
+        .params = NULL,
+        .param_count = 0,
+        .func_index = FUNCTION_NO_BODY,
     };
 
     size_t param_count = stmt->func_decl.params.size;
 
     if (param_count > 0) {
-        func->func.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(const Type *));
-        func->func.param_count = param_count;
+        func->params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(const Type *));
+        func->param_count = param_count;
 
         for (size_t i = 0; i < param_count; i++) {
-            func->func.params[i] = resolve_param_type(state, stmt->func_decl.params.data[i]);
+            func->params[i] = resolve_param_type(state, stmt->func_decl.params.data[i]);
         }
     }
 
     const MethodDecl method = {
         .name = name,
-        .receiver = param_count > 0 ? func->func.params[0] : owner,
+        .receiver = param_count > 0 ? func->params[0] : owner,
         .result = return_type,
-        .params = func->func.params,
+        .params = func->params,
         .param_count = param_count,
-        .function = &func->func,
+        .function = func,
     };
 
     if (!type_registry_declare_method(state->current_scope->type_registry, owner, &method)) {
@@ -1646,7 +1640,7 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
         return;
     }
 
-    stmt->func_decl.binding = func;
+    stmt->func_decl.function = func;
 }
 
 static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
@@ -1696,37 +1690,39 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
 
     stmt->func_decl.resolved_return_type = func_return_type;
 
-    Binding *func =
+    Binding *declared =
         scope_decl_func(state->current_scope, resolver_intern(state, func_name), func_return_type);
 
-    if (!func) {
+    if (!declared) {
         char *name = string_ref_to_cstr(func_name);
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' is already declared in this scope",
                    name);
         free(name);
     }
 
-    stmt->func_decl.binding = func;
+    Function *func = declared ? declared->func : NULL;
+
+    stmt->func_decl.function = func;
 
     if (func) {
-        func->func.is_extern = stmt->func_decl.body == NULL;
+        func->is_extern = stmt->func_decl.body == NULL;
 
-        if (func->func.is_extern) {
-            func->func.name = resolver_intern(state, func_name);
-            func->func.module = state->module_name;
+        if (func->is_extern) {
+            func->name = resolver_intern(state, func_name);
+            func->module = state->module_name;
         }
     }
 
     size_t param_count = stmt->func_decl.params.size;
 
     if (func && param_count > 0) {
-        func->func.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(const Type *));
-        func->func.param_count = param_count;
+        func->params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(const Type *));
+        func->param_count = param_count;
 
         for (size_t i = 0; i < param_count; i++) {
             ASTField *param = stmt->func_decl.params.data[i];
 
-            func->func.params[i] = resolve_param_type(state, param);
+            func->params[i] = resolve_param_type(state, param);
         }
     }
 }

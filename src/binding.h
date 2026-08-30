@@ -46,7 +46,7 @@ typedef struct Binding {
             const Type *type;
         } var;
 
-        Function func;
+        Function *func;
     };
 } Binding;
 
