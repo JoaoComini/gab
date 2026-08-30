@@ -8,6 +8,33 @@ void flow_init(Flow *flow, Arena *arena) {
     flow->unreachable = false;
 }
 
+bool flow_slot_borrows_from(const FlowSlot *slot, const Binding *from) {
+    if (slot->borrows_unknown) {
+        return true;
+    }
+
+    for (size_t i = 0; i < slot->borrow_count; i++) {
+        if (slot->borrows_from[i] == from) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void flow_slot_add_source(FlowSlot *slot, Binding *from) {
+    if (!from || flow_slot_borrows_from(slot, from)) {
+        return;
+    }
+
+    if (slot->borrow_count == FLOW_MAX_BORROW_SOURCES) {
+        slot->borrows_unknown = true;
+        return;
+    }
+
+    slot->borrows_from[slot->borrow_count++] = from;
+}
+
 FlowSlot flow_get(const Flow *flow, Binding *binding) {
     FlowSlot *found = flow_map_lookup(flow->slots, binding);
 
@@ -56,14 +83,28 @@ static FlowSlot slot_merge(FlowSlot a, FlowSlot b) {
         init = FLOW_INIT;
     } else if (a.init == FLOW_MOVED || b.init == FLOW_MOVED) {
         init = FLOW_MOVED;
+    } else if (a.init == FLOW_DANGLING || b.init == FLOW_DANGLING) {
+        init = FLOW_DANGLING;
     } else {
         init = FLOW_UNINIT;
     }
 
-    return (FlowSlot){
+    FlowSlot merged = {
         .init = init,
         .inner_depth = a.inner_depth > b.inner_depth ? a.inner_depth : b.inner_depth,
+        .borrows_unknown = a.borrows_unknown || b.borrows_unknown,
     };
+
+    /* A borrow reaching a join names whatever it named on either path. */
+    for (size_t i = 0; i < a.borrow_count; i++) {
+        flow_slot_add_source(&merged, a.borrows_from[i]);
+    }
+
+    for (size_t i = 0; i < b.borrow_count; i++) {
+        flow_slot_add_source(&merged, b.borrows_from[i]);
+    }
+
+    return merged;
 }
 
 void flow_merge(Flow *flow, const Flow *other) {
@@ -81,6 +122,16 @@ void flow_merge(Flow *flow, const Flow *other) {
     }
 }
 
+void flow_invalidate_borrows_of(Flow *flow, Binding *freed) {
+    flow_for_each(flow->slots, entry) {
+        if (entry->value.init != FLOW_INIT || !flow_slot_borrows_from(&entry->value, freed)) {
+            continue;
+        }
+
+        entry->value.init = FLOW_DANGLING;
+    }
+}
+
 bool flow_equals(const Flow *a, const Flow *b) {
     if (a->unreachable != b->unreachable) {
         return false;
@@ -89,16 +140,32 @@ bool flow_equals(const Flow *a, const Flow *b) {
     flow_for_each(a->slots, entry) {
         FlowSlot other = flow_get(b, entry->key);
 
-        if (other.init != entry->value.init || other.inner_depth != entry->value.inner_depth) {
+        if (other.init != entry->value.init || other.inner_depth != entry->value.inner_depth ||
+            other.borrow_count != entry->value.borrow_count ||
+            other.borrows_unknown != entry->value.borrows_unknown) {
             return false;
+        }
+
+        for (size_t i = 0; i < entry->value.borrow_count; i++) {
+            if (!flow_slot_borrows_from(&other, entry->value.borrows_from[i])) {
+                return false;
+            }
         }
     }
 
     flow_for_each(b->slots, entry) {
         FlowSlot other = flow_get(a, entry->key);
 
-        if (other.init != entry->value.init || other.inner_depth != entry->value.inner_depth) {
+        if (other.init != entry->value.init || other.inner_depth != entry->value.inner_depth ||
+            other.borrow_count != entry->value.borrow_count ||
+            other.borrows_unknown != entry->value.borrows_unknown) {
             return false;
+        }
+
+        for (size_t i = 0; i < entry->value.borrow_count; i++) {
+            if (!flow_slot_borrows_from(&other, entry->value.borrows_from[i])) {
+                return false;
+            }
         }
     }
 

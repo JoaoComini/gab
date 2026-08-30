@@ -264,6 +264,63 @@ static void test_a_ref_borrowed_from_a_heap_object_is_accepted() {
                         "let r: int = main();") == 5);
 }
 
+static void test_a_borrow_does_not_survive_what_it_names() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "func f(): int {\n"
+                          "    let o: *Box = box Box { n: 7 };\n"
+                          "    let b: &Box = o;\n"
+                          "    o = box Box { n: 9 };\n"
+                          "    return b.n;\n"
+                          "}\n"));
+}
+
+static void test_a_borrowing_field_does_not_survive_what_it_names() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "struct Watcher { b: &Box }\n"
+                          "func f(): int {\n"
+                          "    let o: *Box = box Box { n: 7 };\n"
+                          "    let w = Watcher { b: o };\n"
+                          "    o = box Box { n: 9 };\n"
+                          "    return w.b.n;\n"
+                          "}\n"));
+}
+
+static void test_a_borrow_does_not_survive_the_scope_that_owns_it() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "func f(): int {\n"
+                          "    let b: &Box;\n"
+                          "    { let o: *Box = box Box { n: 7 }; b = o; }\n"
+                          "    return b.n;\n"
+                          "}\n"));
+}
+
+static void test_a_value_borrowing_from_two_slots_names_both() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "struct Pair { a: &Box, b: &Box }\n"
+                          "func f(): int {\n"
+                          "    let x: *Box = box Box { n: 1 };\n"
+                          "    let y: *Box = box Box { n: 2 };\n"
+                          "    let p = Pair { a: x, b: y };\n"
+                          "    y = box Box { n: 3 };\n"
+                          "    return p.b.n;\n"
+                          "}\n"));
+}
+
+static void test_a_value_borrowing_from_more_slots_than_fit_names_them_all() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "struct Five { a: &Box, b: &Box, c: &Box, d: &Box, e: &Box }\n"
+                          "func f(): int {\n"
+                          "    let v: *Box = box Box { n: 1 };\n"
+                          "    let w: *Box = box Box { n: 2 };\n"
+                          "    let x: *Box = box Box { n: 3 };\n"
+                          "    let y: *Box = box Box { n: 4 };\n"
+                          "    let z: *Box = box Box { n: 5 };\n"
+                          "    let p = Five { a: v, b: w, c: x, d: y, e: z };\n"
+                          "    z = box Box { n: 6 };\n"
+                          "    return p.e.n;\n"
+                          "}\n"));
+}
+
 static void test_an_owned_return_does_not_inherit_argument_lifetimes() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func make(seed: &Box): *Box {\n"
@@ -461,6 +518,11 @@ int main(void) {
     test_a_ref_returned_from_a_call_cannot_outlive_its_argument();
     test_a_ref_declared_from_a_call_carries_the_argument_lifetime();
     test_a_ref_borrowed_from_a_heap_object_is_accepted();
+    test_a_borrow_does_not_survive_what_it_names();
+    test_a_borrowing_field_does_not_survive_what_it_names();
+    test_a_borrow_does_not_survive_the_scope_that_owns_it();
+    test_a_value_borrowing_from_two_slots_names_both();
+    test_a_value_borrowing_from_more_slots_than_fit_names_them_all();
     test_an_owned_return_does_not_inherit_argument_lifetimes();
     test_a_ref_passes_to_a_ref_parameter();
     test_an_owned_pointer_passes_to_a_ref_parameter();
