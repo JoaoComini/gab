@@ -329,18 +329,6 @@ static bool declare_method(TypeRegistry *registry, MethodKey key, const MethodDe
     return true;
 }
 
-const Type *type_registry_generic_form(TypeRegistry *registry, const TypeDef *def) {
-    assert(def && "a generic form names a declaration");
-
-    const Type *params[GAB_MAX_TYPE_PARAMS];
-
-    for (size_t i = 0; i < def->param_count; i++) {
-        params[i] = type_registry_param(registry, i);
-    }
-
-    return type_registry_apply(registry, def, params, def->param_count);
-}
-
 bool type_registry_declare_method(TypeRegistry *registry, const Type *type, const MethodDecl *method) {
     assert(type && method && method->name && "a method is a type, a name and a signature");
 

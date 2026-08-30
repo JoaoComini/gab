@@ -219,7 +219,7 @@ static void test_a_declared_method_is_substituted_per_instantiation() {
         .result = param,
     };
 
-    type_registry_declare_method(registry, type_registry_generic_form(registry, &def), &method);
+    type_registry_declare_method(registry, type_registry_apply(registry, &def, &param, 1), &method);
 
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
     const Type *of_bool = type_registry_apply(registry, &def, &bool_type, 1);
@@ -264,7 +264,7 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
         .result = param,
     };
 
-    type_registry_declare_method(registry, type_registry_generic_form(registry, &def), &method);
+    type_registry_declare_method(registry, type_registry_apply(registry, &def, &param, 1), &method);
 
     const Symbol *found = type_registry_find_method(registry, of_int, at);
 
@@ -296,7 +296,7 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
         .result = param,
     };
 
-    type_registry_declare_method(registry, type_registry_generic_form(registry, &def), &method);
+    type_registry_declare_method(registry, type_registry_apply(registry, &def, &param, 1), &method);
 
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
 
@@ -367,7 +367,7 @@ static void test_a_substituted_signature_is_read_once_per_type() {
         .result = param,
     };
 
-    type_registry_declare_method(registry, type_registry_generic_form(registry, &def), &method);
+    type_registry_declare_method(registry, type_registry_apply(registry, &def, &param, 1), &method);
 
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
 

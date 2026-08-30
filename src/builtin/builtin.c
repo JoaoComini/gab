@@ -77,27 +77,6 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
     (void)declared;
 }
 
-void builtin_declare_method(VM *vm, const TypeDef *declared_on, const char *name, GabExternFn body,
-                            const Type *receiver, const Type *result, const Type *const *params,
-                            size_t param_count) {
-    const MethodDecl method = {
-        .name = string_from_cstr(&vm->env.strings, name),
-        .body = (void *)body,
-        .receiver = receiver,
-        .result = result,
-        .params = owned_params(vm->env.arena, params, param_count),
-        .param_count = param_count,
-    };
-
-    TypeRegistry *registry = vm->env.global_scope.type_registry;
-
-    bool declared =
-        type_registry_declare_method(registry, type_registry_generic_form(registry, declared_on), &method);
-
-    assert(declared && "a builtin declares each of its methods once");
-    (void)declared;
-}
-
 void builtin_register_static(VM *vm, const Type *declared_on, const char *name, GabExternFn body,
                              const Type *return_type, const Type *const *params, size_t param_count) {
     Arena *arena = vm->env.arena;

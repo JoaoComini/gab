@@ -101,7 +101,7 @@ void builtin_register_vec(VM *vm) {
     const Type *const push_params[] = {element};
     const Type *const at_params[] = {an_int};
 
-    builtin_declare_method(vm, vec_def, "push", vec_push, receiver, NULL, push_params, 1);
-    builtin_declare_method(vm, vec_def, "at", vec_at, receiver, element, at_params, 1);
-    builtin_declare_method(vm, vec_def, "len", vec_len, receiver, an_int, NULL, 0);
+    builtin_register_method(vm, self, receiver, "push", vec_push, NULL, push_params, 1);
+    builtin_register_method(vm, self, receiver, "at", vec_at, element, at_params, 1);
+    builtin_register_method(vm, self, receiver, "len", vec_len, an_int, NULL, 0);
 }
