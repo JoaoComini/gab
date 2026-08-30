@@ -98,11 +98,11 @@ ASTExpr *ast_cast_expr_create(Span span, ASTExpr *operand) {
     return node;
 }
 
-ASTExpr *ast_new_expr_create(Span span, TypeExpr *type_expr) {
+ASTExpr *ast_box_expr_create(Span span, ASTExpr *value) {
     ASTExpr *node = ast_expr_create(span);
-    node->kind = EXPR_NEW;
-    node->new_expr.type_expr = type_expr;
-    node->new_expr.type = NULL;
+    node->kind = EXPR_BOX;
+    node->box_expr.value = value;
+    node->box_expr.type = NULL;
     return node;
 }
 
@@ -172,8 +172,8 @@ void ast_expr_free(ASTExpr *expr) {
     case EXPR_CAST:
         ast_expr_free(expr->cast.operand);
         break;
-    case EXPR_NEW:
-        type_expr_destroy(expr->new_expr.type_expr);
+    case EXPR_BOX:
+        ast_expr_free(expr->box_expr.value);
         break;
     case EXPR_ARRAY_LIT:
         for (size_t i = 0; i < expr->array_lit.elements.size; i++) {

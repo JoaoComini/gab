@@ -504,7 +504,7 @@ static void test_function_cannot_be_declared_inside_another() {
 
 static void test_function_cannot_be_declared_inside_a_method() {
     assert_parse_error("struct P { n: int }\n"
-                       "func P::m(p: ref P): int {\n"
+                       "func P::m(p: &P): int {\n"
                        "    func inner(): int { return 1; }\n"
                        "    return 0;\n"
                        "}\n",
@@ -606,7 +606,7 @@ static void test_an_argument_may_be_an_application() {
 }
 
 static void test_a_type_is_a_tree() {
-    ASTUnit *unit = assert_parse("struct Holder { a: ref box [int; 3] }");
+    ASTUnit *unit = assert_parse("struct Holder { a: &*[int; 3] }");
 
     ASTStmt *stmt = unit->statements.data[0];
     ASTFieldList fields = stmt->struct_decl.fields;

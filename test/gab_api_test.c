@@ -133,7 +133,7 @@ static void test_a_host_call_reaches_a_builtin_method(void) {
     GabError err;
     bool mod = gab_load(vm, "<m>",
                         "module test;\n"
-                        "func size(): int { let s: ref str = \"abcd\"; return s.len(); }\n",
+                        "func size(): int { let s: &str = \"abcd\"; return s.len(); }\n",
                         &err);
     assert(mod);
 
@@ -573,14 +573,14 @@ static void test_builtins_are_shared_across_modules(void) {
     bool player = gab_load(vm, "player.gab",
                            "module Player;\n"
                            "struct Config { health: int }\n"
-                           "func player_size(): int { let p: box Config; return 1; }\n",
+                           "func player_size(): int { let p: *Config; return 1; }\n",
                            &err);
     assert(player);
 
     bool enemy = gab_load(vm, "enemy.gab",
                           "module Enemy;\n"
                           "struct Config { hp: int }\n"
-                          "func enemy_size(): int { let p: box Config; return 1; }\n",
+                          "func enemy_size(): int { let p: *Config; return 1; }\n",
                           &err);
     assert(enemy);
 
@@ -785,7 +785,7 @@ static void test_a_method_is_not_reachable_from_a_host(void) {
     assert(gab_load(vm, "m.gab",
                     "module M;\n"
                     "struct Player { health: int }\n"
-                    "func Player::hp(p: ref Player): int { return p.health; }\n",
+                    "func Player::hp(p: &Player): int { return p.health; }\n",
                     &err));
 
     assert(!gab_lookup(vm, "M", "hp", &err));
@@ -986,7 +986,7 @@ static void test_a_host_pointer_reaches_a_script() {
     assert(gab_load(vm, "u",
                     "module test;\n"
                     "struct Player { health: int }\n"
-                    "func hurt(p: ref Player, amount: int): int {\n"
+                    "func hurt(p: &Player, amount: int): int {\n"
                     "  p.health = p.health - amount;\n"
                     "  return p.health;\n"
                     "}\n",
@@ -1030,7 +1030,7 @@ static void test_a_pointer_argument_checks_its_pointee() {
                     "module test;\n"
                     "struct Player { health: int }\n"
                     "struct Enemy { health: int }\n"
-                    "func hurt(p: ref Player): int { return p.health; }\n",
+                    "func hurt(p: &Player): int { return p.health; }\n",
                     &err));
 
     const GabType *player = gab_find_type(vm, "test", "Player");

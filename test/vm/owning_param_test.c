@@ -5,9 +5,9 @@
 
 static void test_an_owning_parameter_takes_a_moved_argument() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func consume(b: box Box): int { return b.n; }\n"
+                        "func consume(b: *Box): int { return b.n; }\n"
                         "func main(): int {\n"
-                        "    let a: box Box = new Box;\n"
+                        "    let a: *Box = box Box { n: 0 };\n"
                         "    a.n = 6;\n"
                         "    return consume(a);\n"
                         "}\n"
@@ -16,9 +16,9 @@ static void test_an_owning_parameter_takes_a_moved_argument() {
 
 static void test_an_owning_parameter_takes_its_argument() {
     const char *source = "struct Box { n: int }\n"
-                         "func consume(b: box Box): int { return b.n; }\n"
+                         "func consume(b: *Box): int { return b.n; }\n"
                          "func main(): int {\n"
-                         "    let a: box Box = new Box;\n"
+                         "    let a: *Box = box Box { n: 0 };\n"
                          "    consume(a);\n"
                          "    return a.n;\n"
                          "}\n";
@@ -29,9 +29,9 @@ static void test_an_owning_parameter_takes_its_argument() {
 
 static void test_a_moved_argument_is_dead_after_the_call() {
     assert(!test_compiles("struct Box { n: int }\n"
-                          "func consume(b: box Box): int { return b.n; }\n"
+                          "func consume(b: *Box): int { return b.n; }\n"
                           "func main(): int {\n"
-                          "    let a: box Box = new Box;\n"
+                          "    let a: *Box = box Box { n: 0 };\n"
                           "    consume(a);\n"
                           "    return a.n;\n"
                           "}\n"));
@@ -39,9 +39,9 @@ static void test_a_moved_argument_is_dead_after_the_call() {
 
 static void test_a_ref_parameter_still_borrows() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func peek(b: ref Box): int { return b.n; }\n"
+                        "func peek(b: &Box): int { return b.n; }\n"
                         "func main(): int {\n"
-                        "    let a: box Box = new Box;\n"
+                        "    let a: *Box = box Box { n: 0 };\n"
                         "    a.n = 4;\n"
                         "    return peek(a) + a.n;\n"
                         "}\n"
@@ -50,7 +50,7 @@ static void test_a_ref_parameter_still_borrows() {
 
 static void test_a_value_reaches_a_ref_parameter_by_address() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func peek(b: ref Box): int { return b.n; }\n"
+                        "func peek(b: &Box): int { return b.n; }\n"
                         "func main(): int {\n"
                         "    let a = Box { n: 6 };\n"
                         "    return peek(a);\n"
@@ -60,7 +60,7 @@ static void test_a_value_reaches_a_ref_parameter_by_address() {
 
 static void test_an_owning_parameter_frees_what_it_was_given() {
     TestProgram program = test_compile("struct Box { n: int }\n"
-                                       "func consume(b: box Box): int { return b.n; }\n");
+                                       "func consume(b: *Box): int { return b.n; }\n");
 
     assert(test_count_opcode(test_func_chunk(&program, 0), OP_RELEASE) == 1);
 
@@ -69,7 +69,7 @@ static void test_an_owning_parameter_frees_what_it_was_given() {
 
 static void test_a_ref_parameter_frees_nothing() {
     TestProgram program = test_compile("struct Box { n: int }\n"
-                                       "func peek(b: ref Box): int { return b.n; }\n");
+                                       "func peek(b: &Box): int { return b.n; }\n");
 
     assert(test_count_opcode(test_func_chunk(&program, 0), OP_RELEASE) == 0);
 
@@ -78,9 +78,9 @@ static void test_a_ref_parameter_frees_nothing() {
 
 static void test_only_the_callee_frees_an_owned_argument() {
     TestProgram program = test_compile("struct Box { n: int }\n"
-                                       "func consume(b: box Box): int { return b.n; }\n"
+                                       "func consume(b: *Box): int { return b.n; }\n"
                                        "func main(): int {\n"
-                                       "    let a: box Box = new Box;\n"
+                                       "    let a: *Box = box Box { n: 0 };\n"
                                        "    return consume(a);\n"
                                        "}\n");
 
@@ -91,11 +91,11 @@ static void test_only_the_callee_frees_an_owned_argument() {
 
 static void test_an_owned_parameter_may_be_returned() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func through(b: box Box): box Box { return b; }\n"
+                        "func through(b: *Box): *Box { return b; }\n"
                         "func main(): int {\n"
-                        "    let a: box Box = new Box;\n"
+                        "    let a: *Box = box Box { n: 0 };\n"
                         "    a.n = 9;\n"
-                        "    let back: box Box = through(a);\n"
+                        "    let back: *Box = through(a);\n"
                         "    return back.n;\n"
                         "}\n"
                         "let r: int = main();") == 9);
@@ -103,23 +103,23 @@ static void test_an_owned_parameter_may_be_returned() {
 
 static void test_a_borrow_cannot_be_laundered_into_an_owned_return() {
     assert(!test_compiles("struct Box { n: int }\n"
-                          "func launder(b: ref Box): box Box { return b; }\n"));
+                          "func launder(b: &Box): *Box { return b; }\n"));
 }
 
 static void test_parameter_zero_may_own() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func Box::take(b: box Box): int { return b.n; }\n"
+                        "func Box::take(b: *Box): int { return b.n; }\n"
                         "func main(): int {\n"
-                        "    let a: box Box = new Box;\n"
+                        "    let a: *Box = box Box { n: 0 };\n"
                         "    a.n = 4;\n"
                         "    return Box::take(a);\n"
                         "}\n"
                         "let r: int = main();") == 4);
 
     assert(!test_compiles("struct Box { n: int }\n"
-                          "func Box::take(b: box Box): int { return b.n; }\n"
+                          "func Box::take(b: *Box): int { return b.n; }\n"
                           "func main(): int {\n"
-                          "    let a: box Box = new Box;\n"
+                          "    let a: *Box = box Box { n: 0 };\n"
                           "    a.take();\n"
                           "    return a.n;\n"
                           "}\n"));
@@ -127,10 +127,10 @@ static void test_parameter_zero_may_own() {
 
 static void test_a_method_parameter_may_own() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func Box::adopt(b: ref Box, other: box Box): int { return other.n; }\n"
+                        "func Box::adopt(b: &Box, other: *Box): int { return other.n; }\n"
                         "func main(): int {\n"
-                        "    let host: box Box = new Box;\n"
-                        "    let gift: box Box = new Box;\n"
+                        "    let host: *Box = box Box { n: 0 };\n"
+                        "    let gift: *Box = box Box { n: 0 };\n"
                         "    gift.n = 3;\n"
                         "    return host.adopt(gift);\n"
                         "}\n"
@@ -151,9 +151,9 @@ static void test_a_by_value_parameter_takes_ownership() {
                                 "    return take(s);\n"
                                 "}\n"));
 
-    assert(test_compiles_on_vm("func take(s: box String): int { return 0; }\n"
+    assert(test_compiles_on_vm("func take(s: *String): int { return 0; }\n"
                                "func main(): int {\n"
-                               "    let s: box String = new String;\n"
+                               "    let s: *String = box String::from(\"\");\n"
                                "    return take(s);\n"
                                "}\n"));
 }

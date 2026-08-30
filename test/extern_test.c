@@ -153,8 +153,8 @@ static void test_a_borrow_is_written_through(void) {
     assert(gab_load(vm, "<m>",
                     "module test;\n"
                     "struct Player { health: int, mana: int }\n"
-                    "extern func boost(p: ref Player);\n"
-                    "func run(p: ref Player) { boost(p); }\n",
+                    "extern func boost(p: &Player);\n"
+                    "func run(p: &Player) { boost(p); }\n",
                     &err));
 
     const GabType *type = gab_find_type(vm, "test", "Player");

@@ -594,10 +594,17 @@ static TypeExpr *parse_type_expr(Parser *parser) {
         return type_expr_array(element, length);
     }
 
-    if (parser->current.type == TOKEN_REF || parser->current.type == TOKEN_BOX) {
-        TypeExprKind kind = parser->current.type == TOKEN_REF ? TYPE_EXPR_REF : TYPE_EXPR_BOX;
+    /* In a type '&' borrows and '*' owns; neither is the expression operator that shares its spelling. */
+    if (parser->current.type == TOKEN_AMP || parser->current.type == TOKEN_MUL ||
+        parser->current.type == TOKEN_AND) {
+        TypeExprKind kind = parser->current.type == TOKEN_MUL ? TYPE_EXPR_BOX : TYPE_EXPR_REF;
 
-        parser_next_token(parser);
+        /* '&&T' lexes as one token, so consuming half of it leaves the borrow it still spells. */
+        if (parser->current.type == TOKEN_AND) {
+            parser->current.type = TOKEN_AMP;
+        } else {
+            parser_next_token(parser);
+        }
 
         TypeExpr *inner = parse_type_expr(parser);
 
@@ -1099,8 +1106,8 @@ static bool parser_scan_type_args(Parser *parser, TokenType after) {
             break;
         case TOKEN_IDENT:
         case TOKEN_COMMA:
-        case TOKEN_REF:
-        case TOKEN_BOX:
+        case TOKEN_AMP:
+        case TOKEN_MUL:
         case TOKEN_LBRACKET:
         case TOKEN_RBRACKET:
         case TOKEN_SEMICOLON:
@@ -1326,6 +1333,17 @@ static ASTExpr *parse_postfix(Parser *parser, ASTExpr *expr, ExprContext ctx) {
 static ASTExpr *parse_unary(Parser *parser, ExprContext ctx) {
     Span span = parser_span(parser);
 
+    if (parser->current.type == TOKEN_BOX) {
+        parser_next_token(parser);
+
+        ASTExpr *value = parse_unary(parser, ctx);
+        if (!value) {
+            return NULL;
+        }
+
+        return ast_box_expr_create(span, value);
+    }
+
     if (parser->current.type == TOKEN_MUL || parser->current.type == TOKEN_MINUS ||
         parser->current.type == TOKEN_NOT) {
         TokenType prefix = parser->current.type;
@@ -1382,16 +1400,6 @@ static ASTExpr *parse_precedence(Parser *parser, int min_precedence, ExprContext
 static ASTExpr *parse_primary(Parser *parser) {
     Span span = parser_span(parser);
     switch (parser->current.type) {
-    case TOKEN_NEW: {
-        parser_next_token(parser);
-
-        TypeExpr *spec = parse_type_expr(parser);
-        if (!spec) {
-            return NULL;
-        }
-
-        return ast_new_expr_create(span, spec);
-    }
     case TOKEN_LBRACKET: {
         parser_next_token(parser);
 
@@ -1479,8 +1487,7 @@ static ASTExpr *parse_primary(Parser *parser) {
         if (parser->current.type == TOKEN_COLON_COLON) {
             parser_next_token(parser);
 
-            if (parser->current.type != TOKEN_NEW &&
-                !parser_expect(parser, TOKEN_IDENT, "expected a name after '::'")) {
+            if (!parser_expect(parser, TOKEN_IDENT, "expected a name after '::'")) {
                 type_expr_destroy(owner_type_expr);
                 return NULL;
             }

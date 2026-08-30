@@ -66,7 +66,7 @@ typedef enum {
 
     OP_CALL_EXTERN,
 
-    OP_NEW,
+    OP_BOX,
 
     OP_NULL,
 

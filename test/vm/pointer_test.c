@@ -33,7 +33,7 @@ static void test_pointer_types_are_interned() {
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Player { health: int }\n"
-                           "struct Holder { p: box Player, q: box Player }\n");
+                           "struct Holder { p: *Player, q: *Player }\n");
     assert(ok);
 
     const Type *p = field_type(&ctx, scope, "Holder", "p");
@@ -57,7 +57,7 @@ static void test_pointer_depth_nests() {
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
     ASTUnit *unit = ast_unit_create();
 
-    bool ok = test_resolve(&ctx, scope, unit, "struct Holder { p: box int, q: box box int }\n");
+    bool ok = test_resolve(&ctx, scope, unit, "struct Holder { p: *int, q: **int }\n");
     assert(ok);
 
     const Type *p = field_type(&ctx, scope, "Holder", "p");
@@ -79,7 +79,7 @@ static void test_pointer_is_a_word() {
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Big { a: int, b: int, c: int, d: int }\n"
-                           "struct Holder { p: box Big, q: box bool }\n");
+                           "struct Holder { p: *Big, q: *bool }\n");
     assert(ok);
 
     const Type *p = field_type(&ctx, scope, "Holder", "p");
@@ -105,7 +105,7 @@ static void test_ref_is_a_distinct_type() {
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Node { n: int }\n"
-                           "struct Holder { o: box Node, b: ref Node }\n");
+                           "struct Holder { o: *Node, b: &Node }\n");
     assert(ok);
 
     const Type *owning = field_type(&ctx, scope, "Holder", "o");
@@ -132,8 +132,8 @@ static void test_ref_pointers_are_interned() {
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Node { n: int }\n"
-                           "let a: ref Node;\n"
-                           "let b: ref Node;\n");
+                           "let a: &Node;\n"
+                           "let b: &Node;\n");
     assert(ok);
 
     Binding *a = scope_binding_lookup(scope, string_from_cstr(&ctx.strings, "a"));
@@ -146,21 +146,20 @@ static void test_ref_pointers_are_interned() {
 }
 
 static void test_scalar_read_and_write_through_a_pointer() {
-    assert(test_run_int("func f(): int { let x: int = 7; let p: ref int = x; return *p; }\n"
+    assert(test_run_int("func f(): int { let x: int = 7; let p: &int = x; return *p; }\n"
                         "let r: int = f();") == 7);
 
-    assert(test_run_int("func f(): int { let x: int = 3; let p: ref int = x; *p = 42; return x; }\n"
+    assert(test_run_int("func f(): int { let x: int = 3; let p: &int = x; *p = 42; return x; }\n"
                         "let r: int = f();") == 42);
 
-    assert(
-        test_run_float("func f(): float { let x: float = 1.5; let p: ref float = x; *p = 2.5; return x; }\n"
-                       "let r: float = f();") == 2.5f);
+    assert(test_run_float("func f(): float { let x: float = 1.5; let p: &float = x; *p = 2.5; return x; }\n"
+                          "let r: float = f();") == 2.5f);
 }
 
 static void test_field_write_through_a_pointer() {
     assert(test_run_int("struct Player { health: int, mana: int }\n"
                         "func f(): int { let p = Player { health: 1, mana: 2 };\n"
-                        "let q: ref Player = p; (*q).health = 10;\n"
+                        "let q: &Player = p; (*q).health = 10;\n"
                         "return p.health * 100 + p.mana; }\n"
                         "let r: int = f();") == 1002);
 }
@@ -168,7 +167,7 @@ static void test_field_write_through_a_pointer() {
 static void test_pointer_to_a_struct_field() {
     assert(test_run_int("struct Point { x: int, y: int }\n"
                         "func f(): int { let v = Point { x: 1, y: 2 };\n"
-                        "let p: ref int = v.y; *p = 9;\n"
+                        "let p: &int = v.y; *p = 9;\n"
                         "return v.x * 100 + v.y; }\n"
                         "let r: int = f();") == 109);
 }
@@ -176,7 +175,7 @@ static void test_pointer_to_a_struct_field() {
 static void test_pointer_to_a_sub_word_field() {
     assert(test_run_int("struct Flags { a: bool, b: bool, c: bool, d: bool }\n"
                         "func f(): int { let v = Flags { a: true, b: true, c: true, d: true };\n"
-                        "let p: ref bool = v.b; *p = false;\n"
+                        "let p: &bool = v.b; *p = false;\n"
                         "let n: int = 0;\n"
                         "if v.a { n = n + 1000; }\n"
                         "if v.b { n = n + 100; }\n"
@@ -189,7 +188,7 @@ static void test_pointer_to_a_sub_word_field() {
 static void test_dereferencing_a_whole_struct() {
     assert(test_run_int("struct Point { x: int, y: int }\n"
                         "func f(): int { let v = Point { x: 3, y: 4 };\n"
-                        "let p: ref Point = v;\n"
+                        "let p: &Point = v;\n"
                         "let copy: Point = *p;\n"
                         "v.x = 100;\n"
                         "return copy.x * 10 + copy.y; }\n"
@@ -198,22 +197,22 @@ static void test_dereferencing_a_whole_struct() {
 
 static void test_pointer_to_a_pointer() {
     assert(test_run_int("func f(): int { let x: int = 5;\n"
-                        "let p: ref int = x;\n"
-                        "let q: ref ref int = p;\n"
+                        "let p: &int = x;\n"
+                        "let q: &&int = p;\n"
                         "**q = 11;\n"
                         "return x; }\n"
                         "let r: int = f();") == 11);
 }
 
 static void test_a_pointer_survives_a_stack_growth() {
-    assert(test_run_int("func deep(n: int, p: ref int): int {\n"
+    assert(test_run_int("func deep(n: int, p: &int): int {\n"
                         "if n > 0 { return deep(n - 1, p); }\n"
                         "return *p;\n"
                         "}\n"
                         "func f(): int { let x: int = 77; return deep(200, x); }\n"
                         "let r: int = f();") == 77);
 
-    assert(test_run_int("func deep(n: int, p: ref int): int {\n"
+    assert(test_run_int("func deep(n: int, p: &int): int {\n"
                         "if n > 0 { return deep(n - 1, p); }\n"
                         "*p = 88;\n"
                         "return 0;\n"
@@ -225,13 +224,13 @@ static void test_a_pointer_survives_a_stack_growth() {
 static void test_field_access_auto_derefs() {
     assert(test_run_int("struct Player { health: int, mana: int }\n"
                         "func f(): int { let p = Player { health: 1, mana: 2 };\n"
-                        "let q: ref Player = p; q.health = 10;\n"
+                        "let q: &Player = p; q.health = 10;\n"
                         "return p.health * 100 + p.mana; }\n"
                         "let r: int = f();") == 1002);
 
     assert(test_run_int("struct Player { health: int, mana: int }\n"
                         "func f(): int { let p = Player { health: 10, mana: 0 };\n"
-                        "let q: ref Player = p; return q.health; }\n"
+                        "let q: &Player = p; return q.health; }\n"
                         "let r: int = f();") == 10);
 }
 
@@ -239,7 +238,7 @@ static void test_auto_deref_reaches_a_nested_field() {
     assert(test_run_int("struct Inner { v: int }\n"
                         "struct Outer { a: int, inner: Inner }\n"
                         "func f(): int { let o = Outer { a: 0, inner: Inner { v: 0 } };\n"
-                        "let q: ref Outer = o;\n"
+                        "let q: &Outer = o;\n"
                         "q.inner.v = 7; return o.inner.v; }\n"
                         "let r: int = f();") == 7);
 }
@@ -247,25 +246,24 @@ static void test_auto_deref_reaches_a_nested_field() {
 static void test_address_of_a_field_through_a_pointer() {
     assert(test_run_int("struct Player { health: int, mana: int }\n"
                         "func f(): int { let p = Player { health: 0, mana: 2 };\n"
-                        "let q: ref Player = p;\n"
-                        "let h: ref int = q.health; *h = 9;\n"
+                        "let q: &Player = p;\n"
+                        "let h: &int = q.health; *h = 9;\n"
                         "return p.health * 100 + p.mana; }\n"
                         "let r: int = f();") == 902);
 }
 
-static void test_a_pointer_type_is_spelled_box() {
-    assert(test_compiles("func f(): int { let p: box int; return 0; }\n"));
-    assert(!test_compiles("func f(): int { let p: *int; return 0; }\n"));
+static void test_a_pointer_type_is_spelled_with_a_sigil() {
+    assert(test_compiles("func f(): int { let p: *int; return 0; }\n"));
+    assert(!test_compiles("func f(): int { let p: box int; return 0; }\n"));
 }
 
 static void test_a_borrow_has_no_operator() {
-    assert(test_compiles("func f(): int { let x: int = 1; let p: ref int = x; return *p; }\n"));
-    assert(!test_compiles("func f(): int { let x: int = 1; let p: ref int = &x; return *p; }\n"));
-    assert(!test_compiles("func f(): int { let x: int = 1; let p: ref int = ref x; return *p; }\n"));
+    assert(test_compiles("func f(): int { let x: int = 1; let p: &int = x; return *p; }\n"));
+    assert(!test_compiles("func f(): int { let x: int = 1; let p: &int = &x; return *p; }\n"));
 }
 
 int main() {
-    test_a_pointer_type_is_spelled_box();
+    test_a_pointer_type_is_spelled_with_a_sigil();
     test_a_borrow_has_no_operator();
     test_pointer_types_are_interned();
     test_pointer_depth_nests();

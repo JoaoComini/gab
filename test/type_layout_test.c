@@ -323,8 +323,8 @@ static void test_mutually_recursive_structs() {
 
     TypeRegistry *registry = NULL;
     const Type *a = resolve_struct(&ctx,
-                                   "struct A { b: box B }\n"
-                                   "struct B { a: box A }\n",
+                                   "struct A { b: *B }\n"
+                                   "struct B { a: *A }\n",
                                    "A", &registry);
 
     const TypeField *field = type_registry_find_field(registry, a, string_from_cstr(&ctx.strings, "b"));
@@ -379,8 +379,8 @@ static void test_a_ring_through_a_box_is_laid_out() {
 
     TypeRegistry *registry = NULL;
     const Type *a = resolve_struct(&ctx,
-                                   "struct A { b: box B, tag: int }\n"
-                                   "struct B { a: box A }\n",
+                                   "struct A { b: *B, tag: int }\n"
+                                   "struct B { a: *A }\n",
                                    "A", &registry);
 
     assert(type_registry_size_of(registry, a) == sizeof(BoxRingC));

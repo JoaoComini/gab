@@ -27,7 +27,7 @@ static void test_negates_a_call_result() {
 }
 
 static void test_negates_through_a_deref() {
-    assert(test_run_bool("func f(): bool { let b: bool = true; let p: ref bool = b; return !*p; }\n"
+    assert(test_run_bool("func f(): bool { let b: bool = true; let p: &bool = b; return !*p; }\n"
                          "let r: bool = f();\n") == false);
 }
 
@@ -52,12 +52,12 @@ static void test_not_is_typed_boolean() {
 
     assert(!test_compiles("func f(): bool { let x: int = 1; return !x; }\n"));
     assert(!test_compiles("func f(): bool { let x: float = 1.0; return !x; }\n"));
-    assert(!test_compiles("func f(): bool { let x: int = 1; let p: ref int = x; return !p; }\n"));
+    assert(!test_compiles("func f(): bool { let x: int = 1; let p: &int = x; return !p; }\n"));
 }
 
 static void test_not_is_a_temporary() {
     assert(!test_compiles("func f(): bool { let b: bool = true; !b = false; return b; }\n"));
-    assert(!test_compiles("func f(): bool { let b: bool = true; let p: ref bool = !b; return *p; }\n"));
+    assert(!test_compiles("func f(): bool { let b: bool = true; let p: &bool = !b; return *p; }\n"));
 }
 
 int main() {

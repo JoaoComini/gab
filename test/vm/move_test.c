@@ -15,9 +15,9 @@ static void test_a_type_owning_nothing_copies_implicitly() {
 
 static void test_a_type_holding_an_owning_pointer_transfers() {
     assert(!test_compiles("struct Box { n: int }\n"
-                          "struct Holder { b: box Box }\n"
+                          "struct Holder { b: *Box }\n"
                           "func main(): int {\n"
-                          "    let h = Holder { b: new Box };\n"
+                          "    let h = Holder { b: box Box { n: 0 } };\n"
                           "    let other = h;\n"
                           "    return h.b.n;\n"
                           "}\n"));
@@ -25,7 +25,7 @@ static void test_a_type_holding_an_owning_pointer_transfers() {
 
 static void test_a_type_holding_a_borrow_still_copies() {
     assert(test_compiles("struct Box { n: int }\n"
-                         "struct Watcher { b: ref Box }\n"
+                         "struct Watcher { b: &Box }\n"
                          "func main(): int {\n"
                          "    let b = Box { n: 1 };\n"
                          "    let w = Watcher { b: b };\n"
@@ -37,7 +37,7 @@ static void test_a_type_holding_a_borrow_still_copies() {
 static void test_binding_an_owning_value_transfers_it() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
-                        "    let a: box Box = new Box;\n"
+                        "    let a: *Box = box Box { n: 0 };\n"
                         "    a.n = 7;\n"
                         "    let b = a;\n"
                         "    return b.n;\n"
@@ -48,7 +48,7 @@ static void test_binding_an_owning_value_transfers_it() {
 static void test_a_moved_from_slot_is_dead() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let a: box Box = new Box;\n"
+                          "    let a: *Box = box Box { n: 0 };\n"
                           "    let b = a;\n"
                           "    return a.n;\n"
                           "}\n"));
@@ -57,9 +57,9 @@ static void test_a_moved_from_slot_is_dead() {
 static void test_assigning_to_a_dead_slot_revives_it() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
-                        "    let a: box Box = new Box;\n"
+                        "    let a: *Box = box Box { n: 0 };\n"
                         "    let b = a;\n"
-                        "    a = new Box;\n"
+                        "    a = box Box { n: 0 };\n"
                         "    a.n = 5;\n"
                         "    return a.n;\n"
                         "}\n"
@@ -69,7 +69,7 @@ static void test_assigning_to_a_dead_slot_revives_it() {
 static void test_a_slot_moved_on_one_arm_is_dead_after_the_join() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let a: box Box = new Box;\n"
+                          "    let a: *Box = box Box { n: 0 };\n"
                           "    if 1 < 2 { let b = a; } else { }\n"
                           "    return a.n;\n"
                           "}\n"));
@@ -78,7 +78,7 @@ static void test_a_slot_moved_on_one_arm_is_dead_after_the_join() {
 static void test_transferring_the_same_slot_each_iteration_is_refused() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func main(): int {\n"
-                          "    let a: box Box = new Box;\n"
+                          "    let a: *Box = box Box { n: 0 };\n"
                           "    for let i = 0; i < 2; i = i + 1 {\n"
                           "        let b = a;\n"
                           "    }\n"
@@ -89,7 +89,7 @@ static void test_transferring_the_same_slot_each_iteration_is_refused() {
 static void test_reading_a_transferred_slot_names_the_slot() {
     const char *source = "struct Box { n: int }\n"
                          "func main(): int {\n"
-                         "    let a: box Box = new Box;\n"
+                         "    let a: *Box = box Box { n: 0 };\n"
                          "    let b = a;\n"
                          "    return a.n;\n"
                          "}\n";
