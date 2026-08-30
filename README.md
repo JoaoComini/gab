@@ -279,6 +279,29 @@ Freeing an array frees what its elements own, however deep that goes. How many
 elements are live is the count the block carries rather than anything its type
 says, which is what lets one block type serve every length.
 
+A struct is written as a literal, which names every field:
+
+```
+struct Point { x: int, y: int }
+
+let p = Point { x: 1, y: 2 };
+let q = Point { y: 2, x: 1 };   // the same value; order is the writer's
+```
+
+Every field is named because a partial literal would have to invent a value for
+what it omits, and `ref T` has none — a zeroed borrow names nothing, and nothing
+tracks that. So a struct local is written as a literal rather than declared
+empty and filled in: `let p: Point;` is refused, and the fields a literal cannot
+spell are reached through what does spell them — `new T` for an owning field, a
+borrow of a live value for a `ref`, `String::from` and `Vec<T>::new` for the
+library's types.
+
+A generic struct names its arguments the way its type does, as
+`Holder<int> { value: 4 }`.
+
+An `if` or `for` header reads `Name {` as the block it opens rather than as a
+literal, so a literal in one is parenthesized: `if (Point { x: 1 }).x == 1 { }`.
+
 `new` allocates anything with a layout to fill — a struct, or an owning pointer:
 
 ```
@@ -402,7 +425,7 @@ more or less, and a second spelling would say nothing the first does not.
 | | |
 | --- | --- |
 | Types | `int` (32-bit), `float` (32-bit), `bool`, `String` and characters named by `ref str`, `[T; N]`, `Vec<T>`, structs, owning `box T`, borrows `ref T` |
-| Declarations | `let` with inferred or annotated type, `func`, `struct`, `module` |
+| Declarations | `let` with inferred or annotated type, `func`, `struct`, `module`. A struct local is written as a literal |
 | Functions | Parameters and returns of any type, structs by value, functions a type owns, recursion, forward references |
 | Control flow | `if` / `else`, `for` in three forms, `break`, `continue`, `return`, nested blocks with shadowing |
 | Operators | `+` `-` `*` `/` `%`, unary `-` `!`, `==` `!=` `<` `>` `<=` `>=`, `&&` `||`, unary `*`, field access, indexing `xs[i]` |
@@ -419,10 +442,9 @@ Not yet implemented:
 | --- | --- |
 | Strings | No interpolation, no `substring` or case conversion |
 | Arrays | Fixed length once allocated: no growth and no slice type. `Vec<T>` is what grows |
-| Vectors | `push`, `at` and `len` only: no removal, no iteration, and no literal |
+| Vectors | `new`, `push`, `at` and `len` only: no removal, no iteration, and no literal |
 | Generics | Only the built-in declarations. A script cannot declare a generic type of its own |
 | Operators | Bitwise |
-| Literals | No struct literals (`V{x: 1}`) |
 
 ## Building
 

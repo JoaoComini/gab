@@ -87,7 +87,7 @@ static void test_struct_typed_local() {
 
     compile_and_run(vm, "module test;\n"
                         "struct Vec3 { x: float, y: float, z: float }\n"
-                        "func main() { let v: Vec3; }");
+                        "func main() { let v = Vec3 { x: 0.0, y: 0.0, z: 0.0 }; }");
 
     assert(loaded_protos(vm) == 1);
 

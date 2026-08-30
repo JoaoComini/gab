@@ -110,8 +110,7 @@ static void test_signature_names_a_struct_declared_below() {
     assert(test_run_int("func health_of(p: Player): int { return p.health; }\n"
                         "struct Player { health: int }\n"
                         "func main(): int {\n"
-                        "    let p: Player;\n"
-                        "    p.health = 42;\n"
+                        "    let p = Player { health: 42 };\n"
                         "    return health_of(p);\n"
                         "}\n"
                         "let r: int = main();") == 42);

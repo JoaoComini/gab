@@ -13,28 +13,28 @@
 
 static ASTStmt *parse_decl_statement(Parser *parser);
 static ASTStmt *parse_statement(Parser *parser);
-static ASTStmt *parse_var_decl_stmt(Parser *parser);
+static ASTStmt *parse_var_decl_stmt(Parser *parser, ExprContext ctx);
 static ASTStmt *parse_func_decl_stmt(Parser *parser);
 static ASTStmt *parse_struct_decl_stmt(Parser *parser);
 static ASTField *parse_field(Parser *parser, const char *name_message);
 static TypeExpr *parse_type_expr(Parser *parser);
 static ASTExpr *parse_index_expr(Parser *parser, ASTExpr *target);
-static ASTExpr *parse_expression(Parser *parser);
+static ASTExpr *parse_expression(Parser *parser, ExprContext ctx);
 static ASTStmt *parse_if_stmt(Parser *parser);
 static ASTStmt *parse_for_stmt(Parser *parser);
 static ASTStmt *parse_jump_stmt(Parser *parser);
 static ASTStmt *parse_block_stmt(Parser *parser);
 static ASTStmt *parse_return_stmt(Parser *parser);
-static ASTStmt *parse_expr_stmt(Parser *parser);
+static ASTStmt *parse_expr_stmt(Parser *parser, ExprContext ctx);
 static bool stmt_needs_terminator(ASTStmt *stmt);
 
-static ASTExpr *parse_expression(Parser *parser);
+static ASTExpr *parse_expression(Parser *parser, ExprContext ctx);
 static ASTExpr *parse_primary(Parser *parser);
-static ASTExpr *parse_unary(Parser *parser);
+static ASTExpr *parse_unary(Parser *parser, ExprContext ctx);
 static ASTExpr *parse_field_expr(Parser *parser, ASTExpr *target);
 static ASTExpr *parse_method_call_expr(Parser *parser, ASTExpr *receiver, StringRef name, Span span);
 static void parser_synchronize(Parser *parser);
-static ASTExpr *parse_precedence(Parser *parser, int min_precedence);
+static ASTExpr *parse_precedence(Parser *parser, int min_precedence, ExprContext ctx);
 static int get_precedence(TokenType type);
 static BinOp parse_bin_op(TokenType type);
 
@@ -218,7 +218,7 @@ static ASTStmt *parse_decl_statement(Parser *parser) {
 
     switch (parser->current.type) {
     case TOKEN_LET: {
-        stmt = parse_var_decl_stmt(parser);
+        stmt = parse_var_decl_stmt(parser, EXPR_ANY);
         break;
     }
     case TOKEN_FUNC:
@@ -259,7 +259,7 @@ static ASTStmt *parse_statement(Parser *parser) {
 
     switch (parser->current.type) {
     case TOKEN_LET: {
-        stmt = parse_var_decl_stmt(parser);
+        stmt = parse_var_decl_stmt(parser, EXPR_ANY);
         break;
     }
     case TOKEN_FUNC: {
@@ -295,7 +295,7 @@ static ASTStmt *parse_statement(Parser *parser) {
         break;
     }
     default: {
-        stmt = parse_expr_stmt(parser);
+        stmt = parse_expr_stmt(parser, EXPR_ANY);
         break;
     }
     }
@@ -318,7 +318,7 @@ static ASTStmt *parse_statement(Parser *parser) {
     return stmt;
 }
 
-static ASTStmt *parse_var_decl_stmt(Parser *parser) {
+static ASTStmt *parse_var_decl_stmt(Parser *parser, ExprContext ctx) {
     Span span = parser_span(parser);
 
     parser_next_token(parser);
@@ -359,7 +359,7 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser) {
 
     parser_next_token(parser);
 
-    ASTExpr *initializer = parse_expression(parser);
+    ASTExpr *initializer = parse_expression(parser, ctx);
     if (!initializer) {
         if (spec) {
             type_expr_destroy(spec);
@@ -370,12 +370,14 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser) {
     return ast_var_decl_stmt_create(span, name.lexeme, spec, initializer);
 }
 
+/* Inside brackets a '{' cannot open a block, so a struct literal is spelled there even in a header. */
 static ASTStmt *parse_if_stmt(Parser *parser) {
     Span span = parser_span(parser);
 
     parser_next_token(parser);
 
-    ASTExpr *condition = parse_expression(parser);
+    ASTExpr *condition = parse_expression(parser, EXPR_NO_STRUCT_LIT);
+
     if (!condition) {
         return NULL;
     }
@@ -407,10 +409,10 @@ static ASTStmt *parse_for_clause(Parser *parser, TokenType terminator) {
     }
 
     if (parser->current.type == TOKEN_LET) {
-        return parse_var_decl_stmt(parser);
+        return parse_var_decl_stmt(parser, EXPR_NO_STRUCT_LIT);
     }
 
-    return parse_expr_stmt(parser);
+    return parse_expr_stmt(parser, EXPR_NO_STRUCT_LIT);
 }
 
 static ASTStmt *parse_for_stmt(Parser *parser) {
@@ -463,7 +465,7 @@ static ASTStmt *parse_for_stmt(Parser *parser) {
     parser_next_token(parser);
 
     if (parser->current.type != TOKEN_SEMICOLON) {
-        condition = parse_expression(parser);
+        condition = parse_expression(parser, EXPR_NO_STRUCT_LIT);
         if (!condition) {
             ast_stmt_destroy(init);
             return NULL;
@@ -917,7 +919,7 @@ static ASTStmt *parse_return_stmt(Parser *parser) {
 
     parser_next_token(parser);
 
-    ASTExpr *result = parse_expression(parser);
+    ASTExpr *result = parse_expression(parser, EXPR_ANY);
     if (!result) {
         return NULL;
     }
@@ -955,10 +957,10 @@ static bool compound_assign_op(TokenType type, BinOp *op) {
     return true;
 }
 
-static ASTStmt *parse_expr_stmt(Parser *parser) {
+static ASTStmt *parse_expr_stmt(Parser *parser, ExprContext ctx) {
     Span span = parser_span(parser);
 
-    ASTExpr *expr = parse_expression(parser);
+    ASTExpr *expr = parse_expression(parser, ctx);
     if (expr == NULL) {
         return NULL;
     }
@@ -981,7 +983,7 @@ static ASTStmt *parse_expr_stmt(Parser *parser) {
 
     parser_next_token(parser);
 
-    ASTExpr *value = parse_expression(parser);
+    ASTExpr *value = parse_expression(parser, ctx);
     if (!value) {
         ast_expr_free(expr);
         return NULL;
@@ -1009,7 +1011,7 @@ static bool stmt_needs_terminator(ASTStmt *stmt) {
     }
 }
 
-static ASTExpr *parse_expression(Parser *parser) { return parse_precedence(parser, 0); }
+static ASTExpr *parse_expression(Parser *parser, ExprContext ctx) { return parse_precedence(parser, 0, ctx); }
 
 static void ast_expr_list_destroy(ASTExprList *list) {
     for (size_t i = 0; i < list->size; i++) {
@@ -1053,7 +1055,7 @@ static bool parse_call_args(Parser *parser, ASTExprList *out) {
             break;
         }
 
-        ASTExpr *arg = parse_expression(parser);
+        ASTExpr *arg = parse_expression(parser, EXPR_ANY);
         if (!arg) {
             ok = false;
             break;
@@ -1081,6 +1083,160 @@ static bool parse_call_args(Parser *parser, ASTExprList *out) {
 
     *out = args;
     return true;
+}
+
+/* '<' after a name opens type arguments only when '::' or '{' closes them; otherwise it is a comparison. */
+static bool parser_scan_type_args(Parser *parser, TokenType after) {
+    parser_next_token(parser);
+
+    for (int depth = 1; depth > 0;) {
+        switch (parser->current.type) {
+        case TOKEN_LESS:
+            depth++;
+            break;
+        case TOKEN_GREATER:
+            depth--;
+            break;
+        case TOKEN_IDENT:
+        case TOKEN_COMMA:
+        case TOKEN_REF:
+        case TOKEN_BOX:
+        case TOKEN_LBRACKET:
+        case TOKEN_RBRACKET:
+        case TOKEN_SEMICOLON:
+        case TOKEN_INT:
+            break;
+        /* Every token 'parse_type_expr' accepts must be listed above, or a valid type argument scans as a
+         * comparison. */
+        default:
+            return false;
+        }
+
+        parser_next_token(parser);
+    }
+
+    return parser->current.type == after;
+}
+
+static bool parser_type_args_close_with(Parser *parser, TokenType after) {
+    Lexer saved_lexer = *parser->lexer;
+    Token saved_current = parser->current;
+
+    bool ok = parser_scan_type_args(parser, after);
+
+    *parser->lexer = saved_lexer;
+    parser->current = saved_current;
+
+    return ok;
+}
+
+static bool parser_type_args_precede_a_brace(Parser *parser) {
+    return parser_type_args_close_with(parser, TOKEN_LBRACE);
+}
+
+static bool parser_type_args_precede_colons(Parser *parser) {
+    return parser_type_args_close_with(parser, TOKEN_COLON_COLON);
+}
+
+static TypeExpr *parse_type_args_for(Parser *parser, StringRef name) {
+    parser_next_token(parser);
+
+    TypeExpr *apply = type_expr_apply(type_expr_name(name));
+
+    for (;;) {
+        TypeExpr *argument = parse_type_expr(parser);
+
+        if (!argument) {
+            type_expr_destroy(apply);
+            return NULL;
+        }
+
+        type_expr_list_add(&apply->apply.args, argument);
+
+        if (parser->current.type != TOKEN_COMMA) {
+            break;
+        }
+
+        parser_next_token(parser);
+    }
+
+    if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after a type's arguments")) {
+        type_expr_destroy(apply);
+        return NULL;
+    }
+
+    parser_next_token(parser);
+
+    return apply;
+}
+
+static bool parse_field_inits(Parser *parser, ASTFieldInitList *out) {
+    while (parser->current.type != TOKEN_RBRACE) {
+        Span field_span = parser_span(parser);
+
+        if (!parser_expect(parser, TOKEN_IDENT, "expected a field name")) {
+            return false;
+        }
+
+        StringRef field_name = parser->current.lexeme;
+
+        parser_next_token(parser);
+
+        if (!parser_expect(parser, TOKEN_COLON, "expected ':' after a field name")) {
+            return false;
+        }
+
+        parser_next_token(parser);
+
+        ASTExpr *value = parse_expression(parser, EXPR_ANY);
+
+        if (!value) {
+            return false;
+        }
+
+        ast_field_init_list_add(out, (ASTFieldInit){.name = field_name, .value = value, .span = field_span});
+
+        if (parser->current.type != TOKEN_COMMA) {
+            break;
+        }
+
+        parser_next_token(parser);
+    }
+
+    return parser_expect(parser, TOKEN_RBRACE, "expected '}' or ',' after a field value");
+}
+
+static ASTExpr *parse_struct_lit_expr(Parser *parser, ASTExpr *target) {
+    Span span = target->span;
+    StringRef name = target->var.name;
+
+    ast_expr_free(target);
+
+    TypeExpr *type_expr =
+        parser->current.type == TOKEN_LESS ? parse_type_args_for(parser, name) : type_expr_name(name);
+
+    if (!type_expr) {
+        return NULL;
+    }
+
+    if (!parser_expect(parser, TOKEN_LBRACE, "expected '{' after a struct's name")) {
+        type_expr_destroy(type_expr);
+        return NULL;
+    }
+
+    parser_next_token(parser);
+
+    ASTFieldInitList fields = ast_field_init_list_create();
+
+    if (!parse_field_inits(parser, &fields)) {
+        type_expr_destroy(type_expr);
+        ast_field_init_list_destroy(&fields);
+        return NULL;
+    }
+
+    parser_next_token(parser);
+
+    return ast_struct_lit_expr_create(span, type_expr, fields);
 }
 
 static ASTExpr *parse_call_expr(Parser *parser, ASTExpr *target) {
@@ -1112,7 +1268,7 @@ static ASTExpr *parse_index_expr(Parser *parser, ASTExpr *target) {
 
     parser_next_token(parser);
 
-    ASTExpr *index = parse_expression(parser);
+    ASTExpr *index = parse_expression(parser, EXPR_ANY);
 
     if (!index) {
         ast_expr_free(target);
@@ -1130,10 +1286,103 @@ static ASTExpr *parse_index_expr(Parser *parser, ASTExpr *target) {
     return ast_index_expr_create(span, target, index);
 }
 
-static ASTExpr *parse_unary(Parser *parser) {
+/* A '{' after a plain name opens a literal; '<' does only when the type arguments it opens reach one. */
+static bool starts_struct_lit(Parser *parser, const ASTExpr *expr, ExprContext ctx) {
+    if (ctx != EXPR_ANY || expr->kind != EXPR_VARIABLE) {
+        return false;
+    }
+
+    return parser->current.type == TOKEN_LBRACE || parser_type_args_precede_a_brace(parser);
+}
+
+static ASTExpr *parse_postfix(Parser *parser, ASTExpr *expr, ExprContext ctx) {
+    while (expr) {
+        switch (parser->current.type) {
+        case TOKEN_LPAREN:
+            expr = parse_call_expr(parser, expr);
+            break;
+        case TOKEN_LBRACKET:
+            expr = parse_index_expr(parser, expr);
+            break;
+        case TOKEN_DOT:
+            expr = parse_field_expr(parser, expr);
+            break;
+        case TOKEN_LBRACE:
+        case TOKEN_LESS:
+            if (!starts_struct_lit(parser, expr, ctx)) {
+                return expr;
+            }
+
+            expr = parse_struct_lit_expr(parser, expr);
+            break;
+        default:
+            return expr;
+        }
+    }
+
+    return NULL;
+}
+
+static ASTExpr *parse_unary(Parser *parser, ExprContext ctx) {
     Span span = parser_span(parser);
 
-    if (parser->current.type == TOKEN_NEW) {
+    if (parser->current.type == TOKEN_MUL || parser->current.type == TOKEN_MINUS ||
+        parser->current.type == TOKEN_NOT) {
+        TokenType prefix = parser->current.type;
+
+        parser_next_token(parser);
+
+        ASTExpr *target = parse_unary(parser, ctx);
+        if (!target) {
+            return NULL;
+        }
+
+        switch (prefix) {
+        case TOKEN_MUL:
+            return ast_deref_expr_create(span, target);
+        case TOKEN_NOT:
+            return ast_not_expr_create(span, target);
+        default:
+            return ast_neg_expr_create(span, target);
+        }
+    }
+
+    return parse_postfix(parser, parse_primary(parser), ctx);
+}
+
+static ASTExpr *parse_precedence(Parser *parser, int min_precedence, ExprContext ctx) {
+    ASTExpr *lhs = parse_unary(parser, ctx);
+    if (!lhs)
+        return NULL;
+
+    while (1) {
+        Token token = parser->current;
+        int precedence = get_precedence(token.type);
+
+        if (precedence == 0 || precedence < min_precedence) {
+            break;
+        }
+
+        parser_next_token(parser);
+
+        BinOp op = parse_bin_op(token.type);
+        ASTExpr *rhs = parse_precedence(parser, precedence + 1, ctx);
+
+        if (!rhs) {
+            ast_expr_free(lhs);
+            return NULL;
+        }
+
+        lhs = ast_bin_op_expr_create(token_span(token), lhs, op, rhs);
+    }
+
+    return lhs;
+}
+
+static ASTExpr *parse_primary(Parser *parser) {
+    Span span = parser_span(parser);
+    switch (parser->current.type) {
+    case TOKEN_NEW: {
         parser_next_token(parser);
 
         TypeExpr *spec = parse_type_expr(parser);
@@ -1143,8 +1392,7 @@ static ASTExpr *parse_unary(Parser *parser) {
 
         return ast_new_expr_create(span, spec);
     }
-
-    if (parser->current.type == TOKEN_LBRACKET) {
+    case TOKEN_LBRACKET: {
         parser_next_token(parser);
 
         ASTExprList elements = ast_expr_list_create();
@@ -1156,7 +1404,7 @@ static ASTExpr *parse_unary(Parser *parser) {
                 return NULL;
             }
 
-            ASTExpr *element = parse_expression(parser);
+            ASTExpr *element = parse_expression(parser, EXPR_ANY);
 
             if (!element) {
                 ast_expr_list_free(&elements);
@@ -1181,83 +1429,6 @@ static ASTExpr *parse_unary(Parser *parser) {
 
         return ast_array_lit_expr_create(span, elements);
     }
-
-    if (parser->current.type == TOKEN_MUL || parser->current.type == TOKEN_MINUS ||
-        parser->current.type == TOKEN_NOT) {
-        TokenType prefix = parser->current.type;
-
-        parser_next_token(parser);
-
-        ASTExpr *target = parse_unary(parser);
-        if (!target) {
-            return NULL;
-        }
-
-        switch (prefix) {
-        case TOKEN_MUL:
-            return ast_deref_expr_create(span, target);
-        case TOKEN_NOT:
-            return ast_not_expr_create(span, target);
-        default:
-            return ast_neg_expr_create(span, target);
-        }
-    }
-
-    ASTExpr *expr = parse_primary(parser);
-    if (!expr) {
-        return NULL;
-    }
-
-    while (parser->current.type == TOKEN_LPAREN || parser->current.type == TOKEN_DOT ||
-           parser->current.type == TOKEN_LBRACKET) {
-        if (parser->current.type == TOKEN_LPAREN) {
-            expr = parse_call_expr(parser, expr);
-        } else if (parser->current.type == TOKEN_LBRACKET) {
-            expr = parse_index_expr(parser, expr);
-        } else {
-            expr = parse_field_expr(parser, expr);
-        }
-
-        if (!expr) {
-            return NULL;
-        }
-    }
-
-    return expr;
-}
-
-static ASTExpr *parse_precedence(Parser *parser, int min_precedence) {
-    ASTExpr *lhs = parse_unary(parser);
-    if (!lhs)
-        return NULL;
-
-    while (1) {
-        Token token = parser->current;
-        int precedence = get_precedence(token.type);
-
-        if (precedence == 0 || precedence < min_precedence) {
-            break;
-        }
-
-        parser_next_token(parser);
-
-        BinOp op = parse_bin_op(token.type);
-        ASTExpr *rhs = parse_precedence(parser, precedence + 1);
-
-        if (!rhs) {
-            ast_expr_free(lhs);
-            return NULL;
-        }
-
-        lhs = ast_bin_op_expr_create(token_span(token), lhs, op, rhs);
-    }
-
-    return lhs;
-}
-
-static ASTExpr *parse_primary(Parser *parser) {
-    Span span = parser_span(parser);
-    switch (parser->current.type) {
     case TOKEN_INT: {
         int32_t value = parser->current.value.as_int;
 
@@ -1295,10 +1466,22 @@ static ASTExpr *parse_primary(Parser *parser) {
 
         parser_next_token(parser);
 
+        TypeExpr *owner_type_expr = NULL;
+
+        if (parser->current.type == TOKEN_LESS && parser_type_args_precede_colons(parser)) {
+            owner_type_expr = parse_type_args_for(parser, lexeme);
+
+            if (!owner_type_expr) {
+                return NULL;
+            }
+        }
+
         if (parser->current.type == TOKEN_COLON_COLON) {
             parser_next_token(parser);
 
-            if (!parser_expect(parser, TOKEN_IDENT, "expected a name after '::'")) {
+            if (parser->current.type != TOKEN_NEW &&
+                !parser_expect(parser, TOKEN_IDENT, "expected a name after '::'")) {
+                type_expr_destroy(owner_type_expr);
                 return NULL;
             }
 
@@ -1309,16 +1492,24 @@ static ASTExpr *parse_primary(Parser *parser) {
 
             if (parser->current.type == TOKEN_COLON_COLON) {
                 parser_error(parser, "a qualified name has one '::', as 'Module::name'");
+                type_expr_destroy(owner_type_expr);
                 return NULL;
             }
+        } else if (owner_type_expr) {
+            type_expr_destroy(owner_type_expr);
+            owner_type_expr = NULL;
         }
 
-        return ast_variable_expr_create(span, lexeme);
+        ASTExpr *variable = ast_variable_expr_create(span, lexeme);
+
+        variable->var.owner_type_expr = owner_type_expr;
+
+        return variable;
     }
     case TOKEN_LPAREN: {
         parser_next_token(parser);
 
-        ASTExpr *node = parse_expression(parser);
+        ASTExpr *node = parse_expression(parser, EXPR_ANY);
 
         if (node == NULL) {
             return NULL;

@@ -15,7 +15,7 @@ FlowSlot flow_get(const Flow *flow, Binding *binding) {
         return *found;
     }
 
-    return (FlowSlot){.init = FLOW_UNREACHED, .inner_depth = 0, .written_fields = 0};
+    return (FlowSlot){.init = FLOW_UNREACHED, .inner_depth = 0};
 }
 
 void flow_set(Flow *flow, Binding *binding, FlowSlot slot) {
@@ -63,8 +63,6 @@ static FlowSlot slot_merge(FlowSlot a, FlowSlot b) {
     return (FlowSlot){
         .init = init,
         .inner_depth = a.inner_depth > b.inner_depth ? a.inner_depth : b.inner_depth,
-
-        .written_fields = a.written_fields & b.written_fields,
     };
 }
 
@@ -91,8 +89,7 @@ bool flow_equals(const Flow *a, const Flow *b) {
     flow_for_each(a->slots, entry) {
         FlowSlot other = flow_get(b, entry->key);
 
-        if (other.init != entry->value.init || other.inner_depth != entry->value.inner_depth ||
-            other.written_fields != entry->value.written_fields) {
+        if (other.init != entry->value.init || other.inner_depth != entry->value.inner_depth) {
             return false;
         }
     }
@@ -100,8 +97,7 @@ bool flow_equals(const Flow *a, const Flow *b) {
     flow_for_each(b->slots, entry) {
         FlowSlot other = flow_get(a, entry->key);
 
-        if (other.init != entry->value.init || other.inner_depth != entry->value.inner_depth ||
-            other.written_fields != entry->value.written_fields) {
+        if (other.init != entry->value.init || other.inner_depth != entry->value.inner_depth) {
             return false;
         }
     }

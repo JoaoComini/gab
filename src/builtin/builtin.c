@@ -103,6 +103,7 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
 
     const MethodDecl declared = {
         .name = function->name,
+        .body_kind = BODY_NATIVE,
         .body = (void *)body,
         .result = return_type,
         .params = function->params,

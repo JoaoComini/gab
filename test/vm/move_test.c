@@ -6,8 +6,7 @@
 static void test_a_type_owning_nothing_copies_implicitly() {
     assert(test_run_int("struct Point { x: int, y: int }\n"
                         "func main(): int {\n"
-                        "    let a: Point;\n"
-                        "    a.x = 3;\n"
+                        "    let a = Point { x: 3, y: 0 };\n"
                         "    let b = a;\n"
                         "    return b.x;\n"
                         "}\n"
@@ -18,8 +17,7 @@ static void test_a_type_holding_an_owning_pointer_transfers() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "struct Holder { b: box Box }\n"
                           "func main(): int {\n"
-                          "    let h: Holder;\n"
-                          "    h.b = new Box;\n"
+                          "    let h = Holder { b: new Box };\n"
                           "    let other = h;\n"
                           "    return h.b.n;\n"
                           "}\n"));
@@ -29,7 +27,8 @@ static void test_a_type_holding_a_borrow_still_copies() {
     assert(test_compiles("struct Box { n: int }\n"
                          "struct Watcher { b: ref Box }\n"
                          "func main(): int {\n"
-                         "    let w: Watcher;\n"
+                         "    let b = Box { n: 1 };\n"
+                         "    let w = Watcher { b: b };\n"
                          "    let other = w;\n"
                          "    return 0;\n"
                          "}\n"));

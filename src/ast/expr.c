@@ -31,6 +31,7 @@ ASTExpr *ast_variable_expr_create(Span span, StringRef name) {
     ASTExpr *node = ast_expr_create(span);
     node->kind = EXPR_VARIABLE;
     node->var.name = name;
+    node->var.owner_type_expr = NULL;
     return node;
 }
 
@@ -112,6 +113,22 @@ ASTExpr *ast_array_lit_expr_create(Span span, ASTExprList elements) {
     return node;
 }
 
+ASTExpr *ast_struct_lit_expr_create(Span span, TypeExpr *type_expr, ASTFieldInitList fields) {
+    ASTExpr *node = ast_expr_create(span);
+    node->kind = EXPR_STRUCT_LIT;
+    node->struct_lit.type_expr = type_expr;
+    node->struct_lit.fields = fields;
+    return node;
+}
+
+void ast_field_init_list_destroy(ASTFieldInitList *fields) {
+    for (size_t i = 0; i < fields->size; i++) {
+        ast_expr_free(fields->data[i].value);
+    }
+
+    ast_field_init_list_free(fields);
+}
+
 ASTExpr *ast_index_expr_create(Span span, ASTExpr *target, ASTExpr *index) {
     ASTExpr *node = ast_expr_create(span);
     node->kind = EXPR_INDEX;
@@ -163,6 +180,13 @@ void ast_expr_free(ASTExpr *expr) {
             ast_expr_free(expr->array_lit.elements.data[i]);
         }
         ast_expr_list_free(&expr->array_lit.elements);
+        break;
+    case EXPR_VARIABLE:
+        type_expr_destroy(expr->var.owner_type_expr);
+        break;
+    case EXPR_STRUCT_LIT:
+        type_expr_destroy(expr->struct_lit.type_expr);
+        ast_field_init_list_destroy(&expr->struct_lit.fields);
         break;
     case EXPR_INDEX:
         ast_expr_free(expr->index.target);

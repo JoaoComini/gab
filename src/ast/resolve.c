@@ -1143,6 +1143,109 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         expr->type = type_registry_box_to(state->current_scope->type_registry, type);
         break;
     }
+    case EXPR_STRUCT_LIT: {
+        const Type *type = resolve_type_expr(state, expr->struct_lit.type_expr, expr->span);
+
+        if (is_error_type(type)) {
+            for (size_t i = 0; i < expr->struct_lit.fields.size; i++) {
+                resolve_expr(state, expr->struct_lit.fields.data[i].value, NULL);
+            }
+
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        TypeRegistry *registry = state->current_scope->type_registry;
+
+        if (type_kind(type) != TYPE_STRUCT) {
+            for (size_t i = 0; i < expr->struct_lit.fields.size; i++) {
+                resolve_expr(state, expr->struct_lit.fields.data[i].value, NULL);
+            }
+
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "%s is not a struct",
+                       type_name(state, type));
+            expr->type = resolver_error_type(state);
+            break;
+        }
+
+        const TypeFields *fields = type_registry_fields_of(registry, type);
+
+        bool ok = true;
+        bool *seen = fields->count ? arena_alloc(state->compile_arena, fields->count * sizeof *seen) : NULL;
+
+        for (size_t f = 0; f < fields->count; f++) {
+            seen[f] = false;
+        }
+
+        for (size_t i = 0; i < expr->struct_lit.fields.size; i++) {
+            ASTFieldInit *init = &expr->struct_lit.fields.data[i];
+            String *field_name = resolver_intern(state, init->name);
+
+            size_t index = fields->count;
+            for (size_t f = 0; f < fields->count; f++) {
+                if (fields->fields[f].name == field_name) {
+                    index = f;
+                    break;
+                }
+            }
+
+            if (index == fields->count) {
+                resolve_expr(state, init->value, NULL);
+                diag_error(state->diagnostics, GAB_ERR_TYPE, init->span, "%s has no field '%.*s'",
+                           type_name(state, type), (int)init->name.length, init->name.data);
+                ok = false;
+                continue;
+            }
+
+            if (seen[index]) {
+                resolve_expr(state, init->value, fields->fields[index].type);
+                diag_error(state->diagnostics, GAB_ERR_TYPE, init->span, "field '%.*s' is given twice",
+                           (int)init->name.length, init->name.data);
+                ok = false;
+                continue;
+            }
+
+            seen[index] = true;
+            init->index = index;
+
+            const Type *field_type = fields->fields[index].type;
+
+            resolve_expr(state, init->value, field_type);
+
+            ASTExpr *value = init->value;
+
+            if (is_error_type(value->type)) {
+                ok = false;
+                continue;
+            }
+
+            if (!type_accepts(registry, field_type, value->type)) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, value->span,
+                           "field '%.*s' is %s, but %s was given", (int)init->name.length, init->name.data,
+                           type_name(state, field_type), type_name(state, value->type));
+                ok = false;
+                continue;
+            }
+
+            if (!borrow_into(state, &init->value, field_type, value->span)) {
+                ok = false;
+                continue;
+            }
+
+            mark_implicit_move(state, init->value, field_type, value->span);
+        }
+
+        for (size_t f = 0; f < fields->count; f++) {
+            if (!seen[f]) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "field '%s' is missing",
+                           fields->fields[f].name->data);
+                ok = false;
+            }
+        }
+
+        expr->type = ok ? type : resolver_error_type(state);
+        break;
+    }
     case EXPR_ARRAY_LIT: {
         for (size_t i = 0; i < expr->array_lit.elements.size; i++) {
             resolve_expr(state, expr->array_lit.elements.data[i], NULL);
@@ -1748,15 +1851,25 @@ static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
         return NULL;
     }
 
-    Resolution resolution = scope_resolve(state->current_scope, resolver_intern(state, owner_ref));
+    const Type *owner;
 
-    if (resolution.kind == RESOLUTION_TYPE_DECL && resolution.def->param_count > 0) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "'%s' takes %zu type argument(s), not 0",
-                   resolution.def->name->data, resolution.def->param_count);
-        return NULL;
+    if (expr->var.owner_type_expr) {
+        owner = resolve_type_expr(state, expr->var.owner_type_expr, expr->span);
+
+        if (is_error_type(owner)) {
+            return NULL;
+        }
+    } else {
+        Resolution resolution = scope_resolve(state->current_scope, resolver_intern(state, owner_ref));
+
+        if (resolution.kind == RESOLUTION_TYPE_DECL && resolution.def->param_count > 0) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "'%s' takes %zu type argument(s), not 0",
+                       resolution.def->name->data, resolution.def->param_count);
+            return NULL;
+        }
+
+        owner = resolution_type(state->current_scope->type_registry, resolution);
     }
-
-    const Type *owner = resolution_type(state->current_scope->type_registry, resolution);
 
     if (!owner) {
         return NULL;
@@ -1891,6 +2004,14 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         }
 
         resolve_expr(state, stmt->var_decl.initializer, declared);
+
+        if (!stmt->var_decl.initializer && declared && !is_error_type(declared) &&
+            type_kind(declared) == TYPE_STRUCT) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
+                       "a %s must be given its fields where it is declared, as '%s { ... }'",
+                       type_name(state, declared), type_name(state, declared));
+            declared = resolver_error_type(state);
+        }
 
         const Type *type;
         if (stmt->var_decl.type_expr) {

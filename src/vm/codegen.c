@@ -135,6 +135,8 @@ static unsigned int codegen_cast_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_new_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_index_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_array_lit_expr(CodegenState *state, ASTExpr *node);
+static unsigned int codegen_struct_lit_expr(CodegenState *state, ASTExpr *node);
+static void codegen_struct_lit_into(CodegenState *state, ASTExpr *node, unsigned int rd);
 
 static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *node, bool auto_deref);
 static bool codegen_field_access_fits(CodegenState *state, ASTExpr *node, bool ok, size_t offset);
@@ -483,6 +485,12 @@ static void codegen_var_decl_stmt(CodegenState *state, ASTVarDecl *ast) {
 
     if (!is_ref && !type_registry_owns(state->registry, ast->binding->var.type) &&
         codegen_expr_into(state, ast->initializer, slot)) {
+        codegen_release_registers(state, saved);
+        return;
+    }
+
+    if (ast->initializer->kind == EXPR_STRUCT_LIT) {
+        codegen_struct_lit_into(state, ast->initializer, slot);
         codegen_release_registers(state, saved);
         return;
     }
@@ -1160,6 +1168,8 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
         return codegen_index_expr(state, ast);
     case EXPR_ARRAY_LIT:
         return codegen_array_lit_expr(state, ast);
+    case EXPR_STRUCT_LIT:
+        return codegen_struct_lit_expr(state, ast);
     }
 
     assert(0 && "unknown expression kind");
@@ -1429,6 +1439,13 @@ static unsigned int codegen_index_address(CodegenState *state, ASTExpr *node) {
     return address;
 }
 
+static void codegen_value_into_slot(CodegenState *state, ASTExpr *value, unsigned int slot,
+                                    const Type *type) {
+    if (!codegen_expr_into(state, value, slot)) {
+        codegen_copy_slots(state, slot, codegen_expr(state, value), type_slot_count(state->registry, type));
+    }
+}
+
 static unsigned int codegen_array_lit_expr(CodegenState *state, ASTExpr *node) {
     const Type *type = node->type;
     const Type *element = type_array_element(type);
@@ -1443,12 +1460,56 @@ static unsigned int codegen_array_lit_expr(CodegenState *state, ASTExpr *node) {
 
         unsigned int slot = rd + (unsigned int)i * element_slots;
 
-        if (!codegen_expr_into(state, value, slot)) {
-            codegen_copy_slots(state, slot, codegen_expr(state, value), element_slots);
-        }
+        codegen_value_into_slot(state, value, slot, element);
 
         codegen_own_slot(state, slot, element);
     }
+
+    return rd;
+}
+
+static void codegen_struct_lit_into(CodegenState *state, ASTExpr *node, unsigned int rd) {
+    const Type *type = node->type;
+    const TypeLayout *layout = type_registry_layout_of(state->registry, type);
+    const TypeFields *fields = type_registry_fields_of(state->registry, type);
+
+    for (size_t i = 0; i < node->struct_lit.fields.size; i++) {
+        ASTFieldInit *init = &node->struct_lit.fields.data[i];
+
+        const Type *field_type = fields->fields[init->index].type;
+        size_t offset = layout->offsets[init->index];
+
+        if (type_moves_as_slots(state->registry, field_type) ||
+            type_slot_count(state->registry, field_type) > 1) {
+            unsigned int slot = rd + (unsigned int)(offset / VM_SLOT_SIZE);
+
+            codegen_value_into_slot(state, init->value, slot, field_type);
+
+            if (type_registry_owns(state->registry, field_type)) {
+                codegen_own_slot(state, slot, field_type);
+            }
+
+            continue;
+        }
+
+        bool ok;
+        OpCode op = field_opcode_for(type_registry_size_of(state->registry, field_type), false, false, &ok);
+
+        if (!codegen_field_access_fits(state, init->value, ok, offset)) {
+            continue;
+        }
+
+        unsigned int src = codegen_expr(state, init->value);
+
+        chunk_add_instruction(state->chunk, VM_ENCODE_R(op, rd, src, (unsigned int)offset));
+    }
+}
+
+static unsigned int codegen_struct_lit_expr(CodegenState *state, ASTExpr *node) {
+    unsigned int rd = codegen_alloc_slots(state, type_slot_count(state->registry, node->type),
+                                          type_align_slots(state->registry, node->type), node->span);
+
+    codegen_struct_lit_into(state, node, rd);
 
     return rd;
 }
@@ -2157,6 +2218,7 @@ static bool expr_yields_owned(TypeRegistry *registry, const ASTExpr *expr) {
 
     case EXPR_NEW:
     case EXPR_CALL:
+    case EXPR_STRUCT_LIT:
         return true;
 
     case EXPR_VARIABLE:

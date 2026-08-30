@@ -47,6 +47,18 @@ static void compile(TestContext *ctx, const char *source) {
     ast_unit_destroy(unit);
 }
 
+static void test_a_struct_local_without_a_literal_reports_once() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    compile(&ctx, "struct Point { x: int, y: int }\n"
+                  "func f(): int { let v: Point; v.x = 1; return v.x + v.y; }\n");
+
+    assert(diagnostics_count(&ctx.diagnostics) == 1);
+
+    test_context_free(&ctx);
+}
+
 static void test_records_kind_and_position() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -285,7 +297,7 @@ static void test_reports_unknown_field_name() {
     Diagnostics *diagnostics = &ctx.diagnostics;
 
     compile(&ctx, "struct Vec3 { x: float, y: float, z: float }\n"
-                  "func f(): float { let v: Vec3; return v.w; }");
+                  "func f(): float { let v = Vec3 { x: 0.0, y: 0.0, z: 0.0 }; return v.w; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -318,7 +330,7 @@ static void test_reports_mismatched_field_assignment() {
     Diagnostics *diagnostics = &ctx.diagnostics;
 
     compile(&ctx, "struct Vec3 { x: float, y: float, z: float }\n"
-                  "func f(): float { let v: Vec3; v.x = true; return v.x; }");
+                  "func f(): float { let v = Vec3 { x: 0.0, y: 0.0, z: 0.0 }; v.x = true; return v.x; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -786,7 +798,8 @@ static void test_reports_returning_a_string_borrow_of_a_local() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile_with_library(&ctx, "func test(a: ref str): ref str { let s: String; return s; }");
+    compile_with_library(&ctx,
+                         "func test(a: ref str): ref str { let s: String = String::from(\"\"); return s; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -802,7 +815,8 @@ static void test_reports_a_string_borrow_escaping_its_block() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile_with_library(&ctx, "func test(a: ref str) { let p: ref str; { let s: String; p = s; } }");
+    compile_with_library(
+        &ctx, "func test(a: ref str) { let p: ref str; { let s: String = String::from(\"\"); p = s; } }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -819,9 +833,10 @@ static void test_reports_a_string_borrow_stored_into_a_heap_object() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile_with_library(&ctx, "struct Doc { body: ref str }\n"
-                               "func test(a: ref str) { let d: box Doc = new Doc; let s: String; "
-                               "d.body = s; }");
+    compile_with_library(
+        &ctx, "struct Doc { body: ref str }\n"
+              "func test(a: ref str) { let d: box Doc = new Doc; let s: String = String::from(\"\"); "
+              "d.body = s; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -838,9 +853,10 @@ static void test_reports_a_stack_pointer_stored_into_a_heap_object() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "struct Inner { n: int }\n"
-                  "struct Outer { child: ref Inner }\n"
-                  "func test() { let o: box Outer = new Outer; let local: Inner; o.child = local; }");
+    compile(&ctx,
+            "struct Inner { n: int }\n"
+            "struct Outer { child: ref Inner }\n"
+            "func test() { let o: box Outer = new Outer; let local = Inner { n: 0 }; o.child = local; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -871,6 +887,7 @@ static void test_accepts_pointers_that_do_not_outlive_their_pointee() {
 
 int main(void) {
     test_empty_sink_has_no_errors();
+    test_a_struct_local_without_a_literal_reports_once();
     test_records_kind_and_position();
     test_accumulates_in_source_order();
 

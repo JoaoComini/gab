@@ -322,6 +322,20 @@ bool type_registry_declare_method(TypeRegistry *registry, const Type *type, cons
     return declare_method(registry, method_key_of(registry, type, method->name), method);
 }
 
+/* A method whose signature mentions no type parameter is one function for every instantiation of its owner.
+ */
+static bool method_is_shared(const MethodDecl *method, const Type *type) {
+    if (!method->function) {
+        return false;
+    }
+
+    if (method->param_count > 0 && type_has_param(method->params[0])) {
+        return false;
+    }
+
+    return !(type_arg_count(type) > 0 && type_has_param(method->result));
+}
+
 Function *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name) {
     if (!type) {
         return NULL;
@@ -339,7 +353,7 @@ Function *type_registry_find_method(TypeRegistry *registry, const Type *type, co
 
     const MethodDecl *method = *declared;
 
-    if (method->function && (method->param_count == 0 || !type_has_param(method->params[0]))) {
+    if (method_is_shared(method, type)) {
         return method->function;
     }
 

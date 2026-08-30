@@ -38,6 +38,7 @@ typedef enum {
     EXPR_INDEX,
 
     EXPR_ARRAY_LIT,
+    EXPR_STRUCT_LIT,
 } ExprKind;
 
 typedef enum {
@@ -62,6 +63,17 @@ typedef struct ASTExpr ASTExpr;
 #define ast_expr_list_item_free(item) (void)(item)
 GAB_LIST(ASTExprList, ast_expr_list, ASTExpr *)
 
+typedef struct {
+    StringRef name;
+    ASTExpr *value;
+    Span span;
+
+    size_t index;
+} ASTFieldInit;
+
+#define ast_field_init_list_item_free(item) (void)(item)
+GAB_LIST(ASTFieldInitList, ast_field_init_list, ASTFieldInit)
+
 typedef struct ASTExpr {
     ExprKind kind;
 
@@ -76,6 +88,8 @@ typedef struct ASTExpr {
 
         struct {
             StringRef name;
+
+            TypeExpr *owner_type_expr;
         } var;
 
         struct {
@@ -86,6 +100,11 @@ typedef struct ASTExpr {
         struct {
             ASTExprList elements;
         } array_lit;
+
+        struct {
+            TypeExpr *type_expr;
+            ASTFieldInitList fields;
+        } struct_lit;
 
         struct {
             ASTExpr *target;
@@ -147,6 +166,8 @@ ASTExpr *ast_not_expr_create(Span span, ASTExpr *target);
 ASTExpr *ast_cast_expr_create(Span span, ASTExpr *operand);
 ASTExpr *ast_new_expr_create(Span span, TypeExpr *type_expr);
 ASTExpr *ast_array_lit_expr_create(Span span, ASTExprList elements);
+ASTExpr *ast_struct_lit_expr_create(Span span, TypeExpr *type_expr, ASTFieldInitList fields);
+void ast_field_init_list_destroy(ASTFieldInitList *fields);
 ASTExpr *ast_index_expr_create(Span span, ASTExpr *target, ASTExpr *index);
 
 const TypeField *ast_field_of(TypeRegistry *registry, const ASTExpr *expr);

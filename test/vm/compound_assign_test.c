@@ -53,11 +53,11 @@ static void test_compound_assign_on_a_float() {
 
 static void test_compound_assign_reaches_a_field() {
     assert(test_run_int("struct Point { x: int, y: int }\n"
-                        "func f(): int { let v: Point; v.x = 4; v.x += 3; return v.x; }\n"
+                        "func f(): int { let v = Point { x: 4, y: 0 }; v.x += 3; return v.x; }\n"
                         "let r: int = f();\n") == 7);
 
     assert(test_run_int("struct Point { x: int, y: int }\n"
-                        "func f(): int { let v: Point; v.x = 10; v.x -= 4; return v.x; }\n"
+                        "func f(): int { let v = Point { x: 10, y: 0 }; v.x -= 4; return v.x; }\n"
                         "let r: int = f();\n") == 6);
 }
 

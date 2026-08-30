@@ -107,8 +107,7 @@ static void test_lending_through_a_borrow_keeps_its_lifetime() {
 static void test_a_value_initializes_a_ref_binding() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
-                        "    let owned: Box;\n"
-                        "    owned.n = 4;\n"
+                        "    let owned = Box { n: 4 };\n"
                         "    let borrowed: ref Box = owned;\n"
                         "    return borrowed.n;\n"
                         "}\n"
@@ -118,8 +117,7 @@ static void test_a_value_initializes_a_ref_binding() {
 static void test_a_borrowed_binding_writes_through() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func main(): int {\n"
-                        "    let owned: Box;\n"
-                        "    owned.n = 1;\n"
+                        "    let owned = Box { n: 1 };\n"
                         "    let borrowed: ref Box = owned;\n"
                         "    borrowed.n = 9;\n"
                         "    return owned.n;\n"
@@ -131,7 +129,7 @@ static void test_a_temporary_cannot_be_borrowed() {
     assert(!test_compiles("func f(): int { let p: ref int = 1; return *p; }\n"));
 
     assert(!test_compiles("struct Box { n: int }\n"
-                          "func make(): Box { let b: Box; return b; }\n"
+                          "func make(): Box { let b = Box { n: 0 }; return b; }\n"
                           "func peek(b: ref Box): int { return b.n; }\n"
                           "func main(): int { return peek(make()); }\n"));
 }
@@ -230,7 +228,7 @@ static void test_a_call_returning_a_ref_is_not_freed() {
 static void test_a_ref_to_a_local_cannot_be_returned() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func bad(): ref Box {\n"
-                          "    let local: Box;\n"
+                          "    let local = Box { n: 0 };\n"
                           "    return local;\n"
                           "}\n"));
 }
@@ -240,7 +238,7 @@ static void test_a_ref_returned_from_a_call_cannot_outlive_its_argument() {
                           "func borrow(b: ref Box): ref Box { return b; }\n"
                           "func main(): int {\n"
                           "    let escaped: ref Box;\n"
-                          "    { let inner: Box; escaped = borrow(inner); }\n"
+                          "    { let inner = Box { n: 0 }; escaped = borrow(inner); }\n"
                           "    return escaped.n;\n"
                           "}\n"));
 }
@@ -249,7 +247,7 @@ static void test_a_ref_declared_from_a_call_carries_the_argument_lifetime() {
     assert(!test_compiles("struct Box { n: int }\n"
                           "func borrow(b: ref Box): ref Box { return b; }\n"
                           "func leak(): ref Box {\n"
-                          "    let local: Box;\n"
+                          "    let local = Box { n: 0 };\n"
                           "    let got: ref Box = borrow(local);\n"
                           "    return got;\n"
                           "}\n"));
@@ -356,7 +354,7 @@ static void test_a_branch_join_takes_the_shorter_lived_borrow() {
                           "    let heap: box Box = new Box;\n"
                           "    let out: ref Box = heap;\n"
                           "    {\n"
-                          "        let inner: Box;\n"
+                          "        let inner = Box { n: 0 };\n"
                           "        let a: ref Box = heap;\n"
                           "        if 1 < 2 { a = inner; } else { a = heap; }\n"
                           "        out = a;\n"
@@ -369,7 +367,7 @@ static void test_a_branch_join_takes_the_shorter_lived_borrow() {
                          "    let heap: box Box = new Box;\n"
                          "    let out: ref Box = heap;\n"
                          "    {\n"
-                         "        let inner: Box;\n"
+                         "        let inner = Box { n: 0 };\n"
                          "        let a: ref Box = heap;\n"
                          "        if 1 < 2 { a = heap; } else { a = heap; }\n"
                          "        out = a;\n"
@@ -384,7 +382,7 @@ static void test_a_borrow_taken_late_in_a_loop_reaches_the_next_iteration() {
                           "    let heap: box Box = new Box;\n"
                           "    let out: ref Box = heap;\n"
                           "    {\n"
-                          "        let inner: Box;\n"
+                          "        let inner = Box { n: 0 };\n"
                           "        let a: ref Box = heap;\n"
                           "        for let i = 0; i < 2; i = i + 1 {\n"
                           "            out = a;\n"
@@ -401,7 +399,7 @@ static void test_reassigning_a_borrow_replaces_what_it_names() {
                          "    let heap: box Box = new Box;\n"
                          "    let out: ref Box = heap;\n"
                          "    {\n"
-                         "        let inner: Box;\n"
+                         "        let inner = Box { n: 0 };\n"
                          "        let a: ref Box = inner;\n"
                          "        a = heap;\n"
                          "        out = a;\n"
@@ -414,7 +412,7 @@ static void test_reassigning_a_borrow_replaces_what_it_names() {
                           "    let heap: box Box = new Box;\n"
                           "    let out: ref Box = heap;\n"
                           "    {\n"
-                          "        let inner: Box;\n"
+                          "        let inner = Box { n: 0 };\n"
                           "        let a: ref Box = inner;\n"
                           "        out = a;\n"
                           "    }\n"
@@ -428,7 +426,7 @@ static void test_an_arm_that_returns_does_not_reach_the_join() {
                          "    let heap: box Box = new Box;\n"
                          "    let out: ref Box = heap;\n"
                          "    {\n"
-                         "        let inner: Box;\n"
+                         "        let inner = Box { n: 0 };\n"
                          "        let a: ref Box = heap;\n"
                          "        if 1 < 2 { a = inner; return 0; } else { a = heap; }\n"
                          "        out = a;\n"
@@ -441,7 +439,7 @@ static void test_an_arm_that_returns_does_not_reach_the_join() {
                           "    let heap: box Box = new Box;\n"
                           "    let out: ref Box = heap;\n"
                           "    {\n"
-                          "        let inner: Box;\n"
+                          "        let inner = Box { n: 0 };\n"
                           "        let a: ref Box = heap;\n"
                           "        if 1 < 2 { a = inner; } else { a = heap; }\n"
                           "        out = a;\n"

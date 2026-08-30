@@ -106,6 +106,20 @@ static ASTExpr *clone_expr(const ASTExpr *expr) {
 
     case EXPR_ARRAY_LIT:
         return ast_array_lit_expr_create(expr->span, clone_expr_list(&expr->array_lit.elements));
+
+    case EXPR_STRUCT_LIT: {
+        ASTFieldInitList fields = ast_field_init_list_create();
+
+        for (size_t i = 0; i < expr->struct_lit.fields.size; i++) {
+            const ASTFieldInit *field = &expr->struct_lit.fields.data[i];
+
+            ast_field_init_list_add(
+                &fields,
+                (ASTFieldInit){.name = field->name, .value = clone_expr(field->value), .span = field->span});
+        }
+
+        return ast_struct_lit_expr_create(expr->span, clone_type_expr(expr->struct_lit.type_expr), fields);
+    }
     }
 
     assert(false && "an expression is one of the kinds above");

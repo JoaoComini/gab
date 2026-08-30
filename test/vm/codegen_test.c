@@ -318,7 +318,7 @@ static void test_a_method_counts_its_receiver() {
 static void test_a_struct_copy_is_one_instruction() {
     TestProgram program = test_compile("struct Point { x: int, y: int, z: int }\n"
                                        "func f() {\n"
-                                       "    let a: Point;\n"
+                                       "    let a = Point { x: 0, y: 0, z: 0 };\n"
                                        "    let b: Point = a;\n"
                                        "}\n");
 
@@ -374,7 +374,7 @@ static void test_a_pointer_copy_batches_when_it_is_wide() {
 static void test_a_self_copy_emits_nothing() {
     TestProgram self = test_compile("struct Point { x: int, y: int }\n"
                                     "func f() {\n"
-                                    "    let a: Point;\n"
+                                    "    let a = Point { x: 0, y: 0 };\n"
                                     "    a = a;\n"
                                     "}\n");
 
@@ -389,7 +389,7 @@ static void test_a_self_copy_emits_nothing() {
 static void test_a_struct_read_through_a_pointer_is_one_instruction() {
     TestProgram program = test_compile("struct Point { x: int, y: int, z: int }\n"
                                        "func f() {\n"
-                                       "    let a: Point;\n"
+                                       "    let a = Point { x: 0, y: 0, z: 0 };\n"
                                        "    let p: ref Point = a;\n"
                                        "    let b: Point = *p;\n"
                                        "}\n");
@@ -407,8 +407,8 @@ static void test_a_struct_read_through_a_pointer_is_one_instruction() {
 static void test_a_struct_write_through_a_pointer_is_one_instruction() {
     TestProgram program = test_compile("struct Point { x: int, y: int, z: int }\n"
                                        "func f() {\n"
-                                       "    let a: Point;\n"
-                                       "    let b: Point;\n"
+                                       "    let a = Point { x: 0, y: 0, z: 0 };\n"
+                                       "    let b = Point { x: 0, y: 0, z: 0 };\n"
                                        "    let p: ref Point = a;\n"
                                        "    *p = b;\n"
                                        "}\n");
