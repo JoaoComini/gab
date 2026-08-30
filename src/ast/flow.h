@@ -6,6 +6,7 @@
 #include "util/hash_map.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 typedef enum {
@@ -13,14 +14,28 @@ typedef enum {
     FLOW_UNINIT,
 
     FLOW_MOVED,
+    FLOW_DANGLING,
     FLOW_INIT,
 } FlowInit;
+
+#define FLOW_MAX_BORROW_SOURCES 4
 
 typedef struct {
     FlowInit init;
 
     int inner_depth;
+
+    /* The slots this one borrows from, so freeing any of their objects marks this one dangling. */
+    Binding *borrows_from[FLOW_MAX_BORROW_SOURCES];
+    size_t borrow_count;
+
+    /* Set when more sources were named than fit: the slot then borrows from every slot, not from none. */
+    bool borrows_unknown;
 } FlowSlot;
+
+/* Records 'from' as a slot this borrow names, if there is room and it is not already there. */
+void flow_slot_add_source(FlowSlot *slot, Binding *from);
+bool flow_slot_borrows_from(const FlowSlot *slot, const Binding *from);
 
 #define flow_map_hash(key) ((size_t)(key) >> 4)
 #define flow_map_key_equals(key, other) key == other
@@ -44,6 +59,9 @@ void flow_set(Flow *flow, Binding *binding, FlowSlot slot);
 void flow_copy(Flow *into, const Flow *from);
 
 void flow_merge(Flow *flow, const Flow *other);
+
+/* Marks every slot borrowing from 'freed' as dangling. */
+void flow_invalidate_borrows_of(Flow *flow, Binding *freed);
 
 bool flow_equals(const Flow *a, const Flow *b);
 
