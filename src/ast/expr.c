@@ -175,6 +175,20 @@ void ast_expr_free(ASTExpr *expr) {
     free(expr);
 }
 
+Symbol *ast_root_local(const ASTExpr *expr) {
+    for (; expr; expr = expr->kind == EXPR_FIELD ? expr->field.target : expr->unary.target) {
+        if (expr->kind == EXPR_VARIABLE) {
+            return expr->symbol;
+        }
+
+        if (expr->kind != EXPR_FIELD && expr->kind != EXPR_DEREF && expr->kind != EXPR_ADDR_OF) {
+            return NULL;
+        }
+    }
+
+    return NULL;
+}
+
 const TypeField *ast_field_of(TypeRegistry *registry, const ASTExpr *expr) {
     if (!expr->field.owner) {
         return NULL;

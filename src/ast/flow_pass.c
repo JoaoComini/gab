@@ -40,7 +40,7 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
 
     switch (expr->kind) {
     case EXPR_ADDR_OF: {
-        const Symbol *symbol = expr->unary.target->symbol;
+        const Symbol *symbol = ast_root_local(expr->unary.target);
 
         return symbol ? symbol->scope_depth : 0;
     }

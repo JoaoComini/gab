@@ -148,6 +148,8 @@ ASTExpr *ast_array_lit_expr_create(Span span, ASTExprList elements);
 ASTExpr *ast_index_expr_create(Span span, ASTExpr *target, ASTExpr *index);
 
 const TypeField *ast_field_of(TypeRegistry *registry, const ASTExpr *expr);
+
+Symbol *ast_root_local(const ASTExpr *expr);
 void ast_expr_free(ASTExpr *node);
 
 #endif

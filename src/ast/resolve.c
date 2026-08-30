@@ -974,8 +974,6 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
 
         expr->type = field->type;
 
-        expr->symbol = expr->field.target->symbol;
-
         break;
     }
     case EXPR_ADDR_OF: {
@@ -1030,7 +1028,6 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
 
         expr->type = type_pointee(target_type);
 
-        expr->symbol = expr->unary.target->symbol;
         break;
     }
     case EXPR_NEG: {

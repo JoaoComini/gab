@@ -609,7 +609,7 @@ static void codegen_assign_stmt(CodegenState *state, ASTAssignStmt *ast) {
 
     if (!target_is_ref && type_registry_owns(state->registry, ast->target->type) &&
         expr_yields_owned(state->registry, ast->value)) {
-        Symbol *target = ast->target->symbol;
+        Symbol *target = ast_root_local(ast->target);
 
         codegen_own_slot_at(state, rd, ast->target->type,
                             target ? codegen_decl_depth_of(state, target) : state->depth);
