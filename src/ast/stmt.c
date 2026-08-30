@@ -35,6 +35,7 @@ ASTStmt *ast_func_decl_stmt_create(Span span, StringRef name, TypeExpr *return_t
     stmt->func_decl.body = body;
     stmt->func_decl.function = NULL;
     stmt->func_decl.resolved_return_type = NULL;
+    stmt->func_decl.owner_is_generic = false;
     stmt->func_decl.declared = false;
     return stmt;
 }

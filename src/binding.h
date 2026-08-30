@@ -32,6 +32,9 @@ typedef struct Function {
     String *module;
 
     void *body;
+
+    const Type *const *type_args;
+    size_t type_arg_count;
 } Function;
 
 static inline bool function_runs_native(const Function *function) { return function->body_kind != BODY_GAB; }

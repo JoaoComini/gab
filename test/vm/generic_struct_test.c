@@ -98,7 +98,35 @@ static void test_a_parameter_is_the_element_of_an_array() {
                         "let r: int = f();") == 9);
 }
 
+static void test_a_method_on_a_declaration_serves_an_instantiation() {
+    assert(test_run_int("struct Holder<T> { value: T }\n"
+                        "func Holder<T>::get(h: ref Holder<T>): T { return h.value; }\n"
+                        "func f(): int { let h: Holder<int>; h.value = 3; return h.get(); }\n"
+                        "let r: int = f();") == 3);
+}
+
+static void test_each_instantiation_gets_its_own_body() {
+    assert(test_run_int("struct Holder<T> { value: T }\n"
+                        "func Holder<T>::get(h: ref Holder<T>): T { return h.value; }\n"
+                        "func f(): int { let a: Holder<int>; a.value = 4;\n"
+                        "let b: Holder<bool>; b.value = true;\n"
+                        "if b.get() { return a.get(); } return 0; }\n"
+                        "let r: int = f();") == 4);
+}
+
+static void test_an_instantiation_that_owns_frees_what_it_holds() {
+    assert(test_run_int("struct Cell { n: int }\n"
+                        "struct Holder<T> { value: T }\n"
+                        "func Holder<T>::read(h: ref Holder<T>): int { return 1; }\n"
+                        "func f(): int { let h: Holder<box Cell>; h.value = new Cell;\n"
+                        "h.value.n = 8; return h.read() + h.value.n; }\n"
+                        "let r: int = f();") == 9);
+}
+
 int main() {
+    test_an_instantiation_that_owns_frees_what_it_holds();
+    test_each_instantiation_gets_its_own_body();
+    test_a_method_on_a_declaration_serves_an_instantiation();
     test_a_generic_field_holds_its_argument();
     test_two_instantiations_are_two_types();
     test_the_bare_declaration_names_no_type();

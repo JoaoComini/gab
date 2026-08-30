@@ -339,7 +339,7 @@ Function *type_registry_find_method(TypeRegistry *registry, const Type *type, co
 
     const MethodDecl *method = *declared;
 
-    if (method->function) {
+    if (method->function && !type_has_param(method->receiver)) {
         return method->function;
     }
 
@@ -491,6 +491,12 @@ static Function *instantiate_method(TypeRegistry *registry, const MethodDecl *me
         params[p + 1] = substitute(registry, method->params[p], args, arg_count);
     }
 
+    const Type **owned_args = arena_alloc(registry->arena, arg_count * sizeof(const Type *));
+
+    for (size_t i = 0; i < arg_count; i++) {
+        owned_args[i] = args[i];
+    }
+
     *function = (Function){
         .name = method->name,
         .return_type = substitute(registry, method->result, args, arg_count),
@@ -499,6 +505,8 @@ static Function *instantiate_method(TypeRegistry *registry, const MethodDecl *me
         .body_kind = method->body_kind,
         .body = method->body,
         .func_index = FUNCTION_NO_BODY,
+        .type_args = owned_args,
+        .type_arg_count = arg_count,
     };
 
     return function;

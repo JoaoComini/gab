@@ -186,6 +186,16 @@ bool scope_bind_type(Scope *scope, String *name, const Type *type) {
     return true;
 }
 
+bool scope_bind_argument(Scope *scope, String *name, const Type *type) {
+    if (type_map_lookup(scope->types, name)) {
+        return false;
+    }
+
+    type_map_insert(scope->types, name, (TypeBinding){.type = type});
+
+    return true;
+}
+
 bool scope_bind_decl(Scope *scope, String *name, const TypeDef *def) {
     if (type_map_lookup(scope->types, name)) {
         return false;

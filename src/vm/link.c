@@ -38,6 +38,7 @@ void unit_free(Unit *unit) {
     relocation_list_free(&unit->string_relocations);
     proto_binding_list_free(&unit->bindings);
     extern_request_list_free(&unit->externs);
+    pending_instance_list_free(&unit->pending);
 
     free(unit);
 }
