@@ -145,7 +145,23 @@ static void test_a_whole_struct_still_moves() {
                         "let r: int = main();") == 3);
 }
 
+static void test_a_field_assigned_in_an_inner_scope_outlives_it() {
+    assert(test_run_int("struct Box { n: int }\n"
+                        "struct Holder { b: box Box }\n"
+                        "func main(): int {\n"
+                        "    let h: Holder;\n"
+                        "    h.b = new Box;\n"
+                        "    if true {\n"
+                        "        h.b = new Box;\n"
+                        "        h.b.n = 7;\n"
+                        "    }\n"
+                        "    return h.b.n;\n"
+                        "}\n"
+                        "let r: int = main();") == 7);
+}
+
 int main(void) {
+    test_a_field_assigned_in_an_inner_scope_outlives_it();
     test_an_owning_field_refuses_a_value_another_slot_owns();
     test_moving_a_field_is_refused();
     test_a_whole_struct_still_moves();
