@@ -46,7 +46,7 @@ void scope_init_module(Scope *scope, Arena *arena, StringPool *strings, Scope *p
 typedef enum {
     RESOLUTION_NONE,
 
-    RESOLUTION_SELF_NAMED,
+    RESOLUTION_TYPE,
 
     RESOLUTION_TYPE_DECL,
 
@@ -57,7 +57,7 @@ typedef struct {
     ResolutionKind kind;
 
     union {
-        const Type *self_named;
+        const Type *type;
         const TypeDef *def;
         Symbol *symbol;
     };
@@ -78,9 +78,9 @@ Symbol *scope_symbol_lookup_declaring(Scope *scope, String *name);
 
 void scope_withdraw_type(Scope *scope, String *name);
 
-bool scope_decl_type(Scope *scope, String *name, const Type *type);
+bool scope_bind_type(Scope *scope, String *name, const Type *type);
 
-bool scope_decl_type_def(Scope *scope, String *name, const TypeDef *def);
+bool scope_bind_decl(Scope *scope, String *name, const TypeDef *def);
 
 void scope_init_staging(Scope *scope, Arena *arena, StringPool *strings, Scope *target);
 

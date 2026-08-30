@@ -23,7 +23,7 @@ static void scope_declare_primitives(Scope *scope) {
     for (size_t i = 0; i < sizeof(PRIMITIVES) / sizeof(PRIMITIVES[0]); i++) {
         const Type *type = type_registry_get_primitive(registry, PRIMITIVES[i]);
 
-        scope_decl_type(scope, type_name_of(type), type);
+        scope_bind_type(scope, type_name_of(type), type);
     }
 }
 
@@ -114,7 +114,7 @@ Resolution scope_resolve(Scope *scope, String *name) {
 
         if (bound) {
             if (!bound->def) {
-                return (Resolution){.kind = RESOLUTION_SELF_NAMED, .self_named = bound->type};
+                return (Resolution){.kind = RESOLUTION_TYPE, .type = bound->type};
             }
 
             return (Resolution){.kind = RESOLUTION_TYPE_DECL, .def = bound->def};
@@ -132,8 +132,8 @@ Resolution scope_resolve(Scope *scope, String *name) {
 
 const Type *resolution_type(TypeRegistry *registry, Resolution resolution) {
     switch (resolution.kind) {
-    case RESOLUTION_SELF_NAMED:
-        return resolution.self_named;
+    case RESOLUTION_TYPE:
+        return resolution.type;
 
     case RESOLUTION_TYPE_DECL:
         return resolution.def->param_count == 0 ? type_registry_apply(registry, resolution.def, NULL, 0)
@@ -174,7 +174,7 @@ Symbol *scope_symbol_lookup_declaring(Scope *scope, String *name) {
 
 void scope_withdraw_type(Scope *scope, String *name) { type_map_delete(scope->types, name); }
 
-bool scope_decl_type(Scope *scope, String *name, const Type *type) {
+bool scope_bind_type(Scope *scope, String *name, const Type *type) {
     if (type_map_lookup(scope->types, name)) {
         return false;
     }
@@ -186,7 +186,7 @@ bool scope_decl_type(Scope *scope, String *name, const Type *type) {
     return true;
 }
 
-bool scope_decl_type_def(Scope *scope, String *name, const TypeDef *def) {
+bool scope_bind_decl(Scope *scope, String *name, const TypeDef *def) {
     if (type_map_lookup(scope->types, name)) {
         return false;
     }

@@ -839,12 +839,12 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         Symbol *entry = scope_symbol_lookup(state->current_scope, resolver_intern(state, expr->var.name));
 
         if (entry) {
-            expr->symbol = entry;
-
             if (entry->kind == SYMBOL_FUNC) {
                 expr->callee = &entry->func;
+                break;
             }
 
+            expr->symbol = entry;
             expr->type = entry->var.type;
             break;
         }
@@ -1396,7 +1396,7 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
         .param_count = param_count,
     };
 
-    scope_decl_type_def(state->current_scope, struct_name, def);
+    scope_bind_decl(state->current_scope, struct_name, def);
 
     StructDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(StructDecl));
 
@@ -1487,7 +1487,7 @@ static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
     for (size_t i = 0; i < stmt->struct_decl.param_count; i++) {
         String *param_name = resolver_intern(state, stmt->struct_decl.params[i]);
 
-        if (!scope_decl_type(params, param_name, type_registry_param(decl->scope->type_registry, i))) {
+        if (!scope_bind_type(params, param_name, type_registry_param(decl->scope->type_registry, i))) {
             diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "duplicate type parameter '%s' on '%s'",
                        param_name->data, decl->name->data);
         }

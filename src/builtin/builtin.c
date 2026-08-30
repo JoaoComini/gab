@@ -40,7 +40,7 @@ const TypeDef *builtin_declare(VM *vm, const BuiltinTypeSpec *spec) {
 
     type_registry_declare(scope->type_registry, &decl);
 
-    scope_decl_type_def(scope, def->name, def);
+    scope_bind_decl(scope, def->name, def);
 
     return def;
 }
