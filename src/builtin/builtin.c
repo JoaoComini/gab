@@ -45,28 +45,22 @@ const TypeDef *builtin_declare(VM *vm, const BuiltinTypeSpec *spec) {
     return def;
 }
 
-static const Type **owned_params(Arena *arena, const Type *const *params, size_t param_count) {
-    if (param_count == 0) {
+static const Type **owned_signature(Arena *arena, const Type *receiver, const Type *const *params,
+                                    size_t param_count) {
+    size_t leading = receiver ? 1 : 0;
+
+    if (leading + param_count == 0) {
         return NULL;
     }
 
-    const Type **copy = arena_alloc(arena, param_count * sizeof(const Type *));
+    const Type **copy = arena_alloc(arena, (leading + param_count) * sizeof(const Type *));
 
-    for (size_t i = 0; i < param_count; i++) {
-        copy[i] = params[i];
+    if (receiver) {
+        copy[0] = receiver;
     }
 
-    return copy;
-}
-
-static const Type **owned_signature(Arena *arena, const Type *receiver, const Type *const *params,
-                                    size_t param_count) {
-    const Type **copy = arena_alloc(arena, (param_count + 1) * sizeof(const Type *));
-
-    copy[0] = receiver;
-
     for (size_t i = 0; i < param_count; i++) {
-        copy[i + 1] = params[i];
+        copy[leading + i] = params[i];
     }
 
     return copy;
@@ -98,7 +92,7 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
 
     *function = (Function){
         .return_type = return_type,
-        .params = (const Type **)owned_params(arena, params, param_count),
+        .params = owned_signature(arena, NULL, params, param_count),
         .param_count = param_count,
         .body_kind = BODY_NATIVE,
         .name = string_from_cstr(&vm->env.strings, name),
