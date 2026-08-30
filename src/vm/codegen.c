@@ -30,7 +30,7 @@ GAB_HASH_MAP(SlotMap, slot_map, Symbol *, SlotBinding)
 #define proto_map_key_dup(key) key
 #define proto_map_entry_free(key, value)
 
-GAB_HASH_MAP(ProtoMap, proto_map, Symbol *, size_t)
+GAB_HASH_MAP(ProtoMap, proto_map, Function *, size_t)
 
 typedef struct {
     unsigned int slot;
@@ -121,7 +121,7 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast);
 static Constant value_from_literal(Literal lit);
 static unsigned int codegen_literal_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node);
-static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symbol *callee, Span span);
+static void codegen_emit_call(CodegenState *state, unsigned int dest, Function *callee, Span span);
 static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node);
 static FieldTarget codegen_index_target(CodegenState *state, ASTExpr *node);
@@ -954,10 +954,10 @@ static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast) {
     codegen_patch_jump(state, end, OP_JMP, 0);
 }
 
-static size_t codegen_reserve_symbol(CodegenState *state, Symbol *symbol) {
+static size_t codegen_reserve_function(CodegenState *state, Function *function) {
     size_t local;
 
-    if (symbol->func.is_extern) {
+    if (function->is_extern) {
         extern_proto_list_add(&state->unit->extern_protos, (ExternProto){0});
 
         local = state->unit->extern_protos.size - 1;
@@ -970,27 +970,28 @@ static size_t codegen_reserve_symbol(CodegenState *state, Symbol *symbol) {
         local = state->unit->prototypes.size - 1;
     }
 
-    proto_map_insert(state->local_protos, symbol, local);
-    proto_binding_list_add(&state->unit->bindings, (ProtoBinding){.symbol = symbol, .local_index = local});
+    proto_map_insert(state->local_protos, function, local);
+    proto_binding_list_add(&state->unit->bindings,
+                           (ProtoBinding){.function = function, .local_index = local});
 
     return local;
 }
 
 static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast) {
-    if (!ast->symbol || proto_map_lookup(state->local_protos, ast->symbol)) {
+    if (!ast->symbol || proto_map_lookup(state->local_protos, &ast->symbol->func)) {
         return;
     }
 
-    codegen_reserve_symbol(state, ast->symbol);
+    codegen_reserve_function(state, &ast->symbol->func);
 }
 
-static const size_t *codegen_reserve_instantiated(CodegenState *state, Symbol *symbol) {
-    size_t local = codegen_reserve_symbol(state, symbol);
+static const size_t *codegen_reserve_instantiated(CodegenState *state, Function *function) {
+    size_t local = codegen_reserve_function(state, function);
 
     state->unit->extern_protos.data[local] =
-        (ExternProto){.body = (GabExternFn)symbol->func.body, .symbol = symbol};
+        (ExternProto){.body = (GabExternFn)function->body, .function = function};
 
-    return proto_map_lookup(state->local_protos, symbol);
+    return proto_map_lookup(state->local_protos, function);
 }
 
 static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
@@ -1002,7 +1003,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         return;
     }
 
-    const size_t *local = proto_map_lookup(state->local_protos, ast->symbol);
+    const size_t *local = proto_map_lookup(state->local_protos, &ast->symbol->func);
 
     if (!local) {
         return;
@@ -1011,11 +1012,11 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
     size_t func_index = *local;
 
     if (ast->symbol->func.is_extern) {
-        state->unit->extern_protos.data[func_index] = (ExternProto){.symbol = ast->symbol};
+        state->unit->extern_protos.data[func_index] = (ExternProto){.function = &ast->symbol->func};
 
         extern_request_list_add(
             &state->unit->externs,
-            (ExternRequest){.local_index = func_index, .symbol = ast->symbol, .span = stmt->span});
+            (ExternRequest){.local_index = func_index, .function = &ast->symbol->func, .span = stmt->span});
 
         return;
     }
@@ -1233,14 +1234,14 @@ static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node) {
     return codegen_slot_of(state, node->symbol);
 }
 
-static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symbol *callee, Span span) {
-    const size_t *local = proto_map_lookup(state->local_protos, (Symbol *)callee);
+static void codegen_emit_call(CodegenState *state, unsigned int dest, Function *callee, Span span) {
+    const size_t *local = proto_map_lookup(state->local_protos, callee);
 
-    if (!local && callee->func.func_index == SYMBOL_FUNC_NO_BODY && callee->func.body) {
-        local = codegen_reserve_instantiated(state, (Symbol *)callee);
+    if (!local && callee->func_index == SYMBOL_FUNC_NO_BODY && callee->body) {
+        local = codegen_reserve_instantiated(state, callee);
     }
 
-    size_t index = local ? *local : callee->func.func_index;
+    size_t index = local ? *local : callee->func_index;
 
     if (index == SYMBOL_FUNC_NO_BODY) {
         if (!state->failed) {
@@ -1251,7 +1252,7 @@ static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symb
         return;
     }
 
-    bool is_extern = callee->func.is_extern;
+    bool is_extern = callee->is_extern;
 
     if (!local && index > (is_extern ? VM_MAX_EXTERN_PROTOS : VM_MAX_PROTOTYPES)) {
         if (!state->failed) {
@@ -1271,12 +1272,12 @@ static void codegen_emit_call(CodegenState *state, unsigned int dest, const Symb
     }
 }
 
-static bool param_owns(TypeRegistry *registry, const Symbol *callee, size_t index) {
-    if (!callee || callee->kind != SYMBOL_FUNC || index >= callee->func.param_count) {
+static bool param_owns(TypeRegistry *registry, const Function *callee, size_t index) {
+    if (!callee || index >= callee->param_count) {
         return false;
     }
 
-    const Type *param = callee->func.params[index];
+    const Type *param = callee->params[index];
 
     return type_registry_owns(registry, param);
 }
@@ -1315,7 +1316,7 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
 
         codegen_copy_slots(state, dest + offset, arg_reg, slots);
 
-        if (expr_yields_owned(state->registry, arg) && !param_owns(state->registry, node->symbol, i)) {
+        if (expr_yields_owned(state->registry, arg) && !param_owns(state->registry, node->callee, i)) {
             assert(owned_arg_count < VM_MAX_FRAME_SLOTS && "more owned arguments than a frame has slots");
 
             unsigned int owner = dest + offset;
@@ -1336,7 +1337,7 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node) {
         offset += slots;
     }
 
-    codegen_emit_call(state, dest, node->symbol, node->span);
+    codegen_emit_call(state, dest, node->callee, node->span);
 
     for (size_t i = 0; i < owned_arg_count; i++) {
         codegen_emit_release(state, owned_args[i].slot, owned_args[i].type);

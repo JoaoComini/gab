@@ -299,7 +299,7 @@ void vm_fail(VM *vm, VmRunStatus status, const char *message) {
 }
 
 bool vm_call_extern(VM *vm, const ExternProto *proto, size_t base) {
-    Args args = {.vm = vm, .symbol = proto->symbol, .base = base};
+    Args args = {.vm = vm, .function = proto->function, .base = base};
 
     proto->body(&args);
 

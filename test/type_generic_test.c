@@ -227,16 +227,16 @@ static void test_a_declared_method_is_substituted_per_instantiation() {
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
     const Type *of_bool = type_registry_apply(registry, &def, &bool_type, 1);
 
-    const Symbol *from_int = type_registry_find_method(registry, of_int, at);
-    const Symbol *from_bool = type_registry_find_method(registry, of_bool, at);
+    const Function *from_int = type_registry_find_method(registry, of_int, at);
+    const Function *from_bool = type_registry_find_method(registry, of_bool, at);
 
     assert(from_int && from_bool);
 
-    assert(from_int->func.return_type == int_type);
-    assert(from_bool->func.return_type == bool_type);
+    assert(from_int->return_type == int_type);
+    assert(from_bool->return_type == bool_type);
 
-    assert(from_int->func.params[0] == of_int);
-    assert(from_bool->func.params[0] == of_bool);
+    assert(from_int->params[0] == of_int);
+    assert(from_bool->params[0] == of_bool);
 
     type_registry_destroy(registry);
     string_pool_free(&ctx.strings);
@@ -269,10 +269,10 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
 
     type_registry_declare_method(registry, type_registry_apply(registry, &def, &param, 1), &method);
 
-    const Symbol *found = type_registry_find_method(registry, of_int, at);
+    const Function *found = type_registry_find_method(registry, of_int, at);
 
     assert(found);
-    assert(found->func.return_type == int_type);
+    assert(found->return_type == int_type);
 
     type_registry_destroy(registry);
     string_pool_free(&ctx.strings);
@@ -303,11 +303,11 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
 
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
 
-    Symbol other = {0};
+    Function other = {0};
 
-    assert(!type_registry_declare_method(registry, of_int, &(MethodDecl){.name = at, .symbol = &other}));
+    assert(!type_registry_declare_method(registry, of_int, &(MethodDecl){.name = at, .function = &other}));
 
-    assert(type_registry_find_method(registry, of_int, at)->func.return_type == int_type);
+    assert(type_registry_find_method(registry, of_int, at)->return_type == int_type);
 
     type_registry_destroy(registry);
     string_pool_free(&ctx.strings);
@@ -331,13 +331,14 @@ static void test_a_method_declared_on_one_instantiation_answers_on_every_one() {
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
     const Type *of_bool = type_registry_apply(registry, &def, &bool_type, 1);
 
-    Symbol method = {0};
+    Function method = {0};
 
-    assert(type_registry_declare_method(registry, of_int, &(MethodDecl){.name = name, .symbol = &method}));
+    assert(type_registry_declare_method(registry, of_int, &(MethodDecl){.name = name, .function = &method}));
 
     assert(type_registry_find_method(registry, of_bool, name) == &method);
 
-    assert(!type_registry_declare_method(registry, of_bool, &(MethodDecl){.name = name, .symbol = &method}));
+    assert(
+        !type_registry_declare_method(registry, of_bool, &(MethodDecl){.name = name, .function = &method}));
 
     TypeDef other = {.name = string_from_cstr(&ctx.strings, "Other"), .param_count = 1};
 

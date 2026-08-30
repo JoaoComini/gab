@@ -64,11 +64,11 @@ static void remap_indices(const RelocationList *relocations, const size_t *index
     }
 }
 
-static GabExternFn find_extern(const Program *program, const Symbol *symbol) {
+static GabExternFn find_extern(const Program *program, const Function *function) {
     for (size_t i = 0; i < program->extern_bindings.size; i++) {
         const ExternBinding *binding = &program->extern_bindings.data[i];
 
-        if (binding->name == symbol->func.name && binding->module == symbol->func.module) {
+        if (binding->name == function->name && binding->module == function->module) {
             return binding->fn;
         }
     }
@@ -115,11 +115,11 @@ bool link_check(Program *program, Unit *unit, Diagnostics *diagnostics) {
 
     for (size_t i = 0; i < unit->externs.size; i++) {
         const ExternRequest *request = &unit->externs.data[i];
-        GabExternFn body = find_extern(program, request->symbol);
+        GabExternFn body = find_extern(program, request->function);
 
         if (!body) {
             diag_error(diagnostics, GAB_ERR_CODEGEN, request->span,
-                       "extern function '%s' was never registered", request->symbol->func.name->data);
+                       "extern function '%s' was never registered", request->function->name->data);
             return false;
         }
 
@@ -185,8 +185,8 @@ void link_install(Program *program, Unit *unit) {
 
     for (size_t i = 0; i < unit->bindings.size; i++) {
         const ProtoBinding *binding = &unit->bindings.data[i];
-        size_t base = binding->symbol->func.is_extern ? extern_base : proto_base;
+        size_t base = binding->function->is_extern ? extern_base : proto_base;
 
-        binding->symbol->func.func_index = base + binding->local_index;
+        binding->function->func_index = base + binding->local_index;
     }
 }

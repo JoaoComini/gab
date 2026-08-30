@@ -5,6 +5,7 @@ ASTExpr *ast_expr_create(Span span) {
     node->span = span;
     node->type = NULL;
     node->symbol = NULL;
+    node->callee = NULL;
     node->moves = false;
 
     return node;

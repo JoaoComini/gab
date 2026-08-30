@@ -127,7 +127,9 @@ typedef struct ASTExpr {
     Span span;
 
     const Type *type;
+
     Symbol *symbol;
+    Function *callee;
 
     bool moves;
 } ASTExpr;

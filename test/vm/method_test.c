@@ -16,7 +16,7 @@ static const Type *lookup_type(TestContext *ctx, Scope *scope, const char *name)
     return scope_type_lookup(scope, string_from_cstr(&ctx->strings, name));
 }
 
-static Symbol *lookup_method(TestContext *ctx, Scope *scope, const char *type, const char *method) {
+static Function *lookup_method(TestContext *ctx, Scope *scope, const char *type, const char *method) {
     return type_registry_find_method(scope->type_registry, lookup_type(ctx, scope, type),
                                      string_from_cstr(&ctx->strings, method));
 }
@@ -33,14 +33,13 @@ static void test_method_lands_on_its_receiver_type() {
                            "func Player::damage(p: ref Player, n: int): bool { return true; }\n");
     assert(ok);
 
-    Symbol *damage = lookup_method(&ctx, scope, "Player", "damage");
+    Function *damage = lookup_method(&ctx, scope, "Player", "damage");
 
     assert(damage);
-    assert(damage->kind == SYMBOL_FUNC);
 
-    assert(damage->func.param_count == 2);
-    assert(type_is_indirect(damage->func.params[0]));
-    assert(type_pointee(damage->func.params[0]) == lookup_type(&ctx, scope, "Player"));
+    assert(damage->param_count == 2);
+    assert(type_is_indirect(damage->params[0]));
+    assert(type_pointee(damage->params[0]) == lookup_type(&ctx, scope, "Player"));
 
     ast_unit_destroy(unit);
     test_context_free(&ctx);
@@ -78,8 +77,8 @@ static void test_same_name_on_two_types() {
                            "func Enemy::update(e: ref Enemy): int { return 2; }\n");
     assert(ok);
 
-    Symbol *player = lookup_method(&ctx, scope, "Player", "update");
-    Symbol *enemy = lookup_method(&ctx, scope, "Enemy", "update");
+    Function *player = lookup_method(&ctx, scope, "Player", "update");
+    Function *enemy = lookup_method(&ctx, scope, "Enemy", "update");
 
     assert(player && enemy && player != enemy);
 
@@ -99,11 +98,11 @@ static void test_value_receiver() {
                            "func Player::is_alive(p: Player): bool { return true; }\n");
     assert(ok);
 
-    Symbol *alive = lookup_method(&ctx, scope, "Player", "is_alive");
+    Function *alive = lookup_method(&ctx, scope, "Player", "is_alive");
 
     assert(alive);
-    assert(alive->func.param_count == 1);
-    assert(alive->func.params[0] == lookup_type(&ctx, scope, "Player"));
+    assert(alive->param_count == 1);
+    assert(alive->params[0] == lookup_type(&ctx, scope, "Player"));
 
     ast_unit_destroy(unit);
     test_context_free(&ctx);

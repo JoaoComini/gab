@@ -88,7 +88,7 @@ typedef struct VM {
 struct GabArgs {
     VM *vm;
 
-    const struct Symbol *symbol;
+    const struct Function *function;
 
     size_t base;
 };

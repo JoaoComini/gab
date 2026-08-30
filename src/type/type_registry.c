@@ -300,8 +300,8 @@ static MethodKey method_key_of(TypeRegistry *registry, const Type *type, const S
     return (MethodKey){.type = generic_form_of(registry, type), .name = name};
 }
 
-static Symbol *instantiate_method(TypeRegistry *registry, const MethodDecl *method, const Type *const *args,
-                                  size_t arg_count);
+static Function *instantiate_method(TypeRegistry *registry, const MethodDecl *method, const Type *const *args,
+                                    size_t arg_count);
 
 static bool declare_method(TypeRegistry *registry, MethodKey key, const MethodDecl *method) {
     if (method_decl_key_lookup(registry->methods, key)) {
@@ -322,12 +322,12 @@ bool type_registry_declare_method(TypeRegistry *registry, const Type *type, cons
     return declare_method(registry, method_key_of(registry, type, method->name), method);
 }
 
-Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name) {
+Function *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name) {
     if (!type) {
         return NULL;
     }
 
-    Symbol **cached = instance_key_lookup(registry->instances, (InstanceKey){.type = type, .name = name});
+    Function **cached = instance_key_lookup(registry->instances, (InstanceKey){.type = type, .name = name});
     if (cached) {
         return *cached;
     }
@@ -339,8 +339,8 @@ Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, cons
 
     const MethodDecl *method = *declared;
 
-    if (method->symbol) {
-        return method->symbol;
+    if (method->function) {
+        return method->function;
     }
 
     const Type *args[GAB_MAX_TYPE_PARAMS];
@@ -351,11 +351,11 @@ Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, cons
         args[i] = type_args(type)[i].type;
     }
 
-    Symbol *symbol = instantiate_method(registry, method, args, type_arg_count(type));
+    Function *function = instantiate_method(registry, method, args, type_arg_count(type));
 
-    instance_key_insert(registry->instances, (InstanceKey){.type = type, .name = name}, symbol);
+    instance_key_insert(registry->instances, (InstanceKey){.type = type, .name = name}, function);
 
-    return symbol;
+    return function;
 }
 
 static Type *intern(TypeRegistry *registry, const Type *key) {
@@ -479,9 +479,9 @@ static const Type *substitute(TypeRegistry *registry, const Type *type, const Ty
     return type;
 }
 
-static Symbol *instantiate_method(TypeRegistry *registry, const MethodDecl *method, const Type *const *args,
-                                  size_t arg_count) {
-    Symbol *symbol = arena_alloc(registry->arena, sizeof(Symbol));
+static Function *instantiate_method(TypeRegistry *registry, const MethodDecl *method, const Type *const *args,
+                                    size_t arg_count) {
+    Function *function = arena_alloc(registry->arena, sizeof(Function));
 
     const Type **params = arena_alloc(registry->arena, (method->param_count + 1) * sizeof(const Type *));
 
@@ -491,21 +491,17 @@ static Symbol *instantiate_method(TypeRegistry *registry, const MethodDecl *meth
         params[p + 1] = substitute(registry, method->params[p], args, arg_count);
     }
 
-    *symbol = (Symbol){
-        .kind = SYMBOL_FUNC,
-        .func =
-            {
-                .name = method->name,
-                .return_type = substitute(registry, method->result, args, arg_count),
-                .params = params,
-                .param_count = method->param_count + 1,
-                .is_extern = true,
-                .body = method->body,
-                .func_index = SYMBOL_FUNC_NO_BODY,
-            },
+    *function = (Function){
+        .name = method->name,
+        .return_type = substitute(registry, method->result, args, arg_count),
+        .params = params,
+        .param_count = method->param_count + 1,
+        .is_extern = true,
+        .body = method->body,
+        .func_index = SYMBOL_FUNC_NO_BODY,
     };
 
-    return symbol;
+    return function;
 }
 
 static const TypeFields no_fields = {.fields = NULL, .count = 0};

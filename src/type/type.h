@@ -69,6 +69,8 @@ typedef enum {
 
 typedef struct Symbol Symbol;
 
+typedef struct Function Function;
+
 typedef struct TypeField {
     String *name;
     const Type *type;
@@ -90,7 +92,7 @@ typedef struct MethodDecl {
     const Type *const *params;
     size_t param_count;
 
-    Symbol *symbol;
+    Function *function;
 } MethodDecl;
 
 typedef struct TypeDef {

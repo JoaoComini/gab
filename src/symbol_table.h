@@ -18,6 +18,22 @@ typedef enum {
     SYMBOL_FUNC,
 } SymbolKind;
 
+typedef struct Function {
+    const Type *return_type;
+
+    const Type **params;
+    size_t param_count;
+
+    size_t func_index;
+
+    bool is_extern;
+
+    String *name;
+    String *module;
+
+    void *body;
+} Function;
+
 typedef struct Symbol {
     SymbolKind kind;
 
@@ -30,21 +46,7 @@ typedef struct Symbol {
             const Type *type;
         } var;
 
-        struct {
-            const Type *return_type;
-
-            const Type **params;
-            size_t param_count;
-
-            size_t func_index;
-
-            bool is_extern;
-
-            String *name;
-            String *module;
-
-            void *body;
-        } func;
+        Function func;
     };
 } Symbol;
 

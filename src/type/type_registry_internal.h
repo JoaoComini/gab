@@ -39,7 +39,7 @@ typedef struct InstanceKey {
     const String *name;
 } InstanceKey;
 
-GAB_HASH_MAP(InstanceTable, instance_key, InstanceKey, Symbol *)
+GAB_HASH_MAP(InstanceTable, instance_key, InstanceKey, Function *)
 
 #define drop_key_hash(key) (size_t)key
 #define drop_key_key_equals(key, other) key == other

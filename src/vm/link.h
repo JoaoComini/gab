@@ -32,7 +32,7 @@ typedef struct GabArgs Args;
 typedef struct {
     GabExternFn body;
 
-    const struct Symbol *symbol;
+    const struct Function *function;
 } ExternProto;
 
 #define extern_proto_list_item_free(item) ((void)(item))
@@ -75,7 +75,7 @@ typedef struct {
 GAB_LIST(RelocationList, relocation_list, Relocation)
 
 typedef struct {
-    struct Symbol *symbol;
+    struct Function *function;
     size_t local_index;
 } ProtoBinding;
 
@@ -84,7 +84,7 @@ GAB_LIST(ProtoBindingList, proto_binding_list, ProtoBinding)
 
 typedef struct {
     size_t local_index;
-    const struct Symbol *symbol;
+    const struct Function *function;
     Span span;
 } ExternRequest;
 

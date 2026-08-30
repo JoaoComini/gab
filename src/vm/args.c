@@ -22,19 +22,19 @@ static TypeRegistry *args_registry(Args *args) { return args->vm->env.global_sco
 uint8_t *args_address(Args *args, int index, const Type **out_type) {
     assert(args && "a C body was called without a frame");
 
-    const Symbol *symbol = args->symbol;
+    const Function *function = args->function;
 
-    assert(index >= 0 && (size_t)index < symbol->func.param_count &&
+    assert(index >= 0 && (size_t)index < function->param_count &&
            "a C body read a parameter its declaration does not have");
 
     unsigned int slot = 1;
 
     for (int i = 0; i < index; i++) {
-        slot += args_type_slots(args_registry(args), symbol->func.params[i]);
+        slot += args_type_slots(args_registry(args), function->params[i]);
     }
 
     if (out_type) {
-        *out_type = symbol->func.params[index];
+        *out_type = function->params[index];
     }
 
     return args->vm->stack + args->base + (size_t)slot * VM_SLOT_SIZE;
@@ -170,7 +170,7 @@ bool args_return_string_copy(Args *args, const char *data, int32_t length) {
 void args_return_struct(Args *args, const void *data, size_t size) {
     assert(data && "a C body returned a struct from nothing");
 
-    const Type *return_type = args->symbol->func.return_type;
+    const Type *return_type = args->function->return_type;
 
     assert(return_type && type_registry_size_of(args_registry(args), return_type) == size &&
            "a struct was returned at a size the declared return type does not have");

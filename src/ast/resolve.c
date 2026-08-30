@@ -310,10 +310,10 @@ static const Type *receiver_base_type(const Type *type) {
 
 static const Type *derefs_to(TypeRegistry *registry, const Type *type);
 
-static Symbol *find_method_on_chain(TypeRegistry *registry, const Type *type, const String *name,
-                                    const Type **out_base) {
+static Function *find_method_on_chain(TypeRegistry *registry, const Type *type, const String *name,
+                                      const Type **out_base) {
     for (const Type *at = receiver_base_type(type); at; at = derefs_to(registry, at)) {
-        Symbol *found = type_registry_find_method(registry, at, name);
+        Function *found = type_registry_find_method(registry, at, name);
 
         if (found) {
             *out_base = at;
@@ -361,7 +361,7 @@ typedef struct {
     bool address_of;
 } ReceiverAdjustment;
 
-static void lower_method_call(ASTExpr *expr, Symbol *method, ReceiverAdjustment adjustment) {
+static void lower_method_call(ASTExpr *expr, Function *method, ReceiverAdjustment adjustment) {
     ASTExpr *target = expr->call.target;
 
     ASTExpr *receiver = target->field.target;
@@ -379,7 +379,7 @@ static void lower_method_call(ASTExpr *expr, Symbol *method, ReceiverAdjustment 
 
     if (adjustment.address_of) {
         receiver = ast_addr_of_expr_create(span, receiver);
-        receiver->type = method->func.params[0];
+        receiver->type = method->params[0];
     }
 
     ASTExprList args = ast_expr_list_create();
@@ -393,7 +393,7 @@ static void lower_method_call(ASTExpr *expr, Symbol *method, ReceiverAdjustment 
 
     expr->call.target = NULL;
     expr->call.args = args;
-    expr->symbol = method;
+    expr->callee = method;
 }
 
 static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *receiver, const Type *declared,
@@ -441,7 +441,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
 }
 
 static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expected);
-static Symbol *resolve_qualified_func(ResolverState *state, ASTExpr *expr);
+static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr);
 
 static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     ASTExpr *receiver = expr->call.target->field.target;
@@ -483,7 +483,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     }
 
     const Type *base = NULL;
-    Symbol *method =
+    Function *method =
         find_method_on_chain(state->current_scope->type_registry, receiver_type, method_name, &base);
 
     if (!method) {
@@ -493,9 +493,9 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         return;
     }
 
-    const Type *declared_receiver = method->func.param_count > 0 ? method->func.params[0] : base;
+    const Type *declared_receiver = method->param_count > 0 ? method->params[0] : base;
 
-    if (method->func.param_count == 0) {
+    if (method->param_count == 0) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                    "'%s' takes nothing, so it is called as '%s::%s()' rather than on a value",
                    method_name->data, type_name(state, base), method_name->data);
@@ -504,7 +504,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         return;
     }
 
-    size_t declared_params = method->func.param_count - 1;
+    size_t declared_params = method->param_count - 1;
 
     ReceiverAdjustment adjustment;
 
@@ -523,9 +523,9 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 
     lower_method_call(expr, method, adjustment);
 
-    check_call_args(state, &expr->call.args, method->func.params);
+    check_call_args(state, &expr->call.args, method->params);
 
-    expr->type = method->func.return_type;
+    expr->type = method->return_type;
 }
 
 static bool lends_by_value(TypeRegistry *registry, const Type *to, const Type *from) {
@@ -838,11 +838,20 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
     case EXPR_VARIABLE: {
         Symbol *entry = scope_symbol_lookup(state->current_scope, resolver_intern(state, expr->var.name));
 
-        if (!entry) {
-            entry = resolve_qualified_func(state, expr);
+        if (entry) {
+            expr->symbol = entry;
+
+            if (entry->kind == SYMBOL_FUNC) {
+                expr->callee = &entry->func;
+            }
+
+            expr->type = entry->var.type;
+            break;
         }
 
-        if (!entry) {
+        expr->callee = resolve_qualified_func(state, expr);
+
+        if (!expr->callee) {
             char *name = string_ref_to_cstr(expr->var.name);
             diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "undeclared variable '%s'", name);
             free(name);
@@ -850,9 +859,6 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             expr->type = resolver_error_type(state);
             break;
         }
-
-        expr->symbol = entry;
-        expr->type = entry->var.type;
 
         break;
     }
@@ -868,37 +874,34 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
 
         resolve_expr(state, expr->call.target, NULL);
 
-        Symbol *callee = expr->call.target->symbol;
+        Function *callee = expr->call.target->callee;
 
-        bool params_known =
-            callee && callee->kind == SYMBOL_FUNC && expr->call.args.size == callee->func.param_count;
+        bool params_known = callee && expr->call.args.size == callee->param_count;
 
         for (size_t i = 0; i < expr->call.args.size; i++) {
-            resolve_expr(state, expr->call.args.data[i], params_known ? callee->func.params[i] : NULL);
+            resolve_expr(state, expr->call.args.data[i], params_known ? callee->params[i] : NULL);
         }
 
         if (!callee) {
+            if (expr->call.target->type != resolver_error_type(state)) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "this expression is not callable");
+            }
+
             expr->type = resolver_error_type(state);
             break;
         }
 
-        if (callee->kind != SYMBOL_FUNC) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "this expression is not callable");
-            expr->type = resolver_error_type(state);
-            break;
-        }
-
-        if (expr->call.args.size != callee->func.param_count) {
+        if (expr->call.args.size != callee->param_count) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %zu argument(s), found %zu",
-                       callee->func.param_count, expr->call.args.size);
+                       callee->param_count, expr->call.args.size);
             expr->type = resolver_error_type(state);
             break;
         }
 
-        check_call_args(state, &expr->call.args, callee->func.params);
+        check_call_args(state, &expr->call.args, callee->params);
 
-        expr->symbol = callee;
-        expr->type = callee->func.return_type;
+        expr->callee = callee;
+        expr->type = callee->return_type;
         break;
     }
     case EXPR_INDEX: {
@@ -1649,7 +1652,7 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
         .result = return_type,
         .params = func->func.params,
         .param_count = param_count,
-        .symbol = func,
+        .function = &func->func,
     };
 
     if (!type_registry_declare_method(state->current_scope->type_registry, owner, &method)) {
@@ -1661,7 +1664,7 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
     stmt->func_decl.symbol = func;
 }
 
-static Symbol *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
+static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
     StringRef owner_ref, member_ref;
 
     if (!string_ref_split_colons(expr->var.name, &owner_ref, &member_ref)) {
@@ -1683,7 +1686,7 @@ static Symbol *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
     }
 
     String *member = resolver_intern(state, member_ref);
-    Symbol *found = type_registry_find_method(state->current_scope->type_registry, owner, member);
+    Function *found = type_registry_find_method(state->current_scope->type_registry, owner, member);
 
     if (!found) {
         diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "'%s' has no function '%s'",

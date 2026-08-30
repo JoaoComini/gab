@@ -81,29 +81,26 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
                              const Type *return_type, const Type *const *params, size_t param_count) {
     Arena *arena = vm->env.arena;
 
-    Symbol *symbol = arena_alloc(arena, sizeof(Symbol));
-    symbol->kind = SYMBOL_FUNC;
-    symbol->func.return_type = return_type;
-    symbol->func.param_count = param_count;
-    symbol->func.params = param_count ? arena_alloc(arena, sizeof(const Type *) * param_count) : NULL;
-    symbol->func.is_extern = true;
-    symbol->func.name = string_from_cstr(&vm->env.strings, name);
-    symbol->func.module = NULL;
+    Function *function = arena_alloc(arena, sizeof(Function));
 
-    for (size_t i = 0; i < param_count; i++) {
-        symbol->func.params[i] = params[i];
-    }
-
-    symbol->func.func_index = SYMBOL_FUNC_NO_BODY;
-    symbol->func.body = (void *)body;
+    *function = (Function){
+        .return_type = return_type,
+        .params = (const Type **)owned_params(arena, params, param_count),
+        .param_count = param_count,
+        .is_extern = true,
+        .name = string_from_cstr(&vm->env.strings, name),
+        .module = NULL,
+        .func_index = SYMBOL_FUNC_NO_BODY,
+        .body = (void *)body,
+    };
 
     const MethodDecl declared = {
-        .name = symbol->func.name,
+        .name = function->name,
         .body = (void *)body,
         .result = return_type,
-        .params = symbol->func.params,
+        .params = function->params,
         .param_count = param_count,
-        .symbol = symbol,
+        .function = function,
     };
 
     bool ok = type_registry_declare_method(vm->env.global_scope.type_registry, declared_on, &declared);
