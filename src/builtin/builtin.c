@@ -59,6 +59,19 @@ static const Type **owned_params(Arena *arena, const Type *const *params, size_t
     return copy;
 }
 
+static const Type **owned_signature(Arena *arena, const Type *receiver, const Type *const *params,
+                                    size_t param_count) {
+    const Type **copy = arena_alloc(arena, (param_count + 1) * sizeof(const Type *));
+
+    copy[0] = receiver;
+
+    for (size_t i = 0; i < param_count; i++) {
+        copy[i + 1] = params[i];
+    }
+
+    return copy;
+}
+
 void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiver, const char *name,
                              GabExternFn body, const Type *return_type, const Type *const *params,
                              size_t param_count) {
@@ -66,10 +79,9 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
         .name = string_from_cstr(&vm->env.strings, name),
         .body_kind = BODY_NATIVE,
         .body = (void *)body,
-        .receiver = receiver,
         .result = return_type,
-        .params = owned_params(vm->env.arena, params, param_count),
-        .param_count = param_count,
+        .params = owned_signature(vm->env.arena, receiver, params, param_count),
+        .param_count = param_count + 1,
     };
 
     bool declared = type_registry_declare_method(vm->env.global_scope.type_registry, declared_on, &method);

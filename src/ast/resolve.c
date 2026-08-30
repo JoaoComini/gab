@@ -1656,10 +1656,9 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         .name = name,
         .body_kind = BODY_GAB,
         .body = stmt,
-        .receiver = param_count > 0 ? func->params[0] : owner,
         .result = return_type,
-        .params = param_count > 1 ? &func->params[1] : NULL,
-        .param_count = param_count > 0 ? param_count - 1 : 0,
+        .params = func->params,
+        .param_count = param_count,
         .function = func,
     };
 
