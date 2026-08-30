@@ -63,6 +63,8 @@ bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *
 
 bool type_registry_declare_generic(TypeRegistry *registry, TypeDef *def, const GenericMethod *method);
 
+bool type_registry_declare_method(TypeRegistry *registry, const Type *type, const GenericMethod *method);
+
 Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name);
 
 void type_registry_complete(TypeRegistry *registry, const Type *type);

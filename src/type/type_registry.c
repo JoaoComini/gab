@@ -215,9 +215,8 @@ TypeRegistry *type_registry_create(Arena *arena, const TypePrimitiveNames *names
     registry->drops = drop_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->derefs = deref_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->layouts = layout_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
-    registry->methods = method_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->generics = generic_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
-    registry->signatures = signature_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->instances = instance_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->applications = type_intern_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
 
@@ -230,9 +229,8 @@ TypeRegistry *type_registry_create(Arena *arena, const TypePrimitiveNames *names
 
 void type_registry_destroy(TypeRegistry *registry) {
     type_intern_destroy(registry->applications);
-    method_key_destroy(registry->methods);
     generic_key_destroy(registry->generics);
-    signature_key_destroy(registry->signatures);
+    instance_key_destroy(registry->instances);
     drop_key_destroy(registry->drops);
     deref_key_destroy(registry->derefs);
 }
@@ -289,50 +287,50 @@ static MethodKey method_key_of(const Type *type, const String *name) {
 bool type_registry_add_method(TypeRegistry *registry, const Type *type, String *name, Symbol *method) {
     assert(type && name && method && "a method is a type, a name and a body");
 
-    if (type_registry_find_method(registry, type, name)) {
-        return false;
-    }
+    const GenericMethod declared = {
+        .name = name,
+        .receiver = method->func.param_count > 0 ? method->func.params[0] : type,
+        .result = method->func.return_type,
+        .params = method->func.params,
+        .param_count = method->func.param_count,
+        .symbol = method,
+    };
 
-    method_key_insert(registry->methods, method_key_of(type, name), method);
-    return true;
+    return type_registry_declare_method(registry, type, &declared);
 }
 
-static Symbol *substitute_signature(TypeRegistry *registry, const GenericMethod *method,
-                                    const Type *const *args, size_t arg_count);
+static Symbol *instantiate_method(TypeRegistry *registry, const GenericMethod *method,
+                                  const Type *const *args, size_t arg_count);
 
-static MethodKey generic_key_of(const TypeDef *def, const String *name) {
-    return (MethodKey){.def = def, .type = NULL, .name = name};
-}
-
-static const GenericMethod *find_generic(TypeRegistry *registry, const TypeDef *def, const String *name) {
-    GenericMethod **stored = generic_key_lookup(registry->generics, generic_key_of(def, name));
+static const GenericMethod *find_generic(TypeRegistry *registry, MethodKey key) {
+    GenericMethod **stored = generic_key_lookup(registry->generics, key);
 
     return stored ? *stored : NULL;
 }
 
-bool type_registry_declare_generic(TypeRegistry *registry, TypeDef *def, const GenericMethod *method) {
-    assert(def && method && method->name && "a generic method is a declaration, a name and a signature");
-
-    if (find_generic(registry, def, method->name)) {
+static bool declare_generic(TypeRegistry *registry, MethodKey key, const GenericMethod *method) {
+    if (find_generic(registry, key)) {
         return false;
     }
 
     GenericMethod *owned = arena_alloc(registry->arena, sizeof(GenericMethod));
     *owned = *method;
 
-    generic_key_insert(registry->generics, generic_key_of(def, method->name), owned);
+    generic_key_insert(registry->generics, key, owned);
 
     return true;
 }
 
-static const GenericMethod *declared_method(TypeRegistry *registry, const Type *type, const String *name) {
-    const TypeDef *def = type_decl(type);
+bool type_registry_declare_generic(TypeRegistry *registry, TypeDef *def, const GenericMethod *method) {
+    assert(def && method && method->name && "a generic method is a declaration, a name and a signature");
 
-    if (!def) {
-        return NULL;
-    }
+    return declare_generic(registry, (MethodKey){.def = def, .type = NULL, .name = method->name}, method);
+}
 
-    return find_generic(registry, def, name);
+bool type_registry_declare_method(TypeRegistry *registry, const Type *type, const GenericMethod *method) {
+    assert(type && method && method->name && "a method is a type, a name and a signature");
+
+    return declare_generic(registry, method_key_of(type, method->name), method);
 }
 
 Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name) {
@@ -340,19 +338,18 @@ Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, cons
         return NULL;
     }
 
-    Symbol **stored = method_key_lookup(registry->methods, method_key_of(type, name));
-    if (stored) {
-        return *stored;
-    }
-
-    Symbol **cached = signature_key_lookup(registry->signatures, (SignatureKey){.type = type, .name = name});
+    Symbol **cached = instance_key_lookup(registry->instances, (InstanceKey){.type = type, .name = name});
     if (cached) {
         return *cached;
     }
 
-    const GenericMethod *method = declared_method(registry, type, name);
+    const GenericMethod *method = find_generic(registry, method_key_of(type, name));
     if (!method) {
         return NULL;
+    }
+
+    if (method->symbol) {
+        return method->symbol;
     }
 
     const Type *args[GAB_MAX_TYPE_PARAMS];
@@ -363,9 +360,9 @@ Symbol *type_registry_find_method(TypeRegistry *registry, const Type *type, cons
         args[i] = type_args(type)[i].type;
     }
 
-    Symbol *symbol = substitute_signature(registry, method, args, type_arg_count(type));
+    Symbol *symbol = instantiate_method(registry, method, args, type_arg_count(type));
 
-    signature_key_insert(registry->signatures, (SignatureKey){.type = type, .name = name}, symbol);
+    instance_key_insert(registry->instances, (InstanceKey){.type = type, .name = name}, symbol);
 
     return symbol;
 }
@@ -491,8 +488,8 @@ static const Type *substitute(TypeRegistry *registry, const Type *type, const Ty
     return type;
 }
 
-static Symbol *substitute_signature(TypeRegistry *registry, const GenericMethod *method,
-                                    const Type *const *args, size_t arg_count) {
+static Symbol *instantiate_method(TypeRegistry *registry, const GenericMethod *method,
+                                  const Type *const *args, size_t arg_count) {
     Symbol *symbol = arena_alloc(registry->arena, sizeof(Symbol));
 
     const Type **params = arena_alloc(registry->arena, (method->param_count + 1) * sizeof(const Type *));

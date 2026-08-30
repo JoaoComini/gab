@@ -87,6 +87,8 @@ typedef struct GenericMethod {
 
     const Type *const *params;
     size_t param_count;
+
+    Symbol *symbol;
 } GenericMethod;
 
 typedef struct TypeDef {

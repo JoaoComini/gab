@@ -25,8 +25,6 @@ typedef struct MethodKey {
 #define method_key_key_dup(key) key
 #define method_key_entry_free(key, value)
 
-GAB_HASH_MAP(MethodTable, method_key, MethodKey, Symbol *)
-
 #define generic_key_hash(key) method_key_hash(key)
 #define generic_key_key_equals(key, other) method_key_key_equals(key, other)
 #define generic_key_key_dup(key) key
@@ -34,17 +32,17 @@ GAB_HASH_MAP(MethodTable, method_key, MethodKey, Symbol *)
 
 GAB_HASH_MAP(GenericTable, generic_key, MethodKey, GenericMethod *)
 
-#define signature_key_hash(key) (((size_t)(key).type * 31) ^ (size_t)(key).name)
-#define signature_key_key_equals(key, other) ((key).type == (other).type && (key).name == (other).name)
-#define signature_key_key_dup(key) key
-#define signature_key_entry_free(key, value)
+#define instance_key_hash(key) (((size_t)(key).type * 31) ^ (size_t)(key).name)
+#define instance_key_key_equals(key, other) ((key).type == (other).type && (key).name == (other).name)
+#define instance_key_key_dup(key) key
+#define instance_key_entry_free(key, value)
 
-typedef struct SignatureKey {
+typedef struct InstanceKey {
     const Type *type;
     const String *name;
-} SignatureKey;
+} InstanceKey;
 
-GAB_HASH_MAP(SignatureTable, signature_key, SignatureKey, Symbol *)
+GAB_HASH_MAP(InstanceTable, instance_key, InstanceKey, Symbol *)
 
 #define drop_key_hash(key) (size_t)key
 #define drop_key_key_equals(key, other) key == other
@@ -84,11 +82,9 @@ typedef struct TypeRegistry {
 
     TypeInternTable *applications;
 
-    MethodTable *methods;
-
     GenericTable *generics;
 
-    SignatureTable *signatures;
+    InstanceTable *instances;
 
     DropTable *drops;
 
