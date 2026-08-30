@@ -1673,8 +1673,6 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
 }
 
 static void declare_owned(ResolverState *state, ASTStmt *stmt) {
-    stmt->func_decl.owner_is_generic = func_decl_is_generic(stmt);
-
     Scope *enclosing = state->current_scope;
     Scope *params = owner_param_scope(state, stmt->func_decl.owner);
 
@@ -1904,7 +1902,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
             declare_func(state, stmt);
         }
 
-        if (stmt->func_decl.body && stmt->func_decl.owner_is_generic) {
+        if (stmt->func_decl.body && func_decl_is_generic(stmt)) {
             break;
         }
 

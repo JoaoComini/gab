@@ -1047,7 +1047,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         return;
     }
 
-    if (ast->owner_is_generic) {
+    if (ast->owner && ast->owner->kind == TYPE_EXPR_APPLY) {
         return;
     }
 

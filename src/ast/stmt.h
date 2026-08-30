@@ -66,8 +66,6 @@ typedef struct {
 
     Function *function;
 
-    bool owner_is_generic;
-
     const Type *resolved_return_type;
 
     bool declared;
