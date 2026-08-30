@@ -96,9 +96,6 @@ typedef struct TypeDef {
 
     const TypeField *fields;
     size_t field_count;
-
-    const GenericMethod *methods;
-    size_t method_count;
 } TypeDef;
 
 TypeKind type_kind(const Type *type);

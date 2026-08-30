@@ -27,6 +27,13 @@ typedef struct MethodKey {
 
 GAB_HASH_MAP(MethodTable, method_key, MethodKey, Symbol *)
 
+#define generic_key_hash(key) method_key_hash(key)
+#define generic_key_key_equals(key, other) method_key_key_equals(key, other)
+#define generic_key_key_dup(key) key
+#define generic_key_entry_free(key, value)
+
+GAB_HASH_MAP(GenericTable, generic_key, MethodKey, GenericMethod *)
+
 #define signature_key_hash(key) (((size_t)(key).type * 31) ^ (size_t)(key).name)
 #define signature_key_key_equals(key, other) ((key).type == (other).type && (key).name == (other).name)
 #define signature_key_key_dup(key) key
@@ -78,6 +85,8 @@ typedef struct TypeRegistry {
     TypeInternTable *applications;
 
     MethodTable *methods;
+
+    GenericTable *generics;
 
     SignatureTable *signatures;
 
