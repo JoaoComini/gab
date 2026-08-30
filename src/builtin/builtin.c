@@ -62,7 +62,7 @@ static const Type **owned_params(Arena *arena, const Type *const *params, size_t
 void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiver, const char *name,
                              GabExternFn body, const Type *return_type, const Type *const *params,
                              size_t param_count) {
-    const GenericMethod method = {
+    const MethodDecl method = {
         .name = string_from_cstr(&vm->env.strings, name),
         .body = (void *)body,
         .receiver = receiver,
@@ -71,7 +71,8 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
         .param_count = param_count,
     };
 
-    bool declared = type_registry_declare_method(vm->env.global_scope.type_registry, declared_on, &method);
+    bool declared =
+        type_registry_declare_method_on_type(vm->env.global_scope.type_registry, declared_on, &method);
 
     assert(declared && "a builtin declares each of its methods once");
     (void)declared;
@@ -80,7 +81,7 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
 void builtin_declare_method(VM *vm, const TypeDef *declared_on, const char *name, GabExternFn body,
                             const Type *receiver, const Type *result, const Type *const *params,
                             size_t param_count) {
-    const GenericMethod method = {
+    const MethodDecl method = {
         .name = string_from_cstr(&vm->env.strings, name),
         .body = (void *)body,
         .receiver = receiver,
@@ -89,8 +90,8 @@ void builtin_declare_method(VM *vm, const TypeDef *declared_on, const char *name
         .param_count = param_count,
     };
 
-    bool declared =
-        type_registry_declare_generic(vm->env.global_scope.type_registry, (TypeDef *)declared_on, &method);
+    bool declared = type_registry_declare_method_on_decl(vm->env.global_scope.type_registry,
+                                                         (TypeDef *)declared_on, &method);
 
     assert(declared && "a builtin declares each of its methods once");
     (void)declared;

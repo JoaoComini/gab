@@ -213,13 +213,13 @@ static void test_a_declared_method_is_substituted_per_instantiation() {
 
     TypeDef def = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
 
-    GenericMethod method = {
+    MethodDecl method = {
         .name = at,
         .receiver = type_registry_apply(registry, &def, &param, 1),
         .result = param,
     };
 
-    type_registry_declare_generic(registry, &def, &method);
+    type_registry_declare_method_on_decl(registry, &def, &method);
 
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
     const Type *of_bool = type_registry_apply(registry, &def, &bool_type, 1);
@@ -258,13 +258,13 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
 
     assert(type_registry_find_method(registry, of_int, at) == NULL);
 
-    GenericMethod method = {
+    MethodDecl method = {
         .name = at,
         .receiver = type_registry_apply(registry, &def, &param, 1),
         .result = param,
     };
 
-    type_registry_declare_generic(registry, &def, &method);
+    type_registry_declare_method_on_decl(registry, &def, &method);
 
     const Symbol *found = type_registry_find_method(registry, of_int, at);
 
@@ -290,13 +290,13 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
 
     TypeDef def = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
 
-    GenericMethod method = {
+    MethodDecl method = {
         .name = at,
         .receiver = type_registry_apply(registry, &def, &param, 1),
         .result = param,
     };
 
-    type_registry_declare_generic(registry, &def, &method);
+    type_registry_declare_method_on_decl(registry, &def, &method);
 
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
 
@@ -361,13 +361,13 @@ static void test_a_substituted_signature_is_read_once_per_type() {
 
     TypeDef def = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
 
-    GenericMethod method = {
+    MethodDecl method = {
         .name = at,
         .receiver = type_registry_apply(registry, &def, &param, 1),
         .result = param,
     };
 
-    type_registry_declare_generic(registry, &def, &method);
+    type_registry_declare_method_on_decl(registry, &def, &method);
 
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
 

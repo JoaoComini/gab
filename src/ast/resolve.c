@@ -1641,7 +1641,7 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
         }
     }
 
-    const GenericMethod method = {
+    const MethodDecl method = {
         .name = name,
         .receiver = param_count > 0 ? func->func.params[0] : owner,
         .result = return_type,
@@ -1650,7 +1650,7 @@ static void declare_owned(ResolverState *state, ASTStmt *stmt) {
         .symbol = func,
     };
 
-    if (!type_registry_declare_method(state->current_scope->type_registry, owner, &method)) {
+    if (!type_registry_declare_method_on_type(state->current_scope->type_registry, owner, &method)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' already has a function '%s'",
                    type_name_of(owner)->data, name->data);
         return;
