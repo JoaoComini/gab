@@ -763,13 +763,13 @@ static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
     return ast_struct_decl_stmt_create(span, name, params, param_count, fields);
 }
 
-/* Type parameters not consumed by an owner belong to the function itself. */
+/* A declaration names what it is generic over, whether those parameters came from an owner or from itself. */
 static void func_decl_take_type_params(ASTStmt *decl, TypeExprList *params) {
-    if (decl->func_decl.owner) {
-        return;
-    }
-
     for (size_t i = 0; i < params->size && i < GAB_MAX_TYPE_PARAMS; i++) {
+        if (params->data[i]->kind != TYPE_EXPR_NAME) {
+            continue;
+        }
+
         decl->func_decl.type_params[decl->func_decl.type_param_count++] = params->data[i]->name;
     }
 }

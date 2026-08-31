@@ -89,20 +89,6 @@ typedef enum {
     BODY_NATIVE,
 } BodyKind;
 
-typedef struct MethodDecl {
-    String *name;
-
-    BodyKind body_kind;
-    void *body;
-
-    const Type *result;
-
-    const Type *const *params;
-    size_t param_count;
-
-    Function *function;
-} MethodDecl;
-
 typedef struct TypeDef {
     String *name;
 

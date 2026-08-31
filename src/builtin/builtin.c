@@ -69,16 +69,19 @@ static const Type **owned_signature(Arena *arena, const Type *receiver, const Ty
 void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiver, const char *name,
                              GabExternFn body, const Type *return_type, const Type *const *params,
                              size_t param_count) {
-    const MethodDecl method = {
+    Function *method = arena_alloc(vm->env.arena, sizeof(Function));
+
+    *method = (Function){
         .name = string_from_cstr(&vm->env.strings, name),
         .body_kind = BODY_NATIVE,
         .body = (void *)body,
-        .result = return_type,
+        .return_type = return_type,
         .params = owned_signature(vm->env.arena, receiver, params, param_count),
         .param_count = param_count + 1,
+        .func_index = FUNCTION_NO_BODY,
     };
 
-    bool declared = type_registry_declare_method(vm->env.global_scope.type_registry, declared_on, &method);
+    bool declared = type_registry_declare_method(vm->env.global_scope.type_registry, declared_on, method);
 
     assert(declared && "a builtin declares each of its methods once");
     (void)declared;
@@ -86,13 +89,11 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
 
 void builtin_register_static(VM *vm, const Type *declared_on, const char *name, GabExternFn body,
                              const Type *return_type, const Type *const *params, size_t param_count) {
-    Arena *arena = vm->env.arena;
-
-    Function *function = arena_alloc(arena, sizeof(Function));
+    Function *function = arena_alloc(vm->env.arena, sizeof(Function));
 
     *function = (Function){
         .return_type = return_type,
-        .params = owned_signature(arena, NULL, params, param_count),
+        .params = owned_signature(vm->env.arena, NULL, params, param_count),
         .param_count = param_count,
         .body_kind = BODY_NATIVE,
         .name = string_from_cstr(&vm->env.strings, name),
@@ -101,17 +102,7 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
         .body = (void *)body,
     };
 
-    const MethodDecl declared = {
-        .name = function->name,
-        .body_kind = BODY_NATIVE,
-        .body = (void *)body,
-        .result = return_type,
-        .params = function->params,
-        .param_count = param_count,
-        .function = function,
-    };
-
-    bool ok = type_registry_declare_method(vm->env.global_scope.type_registry, declared_on, &declared);
+    bool ok = type_registry_declare_method(vm->env.global_scope.type_registry, declared_on, function);
 
     assert(ok && "a builtin declares each of its functions once");
     (void)ok;

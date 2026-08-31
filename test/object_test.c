@@ -447,14 +447,15 @@ static void test_methods_live_beside_the_type_not_in_it() {
 
     assert(type_registry_find_method(registry, int_type, name) == NULL);
 
-    Function method = {0};
+    Function method = {.name = name};
 
-    assert(
-        type_registry_declare_method(registry, int_type, &(MethodDecl){.name = name, .function = &method}));
-    assert(type_registry_find_method(registry, int_type, name) == &method);
+    assert(type_registry_declare_method(registry, int_type, &method));
 
-    assert(
-        !type_registry_declare_method(registry, int_type, &(MethodDecl){.name = name, .function = &method}));
+    Function *found = type_registry_find_method(registry, int_type, name);
+
+    assert(found && found->name == name);
+
+    assert(!type_registry_declare_method(registry, int_type, &method));
 
     assert(type_registry_find_method(registry, type_registry_get_primitive(registry, TYPE_BOOL), name) ==
            NULL);

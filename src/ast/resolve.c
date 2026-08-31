@@ -558,7 +558,7 @@ static bool infer_type_args(const Type *declared, const Type *actual, const Type
 static Function *specialize_call(ResolverState *state, ASTExpr *expr, Function *generic) {
     const TypeExpr *supplied = expr->call.target->var.owner_type_expr;
 
-    size_t owed = generic->type_arg_count;
+    size_t owed = generic->type_param_count;
 
     const char *name = generic->name ? generic->name->data : "this function";
 
@@ -626,6 +626,10 @@ static void instantiate_body(ResolverState *state, Function *method, Span span) 
         return;
     }
 
+    if (method->type_param_count == 0) {
+        return;
+    }
+
     if (state->instantiating >= GAB_MAX_INSTANTIATION_DEPTH) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' instantiates itself without end",
                    method->name->data);
@@ -643,21 +647,9 @@ static void instantiate_body(ResolverState *state, Function *method, Span span) 
     Scope *enclosing = state->current_scope;
     Scope *params = scope_create(resolver_owner_arena(state), enclosing->strings, enclosing);
 
-    const TypeExpr *owner = clone->func_decl.owner;
-
-    if (owner) {
-        for (size_t i = 0; i < method->type_arg_count && i < owner->apply.args.size; i++) {
-            const TypeExpr *param = owner->apply.args.data[i];
-
-            if (param->kind == TYPE_EXPR_NAME) {
-                scope_bind_argument(params, resolver_intern(state, param->name), method->type_args[i]);
-            }
-        }
-    } else {
-        for (size_t i = 0; i < method->type_arg_count && i < clone->func_decl.type_param_count; i++) {
-            scope_bind_argument(params, resolver_intern(state, clone->func_decl.type_params[i]),
-                                method->type_args[i]);
-        }
+    for (size_t i = 0; i < method->type_arg_count && i < clone->func_decl.type_param_count; i++) {
+        scope_bind_argument(params, resolver_intern(state, clone->func_decl.type_params[i]),
+                            method->type_args[i]);
     }
 
     state->current_scope = params;
@@ -1094,6 +1086,11 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         break;
     }
     case EXPR_CALL: {
+        if (!expr->call.target && expr->callee) {
+            expr->type = expr->callee->return_type;
+            break;
+        }
+
         if (expr->call.target && expr->call.target->kind == EXPR_FIELD) {
             resolve_method_call(state, expr);
             break;
@@ -1107,7 +1104,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
 
         Function *callee = expr->call.target->callee;
 
-        if (callee && callee->type_arg_count > 0 && !callee->type_args) {
+        if (callee && callee->type_param_count > 0) {
             callee = specialize_call(state, expr, callee);
 
             if (!callee) {
@@ -2006,6 +2003,10 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         .params = NULL,
         .param_count = 0,
         .func_index = FUNCTION_NO_BODY,
+        .name = name,
+        .body_kind = BODY_GAB,
+        .body = stmt,
+        .type_param_count = stmt->func_decl.type_param_count,
     };
 
     size_t param_count = stmt->func_decl.params.size;
@@ -2019,17 +2020,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         }
     }
 
-    const MethodDecl method = {
-        .name = name,
-        .body_kind = BODY_GAB,
-        .body = stmt,
-        .result = return_type,
-        .params = func->params,
-        .param_count = param_count,
-        .function = func,
-    };
-
-    if (!type_registry_declare_method(state->current_scope->type_registry, owner, &method)) {
+    if (!type_registry_declare_method(state->current_scope->type_registry, owner, func)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' already has a function '%s'",
                    type_name_of(owner)->data, name->data);
         return;
@@ -2162,7 +2153,7 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
     }
 
     if (func && stmt->func_decl.type_param_count > 0) {
-        func->type_arg_count = stmt->func_decl.type_param_count;
+        func->type_param_count = stmt->func_decl.type_param_count;
         func->name = resolver_intern(state, func_name);
 
         /* A generic declaration keeps its own statement, which each instantiation clones and resolves. */
