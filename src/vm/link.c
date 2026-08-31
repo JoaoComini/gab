@@ -68,7 +68,7 @@ static GabExternFn find_extern(const Program *program, const Function *function)
     for (size_t i = 0; i < program->extern_bindings.size; i++) {
         const ExternBinding *binding = &program->extern_bindings.data[i];
 
-        if (binding->name == function->name && binding->module == function->module) {
+        if (binding->name == function->decl->name && binding->module == function->decl->module) {
             return binding->fn;
         }
     }
@@ -119,7 +119,7 @@ bool link_check(Program *program, Unit *unit, Diagnostics *diagnostics) {
 
         if (!body) {
             diag_error(diagnostics, GAB_ERR_CODEGEN, request->span,
-                       "extern function '%s' was never registered", request->function->name->data);
+                       "extern function '%s' was never registered", request->function->decl->name->data);
             return false;
         }
 

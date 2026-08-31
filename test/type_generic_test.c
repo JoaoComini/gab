@@ -238,8 +238,10 @@ static void test_a_declared_method_is_substituted_per_instantiation() {
 
     const Type *receiver[] = {type_registry_apply(registry, &def, &param, 1)};
 
+    FuncDecl method_decl = {.name = at};
+
     Function method = {
-        .name = at,
+        .decl = &method_decl,
         .return_type = param,
         .params = receiver,
         .param_count = 1,
@@ -287,8 +289,10 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
 
     const Type *receiver[] = {type_registry_apply(registry, &def, &param, 1)};
 
+    FuncDecl method_decl = {.name = at};
+
     Function method = {
-        .name = at,
+        .decl = &method_decl,
         .return_type = param,
         .params = receiver,
         .param_count = 1,
@@ -323,8 +327,10 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
 
     const Type *receiver[] = {type_registry_apply(registry, &def, &param, 1)};
 
+    FuncDecl method_decl = {.name = at};
+
     Function method = {
-        .name = at,
+        .decl = &method_decl,
         .return_type = param,
         .params = receiver,
         .param_count = 1,
@@ -334,7 +340,8 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
 
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
 
-    Function other = {.name = at};
+    FuncDecl other_decl = {.name = at};
+    Function other = {.decl = &other_decl};
 
     assert(!type_registry_declare_owned(registry, of_int, &other));
 
@@ -362,11 +369,12 @@ static void test_a_method_declared_on_one_instantiation_answers_on_every_one() {
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
     const Type *of_bool = type_registry_apply(registry, &def, &bool_type, 1);
 
-    Function method = {.name = name};
+    FuncDecl method_decl = {.name = name};
+    Function method = {.decl = &method_decl};
 
     assert(type_registry_declare_owned(registry, of_int, &method));
 
-    assert(type_registry_find_owned(registry, of_bool, name)->name == name);
+    assert(type_registry_find_owned(registry, of_bool, name)->decl->name == name);
 
     assert(!type_registry_declare_owned(registry, of_bool, &method));
 
@@ -398,8 +406,10 @@ static void test_a_substituted_signature_is_read_once_per_type() {
 
     const Type *receiver[] = {type_registry_apply(registry, &def, &param, 1)};
 
+    FuncDecl method_decl = {.name = at};
+
     Function method = {
-        .name = at,
+        .decl = &method_decl,
         .return_type = param,
         .params = receiver,
         .param_count = 1,
@@ -472,6 +482,42 @@ static void test_an_instantiation_reads_fields_declared_after_it_is_applied(void
     arena_destroy(ctx.arena);
 }
 
+static void test_a_specialization_does_not_inherit_a_summary() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    TypeRegistry *registry = type_registry_create(ctx.arena, &names);
+    FunctionRegistry *functions = function_registry_create(ctx.arena, registry);
+
+    const Type *param = type_registry_param(registry, 0);
+    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+
+    const Type *params[] = {type_registry_ref_to(registry, param)};
+
+    FuncDecl generic_decl = {.name = string_from_cstr(&ctx.strings, "pick"), .type_param_count = 1};
+
+    Function *generic = arena_alloc(ctx.arena, sizeof(Function));
+
+    *generic = (Function){
+        .decl = &generic_decl,
+        .return_type = type_registry_ref_to(registry, param),
+        .params = params,
+        .param_count = 1,
+        .func_index = FUNCTION_NO_BODY,
+    };
+
+    generic->borrowed_params = 1;
+    generic->borrowed_params_known = true;
+
+    Function *specialized = function_registry_specialize(functions, generic, &int_type, 1);
+
+    assert(!specialized->borrowed_params_known);
+
+    function_registry_destroy(functions);
+    test_context_free(&ctx);
+}
+
 int main(void) {
     test_an_instantiation_reads_fields_declared_after_it_is_applied();
     test_two_instantiations_share_one_generic_form();
@@ -486,5 +532,6 @@ int main(void) {
     test_a_declared_method_takes_the_name_on_every_instantiation();
     test_a_method_declared_on_one_instantiation_answers_on_every_one();
     test_a_substituted_signature_is_read_once_per_type();
+    test_a_specialization_does_not_inherit_a_summary();
     return 0;
 }

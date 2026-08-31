@@ -66,15 +66,25 @@ static const Type **owned_signature(Arena *arena, const Type *receiver, const Ty
     return copy;
 }
 
+static FuncDecl *builtin_decl(VM *vm, const char *name, GabExternFn body) {
+    FuncDecl *decl = arena_alloc(vm->env.arena, sizeof(FuncDecl));
+
+    *decl = (FuncDecl){
+        .name = string_from_cstr(&vm->env.strings, name),
+        .body_kind = BODY_NATIVE,
+        .body = (void *)body,
+    };
+
+    return decl;
+}
+
 void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiver, const char *name,
                              GabExternFn body, const Type *return_type, const Type *const *params,
                              size_t param_count) {
     Function *method = arena_alloc(vm->env.arena, sizeof(Function));
 
     *method = (Function){
-        .name = string_from_cstr(&vm->env.strings, name),
-        .body_kind = BODY_NATIVE,
-        .body = (void *)body,
+        .decl = builtin_decl(vm, name, body),
         .return_type = return_type,
         .params = owned_signature(vm->env.arena, receiver, params, param_count),
         .param_count = param_count + 1,
@@ -92,14 +102,11 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
     Function *function = arena_alloc(vm->env.arena, sizeof(Function));
 
     *function = (Function){
+        .decl = builtin_decl(vm, name, body),
         .return_type = return_type,
         .params = owned_signature(vm->env.arena, NULL, params, param_count),
         .param_count = param_count,
-        .body_kind = BODY_NATIVE,
-        .name = string_from_cstr(&vm->env.strings, name),
-        .module = NULL,
         .func_index = FUNCTION_NO_BODY,
-        .body = (void *)body,
     };
 
     bool ok = type_registry_declare_owned(vm->env.global_scope.type_registry, declared_on, function);

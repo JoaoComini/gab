@@ -21,23 +21,27 @@ typedef enum {
 
 typedef struct ASTStmt ASTStmt;
 
+typedef struct FuncDecl {
+    String *name;
+    String *module;
+
+    BodyKind body_kind;
+
+    void *body;
+
+    /* How many arguments this declaration is generic over, whether they came from an owner or itself. */
+    size_t type_param_count;
+} FuncDecl;
+
 typedef struct Function {
+    const FuncDecl *decl;
+
     const Type *return_type;
 
     const Type **params;
     size_t param_count;
 
     size_t func_index;
-
-    BodyKind body_kind;
-
-    String *name;
-    String *module;
-
-    void *body;
-
-    /* How many arguments this declaration is generic over, whether they came from an owner or itself. */
-    size_t type_param_count;
 
     /* What a specialization was given, one per type parameter; NULL while this is still a declaration. */
     const Type *const *type_args;
@@ -50,7 +54,9 @@ typedef struct Function {
     bool borrowed_params_known;
 } Function;
 
-static inline bool function_runs_native(const Function *function) { return function->body_kind != BODY_GAB; }
+static inline bool function_runs_native(const Function *function) {
+    return function->decl->body_kind != BODY_GAB;
+}
 
 typedef struct Binding {
     BindingKind kind;

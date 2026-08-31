@@ -542,9 +542,9 @@ static bool infer_type_args(const Type *declared, const Type *actual, const Type
 static Function *specialize_call(ResolverState *state, ASTExpr *expr, Function *generic) {
     const TypeExpr *supplied = expr->call.target->var.owner_type_expr;
 
-    size_t owed = generic->type_param_count;
+    size_t owed = generic->decl->type_param_count;
 
-    const char *name = generic->name ? generic->name->data : "this function";
+    const char *name = generic->decl->name ? generic->decl->name->data : "this function";
 
     const Type *args[GAB_MAX_TYPE_PARAMS] = {0};
 
@@ -597,21 +597,21 @@ static Function *specialize_call(ResolverState *state, ASTExpr *expr, Function *
 }
 
 static void instantiate_body(ResolverState *state, Function *method, Span span) {
-    if (method->body_kind != BODY_GAB || method->instance || !method->body) {
+    if (method->decl->body_kind != BODY_GAB || method->instance || !method->decl->body) {
         return;
     }
 
-    if (method->type_param_count == 0) {
+    if (method->decl->type_param_count == 0) {
         return;
     }
 
     if (state->instantiating >= GAB_MAX_INSTANTIATION_DEPTH) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' instantiates itself without end",
-                   method->name->data);
+                   method->decl->name->data);
         return;
     }
 
-    const ASTStmt *declaration = method->body;
+    const ASTStmt *declaration = method->decl->body;
 
     ASTStmt *clone = ast_clone_stmt(declaration);
 
@@ -1080,7 +1080,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
 
         Function *callee = expr->call.target->callee;
 
-        if (callee && callee->type_param_count > 0) {
+        if (callee && callee->decl->type_param_count > 0) {
             callee = specialize_call(state, expr, callee);
 
             if (!callee) {
@@ -1973,16 +1973,21 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
 
     String *name = resolver_intern(state, stmt->func_decl.name);
 
-    Function *func = arena_alloc(resolver_owner_arena(state), sizeof(Function));
-    *func = (Function){
-        .return_type = return_type,
-        .params = NULL,
-        .param_count = 0,
-        .func_index = FUNCTION_NO_BODY,
+    FuncDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(FuncDecl));
+    *decl = (FuncDecl){
         .name = name,
         .body_kind = BODY_GAB,
         .body = stmt,
         .type_param_count = stmt->func_decl.type_param_count,
+    };
+
+    Function *func = arena_alloc(resolver_owner_arena(state), sizeof(Function));
+    *func = (Function){
+        .decl = decl,
+        .return_type = return_type,
+        .params = NULL,
+        .param_count = 0,
+        .func_index = FUNCTION_NO_BODY,
     };
 
     size_t param_count = stmt->func_decl.params.size;
@@ -2117,12 +2122,14 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
 
     stmt->func_decl.function = func;
 
-    if (func) {
-        func->body_kind = stmt->func_decl.body == NULL ? BODY_HOST : BODY_GAB;
+    FuncDecl *decl = func ? (FuncDecl *)func->decl : NULL;
 
-        if (func->body_kind == BODY_HOST) {
-            func->name = resolver_intern(state, func_name);
-            func->module = state->module_name;
+    if (decl) {
+        decl->body_kind = stmt->func_decl.body == NULL ? BODY_HOST : BODY_GAB;
+
+        if (decl->body_kind == BODY_HOST) {
+            decl->name = resolver_intern(state, func_name);
+            decl->module = state->module_name;
         }
     }
 
@@ -2139,12 +2146,12 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
         }
     }
 
-    if (func && stmt->func_decl.type_param_count > 0) {
-        func->type_param_count = stmt->func_decl.type_param_count;
-        func->name = resolver_intern(state, func_name);
+    if (decl && stmt->func_decl.type_param_count > 0) {
+        decl->type_param_count = stmt->func_decl.type_param_count;
+        decl->name = resolver_intern(state, func_name);
 
         /* A generic declaration keeps its own statement, which each instantiation clones and resolves. */
-        func->body = stmt;
+        decl->body = stmt;
     }
 
     state->current_scope = enclosing;

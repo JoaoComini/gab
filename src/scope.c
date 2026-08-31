@@ -240,14 +240,18 @@ Binding *scope_decl_func(Scope *scope, String *name, const Type *return_type) {
     binding->scope_depth = scope->depth;
     binding->pinned = false;
 
+    FuncDecl *func_decl = arena_alloc(scope->arena, sizeof(FuncDecl));
+
+    *func_decl = (FuncDecl){.name = name, .body_kind = BODY_GAB};
+
     binding->func = arena_alloc(scope->arena, sizeof(Function));
 
     *binding->func = (Function){
+        .decl = func_decl,
         .return_type = return_type,
         .params = NULL,
         .param_count = 0,
         .func_index = FUNCTION_NO_BODY,
-        .body_kind = BODY_GAB,
     };
 
     Binding **decl = binding_table_insert(scope->bindings, name, binding);

@@ -300,9 +300,10 @@ static bool declare_owned(TypeRegistry *registry, OwnedKey key, Function *functi
 }
 
 bool type_registry_declare_owned(TypeRegistry *registry, const Type *type, Function *function) {
-    assert(type && function && function->name && "a function a type owns has a name and a signature");
+    assert(type && function && function->decl && function->decl->name &&
+           "a function a type owns has a name and a signature");
 
-    return declare_owned(registry, owned_key_of(type, function->name), function);
+    return declare_owned(registry, owned_key_of(type, function->decl->name), function);
 }
 
 /* A signature mentioning no type parameter is one function for every instantiation of its owner. */
