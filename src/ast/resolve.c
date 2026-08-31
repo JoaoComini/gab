@@ -2025,6 +2025,16 @@ static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
         return NULL;
     }
 
+    Scope *module_scope = expr->var.owner_type_expr ? NULL : resolver_expr_scope(state, expr->var.name);
+
+    if (module_scope) {
+        Binding *entry = scope_binding_lookup(module_scope, resolver_intern(state, member_ref));
+
+        if (entry && entry->kind == BINDING_FUNC) {
+            return entry->func;
+        }
+    }
+
     const Type *owner;
 
     if (expr->var.owner_type_expr) {

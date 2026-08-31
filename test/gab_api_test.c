@@ -646,6 +646,61 @@ static void test_a_module_may_be_imported_twice(void) {
     gab_vm_free(vm);
 }
 
+static void test_a_call_crosses_modules(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    assert(gab_load(vm, "a.gab", "module A;\nfunc add(x: int): int { return x + 1; }\n", &err));
+    assert(gab_load(vm, "b.gab",
+                    "module B;\n"
+                    "import A;\n"
+                    "func f(): int { return A::add(1); }\n",
+                    &err));
+
+    GabFunc *fn = gab_lookup(vm, "B", "f", &err);
+    assert(fn);
+
+    GabCall *call = gab_call_init(fn, &err);
+    assert(call);
+
+    int result = 0;
+    assert(gab_call(vm, call, &result, &err) == GAB_OK);
+    assert(result == 2);
+
+    gab_call_free(call);
+
+    gab_vm_free(vm);
+}
+
+static void test_a_cross_module_call_needs_an_import(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    assert(gab_load(vm, "a.gab", "module A;\nfunc add(x: int): int { return x + 1; }\n", &err));
+    assert(!gab_load(vm, "b.gab", "module B;\nfunc f(): int { return A::add(1); }\n", &err));
+    assert(strstr(err.message, "A::add"));
+
+    gab_vm_free(vm);
+}
+
+static void test_a_cross_module_call_names_a_declared_function(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+
+    assert(gab_load(vm, "a.gab", "module A;\nfunc add(x: int): int { return x + 1; }\n", &err));
+    assert(!gab_load(vm, "b.gab",
+                     "module B;\n"
+                     "import A;\n"
+                     "func f(): int { return A::sub(1); }\n",
+                     &err));
+    assert(strstr(err.message, "sub"));
+
+    gab_vm_free(vm);
+}
+
 static void test_an_import_names_a_loaded_module(void) {
     GabVM *vm = gab_vm_new();
 
@@ -1106,6 +1161,9 @@ int main(void) {
     test_builtins_are_shared_across_modules();
     test_module_type_shadows_the_root();
     test_a_module_may_be_imported_twice();
+    test_a_call_crosses_modules();
+    test_a_cross_module_call_needs_an_import();
+    test_a_cross_module_call_names_a_declared_function();
     test_an_import_names_a_loaded_module();
     test_modules_cannot_import_each_other();
     test_a_qualified_name_needs_an_import();
