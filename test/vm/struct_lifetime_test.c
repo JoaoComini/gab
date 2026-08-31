@@ -1,5 +1,52 @@
 #include "support/run.h"
 
+#include <stdio.h>
+#include <string.h>
+
+/* A borrow reaching a join with K distinct sources must still track all of them, not just a capped few. */
+static bool a_read_through_k_distinct_borrow_sources_compiles(int k) {
+    char source[8192];
+    size_t offset = 0;
+
+    offset += (size_t)snprintf(source + offset, sizeof(source) - offset,
+                               "struct Node { n: int }\n"
+                               "func f(): int {\n"
+                               "    let p1: *Node = box Node { n: 1 };\n");
+
+    for (int i = 2; i <= k; i++) {
+        offset += (size_t)snprintf(source + offset, sizeof(source) - offset,
+                                   "    let p%d: *Node = box Node { n: %d };\n", i, i);
+    }
+
+    offset += (size_t)snprintf(source + offset, sizeof(source) - offset,
+                               "    let q: *Node = box Node { n: 0 };\n"
+                               "    let x: &Node = p1;\n");
+
+    for (int i = 2; i <= k; i++) {
+        offset += (size_t)snprintf(source + offset, sizeof(source) - offset,
+                                   "    if true {\n"
+                                   "        x = p%d;\n"
+                                   "    } else {\n"
+                                   "        x = x;\n"
+                                   "    }\n",
+                                   i);
+    }
+
+    offset += (size_t)snprintf(source + offset, sizeof(source) - offset,
+                               "    q = box Node { n: 99 };\n"
+                               "    return x.n;\n"
+                               "}\n");
+
+    return test_compiles(source);
+}
+
+static void test_a_borrow_with_many_distinct_sources_is_untouched_by_an_unrelated_free() {
+    assert(a_read_through_k_distinct_borrow_sources_compiles(4));
+    assert(a_read_through_k_distinct_borrow_sources_compiles(5));
+    assert(a_read_through_k_distinct_borrow_sources_compiles(8));
+    assert(a_read_through_k_distinct_borrow_sources_compiles(16));
+}
+
 static void test_a_struct_holding_a_borrow_of_a_local_is_not_returned() {
     assert(!test_compiles("struct Node { n: int }\n"
                           "struct View { r: &Node }\n"
@@ -279,5 +326,6 @@ int main(void) {
     test_a_whole_struct_names_every_field_it_holds();
     test_writing_one_field_leaves_the_others_as_they_were();
     test_freeing_a_box_dangles_only_the_fields_that_named_it();
+    test_a_borrow_with_many_distinct_sources_is_untouched_by_an_unrelated_free();
     return 0;
 }

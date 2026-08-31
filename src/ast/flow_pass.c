@@ -110,7 +110,7 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
         {
             FlowSlot named = flow_get(pass->flow, ast_binding_of(expr));
 
-            return flow_slot_flattened(&named).inner_depth;
+            return flow_slot_flattened(pass->arena, &named).inner_depth;
         }
     case EXPR_BOX:
 
@@ -154,7 +154,7 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
         FlowSlot named;
 
         if (slot_of_place(pass, expr, &named)) {
-            return flow_slot_flattened(&named).inner_depth;
+            return flow_slot_flattened(pass->arena, &named).inner_depth;
         }
 
         return inner_depth(pass, expr->field.target);
@@ -219,7 +219,7 @@ static void collect_borrow_sources(FlowPass *pass, const ASTExpr *value, FlowSlo
     }
 
     if (root->var.type && type_kind(root->var.type) == TYPE_BOX) {
-        flow_slot_add_source(into, root);
+        flow_slot_add_source(pass->arena, into, root);
         return;
     }
 
@@ -229,12 +229,10 @@ static void collect_borrow_sources(FlowPass *pass, const ASTExpr *value, FlowSlo
         named = flow_get(pass->flow, root);
     }
 
-    FlowSlot source = flow_slot_flattened(&named);
-
-    into->borrows_unknown = into->borrows_unknown || source.borrows_unknown;
+    FlowSlot source = flow_slot_flattened(pass->arena, &named);
 
     for (size_t i = 0; i < source.borrow_count; i++) {
-        flow_slot_add_source(into, source.borrows_from[i]);
+        flow_slot_add_source(pass->arena, into, source.borrows_from[i]);
     }
 }
 
@@ -279,11 +277,6 @@ static void collect_returned_params(FlowPass *pass, const ASTExpr *value) {
 
     FlowSlot reached = {0};
     collect_borrow_sources(pass, value, &reached);
-
-    if (reached.borrows_unknown) {
-        pass->returned_params = UINT32_MAX;
-        return;
-    }
 
     for (size_t i = 0; i < reached.borrow_count; i++) {
         for (size_t p = 0; p < pass->param_count; p++) {
@@ -448,7 +441,7 @@ static void flow_pass_expr(FlowPass *pass, ASTExpr *expr) {
         FlowSlot named = flow_get(pass->flow, entry);
 
         /* Reading the whole value reads every field, so a field's freed borrow dangles the read. */
-        FlowInit init = named.init == FLOW_INIT ? flow_slot_flattened(&named).init : named.init;
+        FlowInit init = named.init == FLOW_INIT ? flow_slot_flattened(pass->arena, &named).init : named.init;
 
         if (init == FLOW_MOVED) {
             char *name = string_ref_to_cstr(expr->var.name);
@@ -483,7 +476,7 @@ static void flow_pass_expr(FlowPass *pass, ASTExpr *expr) {
 
         /* A tracked field answers for itself; its struct may hold a freed borrow in another field. */
         if (!assigning && field_is_tracked(pass, expr, &named)) {
-            if (flow_slot_flattened(&named).init == FLOW_DANGLING) {
+            if (flow_slot_flattened(pass->arena, &named).init == FLOW_DANGLING) {
                 flow_report(pass, expr->span, "this field names memory that has been freed", NULL);
             }
         } else {
@@ -614,9 +607,16 @@ static void flow_pass_block(FlowPass *pass, CFGBlock *block) {
     }
 }
 
+#define FLOW_SCRATCH_ARENA_BLOCK_SIZE 2048
+
 void flow_pass_run(Arena *arena, TypeRegistry *registry, ASTStmt *body, Binding **params, size_t param_count,
                    const Type *return_type, Diagnostics *diagnostics, Function *function, bool report) {
     CFG *cfg = cfg_build(arena, body);
+
+    /* Every flow the fixpoint loop builds besides entries[] is scratch: read only to decide what
+     * entries[] should hold, and copied into it by value, so none of it needs to outlive an iteration.
+     * It lives on its own arena so rewinding it can never reclaim entries[]'s own storage. */
+    Arena *scratch = arena_create(FLOW_SCRATCH_ARENA_BLOCK_SIZE);
 
     Flow *entries = arena_alloc(arena, cfg->block_count * sizeof(Flow));
 
@@ -640,12 +640,16 @@ void flow_pass_run(Arena *arena, TypeRegistry *registry, ASTStmt *body, Binding 
             FlowSlot slot = {.init = FLOW_INIT, .inner_depth = 0};
 
             if (borrows_memory(&pass, params[i]->var.type)) {
-                flow_slot_add_source(&slot, params[i]);
+                flow_slot_add_source(arena, &slot, params[i]);
             }
 
             flow_set(&entries[cfg->entry->index], params[i], slot);
         }
     }
+
+    /* Everything from here on mutates a flow that lives on scratch, so its field and source arrays
+     * should too, or rewinding scratch would reclaim nothing and this arena would fill up instead. */
+    pass.arena = scratch;
 
     bool changed = true;
 
@@ -659,8 +663,10 @@ void flow_pass_run(Arena *arena, TypeRegistry *registry, ASTStmt *body, Binding 
                 continue;
             }
 
+            ArenaCheckpoint checkpoint = arena_checkpoint(scratch);
+
             Flow exit;
-            flow_init(&exit, arena);
+            flow_init(&exit, scratch);
             flow_copy(&exit, &entries[i]);
 
             pass.flow = &exit;
@@ -676,7 +682,7 @@ void flow_pass_run(Arena *arena, TypeRegistry *registry, ASTStmt *body, Binding 
                 Flow *target = &entries[successors[s]->index];
 
                 Flow merged;
-                flow_init(&merged, arena);
+                flow_init(&merged, scratch);
                 flow_copy(&merged, target);
                 flow_merge(&merged, &exit);
 
@@ -685,6 +691,8 @@ void flow_pass_run(Arena *arena, TypeRegistry *registry, ASTStmt *body, Binding 
                     changed = true;
                 }
             }
+
+            arena_rewind(scratch, checkpoint);
         }
     }
 
@@ -695,13 +703,19 @@ void flow_pass_run(Arena *arena, TypeRegistry *registry, ASTStmt *body, Binding 
             continue;
         }
 
+        ArenaCheckpoint checkpoint = arena_checkpoint(scratch);
+
         Flow exit;
-        flow_init(&exit, arena);
+        flow_init(&exit, scratch);
         flow_copy(&exit, &entries[i]);
 
         pass.flow = &exit;
         flow_pass_block(&pass, cfg->blocks[i]);
+
+        arena_rewind(scratch, checkpoint);
     }
+
+    arena_destroy(scratch);
 
     if (function && !report) {
         function->borrowed_params = pass.returned_params;

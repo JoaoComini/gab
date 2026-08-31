@@ -18,34 +18,30 @@ typedef enum {
     FLOW_INIT,
 } FlowInit;
 
-#define FLOW_MAX_BORROW_SOURCES 4
-
 typedef struct FlowSlot {
     FlowInit init;
 
     int inner_depth;
 
     /* The slots this one borrows from, so freeing any of their objects marks this one dangling. */
-    Binding *borrows_from[FLOW_MAX_BORROW_SOURCES];
+    Binding **borrows_from;
     size_t borrow_count;
-
-    /* Set when more sources were named than fit: the slot then borrows from every slot, not from none. */
-    bool borrows_unknown;
+    size_t borrow_capacity;
 
     /* What each field holds, so reading one names its own sources rather than the whole struct's. */
     struct FlowSlot *fields;
     size_t field_count;
 } FlowSlot;
 
-/* Records 'from' as a slot this borrow names, if there is room and it is not already there. */
-void flow_slot_add_source(FlowSlot *slot, Binding *from);
+/* Records 'from' as a slot this borrow names, growing the source array on the given arena as needed. */
+void flow_slot_add_source(Arena *arena, FlowSlot *slot, Binding *from);
 bool flow_slot_borrows_from(const FlowSlot *slot, const Binding *from);
 
 /* Gives a slot room for 'count' fields, so each can be tracked apart from the others. */
 void flow_slot_open_fields(FlowSlot *slot, Arena *arena, size_t count);
 
 /* Folds every field into the slot itself, for a read that names the whole value. */
-FlowSlot flow_slot_flattened(const FlowSlot *slot);
+FlowSlot flow_slot_flattened(Arena *arena, const FlowSlot *slot);
 
 #define flow_map_hash(key) ((size_t)(key) >> 4)
 #define flow_map_key_equals(key, other) key == other
