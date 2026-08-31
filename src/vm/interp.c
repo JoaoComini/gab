@@ -54,7 +54,7 @@ static void vm_release_frame_refs(VM *vm, const CallFrame *frame) {
         FrameRef ref = refs->data[i];
         void *slot = vm->stack + frame->base + ref.slot * VM_SLOT_SIZE;
 
-        object_release(DEFAULT_ALLOCATOR, ref.drop, slot);
+        object_release(&DEFAULT_ALLOCATOR, ref.drop, slot);
 
         memset(slot, 0, ref.release_width);
     }
@@ -558,7 +558,7 @@ static void vm_run_loop(VM *vm) {
 
                 const HeapShape *shape = &vm->program.heap_shapes.data[type_index];
 
-                void *object = object_alloc(DEFAULT_ALLOCATOR, shape->size, shape->drop);
+                void *object = object_alloc(&DEFAULT_ALLOCATOR, shape->size, shape->drop);
 
                 if (!object) {
                     vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory");
@@ -581,7 +581,7 @@ static void vm_run_loop(VM *vm) {
 
                 void *slot = regs + rd * VM_SLOT_SIZE;
 
-                object_release(DEFAULT_ALLOCATOR, shape->drop, slot);
+                object_release(&DEFAULT_ALLOCATOR, shape->drop, slot);
 
                 memset(slot, 0, shape->release_width);
                 VM_NEXT();
@@ -736,7 +736,7 @@ static void vm_run_loop(VM *vm) {
                 int32_t size;
                 memcpy(&size, VM_REG(r1), sizeof(size));
 
-                DEFAULT_ALLOCATOR.free_sized(DEFAULT_ALLOCATOR.ctx, vm_read_ptr_at(regs, rd), (size_t)size);
+                DEFAULT_ALLOCATOR.free(DEFAULT_ALLOCATOR.ctx, vm_read_ptr_at(regs, rd), (size_t)size);
                 VM_NEXT();
             }
             VM_CASE(OP_ADD_PTR_REG) {

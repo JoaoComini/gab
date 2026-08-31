@@ -148,20 +148,12 @@ void arena_rewind(Arena *arena, ArenaCheckpoint checkpoint) {
 
 static void *arena_allocator_alloc(void *ctx, size_t size) { return arena_alloc((Arena *)ctx, size); }
 
-static void arena_allocator_free(void *ctx, void *ptr) {
-    (void)ctx;
-    (void)ptr;
-}
-
-static void arena_allocator_free_sized(void *ctx, void *ptr, size_t size) {
+static void arena_allocator_free(void *ctx, void *ptr, size_t size) {
     (void)ctx;
     (void)ptr;
     (void)size;
 }
 
 Allocator arena_allocator(Arena *arena) {
-    return (Allocator){.alloc = &arena_allocator_alloc,
-                       .free = &arena_allocator_free,
-                       .free_sized = &arena_allocator_free_sized,
-                       .ctx = arena};
+    return (Allocator){.alloc = &arena_allocator_alloc, .free = &arena_allocator_free, .ctx = arena};
 }

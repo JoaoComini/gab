@@ -35,6 +35,7 @@ if(GAB_SANITIZE)
 endif()
 
 add_library(gab
+    src/allocator.c
     src/arena.c
     src/diagnostics.c
     src/lexer.c

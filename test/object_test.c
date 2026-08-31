@@ -11,6 +11,8 @@
 typedef struct {
     int allocs;
     int frees;
+
+    size_t freed_bytes;
 } AllocCounts;
 
 static void *counting_alloc(void *ctx, size_t size) {
@@ -18,8 +20,12 @@ static void *counting_alloc(void *ctx, size_t size) {
     return malloc(size);
 }
 
-static void counting_free(void *ctx, void *ptr) {
-    ((AllocCounts *)ctx)->frees++;
+static void counting_free(void *ctx, void *ptr, size_t size) {
+    AllocCounts *counts = ctx;
+
+    counts->frees++;
+    counts->freed_bytes += size;
+
     free(ptr);
 }
 
@@ -109,14 +115,14 @@ static void test_alloc_and_free_are_one_allocation() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *p = object_alloc(allocator, type_registry_size_of(registry, player),
+    void *p = object_alloc(&allocator, type_registry_size_of(registry, player),
                            type_registry_drop_of(registry, player));
 
     assert(p);
     assert(counts.allocs == 1);
     assert(object_of(p)->drop == type_registry_drop_of(registry, player));
 
-    object_free(allocator, p);
+    object_free(&allocator, p);
 
     assert(counts.frees == 1);
 
@@ -138,12 +144,12 @@ static void test_the_payload_follows_the_header() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *p =
-        object_alloc(allocator, type_registry_size_of(registry, pair), type_registry_drop_of(registry, pair));
+    void *p = object_alloc(&allocator, type_registry_size_of(registry, pair),
+                           type_registry_drop_of(registry, pair));
 
     assert((char *)object_of(p) + sizeof(ObjectHeader) == (char *)p);
 
-    object_free(allocator, p);
+    object_free(&allocator, p);
 
     test_context_free(&ctx);
 }
@@ -163,14 +169,14 @@ static void test_a_fresh_payload_is_zeroed() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    char *p =
-        object_alloc(allocator, type_registry_size_of(registry, pair), type_registry_drop_of(registry, pair));
+    char *p = object_alloc(&allocator, type_registry_size_of(registry, pair),
+                           type_registry_drop_of(registry, pair));
 
     for (size_t i = 0; i < type_registry_size_of(registry, pair); i++) {
         assert(p[i] == 0);
     }
 
-    object_free(allocator, p);
+    object_free(&allocator, p);
 
     test_context_free(&ctx);
 }
@@ -194,16 +200,16 @@ static void test_freeing_an_object_frees_what_it_owns() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *child = object_alloc(allocator, type_registry_size_of(registry, inner),
+    void *child = object_alloc(&allocator, type_registry_size_of(registry, inner),
                                type_registry_drop_of(registry, inner));
-    void *parent = object_alloc(allocator, type_registry_size_of(registry, outer),
+    void *parent = object_alloc(&allocator, type_registry_size_of(registry, outer),
                                 type_registry_drop_of(registry, outer));
 
     memcpy(parent, &child, sizeof(child));
 
     assert(counts.allocs == 2);
 
-    object_free(allocator, parent);
+    object_free(&allocator, parent);
 
     assert(counts.frees == 2);
 
@@ -236,16 +242,16 @@ static void test_freeing_reaches_an_owning_field_at_its_offset() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *child = object_alloc(allocator, type_registry_size_of(registry, inner),
+    void *child = object_alloc(&allocator, type_registry_size_of(registry, inner),
                                type_registry_drop_of(registry, inner));
-    void *parent = object_alloc(allocator, type_registry_size_of(registry, outer),
+    void *parent = object_alloc(&allocator, type_registry_size_of(registry, outer),
                                 type_registry_drop_of(registry, outer));
 
     memcpy((char *)parent + offset, &child, sizeof(child));
 
     assert(counts.allocs == 2);
 
-    object_free(allocator, parent);
+    object_free(&allocator, parent);
 
     assert(counts.frees == 2);
 
@@ -271,18 +277,18 @@ static void test_freeing_does_not_follow_a_ref_field() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    void *borrowed = object_alloc(allocator, type_registry_size_of(registry, inner),
+    void *borrowed = object_alloc(&allocator, type_registry_size_of(registry, inner),
                                   type_registry_drop_of(registry, inner));
-    void *holder = object_alloc(allocator, type_registry_size_of(registry, outer),
+    void *holder = object_alloc(&allocator, type_registry_size_of(registry, outer),
                                 type_registry_drop_of(registry, outer));
 
     memcpy(holder, &borrowed, sizeof(borrowed));
 
-    object_free(allocator, holder);
+    object_free(&allocator, holder);
 
     assert(counts.frees == 1);
 
-    object_free(allocator, borrowed);
+    object_free(&allocator, borrowed);
 
     assert(counts.frees == 2);
 
@@ -293,9 +299,32 @@ static void test_freeing_null_is_a_no_op() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    object_free(allocator, NULL);
+    object_free(&allocator, NULL);
 
     assert(counts.frees == 0);
+}
+
+static void test_a_block_is_freed_with_the_size_it_was_reserved_with() {
+    VM *vm = vm_create();
+
+    Scope *scope = &vm->env.global_scope;
+    TypeRegistry *registry = scope->type_registry;
+
+    const Type *owning = scope_type_lookup(scope, string_from_cstr(&vm->env.strings, "String"));
+
+    AllocCounts counts = {0};
+    Allocator allocator = counting_allocator(&counts);
+
+    GabStringValue string = {0};
+
+    assert(block_reserve(&allocator, &string.block, 8, sizeof(char)));
+
+    object_release(&allocator, type_registry_drop_of(registry, owning), &string);
+
+    assert(counts.frees == 1);
+    assert(counts.freed_bytes == (size_t)string.block.capacity * sizeof(char));
+
+    vm_free(vm);
 }
 
 static void test_a_string_owns_and_a_reference_to_one_does_not() {
@@ -489,6 +518,7 @@ static void test_a_builtin_is_interned_and_found_by_its_kind() {
 
 int main(void) {
     test_a_raw_pointer_carries_a_stride_and_drops_nothing();
+    test_a_block_is_freed_with_the_size_it_was_reserved_with();
     test_a_string_owns_and_a_reference_to_one_does_not();
     test_a_type_carries_only_what_its_kind_has();
     test_methods_live_beside_the_type_not_in_it();

@@ -58,7 +58,7 @@ static void vec_push(Args *args) {
     VecHeader vec = vec_load(args);
     size_t stride = vec_stride(args);
 
-    if (!block_reserve(DEFAULT_ALLOCATOR, &vec.block, 1, stride)) {
+    if (!block_reserve(&DEFAULT_ALLOCATOR, &vec.block, 1, stride)) {
         vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory growing a vector");
         return;
     }
@@ -104,7 +104,7 @@ static void vec_new(Args *args) {
 
     VecHeader vec = {0};
 
-    if (count > 0 && !block_reserve(DEFAULT_ALLOCATOR, &vec.block, count, stride)) {
+    if (count > 0 && !block_reserve(&DEFAULT_ALLOCATOR, &vec.block, count, stride)) {
         vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory reserving a vector");
         return;
     }
