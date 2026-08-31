@@ -76,6 +76,9 @@ bool type_registry_holds_its_memory_inline(TypeRegistry *registry, const Type *t
 
 bool type_registry_owns(TypeRegistry *registry, const Type *type);
 
+/* True when a value of this type names memory it does not own, at any depth. */
+bool type_registry_borrows(TypeRegistry *registry, const Type *type);
+
 bool type_registry_copies(TypeRegistry *registry, const Type *type);
 
 const DropPlan *type_registry_drop_of(TypeRegistry *registry, const Type *type);

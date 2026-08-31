@@ -25,6 +25,7 @@ set(
     vm/owned_func_test.c
     vm/heap_test.c
     vm/ownership_test.c
+    vm/struct_lifetime_test.c
     vm/move_test.c
     vm/owning_param_test.c
     vm/field_ownership_test.c
