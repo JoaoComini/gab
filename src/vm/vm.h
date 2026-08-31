@@ -34,6 +34,8 @@ typedef struct {
 
 GAB_LIST(ModuleImportList, module_import_list, ModuleImport)
 
+GAB_LIST(StagingArenaList, staging_arena_list, Arena *)
+
 typedef enum {
     VM_RUN_OK,
     VM_RUN_ERR_CALL_DEPTH,
@@ -64,6 +66,9 @@ typedef struct {
     ModuleScopeMap *module_scopes;
 
     ModuleImportList module_imports;
+
+    /* Arenas of compiles that committed; a rejected compile destroys its own instead of adding it here. */
+    StagingArenaList staging_arenas;
 } Environment;
 
 typedef struct VM {
