@@ -524,6 +524,36 @@ static Function *instantiate_method(TypeRegistry *registry, const MethodDecl *me
     return function;
 }
 
+Function *type_registry_specialize(TypeRegistry *registry, const Function *generic, const Type *const *args,
+                                   size_t arg_count) {
+    Function *function = arena_alloc(registry->arena, sizeof(Function));
+
+    const Type **params = generic->param_count
+                              ? arena_alloc(registry->arena, generic->param_count * sizeof(const Type *))
+                              : NULL;
+
+    for (size_t p = 0; p < generic->param_count; p++) {
+        params[p] = substitute(registry, generic->params[p], args, arg_count);
+    }
+
+    const Type **owned_args = arena_alloc(registry->arena, arg_count * sizeof(const Type *));
+
+    for (size_t i = 0; i < arg_count; i++) {
+        owned_args[i] = args[i];
+    }
+
+    *function = *generic;
+
+    function->params = params;
+    function->return_type = substitute(registry, generic->return_type, args, arg_count);
+    function->type_args = owned_args;
+    function->type_arg_count = arg_count;
+    function->instance = NULL;
+    function->func_index = FUNCTION_NO_BODY;
+
+    return function;
+}
+
 static const TypeFields no_fields = {.fields = NULL, .count = 0};
 
 const TypeFields *type_registry_fields_of(TypeRegistry *registry, const Type *type) {

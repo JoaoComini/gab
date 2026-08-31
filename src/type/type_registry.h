@@ -118,4 +118,7 @@ const Type *type_registry_apply(TypeRegistry *registry, const TypeDef *def, cons
 
 const Type *type_registry_block_of(TypeRegistry *registry, const Type *element);
 
+Function *type_registry_specialize(TypeRegistry *registry, const Function *generic, const Type *const *args,
+                                   size_t arg_count);
+
 #endif

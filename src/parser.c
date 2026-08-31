@@ -763,6 +763,17 @@ static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
     return ast_struct_decl_stmt_create(span, name, params, param_count, fields);
 }
 
+/* Type parameters not consumed by an owner belong to the function itself. */
+static void func_decl_take_type_params(ASTStmt *decl, TypeExprList *params) {
+    if (decl->func_decl.owner) {
+        return;
+    }
+
+    for (size_t i = 0; i < params->size && i < GAB_MAX_TYPE_PARAMS; i++) {
+        decl->func_decl.type_params[decl->func_decl.type_param_count++] = params->data[i]->name;
+    }
+}
+
 static ASTStmt *parse_func_decl_stmt(Parser *parser) {
     Span span = parser_span(parser);
 
@@ -814,12 +825,6 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
         }
 
         parser_next_token(parser);
-
-        if (parser->current.type != TOKEN_COLON_COLON) {
-            parser_error(parser, "a type parameter list belongs to the type a function is declared on");
-            type_expr_list_free(&owner_params);
-            return NULL;
-        }
     }
 
     if (parser->current.type == TOKEN_COLON_COLON) {
@@ -904,6 +909,12 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
         ASTStmt *decl = ast_func_decl_stmt_create(span, func_name, func_type, func_params, NULL);
         decl->func_decl.owner = owner;
 
+        func_decl_take_type_params(decl, &owner_params);
+
+        if (!owner) {
+            type_expr_list_free(&owner_params);
+        }
+
         return decl;
     }
 
@@ -917,6 +928,12 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
     ASTStmt *decl = ast_func_decl_stmt_create(span, func_name, func_type, func_params, func_body);
     decl->func_decl.owner = owner;
+
+    func_decl_take_type_params(decl, &owner_params);
+
+    if (!owner) {
+        type_expr_list_free(&owner_params);
+    }
 
     return decl;
 }
@@ -1143,6 +1160,11 @@ static bool parser_type_args_precede_a_brace(Parser *parser) {
 
 static bool parser_type_args_precede_colons(Parser *parser) {
     return parser_type_args_close_with(parser, TOKEN_COLON_COLON);
+}
+
+/* 'f<int>(' supplies type arguments; 'a < b' compares, and only the closing token tells them apart. */
+static bool parser_type_args_precede_a_call(Parser *parser) {
+    return parser_type_args_close_with(parser, TOKEN_LPAREN);
 }
 
 static TypeExpr *parse_type_args_for(Parser *parser, StringRef name) {
@@ -1476,7 +1498,8 @@ static ASTExpr *parse_primary(Parser *parser) {
 
         TypeExpr *owner_type_expr = NULL;
 
-        if (parser->current.type == TOKEN_LESS && parser_type_args_precede_colons(parser)) {
+        if (parser->current.type == TOKEN_LESS &&
+            (parser_type_args_precede_colons(parser) || parser_type_args_precede_a_call(parser))) {
             owner_type_expr = parse_type_args_for(parser, lexeme);
 
             if (!owner_type_expr) {
@@ -1502,9 +1525,6 @@ static ASTExpr *parse_primary(Parser *parser) {
                 type_expr_destroy(owner_type_expr);
                 return NULL;
             }
-        } else if (owner_type_expr) {
-            type_expr_destroy(owner_type_expr);
-            owner_type_expr = NULL;
         }
 
         ASTExpr *variable = ast_variable_expr_create(span, lexeme);
