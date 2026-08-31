@@ -100,6 +100,13 @@ static void test_a_parameter_is_the_element_of_an_array() {
                         "let r: int = f();") == 9);
 }
 
+static void test_a_function_owned_by_an_instantiation_is_called_through_it() {
+    assert(test_run_int("struct Holder<T> { value: T }\n"
+                        "func Holder<T>::make(n: int): int { return n + 1; }\n"
+                        "func f(): int { return Holder<int>::make(6); }\n"
+                        "let r: int = f();") == 7);
+}
+
 static void test_a_method_on_a_declaration_serves_an_instantiation() {
     assert(test_run_int("struct Holder<T> { value: T }\n"
                         "func Holder<T>::get(h: &Holder<T>): T { return h.value; }\n"
@@ -223,6 +230,7 @@ int main() {
     test_an_instantiation_reached_from_another_is_emitted();
     test_an_instantiation_that_owns_frees_what_it_holds();
     test_each_instantiation_gets_its_own_body();
+    test_a_function_owned_by_an_instantiation_is_called_through_it();
     test_a_method_on_a_declaration_serves_an_instantiation();
     test_a_generic_field_holds_its_argument();
     test_two_instantiations_are_two_types();
