@@ -22,7 +22,7 @@ typedef struct StructDecl {
     Scope *scope;
     String *name;
 
-    TypeDef *def;
+    TypeDecl *decl;
 
     bool fields_demanded;
 
@@ -1537,7 +1537,8 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
 
         Resolution base_resolution = base_name ? scope_resolve(base_scope, base_name) : (Resolution){0};
 
-        const TypeDef *base_def = base_resolution.kind == RESOLUTION_TYPE_DECL ? base_resolution.def : NULL;
+        const TypeDecl *base_decl =
+            base_resolution.kind == RESOLUTION_TYPE_DECL ? base_resolution.decl : NULL;
         const Type *base = resolution_type(registry, base_resolution);
 
         if (base_resolution.kind == RESOLUTION_NONE) {
@@ -1548,10 +1549,10 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
             return resolver_error_type(state);
         }
 
-        if (base_def) {
-            if (expr->apply.args.size != base_def->param_count) {
+        if (base_decl) {
+            if (expr->apply.args.size != base_decl->param_count) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' takes %zu type argument(s), not %zu",
-                           base_def->name->data, base_def->param_count, expr->apply.args.size);
+                           base_decl->name->data, base_decl->param_count, expr->apply.args.size);
                 return resolver_error_type(state);
             }
 
@@ -1585,7 +1586,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
                 }
             }
 
-            return type_registry_apply(registry, base_def, args, expr->apply.args.size);
+            return type_registry_apply(registry, base_decl, args, expr->apply.args.size);
         }
 
         diag_error(state->diagnostics, GAB_ERR_TYPE, span, "%s does not take a type argument",
@@ -1660,7 +1661,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
 
     if (resolution.kind == RESOLUTION_TYPE_DECL) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' takes %zu type argument(s), not 0",
-                   resolution.def->name->data, resolution.def->param_count);
+                   resolution.decl->name->data, resolution.decl->param_count);
 
         return resolver_error_type(state);
     }
@@ -1680,7 +1681,7 @@ static StructDecl *decl_held_by_value(ResolverState *state, const Type *type) {
     }
 
     for (size_t i = 0; i < state->struct_decls.size; i++) {
-        if (type && state->struct_decls.data[i]->def == type_decl(type)) {
+        if (type && state->struct_decls.data[i]->decl == type_decl(type)) {
             return state->struct_decls.data[i];
         }
     }
@@ -1701,14 +1702,14 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
 
     size_t param_count = stmt->struct_decl.param_count;
 
-    TypeDef *def = arena_alloc(resolver_owner_arena(state), sizeof(TypeDef));
+    TypeDecl *declared = arena_alloc(resolver_owner_arena(state), sizeof(TypeDecl));
 
-    *def = (TypeDef){
+    *declared = (TypeDecl){
         .name = struct_name,
         .param_count = param_count,
     };
 
-    scope_bind_decl(state->current_scope, struct_name, def);
+    scope_bind_decl(state->current_scope, struct_name, declared);
 
     StructDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(StructDecl));
 
@@ -1716,7 +1717,7 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
         .stmt = stmt,
         .scope = state->current_scope,
         .name = struct_name,
-        .def = def,
+        .decl = declared,
         .fields_demanded = false,
         .poisoned = false,
     };
@@ -1791,7 +1792,7 @@ static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
     struct_decl_list_add(&state->resolving, decl);
 
     ASTStmt *stmt = decl->stmt;
-    TypeDef *def = decl->def;
+    TypeDecl *declared = decl->decl;
 
     Scope *enclosing = state->current_scope;
     Scope *params = scope_create(resolver_owner_arena(state), decl->scope->strings, decl->scope);
@@ -1874,20 +1875,20 @@ static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
         return;
     }
 
-    def->fields = fields;
-    def->field_count = resolved;
+    declared->fields = fields;
+    declared->field_count = resolved;
 
     layout_struct(state, decl);
 }
 
 static void layout_struct(ResolverState *state, StructDecl *decl) {
-    if (decl->def->param_count > 0) {
+    if (decl->decl->param_count > 0) {
         return;
     }
 
     TypeRegistry *registry = state->current_scope->type_registry;
 
-    type_registry_complete(registry, type_registry_apply(registry, decl->def, NULL, 0));
+    type_registry_complete(registry, type_registry_apply(registry, decl->decl, NULL, 0));
 }
 
 /* A type parameter has no width until it is substituted, so a generic signature is checked per instantiation.
@@ -1956,7 +1957,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
     TypeBinding *bound =
         type_name_of(owner) ? scope_binding_lookup_local(declaring, type_name_of(owner)) : NULL;
 
-    if (!bound || bound->def != type_decl(owner)) {
+    if (!bound || bound->decl != type_decl(owner)) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                    "cannot declare a function on '%s', which this module does not declare",
                    type_name(state, owner));
@@ -2051,9 +2052,9 @@ static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
     } else {
         Resolution resolution = scope_resolve(state->current_scope, resolver_intern(state, owner_ref));
 
-        if (resolution.kind == RESOLUTION_TYPE_DECL && resolution.def->param_count > 0) {
+        if (resolution.kind == RESOLUTION_TYPE_DECL && resolution.decl->param_count > 0) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "'%s' takes %zu type argument(s), not 0",
-                       resolution.def->name->data, resolution.def->param_count);
+                       resolution.decl->name->data, resolution.decl->param_count);
             return NULL;
         }
 

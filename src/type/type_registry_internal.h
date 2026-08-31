@@ -13,7 +13,7 @@ GAB_HASH_MAP(TypeInternTable, type_intern, const Type *, Type *)
 
 /* Keyed on the declaration rather than the type, so every instantiation of an owner finds the one entry. */
 typedef struct OwnedKey {
-    const TypeDef *owner;
+    const TypeDecl *owner;
 
     const String *name;
 } OwnedKey;

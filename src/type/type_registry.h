@@ -27,7 +27,7 @@ typedef struct Binding Binding;
 typedef struct {
     const Type *type;
 
-    const TypeDef *def;
+    const TypeDecl *decl;
 } TypeBinding;
 
 #define type_map_hash(key) (size_t)key
@@ -36,13 +36,13 @@ typedef struct {
 
 GAB_HASH_MAP(TypeMap, type_map, String *, TypeBinding)
 
-typedef struct TypeDecl {
-    const TypeDef *def;
+typedef struct TypeDeclSpec {
+    const TypeDecl *decl;
 
     const Type *derefs_to;
     const LentPart *lent_parts;
     size_t lent_part_count;
-} TypeDecl;
+} TypeDeclSpec;
 
 typedef struct TypeFieldSpec {
     String *name;
@@ -93,7 +93,7 @@ void type_registry_destroy(TypeRegistry *registry);
 
 const Type *type_registry_get_primitive(TypeRegistry *registry, TypeKind kind);
 
-const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl);
+const Type *type_registry_declare(TypeRegistry *registry, const TypeDeclSpec *spec);
 
 void type_registry_set_deref(TypeRegistry *registry, const Type *from, const Type *to, const LentPart *parts,
                              size_t part_count);
@@ -113,10 +113,10 @@ const Type *type_registry_ptr_to(TypeRegistry *registry, const Type *pointee);
 
 const Type *type_registry_param(TypeRegistry *registry, size_t index);
 
-const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDef *def, const TypeArg *args,
+const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDecl *decl, const TypeArg *args,
                                       size_t arg_count);
 
-const Type *type_registry_apply(TypeRegistry *registry, const TypeDef *def, const Type *const *args,
+const Type *type_registry_apply(TypeRegistry *registry, const TypeDecl *decl, const Type *const *args,
                                 size_t arg_count);
 
 const Type *type_registry_block_of(TypeRegistry *registry, const Type *element);

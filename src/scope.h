@@ -62,7 +62,7 @@ typedef struct {
 
     union {
         const Type *type;
-        const TypeDef *def;
+        const TypeDecl *decl;
         Binding *binding;
     };
 } Resolution;
@@ -86,7 +86,7 @@ bool scope_bind_type(Scope *scope, String *name, const Type *type);
 
 bool scope_bind_argument(Scope *scope, String *name, const Type *type);
 
-bool scope_bind_decl(Scope *scope, String *name, const TypeDef *def);
+bool scope_bind_decl(Scope *scope, String *name, const TypeDecl *decl);
 
 void scope_init_staging(Scope *scope, Arena *arena, StringPool *strings, Scope *target);
 

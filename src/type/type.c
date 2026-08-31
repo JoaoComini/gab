@@ -107,7 +107,7 @@ TypeKind type_kind(const Type *type) { return type->kind; }
 
 String *type_name_of(const Type *type) { return type->name; }
 
-const TypeDef *type_decl(const Type *type) { return type->decl; }
+const TypeDecl *type_decl(const Type *type) { return type->decl; }
 
 size_t type_structural_hash(const Type *type) {
     size_t hash = 5381;

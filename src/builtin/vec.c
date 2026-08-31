@@ -11,7 +11,7 @@
 #include <stdint.h>
 #include <string.h>
 
-static const TypeDef *vec_declare_type(VM *vm) {
+static const TypeDecl *vec_declare_type(VM *vm) {
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
     const TypeFieldSpec fields[] = {
@@ -113,7 +113,7 @@ static void vec_new(Args *args) {
 }
 
 void builtin_register_vec(VM *vm) {
-    const TypeDef *vec_def = vec_declare_type(vm);
+    const TypeDecl *vec_def = vec_declare_type(vm);
 
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
