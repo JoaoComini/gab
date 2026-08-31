@@ -1,6 +1,7 @@
 #include "ast/flow.h"
 
 #define FLOW_INITIAL_CAPACITY 16
+#define FLOW_INITIAL_BORROW_CAPACITY 2
 
 void flow_init(Flow *flow, Arena *arena) {
     flow->arena = arena;
@@ -9,10 +10,6 @@ void flow_init(Flow *flow, Arena *arena) {
 }
 
 bool flow_slot_borrows_from(const FlowSlot *slot, const Binding *from) {
-    if (slot->borrows_unknown) {
-        return true;
-    }
-
     for (size_t i = 0; i < slot->borrow_count; i++) {
         if (slot->borrows_from[i] == from) {
             return true;
@@ -22,14 +19,23 @@ bool flow_slot_borrows_from(const FlowSlot *slot, const Binding *from) {
     return false;
 }
 
-void flow_slot_add_source(FlowSlot *slot, Binding *from) {
+void flow_slot_add_source(Arena *arena, FlowSlot *slot, Binding *from) {
     if (!from || flow_slot_borrows_from(slot, from)) {
         return;
     }
 
-    if (slot->borrow_count == FLOW_MAX_BORROW_SOURCES) {
-        slot->borrows_unknown = true;
-        return;
+    if (slot->borrow_count == slot->borrow_capacity) {
+        size_t new_capacity =
+            slot->borrow_capacity ? slot->borrow_capacity * 2 : FLOW_INITIAL_BORROW_CAPACITY;
+
+        Binding **grown = arena_alloc(arena, new_capacity * sizeof(Binding *));
+
+        for (size_t i = 0; i < slot->borrow_count; i++) {
+            grown[i] = slot->borrows_from[i];
+        }
+
+        slot->borrows_from = grown;
+        slot->borrow_capacity = new_capacity;
     }
 
     slot->borrows_from[slot->borrow_count++] = from;
@@ -48,20 +54,25 @@ void flow_slot_open_fields(FlowSlot *slot, Arena *arena, size_t count) {
     }
 }
 
-FlowSlot flow_slot_flattened(const FlowSlot *slot) {
+FlowSlot flow_slot_flattened(Arena *arena, const FlowSlot *slot) {
     FlowSlot flat = *slot;
 
     flat.fields = NULL;
     flat.field_count = 0;
+    flat.borrows_from = NULL;
+    flat.borrow_count = 0;
+    flat.borrow_capacity = 0;
+
+    for (size_t i = 0; i < slot->borrow_count; i++) {
+        flow_slot_add_source(arena, &flat, slot->borrows_from[i]);
+    }
 
     for (size_t i = 0; i < slot->field_count; i++) {
-        FlowSlot field = flow_slot_flattened(&slot->fields[i]);
+        FlowSlot field = flow_slot_flattened(arena, &slot->fields[i]);
 
         if (field.inner_depth > flat.inner_depth) {
             flat.inner_depth = field.inner_depth;
         }
-
-        flat.borrows_unknown = flat.borrows_unknown || field.borrows_unknown;
 
         /* Reading the whole value reads this field too, so its freed borrow is the value's. */
         if (flat.init == FLOW_INIT && field.init == FLOW_DANGLING) {
@@ -69,7 +80,7 @@ FlowSlot flow_slot_flattened(const FlowSlot *slot) {
         }
 
         for (size_t j = 0; j < field.borrow_count; j++) {
-            flow_slot_add_source(&flat, field.borrows_from[j]);
+            flow_slot_add_source(arena, &flat, field.borrows_from[j]);
         }
     }
 
@@ -101,8 +112,18 @@ void flow_set(Flow *flow, Binding *binding, FlowSlot slot) {
     for (size_t _i = 0; _i < (map)->capacity; _i++)                                                          \
         for (FlowMapEntry *entry = (map)->buckets[_i]; entry; entry = entry->next)
 
-/* Field arrays are shared until written, so a slot entering a new flow takes its own copy. */
+/* Field and source arrays are shared until written, so a slot entering a new flow takes its own copy. */
 static FlowSlot slot_copy(Arena *arena, FlowSlot slot) {
+    if (slot.borrow_capacity > 0) {
+        Binding **borrows_from = arena_alloc(arena, slot.borrow_capacity * sizeof(Binding *));
+
+        for (size_t i = 0; i < slot.borrow_count; i++) {
+            borrows_from[i] = slot.borrows_from[i];
+        }
+
+        slot.borrows_from = borrows_from;
+    }
+
     if (slot.field_count == 0) {
         return slot;
     }
@@ -150,16 +171,15 @@ static FlowSlot slot_merge(Arena *arena, FlowSlot a, FlowSlot b) {
     FlowSlot merged = {
         .init = init,
         .inner_depth = a.inner_depth > b.inner_depth ? a.inner_depth : b.inner_depth,
-        .borrows_unknown = a.borrows_unknown || b.borrows_unknown,
     };
 
     /* A borrow reaching a join names whatever it named on either path. */
     for (size_t i = 0; i < a.borrow_count; i++) {
-        flow_slot_add_source(&merged, a.borrows_from[i]);
+        flow_slot_add_source(arena, &merged, a.borrows_from[i]);
     }
 
     for (size_t i = 0; i < b.borrow_count; i++) {
-        flow_slot_add_source(&merged, b.borrows_from[i]);
+        flow_slot_add_source(arena, &merged, b.borrows_from[i]);
     }
 
     /* A value tracked per field on one path is tracked per field at the join. */
@@ -215,7 +235,7 @@ void flow_invalidate_borrows_of(Flow *flow, Binding *freed) {
 
 static bool slot_equals(const FlowSlot *a, const FlowSlot *b) {
     if (a->init != b->init || a->inner_depth != b->inner_depth || a->borrow_count != b->borrow_count ||
-        a->borrows_unknown != b->borrows_unknown || a->field_count != b->field_count) {
+        a->field_count != b->field_count) {
         return false;
     }
 

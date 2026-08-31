@@ -100,6 +100,29 @@ void arena_reset(Arena *arena) {
     arena->current_block = arena->first_block;
 }
 
+ArenaCheckpoint arena_checkpoint(const Arena *arena) {
+    return (ArenaCheckpoint){.block = arena->current_block, .offset = arena->current_block->offset};
+}
+
+/* Every block from the checkpoint's forward was touched only after it, so each rewinds to empty; the
+ * checkpoint's own block rewinds to where its cursor stood, not to empty. */
+void arena_rewind(Arena *arena, ArenaCheckpoint checkpoint) {
+#ifdef ARENA_POISON
+    memset((char *)checkpoint.block->memory + checkpoint.offset, ARENA_POISON,
+           checkpoint.block->offset - checkpoint.offset);
+#endif
+    checkpoint.block->offset = checkpoint.offset;
+
+    for (ArenaBlock *block = checkpoint.block->next; block; block = block->next) {
+#ifdef ARENA_POISON
+        memset(block->memory, ARENA_POISON, block->offset);
+#endif
+        block->offset = 0;
+    }
+
+    arena->current_block = checkpoint.block;
+}
+
 static void *arena_allocator_alloc(void *ctx, size_t size) { return arena_alloc((Arena *)ctx, size); }
 
 static void arena_allocator_free(void *ctx, void *ptr) {
