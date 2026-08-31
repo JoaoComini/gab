@@ -17,10 +17,10 @@ static const TypeLayout empty_layout = {.size = 0, .alignment = 1};
 static Type *register_builtin(TypeRegistry *registry, TypeKind kind, String *name) {
     Type *type = type_create(registry->arena, kind, name);
 
-    TypeDef *def = arena_alloc(registry->arena, sizeof(TypeDef));
-    *def = (TypeDef){.name = name};
+    TypeDecl *decl = arena_alloc(registry->arena, sizeof(TypeDecl));
+    *decl = (TypeDecl){.name = name};
 
-    type->decl = def;
+    type->decl = decl;
 
     return type;
 }
@@ -247,19 +247,20 @@ void type_registry_complete(TypeRegistry *registry, const Type *type) {
     type_registry_drop_of(registry, type);
 }
 
-const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl) {
-    assert(decl && decl->def && decl->def->name && "a declared type is found by name");
-    assert((decl->derefs_to != NULL) == (decl->lent_part_count > 0) &&
+const Type *type_registry_declare(TypeRegistry *registry, const TypeDeclSpec *spec) {
+    assert(spec && spec->decl && spec->decl->name && "a declared type is found by name");
+    assert((spec->derefs_to != NULL) == (spec->lent_part_count > 0) &&
            "a deref and the parts naming it are one statement");
 
-    const Type *type = decl->def->param_count == 0 ? type_registry_apply(registry, decl->def, NULL, 0) : NULL;
+    const Type *type =
+        spec->decl->param_count == 0 ? type_registry_apply(registry, spec->decl, NULL, 0) : NULL;
 
     if (type) {
         type_registry_complete(registry, type);
     }
 
-    if (decl->derefs_to) {
-        type_registry_set_deref(registry, type, decl->derefs_to, decl->lent_parts, decl->lent_part_count);
+    if (spec->derefs_to) {
+        type_registry_set_deref(registry, type, spec->derefs_to, spec->lent_parts, spec->lent_part_count);
     }
 
     return type;
@@ -276,13 +277,13 @@ const Type *type_registry_declare_struct(TypeRegistry *registry, String *name, c
         owned[i] = (TypeField){.name = fields[i].name, .type = fields[i].type};
     }
 
-    TypeDef *def = arena_alloc(registry->arena, sizeof(TypeDef));
+    TypeDecl *decl = arena_alloc(registry->arena, sizeof(TypeDecl));
 
-    *def = (TypeDef){.name = name, .fields = owned, .field_count = field_count};
+    *decl = (TypeDecl){.name = name, .fields = owned, .field_count = field_count};
 
-    const TypeDecl decl = {.def = def};
+    const TypeDeclSpec spec = {.decl = decl};
 
-    return type_registry_declare(registry, &decl);
+    return type_registry_declare(registry, &spec);
 }
 
 static OwnedKey owned_key_of(const Type *type, const String *name) {
@@ -300,9 +301,10 @@ static bool declare_owned(TypeRegistry *registry, OwnedKey key, Function *functi
 }
 
 bool type_registry_declare_owned(TypeRegistry *registry, const Type *type, Function *function) {
-    assert(type && function && function->name && "a function a type owns has a name and a signature");
+    assert(type && function && function->decl && function->decl->name &&
+           "a function a type owns has a name and a signature");
 
-    return declare_owned(registry, owned_key_of(type, function->name), function);
+    return declare_owned(registry, owned_key_of(type, function->decl->name), function);
 }
 
 /* A signature mentioning no type parameter is one function for every instantiation of its owner. */
@@ -348,7 +350,7 @@ static Type *intern(TypeRegistry *registry, const Type *key) {
     return type;
 }
 
-const Type *type_registry_apply(TypeRegistry *registry, const TypeDef *def, const Type *const *args,
+const Type *type_registry_apply(TypeRegistry *registry, const TypeDecl *decl, const Type *const *args,
                                 size_t arg_count) {
     TypeArg type_args[GAB_MAX_TYPE_PARAMS];
 
@@ -358,7 +360,7 @@ const Type *type_registry_apply(TypeRegistry *registry, const TypeDef *def, cons
         type_args[i] = (TypeArg){.kind = TYPE_ARG_TYPE, .type = args[i]};
     }
 
-    return type_registry_instantiate(registry, def, type_args, arg_count);
+    return type_registry_instantiate(registry, decl, type_args, arg_count);
 }
 
 const Type *type_registry_array_of(TypeRegistry *registry, const Type *element, int32_t length) {
@@ -466,11 +468,11 @@ const TypeFields *type_registry_fields_of(TypeRegistry *registry, const Type *ty
         return &no_fields;
     }
 
-    const TypeDef *def = type_decl(type);
+    const TypeDecl *decl = type_decl(type);
 
     if (type_arg_count(type) == 0) {
         TypeFields *plain = arena_alloc(registry->arena, sizeof(TypeFields));
-        *plain = (TypeFields){.fields = def->fields, .count = def->field_count};
+        *plain = (TypeFields){.fields = decl->fields, .count = decl->field_count};
 
         return plain;
     }
@@ -489,16 +491,16 @@ const TypeFields *type_registry_fields_of(TypeRegistry *registry, const Type *ty
         args[i] = type_args(type)[i].type;
     }
 
-    TypeField *fields = arena_alloc(registry->arena, def->field_count * sizeof(TypeField));
+    TypeField *fields = arena_alloc(registry->arena, decl->field_count * sizeof(TypeField));
 
-    for (size_t i = 0; i < def->field_count; i++) {
+    for (size_t i = 0; i < decl->field_count; i++) {
         fields[i] = (TypeField){
-            .name = def->fields[i].name,
-            .type = type_registry_substitute(registry, def->fields[i].type, args, type_arg_count(type)),
+            .name = decl->fields[i].name,
+            .type = type_registry_substitute(registry, decl->fields[i].type, args, type_arg_count(type)),
         };
     }
 
-    *result = (TypeFields){.fields = fields, .count = def->field_count};
+    *result = (TypeFields){.fields = fields, .count = decl->field_count};
 
     ((Type *)type)->record.substituted = result;
 
@@ -603,14 +605,14 @@ const TypeField *type_registry_find_field(TypeRegistry *registry, const Type *ty
     return NULL;
 }
 
-const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDef *def, const TypeArg *args,
+const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDecl *decl, const TypeArg *args,
                                       size_t arg_count) {
-    assert(def && "an instantiation names a declaration");
-    assert(arg_count == def->param_count && "an instantiation was given the wrong argument count");
+    assert(decl && "an instantiation names a declaration");
+    assert(arg_count == decl->param_count && "an instantiation was given the wrong argument count");
 
-    Type key = type_init(TYPE_STRUCT, def->name);
+    Type key = type_init(TYPE_STRUCT, decl->name);
 
-    key.decl = def;
+    key.decl = decl;
     key.args = args;
     key.arg_count = arg_count;
 

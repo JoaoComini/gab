@@ -118,11 +118,11 @@ Resolution scope_resolve(Scope *scope, String *name) {
         TypeBinding *bound = type_map_lookup(s->types, name);
 
         if (bound) {
-            if (!bound->def) {
+            if (!bound->decl) {
                 return (Resolution){.kind = RESOLUTION_TYPE, .type = bound->type};
             }
 
-            return (Resolution){.kind = RESOLUTION_TYPE_DECL, .def = bound->def};
+            return (Resolution){.kind = RESOLUTION_TYPE_DECL, .decl = bound->decl};
         }
 
         Binding **binding = binding_table_lookup(s->bindings, name);
@@ -141,8 +141,8 @@ const Type *resolution_type(TypeRegistry *registry, Resolution resolution) {
         return resolution.type;
 
     case RESOLUTION_TYPE_DECL:
-        return resolution.def->param_count == 0 ? type_registry_apply(registry, resolution.def, NULL, 0)
-                                                : NULL;
+        return resolution.decl->param_count == 0 ? type_registry_apply(registry, resolution.decl, NULL, 0)
+                                                 : NULL;
 
     default:
         return NULL;
@@ -201,12 +201,12 @@ bool scope_bind_argument(Scope *scope, String *name, const Type *type) {
     return true;
 }
 
-bool scope_bind_decl(Scope *scope, String *name, const TypeDef *def) {
+bool scope_bind_decl(Scope *scope, String *name, const TypeDecl *decl) {
     if (type_map_lookup(scope->types, name)) {
         return false;
     }
 
-    type_map_insert(scope->types, name, (TypeBinding){.def = def});
+    type_map_insert(scope->types, name, (TypeBinding){.decl = decl});
 
     return true;
 }
@@ -240,14 +240,18 @@ Binding *scope_decl_func(Scope *scope, String *name, const Type *return_type) {
     binding->scope_depth = scope->depth;
     binding->pinned = false;
 
+    FuncDecl *func_decl = arena_alloc(scope->arena, sizeof(FuncDecl));
+
+    *func_decl = (FuncDecl){.name = name, .body_kind = BODY_GAB};
+
     binding->func = arena_alloc(scope->arena, sizeof(Function));
 
     *binding->func = (Function){
+        .decl = func_decl,
         .return_type = return_type,
         .params = NULL,
         .param_count = 0,
         .func_index = FUNCTION_NO_BODY,
-        .body_kind = BODY_GAB,
     };
 
     Binding **decl = binding_table_insert(scope->bindings, name, binding);

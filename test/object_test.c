@@ -447,13 +447,14 @@ static void test_methods_live_beside_the_type_not_in_it() {
 
     assert(type_registry_find_owned(registry, int_type, name) == NULL);
 
-    Function method = {.name = name};
+    FuncDecl decl = {.name = name};
+    Function method = {.decl = &decl};
 
     assert(type_registry_declare_owned(registry, int_type, &method));
 
     Function *found = type_registry_find_owned(registry, int_type, name);
 
-    assert(found && found->name == name);
+    assert(found && found->decl->name == name);
 
     assert(!type_registry_declare_owned(registry, int_type, &method));
 

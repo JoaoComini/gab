@@ -21,7 +21,7 @@ typedef struct BuiltinTypeSpec {
     size_t lent_part_count;
 } BuiltinTypeSpec;
 
-const TypeDef *builtin_declare(VM *vm, const BuiltinTypeSpec *spec);
+const TypeDecl *builtin_declare(VM *vm, const BuiltinTypeSpec *spec);
 
 void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiver, const char *name,
                              GabExternFn body, const Type *return_type, const Type *const *params,

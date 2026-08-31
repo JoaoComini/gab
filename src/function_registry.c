@@ -99,14 +99,15 @@ Function *function_registry_specialize(FunctionRegistry *registry, Function *gen
         owned_args[i] = args[i];
     }
 
-    *function = *generic;
-
-    function->params = params;
-    function->return_type = type_registry_substitute(registry->types, generic->return_type, args, arg_count);
-    function->type_args = owned_args;
-    function->type_arg_count = arg_count;
-    function->instance = NULL;
-    function->func_index = FUNCTION_NO_BODY;
+    *function = (Function){
+        .decl = generic->decl,
+        .params = params,
+        .param_count = generic->param_count,
+        .return_type = type_registry_substitute(registry->types, generic->return_type, args, arg_count),
+        .type_args = owned_args,
+        .type_arg_count = arg_count,
+        .func_index = FUNCTION_NO_BODY,
+    };
 
     instance_key_insert(registry->instances, key, function);
 

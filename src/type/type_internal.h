@@ -8,7 +8,7 @@ struct Type {
 
     String *name;
 
-    const TypeDef *decl;
+    const TypeDecl *decl;
 
     const TypeArg *args;
     size_t arg_count;

@@ -22,7 +22,7 @@ typedef struct StructDecl {
     Scope *scope;
     String *name;
 
-    TypeDef *def;
+    TypeDecl *decl;
 
     bool fields_demanded;
 
@@ -542,9 +542,9 @@ static bool infer_type_args(const Type *declared, const Type *actual, const Type
 static Function *specialize_call(ResolverState *state, ASTExpr *expr, Function *generic) {
     const TypeExpr *supplied = expr->call.target->var.owner_type_expr;
 
-    size_t owed = generic->type_param_count;
+    size_t owed = generic->decl->type_param_count;
 
-    const char *name = generic->name ? generic->name->data : "this function";
+    const char *name = generic->decl->name ? generic->decl->name->data : "this function";
 
     const Type *args[GAB_MAX_TYPE_PARAMS] = {0};
 
@@ -597,21 +597,21 @@ static Function *specialize_call(ResolverState *state, ASTExpr *expr, Function *
 }
 
 static void instantiate_body(ResolverState *state, Function *method, Span span) {
-    if (method->body_kind != BODY_GAB || method->instance || !method->body) {
+    if (method->decl->body_kind != BODY_GAB || method->instance || !method->decl->body) {
         return;
     }
 
-    if (method->type_param_count == 0) {
+    if (method->decl->type_param_count == 0) {
         return;
     }
 
     if (state->instantiating >= GAB_MAX_INSTANTIATION_DEPTH) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' instantiates itself without end",
-                   method->name->data);
+                   method->decl->name->data);
         return;
     }
 
-    const ASTStmt *declaration = method->body;
+    const ASTStmt *declaration = method->decl->body;
 
     ASTStmt *clone = ast_clone_stmt(declaration);
 
@@ -1080,7 +1080,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
 
         Function *callee = expr->call.target->callee;
 
-        if (callee && callee->type_param_count > 0) {
+        if (callee && callee->decl->type_param_count > 0) {
             callee = specialize_call(state, expr, callee);
 
             if (!callee) {
@@ -1537,7 +1537,8 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
 
         Resolution base_resolution = base_name ? scope_resolve(base_scope, base_name) : (Resolution){0};
 
-        const TypeDef *base_def = base_resolution.kind == RESOLUTION_TYPE_DECL ? base_resolution.def : NULL;
+        const TypeDecl *base_decl =
+            base_resolution.kind == RESOLUTION_TYPE_DECL ? base_resolution.decl : NULL;
         const Type *base = resolution_type(registry, base_resolution);
 
         if (base_resolution.kind == RESOLUTION_NONE) {
@@ -1548,10 +1549,10 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
             return resolver_error_type(state);
         }
 
-        if (base_def) {
-            if (expr->apply.args.size != base_def->param_count) {
+        if (base_decl) {
+            if (expr->apply.args.size != base_decl->param_count) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' takes %zu type argument(s), not %zu",
-                           base_def->name->data, base_def->param_count, expr->apply.args.size);
+                           base_decl->name->data, base_decl->param_count, expr->apply.args.size);
                 return resolver_error_type(state);
             }
 
@@ -1585,7 +1586,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
                 }
             }
 
-            return type_registry_apply(registry, base_def, args, expr->apply.args.size);
+            return type_registry_apply(registry, base_decl, args, expr->apply.args.size);
         }
 
         diag_error(state->diagnostics, GAB_ERR_TYPE, span, "%s does not take a type argument",
@@ -1660,7 +1661,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
 
     if (resolution.kind == RESOLUTION_TYPE_DECL) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' takes %zu type argument(s), not 0",
-                   resolution.def->name->data, resolution.def->param_count);
+                   resolution.decl->name->data, resolution.decl->param_count);
 
         return resolver_error_type(state);
     }
@@ -1680,7 +1681,7 @@ static StructDecl *decl_held_by_value(ResolverState *state, const Type *type) {
     }
 
     for (size_t i = 0; i < state->struct_decls.size; i++) {
-        if (type && state->struct_decls.data[i]->def == type_decl(type)) {
+        if (type && state->struct_decls.data[i]->decl == type_decl(type)) {
             return state->struct_decls.data[i];
         }
     }
@@ -1701,14 +1702,14 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
 
     size_t param_count = stmt->struct_decl.param_count;
 
-    TypeDef *def = arena_alloc(resolver_owner_arena(state), sizeof(TypeDef));
+    TypeDecl *declared = arena_alloc(resolver_owner_arena(state), sizeof(TypeDecl));
 
-    *def = (TypeDef){
+    *declared = (TypeDecl){
         .name = struct_name,
         .param_count = param_count,
     };
 
-    scope_bind_decl(state->current_scope, struct_name, def);
+    scope_bind_decl(state->current_scope, struct_name, declared);
 
     StructDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(StructDecl));
 
@@ -1716,7 +1717,7 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
         .stmt = stmt,
         .scope = state->current_scope,
         .name = struct_name,
-        .def = def,
+        .decl = declared,
         .fields_demanded = false,
         .poisoned = false,
     };
@@ -1791,7 +1792,7 @@ static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
     struct_decl_list_add(&state->resolving, decl);
 
     ASTStmt *stmt = decl->stmt;
-    TypeDef *def = decl->def;
+    TypeDecl *declared = decl->decl;
 
     Scope *enclosing = state->current_scope;
     Scope *params = scope_create(resolver_owner_arena(state), decl->scope->strings, decl->scope);
@@ -1874,20 +1875,20 @@ static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
         return;
     }
 
-    def->fields = fields;
-    def->field_count = resolved;
+    declared->fields = fields;
+    declared->field_count = resolved;
 
     layout_struct(state, decl);
 }
 
 static void layout_struct(ResolverState *state, StructDecl *decl) {
-    if (decl->def->param_count > 0) {
+    if (decl->decl->param_count > 0) {
         return;
     }
 
     TypeRegistry *registry = state->current_scope->type_registry;
 
-    type_registry_complete(registry, type_registry_apply(registry, decl->def, NULL, 0));
+    type_registry_complete(registry, type_registry_apply(registry, decl->decl, NULL, 0));
 }
 
 /* A type parameter has no width until it is substituted, so a generic signature is checked per instantiation.
@@ -1956,7 +1957,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
     TypeBinding *bound =
         type_name_of(owner) ? scope_binding_lookup_local(declaring, type_name_of(owner)) : NULL;
 
-    if (!bound || bound->def != type_decl(owner)) {
+    if (!bound || bound->decl != type_decl(owner)) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                    "cannot declare a function on '%s', which this module does not declare",
                    type_name(state, owner));
@@ -1973,16 +1974,21 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
 
     String *name = resolver_intern(state, stmt->func_decl.name);
 
-    Function *func = arena_alloc(resolver_owner_arena(state), sizeof(Function));
-    *func = (Function){
-        .return_type = return_type,
-        .params = NULL,
-        .param_count = 0,
-        .func_index = FUNCTION_NO_BODY,
+    FuncDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(FuncDecl));
+    *decl = (FuncDecl){
         .name = name,
         .body_kind = BODY_GAB,
         .body = stmt,
         .type_param_count = stmt->func_decl.type_param_count,
+    };
+
+    Function *func = arena_alloc(resolver_owner_arena(state), sizeof(Function));
+    *func = (Function){
+        .decl = decl,
+        .return_type = return_type,
+        .params = NULL,
+        .param_count = 0,
+        .func_index = FUNCTION_NO_BODY,
     };
 
     size_t param_count = stmt->func_decl.params.size;
@@ -2046,9 +2052,9 @@ static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
     } else {
         Resolution resolution = scope_resolve(state->current_scope, resolver_intern(state, owner_ref));
 
-        if (resolution.kind == RESOLUTION_TYPE_DECL && resolution.def->param_count > 0) {
+        if (resolution.kind == RESOLUTION_TYPE_DECL && resolution.decl->param_count > 0) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "'%s' takes %zu type argument(s), not 0",
-                       resolution.def->name->data, resolution.def->param_count);
+                       resolution.decl->name->data, resolution.decl->param_count);
             return NULL;
         }
 
@@ -2117,12 +2123,14 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
 
     stmt->func_decl.function = func;
 
-    if (func) {
-        func->body_kind = stmt->func_decl.body == NULL ? BODY_HOST : BODY_GAB;
+    FuncDecl *decl = func ? (FuncDecl *)func->decl : NULL;
 
-        if (func->body_kind == BODY_HOST) {
-            func->name = resolver_intern(state, func_name);
-            func->module = state->module_name;
+    if (decl) {
+        decl->body_kind = stmt->func_decl.body == NULL ? BODY_HOST : BODY_GAB;
+
+        if (decl->body_kind == BODY_HOST) {
+            decl->name = resolver_intern(state, func_name);
+            decl->module = state->module_name;
         }
     }
 
@@ -2139,12 +2147,12 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
         }
     }
 
-    if (func && stmt->func_decl.type_param_count > 0) {
-        func->type_param_count = stmt->func_decl.type_param_count;
-        func->name = resolver_intern(state, func_name);
+    if (decl && stmt->func_decl.type_param_count > 0) {
+        decl->type_param_count = stmt->func_decl.type_param_count;
+        decl->name = resolver_intern(state, func_name);
 
         /* A generic declaration keeps its own statement, which each instantiation clones and resolves. */
-        func->body = stmt;
+        decl->body = stmt;
     }
 
     state->current_scope = enclosing;

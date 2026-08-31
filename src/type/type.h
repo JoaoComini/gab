@@ -89,19 +89,19 @@ typedef enum {
     BODY_NATIVE,
 } BodyKind;
 
-typedef struct TypeDef {
+typedef struct TypeDecl {
     String *name;
 
     size_t param_count;
 
     const TypeField *fields;
     size_t field_count;
-} TypeDef;
+} TypeDecl;
 
 TypeKind type_kind(const Type *type);
 String *type_name_of(const Type *type);
 
-const TypeDef *type_decl(const Type *type);
+const TypeDecl *type_decl(const Type *type);
 
 const TypeArg *type_args(const Type *type);
 size_t type_arg_count(const Type *type);

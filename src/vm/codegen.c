@@ -1009,7 +1009,7 @@ static const size_t *codegen_reserve_instantiated(CodegenState *state, Function 
     size_t local = codegen_reserve_function(state, function);
 
     state->unit->extern_protos.data[local] =
-        (ExternProto){.body = (GabExternFn)function->body, .function = function};
+        (ExternProto){.body = (GabExternFn)function->decl->body, .function = function};
 
     return proto_map_lookup(state->local_protos, function);
 }
@@ -1031,7 +1031,7 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
 
     size_t func_index = *local;
 
-    if (ast->function->body_kind == BODY_HOST) {
+    if (ast->function->decl->body_kind == BODY_HOST) {
         state->unit->extern_protos.data[func_index] = (ExternProto){.function = ast->function};
 
         extern_request_list_add(
@@ -1270,7 +1270,7 @@ static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node) {
 static void codegen_emit_call(CodegenState *state, unsigned int dest, Function *callee, Span span) {
     const size_t *local = proto_map_lookup(state->local_protos, callee);
 
-    if (!local && callee->func_index == FUNCTION_NO_BODY && callee->body) {
+    if (!local && callee->func_index == FUNCTION_NO_BODY && callee->decl->body) {
         local = codegen_reserve_instantiated(state, callee);
     }
 
