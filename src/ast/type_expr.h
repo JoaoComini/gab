@@ -9,7 +9,7 @@
 
 typedef struct TypeExpr TypeExpr;
 
-GAB_LIST_ALLOC(TypeExprList, type_expr_list, TypeExpr *)
+GAB_LIST(TypeExprList, type_expr_list, TypeExpr *)
 
 typedef enum {
     TYPE_EXPR_NAME,

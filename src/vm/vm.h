@@ -25,7 +25,6 @@ typedef struct {
     unsigned int dest;
 } CallFrame;
 
-#define func_handle_list_item_free(item) ((void)(item))
 GAB_LIST(FuncHandleList, func_handle_list, void *)
 
 typedef struct {
@@ -33,7 +32,6 @@ typedef struct {
     String *to;
 } ModuleImport;
 
-#define module_import_list_item_free(item) ((void)(item))
 GAB_LIST(ModuleImportList, module_import_list, ModuleImport)
 
 typedef enum {

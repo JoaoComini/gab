@@ -11,7 +11,7 @@ typedef struct {
     Span span;
 } ASTImport;
 
-GAB_LIST_ALLOC(ASTImportList, ast_import_list, ASTImport)
+GAB_LIST(ASTImportList, ast_import_list, ASTImport)
 
 typedef struct ASTUnit {
     Arena *arena;

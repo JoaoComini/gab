@@ -13,8 +13,6 @@
 
 #define slot_map_hash(key) (size_t)key
 #define slot_map_key_equals(key, other) key == other
-#define slot_map_key_dup(key) key
-#define slot_map_entry_free(key, value)
 
 typedef struct {
     unsigned int slot;
@@ -27,8 +25,6 @@ GAB_HASH_MAP(SlotMap, slot_map, Binding *, SlotBinding)
 
 #define proto_map_hash(key) (size_t)key
 #define proto_map_key_equals(key, other) key == other
-#define proto_map_key_dup(key) key
-#define proto_map_entry_free(key, value)
 
 GAB_HASH_MAP(ProtoMap, proto_map, Function *, size_t)
 
@@ -39,7 +35,6 @@ typedef struct {
     const Type *type;
 } OwnedSlot;
 
-#define owned_list_item_free(item) ((void)(item))
 GAB_LIST(OwnedList, owned_list, OwnedSlot)
 
 typedef struct {
@@ -47,7 +42,6 @@ typedef struct {
     unsigned int cond_reg;
 } CodegenLabel;
 
-#define codegen_label_list_item_free(item) ((void)(item))
 GAB_LIST(CodegenLabelList, codegen_label_list, CodegenLabel)
 
 typedef struct LoopContext {
@@ -213,17 +207,17 @@ Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, TypeRegi
         return NULL;
     }
 
-    unit->prototypes = func_proto_list_create();
-    unit->extern_protos = extern_proto_list_create();
-    unit->types = type_list_create();
-    unit->type_shapes = heap_shape_list_create();
-    unit->strings = string_list_create();
-    unit->proto_relocations = relocation_list_create();
-    unit->extern_relocations = relocation_list_create();
-    unit->type_relocations = relocation_list_create();
-    unit->string_relocations = relocation_list_create();
-    unit->bindings = proto_binding_list_create();
-    unit->externs = extern_request_list_create();
+    unit->prototypes = func_proto_list_create(arena_allocator(arena));
+    unit->extern_protos = extern_proto_list_create(arena_allocator(arena));
+    unit->types = type_list_create(arena_allocator(arena));
+    unit->type_shapes = heap_shape_list_create(arena_allocator(arena));
+    unit->strings = string_list_create(arena_allocator(arena));
+    unit->proto_relocations = relocation_list_create(arena_allocator(arena));
+    unit->extern_relocations = relocation_list_create(arena_allocator(arena));
+    unit->type_relocations = relocation_list_create(arena_allocator(arena));
+    unit->string_relocations = relocation_list_create(arena_allocator(arena));
+    unit->bindings = proto_binding_list_create(arena_allocator(arena));
+    unit->externs = extern_request_list_create(arena_allocator(arena));
     unit->arena = arena;
 
     CodegenState state = {
@@ -236,10 +230,10 @@ Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, TypeRegi
         .strings = strings,
         .local_protos = proto_map_create(SLOT_MAP_INITIAL_CAPACITY),
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
-        .owned = owned_list_create(),
-        .temporaries = owned_list_create(),
+        .owned = owned_list_create(arena_allocator(arena)),
+        .temporaries = owned_list_create(arena_allocator(arena)),
         .depth = 0,
-        .frame_refs = frame_ref_list_create(),
+        .frame_refs = frame_ref_list_create(arena_allocator(arena)),
         .diagnostics = diagnostics,
         .failed = false,
     };
@@ -838,8 +832,8 @@ static void codegen_for_stmt(CodegenState *state, ASTForStmt *ast) {
 
     LoopContext *enclosing_loop = state->loop;
     LoopContext loop = {
-        .breaks = codegen_label_list_create(),
-        .continues = codegen_label_list_create(),
+        .breaks = codegen_label_list_create(arena_allocator(state->arena)),
+        .continues = codegen_label_list_create(arena_allocator(state->arena)),
 
         .depth = state->depth,
     };
@@ -1064,10 +1058,10 @@ static void codegen_emit_body(CodegenState *state, const ASTFieldList *params, A
         .strings = state->strings,
         .local_protos = state->local_protos,
         .slots = slot_map_create(SLOT_MAP_INITIAL_CAPACITY),
-        .owned = owned_list_create(),
-        .temporaries = owned_list_create(),
+        .owned = owned_list_create(arena_allocator(state->arena)),
+        .temporaries = owned_list_create(arena_allocator(state->arena)),
         .depth = 0,
-        .frame_refs = frame_ref_list_create(),
+        .frame_refs = frame_ref_list_create(arena_allocator(state->arena)),
         .diagnostics = state->diagnostics,
         .failed = false,
     };

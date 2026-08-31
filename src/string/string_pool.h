@@ -13,8 +13,6 @@
 #define string_map_hash(key) hash_dj2b_cstr(key.data, key.length)
 #define string_map_key_equals(key, other)                                                                    \
     (key.length == other.length) && (memcmp(key.data, other.data, key.length) == 0)
-#define string_map_key_dup(key) key
-#define string_map_entry_free(key, value)
 
 typedef struct {
     const char *data;

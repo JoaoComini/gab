@@ -61,7 +61,7 @@ typedef enum {
 
 typedef struct ASTExpr ASTExpr;
 
-GAB_LIST_ALLOC(ASTExprList, ast_expr_list, ASTExpr *)
+GAB_LIST(ASTExprList, ast_expr_list, ASTExpr *)
 
 typedef struct {
     StringRef name;
@@ -71,7 +71,7 @@ typedef struct {
     size_t index;
 } ASTFieldInit;
 
-GAB_LIST_ALLOC(ASTFieldInitList, ast_field_init_list, ASTFieldInit)
+GAB_LIST(ASTFieldInitList, ast_field_init_list, ASTFieldInit)
 
 typedef struct ASTExpr {
     ExprKind kind;

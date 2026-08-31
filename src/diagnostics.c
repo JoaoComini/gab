@@ -6,7 +6,7 @@
 void diagnostics_init(Diagnostics *diagnostics, Arena *arena, const char *module) {
     diagnostics->arena = arena;
     diagnostics->module = module;
-    diagnostics->items = diagnostic_list_create();
+    diagnostics->items = diagnostic_list_create(arena_allocator(arena));
 }
 
 void diagnostics_free(Diagnostics *diagnostics) { diagnostic_list_free(&diagnostics->items); }

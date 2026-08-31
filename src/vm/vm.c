@@ -42,7 +42,7 @@ static void environment_init(Environment *env) {
     scope_init(&env->global_scope, env->arena, &env->strings, NULL);
     env->module_scopes = module_scope_map_create_alloc(arena_allocator(env->arena), 8);
 
-    env->module_imports = module_import_list_create();
+    env->module_imports = module_import_list_create(DEFAULT_ALLOCATOR);
 }
 
 static void environment_free(Environment *env) {
@@ -57,16 +57,19 @@ static void environment_free(Environment *env) {
 }
 
 static void program_init(Program *program) {
-    program->prototypes = func_proto_list_create();
-    program->heap_shapes = heap_shape_list_create();
-    program->shape_types = type_list_create();
-    program->strings = string_list_create();
-    program->top_levels = top_level_list_create();
-    program->extern_bindings = extern_binding_list_create();
-    program->extern_protos = extern_proto_list_create();
+    program->prototypes = func_proto_list_create(DEFAULT_ALLOCATOR);
+    program->heap_shapes = heap_shape_list_create(DEFAULT_ALLOCATOR);
+    program->shape_types = type_list_create(DEFAULT_ALLOCATOR);
+    program->strings = string_list_create(DEFAULT_ALLOCATOR);
+    program->top_levels = top_level_list_create(DEFAULT_ALLOCATOR);
+    program->extern_bindings = extern_binding_list_create(DEFAULT_ALLOCATOR);
+    program->extern_protos = extern_proto_list_create(DEFAULT_ALLOCATOR);
 }
 
 static void program_free(Program *program) {
+    for (size_t i = 0; i < program->prototypes.size; i++) {
+        func_proto_free(program->prototypes.data[i]);
+    }
     func_proto_list_free(&program->prototypes);
     heap_shape_list_free(&program->heap_shapes);
     type_list_free(&program->shape_types);
@@ -74,6 +77,9 @@ static void program_free(Program *program) {
     extern_binding_list_free(&program->extern_bindings);
     extern_proto_list_free(&program->extern_protos);
 
+    for (size_t i = 0; i < program->top_levels.size; i++) {
+        func_proto_free(&program->top_levels.data[i]);
+    }
     top_level_list_free(&program->top_levels);
 }
 
@@ -83,7 +89,7 @@ VM *vm_create() {
     environment_init(&vm->env);
     program_init(&vm->program);
 
-    vm->func_handles = func_handle_list_create();
+    vm->func_handles = func_handle_list_create(DEFAULT_ALLOCATOR);
 
     vm->stack_capacity = VM_STACK_SIZE;
     vm->stack = calloc(vm->stack_capacity, VM_SLOT_SIZE);

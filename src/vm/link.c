@@ -27,6 +27,10 @@ void unit_free(Unit *unit) {
     }
 
     func_proto_free(&unit->top_level);
+
+    for (size_t i = 0; i < unit->prototypes.size; i++) {
+        func_proto_free(unit->prototypes.data[i]);
+    }
     func_proto_list_free(&unit->prototypes);
     extern_proto_list_free(&unit->extern_protos);
     type_list_free(&unit->types);

@@ -8,7 +8,6 @@
 
 typedef uint32_t Instruction;
 
-#define instruction_list_item_free(item)
 GAB_LIST(InstructionList, instruction_list, Instruction)
 
 typedef struct {

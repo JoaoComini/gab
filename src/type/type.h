@@ -109,7 +109,6 @@ size_t type_arg_count(const Type *type);
 size_t type_structural_hash(const Type *type);
 bool type_structurally_equals(const Type *type, const Type *other);
 
-#define type_list_item_free(item) ((void)(item))
 GAB_LIST(TypeList, type_list, const Type *)
 
 const Type *type_pointee(const Type *type);

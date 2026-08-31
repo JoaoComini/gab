@@ -6,8 +6,6 @@
 
 #define type_intern_hash(key) type_structural_hash(key)
 #define type_intern_key_equals(key, other) type_structurally_equals(key, other)
-#define type_intern_key_dup(key) key
-#define type_intern_entry_free(key, value)
 
 GAB_HASH_MAP(TypeInternTable, type_intern, const Type *, Type *)
 
@@ -20,29 +18,21 @@ typedef struct OwnedKey {
 
 #define owned_key_hash(key) (((size_t)(key).owner * 31) ^ (size_t)(key).name)
 #define owned_key_key_equals(key, other) ((key).owner == (other).owner && (key).name == (other).name)
-#define owned_key_key_dup(key) key
-#define owned_key_entry_free(key, value)
 
 GAB_HASH_MAP(OwnedTable, owned_key, OwnedKey, Function *)
 
 #define drop_key_hash(key) (size_t)key
 #define drop_key_key_equals(key, other) key == other
-#define drop_key_key_dup(key) key
-#define drop_key_entry_free(key, value)
 
 GAB_HASH_MAP(DropTable, drop_key, const Type *, const DropPlan *)
 
 #define deref_key_hash(key) (size_t)key
 #define deref_key_key_equals(key, other) key == other
-#define deref_key_key_dup(key) key
-#define deref_key_entry_free(key, value)
 
 GAB_HASH_MAP(DerefTable, deref_key, const Type *, const Deref *)
 
 #define layout_key_hash(key) (size_t)key
 #define layout_key_key_equals(key, other) key == other
-#define layout_key_key_dup(key) key
-#define layout_key_entry_free(key, value)
 
 GAB_HASH_MAP(LayoutTable, layout_key, const Type *, const TypeLayout *)
 

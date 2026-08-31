@@ -26,7 +26,6 @@ typedef struct {
     char *message;
 } Diagnostic;
 
-#define diagnostic_list_item_free(item) (void)(item)
 GAB_LIST(DiagnosticList, diagnostic_list, Diagnostic)
 
 typedef struct {

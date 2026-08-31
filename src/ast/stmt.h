@@ -20,11 +20,11 @@ typedef struct ASTField {
 
 ASTField *ast_field_create(Arena *arena, Span span, StringRef name, TypeExpr *type_expr);
 
-GAB_LIST_ALLOC(ASTFieldList, ast_field_list, ASTField *);
+GAB_LIST(ASTFieldList, ast_field_list, ASTField *);
 
 typedef struct ASTStmt ASTStmt;
 
-GAB_LIST_ALLOC(ASTStmtList, ast_stmt_list, ASTStmt *);
+GAB_LIST(ASTStmtList, ast_stmt_list, ASTStmt *);
 
 typedef enum {
     STMT_EXPR,

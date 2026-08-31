@@ -76,8 +76,6 @@ typedef struct Binding {
 
 #define binding_table_hash(key) (size_t)key
 #define binding_table_key_equals(key, other) key == other
-#define binding_table_key_dup(key) key
-#define binding_table_entry_free(key, value)
 
 GAB_HASH_MAP(BindingTable, binding_table, String *, Binding *);
 
