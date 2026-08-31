@@ -557,6 +557,41 @@ bool type_registry_owns(TypeRegistry *registry, const Type *type) {
     return false;
 }
 
+bool type_registry_borrows(TypeRegistry *registry, const Type *type) {
+    if (!type) {
+        return false;
+    }
+
+    switch (type->kind) {
+    case TYPE_REF:
+        return true;
+
+    case TYPE_BOX:
+    case TYPE_PTR:
+    case TYPE_BLOCK:
+        return false;
+
+    case TYPE_ARRAY:
+        return type_registry_borrows(registry, type_array_element(type));
+
+    case TYPE_STR:
+        return false;
+
+    default:
+        break;
+    }
+
+    const TypeFields *fields = type_registry_fields_of(registry, type);
+
+    for (size_t i = 0; i < fields->count; i++) {
+        if (type_registry_borrows(registry, fields->fields[i].type)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool type_registry_copies(TypeRegistry *registry, const Type *type) {
     if (!type) {
         return true;

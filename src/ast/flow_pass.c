@@ -47,6 +47,41 @@ static bool call_result_may_name(const Function *callee, size_t index) {
     return index >= 32 || (callee->borrowed_params & ((uint32_t)1 << index)) != 0;
 }
 
+static int deepest_of(int a, int b) { return a > b ? a : b; }
+
+/* The tracked slot an lvalue names, following each field into its own state. */
+static bool slot_of_place(FlowPass *pass, const ASTExpr *place, FlowSlot *out) {
+    if (!place) {
+        return false;
+    }
+
+    if (place->kind == EXPR_VARIABLE) {
+        Binding *binding = ast_binding_of(place);
+
+        if (!binding || binding->kind != BINDING_VAR) {
+            return false;
+        }
+
+        *out = flow_get(pass->flow, binding);
+
+        return true;
+    }
+
+    if (place->kind != EXPR_FIELD) {
+        return false;
+    }
+
+    FlowSlot owner;
+
+    if (!slot_of_place(pass, place->field.target, &owner) || place->field.index >= owner.field_count) {
+        return false;
+    }
+
+    *out = owner.fields[place->field.index];
+
+    return true;
+}
+
 static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
     if (!expr) {
         return 0;
@@ -72,12 +107,16 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
             return ast_binding_of(expr)->scope_depth;
         }
 
-        return flow_get(pass->flow, ast_binding_of(expr)).inner_depth;
+        {
+            FlowSlot named = flow_get(pass->flow, ast_binding_of(expr));
+
+            return flow_slot_flattened(&named).inner_depth;
+        }
     case EXPR_BOX:
 
         return 0;
     case EXPR_CALL: {
-        if (!expr->type || type_kind(expr->type) != TYPE_REF) {
+        if (!type_registry_borrows(pass->registry, expr->type)) {
             return 0;
         }
 
@@ -88,17 +127,38 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
                 continue;
             }
 
-            int depth = inner_depth(pass, expr->call.args.data[i]);
-
-            if (depth > deepest) {
-                deepest = depth;
-            }
+            deepest = deepest_of(deepest, inner_depth(pass, expr->call.args.data[i]));
         }
 
         return deepest;
     }
-    case EXPR_FIELD:
+    case EXPR_STRUCT_LIT: {
+        int deepest = 0;
+
+        for (size_t i = 0; i < expr->struct_lit.fields.size; i++) {
+            deepest = deepest_of(deepest, inner_depth(pass, expr->struct_lit.fields.data[i].value));
+        }
+
+        return deepest;
+    }
+    case EXPR_ARRAY_LIT: {
+        int deepest = 0;
+
+        for (size_t i = 0; i < expr->array_lit.elements.size; i++) {
+            deepest = deepest_of(deepest, inner_depth(pass, expr->array_lit.elements.data[i]));
+        }
+
+        return deepest;
+    }
+    case EXPR_FIELD: {
+        FlowSlot named;
+
+        if (slot_of_place(pass, expr, &named)) {
+            return flow_slot_flattened(&named).inner_depth;
+        }
+
         return inner_depth(pass, expr->field.target);
+    }
 
     case EXPR_LEND:
         return inner_depth(pass, expr->lend.target);
@@ -163,25 +223,57 @@ static void collect_borrow_sources(FlowPass *pass, const ASTExpr *value, FlowSlo
         return;
     }
 
-    FlowSlot source = flow_get(pass->flow, root);
+    FlowSlot named;
+
+    if (!slot_of_place(pass, value, &named)) {
+        named = flow_get(pass->flow, root);
+    }
+
+    FlowSlot source = flow_slot_flattened(&named);
+
+    into->borrows_unknown = into->borrows_unknown || source.borrows_unknown;
 
     for (size_t i = 0; i < source.borrow_count; i++) {
         flow_slot_add_source(into, source.borrows_from[i]);
     }
 }
 
+/* The state a value leaves in the slot it is stored into, per field where the value names them. */
+static FlowSlot slot_of_value(FlowPass *pass, const ASTExpr *value) {
+    FlowSlot slot = {.init = value ? FLOW_INIT : FLOW_UNINIT, .inner_depth = inner_depth(pass, value)};
+
+    if (!value || value->kind != EXPR_STRUCT_LIT) {
+        collect_borrow_sources(pass, value, &slot);
+
+        return slot;
+    }
+
+    /* Sources live on the fields that named them, so the struct itself names none of them. */
+    flow_slot_open_fields(&slot, pass->arena, value->struct_lit.fields.size);
+
+    for (size_t i = 0; i < value->struct_lit.fields.size; i++) {
+        const ASTFieldInit *init = &value->struct_lit.fields.data[i];
+
+        if (init->index < slot.field_count) {
+            slot.fields[init->index] = slot_of_value(pass, init->value);
+        }
+    }
+
+    return slot;
+}
+
 /* Only a borrowing destination is bound by what it names; an owning one takes the object with it. */
-static bool borrows_memory(const Type *type) {
+static bool borrows_memory(FlowPass *pass, const Type *type) {
     if (!type) {
         return false;
     }
 
-    return type_kind(type) == TYPE_REF;
+    return type_registry_borrows(pass->registry, type);
 }
 
 /* Records which parameters a returned borrow reaches, so a caller can attribute the result to them. */
 static void collect_returned_params(FlowPass *pass, const ASTExpr *value) {
-    if (!value || !borrows_memory(pass->return_type)) {
+    if (!value || !borrows_memory(pass, pass->return_type)) {
         return;
     }
 
@@ -217,19 +309,127 @@ static void check_borrow_lifetime(FlowPass *pass, ASTExpr *value, int target_dep
     flow_report(pass, span, "this borrow outlives what it names, so it cannot be %s", what);
 }
 
+/* How long the slot written through lives; a heap object outlives every scope that names it. */
+static int destination_depth(FlowPass *pass, const ASTExpr *target) {
+    while (target) {
+        switch (target->kind) {
+        case EXPR_VARIABLE: {
+            Binding *binding = ast_binding_of(target);
+
+            if (!binding || binding->kind != BINDING_VAR) {
+                return 0;
+            }
+
+            return type_registry_owns(pass->registry, binding->var.type) ? 0 : binding->scope_depth;
+        }
+        case EXPR_FIELD:
+            if (type_registry_owns(pass->registry, target->field.target->type)) {
+                return 0;
+            }
+
+            target = target->field.target;
+            break;
+        case EXPR_INDEX:
+            target = target->index.target;
+            break;
+        case EXPR_DEREF:
+            return 0;
+        default:
+            return 0;
+        }
+    }
+
+    return 0;
+}
+
 static void check_stored_lifetime(FlowPass *pass, ASTExpr *value, const Type *destination, int target_depth,
                                   Span span, const char *what) {
-    if (!borrows_memory(destination)) {
+    if (!borrows_memory(pass, destination)) {
         return;
     }
 
     check_borrow_lifetime(pass, value, target_depth, span, what);
 }
 
+/* Writes 'stored' into the field an lvalue names; false when that field is not tracked apart. */
+static bool store_into_place(FlowPass *pass, const ASTExpr *place, FlowSlot stored) {
+    if (!place || place->kind != EXPR_FIELD) {
+        return false;
+    }
+
+    const ASTExpr *owner = place->field.target;
+
+    if (owner->kind == EXPR_VARIABLE) {
+        Binding *binding = ast_binding_of(owner);
+
+        if (!binding || binding->kind != BINDING_VAR) {
+            return false;
+        }
+
+        FlowSlot slot = flow_get(pass->flow, binding);
+
+        if (place->field.index >= slot.field_count) {
+            return false;
+        }
+
+        slot.fields[place->field.index] = stored;
+
+        flow_set(pass->flow, binding, slot);
+
+        return true;
+    }
+
+    FlowSlot nested;
+
+    if (!slot_of_place(pass, owner, &nested) || place->field.index >= nested.field_count) {
+        return false;
+    }
+
+    nested.fields[place->field.index] = stored;
+
+    return store_into_place(pass, owner, nested);
+}
+
+/* A field given a borrow names what that borrow names, leaving the struct's other fields alone. */
+static void narrow_to_stored_borrow(FlowPass *pass, const ASTExpr *target, const ASTExpr *value) {
+    if (target->kind != EXPR_FIELD) {
+        return;
+    }
+
+    Binding *root = ast_root_local(target);
+
+    if (!root || root->kind != BINDING_VAR || type_registry_owns(pass->registry, root->var.type)) {
+        return;
+    }
+
+    FlowSlot stored = slot_of_value(pass, value);
+
+    if (!store_into_place(pass, target, stored)) {
+        FlowSlot slot = flow_get(pass->flow, root);
+
+        slot.inner_depth = deepest_of(slot.inner_depth, stored.inner_depth);
+
+        collect_borrow_sources(pass, value, &slot);
+
+        flow_set(pass->flow, root, slot);
+    }
+}
+
 static void flow_pass_expr_list(FlowPass *pass, ASTExprList *list) {
     for (size_t i = 0; i < list->size; i++) {
         flow_pass_expr(pass, list->data[i]);
     }
+}
+
+/* A field answers for itself only while the struct holding it still holds a value at all. */
+static bool field_is_tracked(FlowPass *pass, const ASTExpr *field, FlowSlot *out) {
+    Binding *root = ast_root_local(field);
+
+    if (!root || root->kind != BINDING_VAR || flow_get(pass->flow, root).init != FLOW_INIT) {
+        return false;
+    }
+
+    return slot_of_place(pass, field, out);
 }
 
 static void flow_pass_expr(FlowPass *pass, ASTExpr *expr) {
@@ -245,7 +445,10 @@ static void flow_pass_expr(FlowPass *pass, ASTExpr *expr) {
             break;
         }
 
-        FlowInit init = flow_get(pass->flow, entry).init;
+        FlowSlot named = flow_get(pass->flow, entry);
+
+        /* Reading the whole value reads every field, so a field's freed borrow dangles the read. */
+        FlowInit init = named.init == FLOW_INIT ? flow_slot_flattened(&named).init : named.init;
 
         if (init == FLOW_MOVED) {
             char *name = string_ref_to_cstr(expr->var.name);
@@ -276,7 +479,16 @@ static void flow_pass_expr(FlowPass *pass, ASTExpr *expr) {
         bool assigning = pass->assigning;
         pass->assigning = false;
 
-        flow_pass_expr(pass, expr->field.target);
+        FlowSlot named;
+
+        /* A tracked field answers for itself; its struct may hold a freed borrow in another field. */
+        if (!assigning && field_is_tracked(pass, expr, &named)) {
+            if (flow_slot_flattened(&named).init == FLOW_DANGLING) {
+                flow_report(pass, expr->span, "this field names memory that has been freed", NULL);
+            }
+        } else {
+            flow_pass_expr(pass, expr->field.target);
+        }
 
         pass->assigning = assigning;
 
@@ -348,12 +560,7 @@ static void flow_pass_stmt(FlowPass *pass, ASTStmt *stmt) {
             break;
         }
 
-        FlowSlot declared = {.init = stmt->var_decl.initializer ? FLOW_INIT : FLOW_UNINIT,
-                             .inner_depth = inner_depth(pass, stmt->var_decl.initializer)};
-
-        collect_borrow_sources(pass, stmt->var_decl.initializer, &declared);
-
-        flow_set(pass->flow, var, declared);
+        flow_set(pass->flow, var, slot_of_value(pass, stmt->var_decl.initializer));
         break;
     }
     case STMT_ASSIGN: {
@@ -368,8 +575,12 @@ static void flow_pass_stmt(FlowPass *pass, ASTStmt *stmt) {
         flow_pass_expr(pass, stmt->assign.value);
 
         if (stmt->assign.target->kind == EXPR_FIELD || stmt->assign.target->kind == EXPR_DEREF) {
-            check_stored_lifetime(pass, stmt->assign.value, stmt->assign.target->type, 0, stmt->span,
+            int depth = destination_depth(pass, stmt->assign.target);
+
+            check_stored_lifetime(pass, stmt->assign.value, stmt->assign.target->type, depth, stmt->span,
                                   "stored here");
+
+            narrow_to_stored_borrow(pass, stmt->assign.target, stmt->assign.value);
 
             break;
         }
@@ -384,11 +595,7 @@ static void flow_pass_stmt(FlowPass *pass, ASTStmt *stmt) {
                 flow_invalidate_borrows_of(pass->flow, target);
             }
 
-            FlowSlot assigned = {.init = FLOW_INIT, .inner_depth = inner_depth(pass, stmt->assign.value)};
-
-            collect_borrow_sources(pass, stmt->assign.value, &assigned);
-
-            flow_set(pass->flow, target, assigned);
+            flow_set(pass->flow, target, slot_of_value(pass, stmt->assign.value));
         }
         break;
     }
@@ -420,18 +627,6 @@ void flow_pass_run(Arena *arena, TypeRegistry *registry, ASTStmt *body, Binding 
 
     entries[cfg->entry->index].unreachable = false;
 
-    for (size_t i = 0; i < param_count; i++) {
-        if (params[i]) {
-            FlowSlot slot = {.init = FLOW_INIT, .inner_depth = 0};
-
-            if (borrows_memory(params[i]->var.type)) {
-                flow_slot_add_source(&slot, params[i]);
-            }
-
-            flow_set(&entries[cfg->entry->index], params[i], slot);
-        }
-    }
-
     FlowPass pass = {.arena = arena,
                      .diagnostics = diagnostics,
                      .registry = registry,
@@ -439,6 +634,18 @@ void flow_pass_run(Arena *arena, TypeRegistry *registry, ASTStmt *body, Binding 
                      .return_type = return_type,
                      .params = params,
                      .param_count = param_count};
+
+    for (size_t i = 0; i < param_count; i++) {
+        if (params[i]) {
+            FlowSlot slot = {.init = FLOW_INIT, .inner_depth = 0};
+
+            if (borrows_memory(&pass, params[i]->var.type)) {
+                flow_slot_add_source(&slot, params[i]);
+            }
+
+            flow_set(&entries[cfg->entry->index], params[i], slot);
+        }
+    }
 
     bool changed = true;
 
