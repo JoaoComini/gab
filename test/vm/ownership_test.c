@@ -313,6 +313,18 @@ static void test_a_borrow_returned_by_a_function_declared_below_names_its_argume
                          "func pick(a: &Box, b: &Box): &Box { return a; }\n"));
 }
 
+static void test_a_lone_borrowed_parameter_is_what_a_bodiless_call_returns() {
+    assert(test_compiles("struct Box { n: int }\n"
+                         "extern func peek(b: &Box, other: Box): &Box;\n"
+                         "func f(): int {\n"
+                         "    let owner: *Box = box Box { n: 0 };\n"
+                         "    let got: &Box;\n"
+                         "    { let scratch = Box { n: 1 }; got = peek(owner, scratch); }\n"
+                         "    return got.n;\n"
+                         "}\n"
+                         "let r: int = f();"));
+}
+
 static void test_a_ref_borrowed_from_a_heap_object_is_accepted() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func borrow(b: &Box): &Box { return b; }\n"
@@ -583,6 +595,7 @@ int main(void) {
     test_a_recursive_call_names_every_argument();
     test_a_call_without_a_body_names_every_argument();
     test_a_borrow_returned_by_a_function_declared_below_names_its_argument();
+    test_a_lone_borrowed_parameter_is_what_a_bodiless_call_returns();
     test_a_ref_borrowed_from_a_heap_object_is_accepted();
     test_a_borrow_does_not_survive_what_it_names();
     test_a_borrowing_field_does_not_survive_what_it_names();
