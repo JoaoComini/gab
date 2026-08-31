@@ -12,6 +12,7 @@ set(
     type_generic_test.c
     util/hash_map_test.c
     util/list_test.c
+    failed_compile_test.c
     vm/constant_pool_test.c
     vm/call_test.c
     vm/register_reuse_test.c

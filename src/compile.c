@@ -60,6 +60,8 @@ static bool check_imports(VM *vm, const ASTUnit *ast, Diagnostics *diagnostics) 
     return ok;
 }
 
+#define STAGING_ARENA_BLOCK_SIZE 512
+
 bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *diagnostics) {
     arena_reset(vm->env.compile_arena);
 
@@ -71,6 +73,7 @@ bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *d
     String *module_name = NULL;
     Scope *target = NULL;
     Scope *staging = NULL;
+    Arena *staging_arena = NULL;
 
     StringList imported = string_list_create(DEFAULT_ALLOCATOR);
 
@@ -78,8 +81,9 @@ bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *d
         module_name = string_from_ref(&vm->env.strings, ast->module_name);
         target = environment_module_scope(&vm->env, module_name);
 
+        staging_arena = arena_create(STAGING_ARENA_BLOCK_SIZE);
         staging = arena_alloc(vm->env.compile_arena, sizeof(Scope));
-        scope_init_staging(staging, target->arena, &vm->env.strings, target);
+        scope_init_staging(staging, staging_arena, &vm->env.strings, target);
 
         for (size_t i = 0; i < ast->imports.size; i++) {
             string_list_add(&imported, string_from_ref(&vm->env.strings, ast->imports.data[i].name));
@@ -93,17 +97,22 @@ bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *d
 
     if (!unit) {
         string_list_free(&imported);
+        if (staging_arena) {
+            arena_destroy(staging_arena);
+        }
         return false;
     }
 
     if (!link_check(&vm->program, unit, diagnostics)) {
         string_list_free(&imported);
         unit_free(unit);
+        arena_destroy(staging_arena);
         return false;
     }
 
     link_install(&vm->program, unit);
     scope_merge_staged(target, staging);
+    staging_arena_list_add(&vm->env.staging_arenas, staging_arena);
 
     for (size_t i = 0; i < imported.size; i++) {
         module_import_list_add(&vm->env.module_imports,

@@ -43,9 +43,15 @@ static void environment_init(Environment *env) {
     env->module_scopes = module_scope_map_create_alloc(arena_allocator(env->arena), 8);
 
     env->module_imports = module_import_list_create(DEFAULT_ALLOCATOR);
+    env->staging_arenas = staging_arena_list_create(DEFAULT_ALLOCATOR);
 }
 
 static void environment_free(Environment *env) {
+    for (size_t i = 0; i < env->staging_arenas.size; i++) {
+        arena_destroy(env->staging_arenas.data[i]);
+    }
+    staging_arena_list_free(&env->staging_arenas);
+
     module_import_list_free(&env->module_imports);
 
     module_scope_map_destroy(env->module_scopes);
