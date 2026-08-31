@@ -94,10 +94,12 @@ bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *d
     ast_unit_destroy(ast);
 
     if (!unit) {
+        string_list_free(&imported);
         return false;
     }
 
     if (!link_check(&vm->program, unit, diagnostics)) {
+        string_list_free(&imported);
         unit_free(unit);
         return false;
     }
