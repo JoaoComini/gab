@@ -60,7 +60,7 @@
             }                                                                                                \
         }                                                                                                    \
                                                                                                              \
-        map->allocator.free(map->allocator.ctx, map->buckets);                                               \
+        map->allocator.free(map->allocator.ctx, map->buckets, map->capacity * sizeof(Name##Entry *));        \
         map->buckets = new_buckets;                                                                          \
         map->capacity = new_cap;                                                                             \
     }                                                                                                        \
@@ -120,7 +120,7 @@
                     map->buckets[idx] = entry->next;                                                         \
                 }                                                                                            \
                                                                                                              \
-                map->allocator.free(map->allocator.ctx, entry);                                              \
+                map->allocator.free(map->allocator.ctx, entry, sizeof(Name##Entry));                         \
                 map->size--;                                                                                 \
                 return true;                                                                                 \
             }                                                                                                \
@@ -136,16 +136,16 @@
             Name##Entry *entry = map->buckets[i];                                                            \
             while (entry) {                                                                                  \
                 Name##Entry *next = entry->next;                                                             \
-                map->allocator.free(map->allocator.ctx, entry);                                              \
+                map->allocator.free(map->allocator.ctx, entry, sizeof(Name##Entry));                         \
                 entry = next;                                                                                \
             }                                                                                                \
         }                                                                                                    \
-        map->allocator.free(map->allocator.ctx, map->buckets);                                               \
+        map->allocator.free(map->allocator.ctx, map->buckets, map->capacity * sizeof(Name##Entry *));        \
     }                                                                                                        \
                                                                                                              \
     static void Alias##_destroy(Name *map) {                                                                 \
         Alias##_free(map);                                                                                   \
-        map->allocator.free(map->allocator.ctx, map);                                                        \
+        map->allocator.free(map->allocator.ctx, map, sizeof(Name));                                          \
     }
 
 #endif

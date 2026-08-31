@@ -90,7 +90,7 @@ static void string_push(Args *args) {
     GabStringValue string = args_string_at(args, 0);
     int32_t character = args_int(args, 1);
 
-    if (!block_reserve(DEFAULT_ALLOCATOR, &string.block, 1, sizeof(char))) {
+    if (!block_reserve(&DEFAULT_ALLOCATOR, &string.block, 1, sizeof(char))) {
         vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory growing a string");
         return;
     }
@@ -118,7 +118,7 @@ static void string_append(Args *args) {
 
     memcpy(copy, other.data, (size_t)other.length);
 
-    if (block_reserve(DEFAULT_ALLOCATOR, &string.block, other.length, sizeof(char))) {
+    if (block_reserve(&DEFAULT_ALLOCATOR, &string.block, other.length, sizeof(char))) {
         memcpy((char *)string.block.data + string.block.length, copy, (size_t)other.length);
         string.block.length += other.length;
 
@@ -127,7 +127,7 @@ static void string_append(Args *args) {
         vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory appending to a string");
     }
 
-    DEFAULT_ALLOCATOR.free_sized(DEFAULT_ALLOCATOR.ctx, copy, (size_t)other.length);
+    DEFAULT_ALLOCATOR.free(DEFAULT_ALLOCATOR.ctx, copy, (size_t)other.length);
 }
 
 static void string_to_owned(Args *args) {
