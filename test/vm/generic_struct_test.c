@@ -100,6 +100,13 @@ static void test_a_parameter_is_the_element_of_an_array() {
                         "let r: int = f();") == 9);
 }
 
+static void test_a_function_owned_by_an_instantiation_is_called_through_it() {
+    assert(test_run_int("struct Holder<T> { value: T }\n"
+                        "func Holder<T>::make(n: int): int { return n + 1; }\n"
+                        "func f(): int { return Holder<int>::make(6); }\n"
+                        "let r: int = f();") == 7);
+}
+
 static void test_a_method_on_a_declaration_serves_an_instantiation() {
     assert(test_run_int("struct Holder<T> { value: T }\n"
                         "func Holder<T>::get(h: &Holder<T>): T { return h.value; }\n"
@@ -143,11 +150,87 @@ static void test_a_generic_that_instantiates_itself_is_rejected() {
                           "let r: int = f();"));
 }
 
+static void test_a_free_function_takes_type_parameters() {
+    assert(test_run_int("func id<T>(x: T): T { return x; }\n"
+                        "func f(): int { return id<int>(7); }\n"
+                        "let r: int = f();") == 7);
+}
+
+static void test_each_instantiation_of_a_free_function_takes_its_own_type() {
+    assert(!test_compiles("func id<T>(x: T): T { return x; }\n"
+                          "func f(): int { return id<bool>(7); }\n"
+                          "let r: int = f();"));
+}
+
+static void test_a_free_function_owes_every_type_argument() {
+    assert(!test_compiles("func pair<A, B>(a: A, b: B): A { return a; }\n"
+                          "func f(): int { return pair<int>(1, 2); }\n"
+                          "let r: int = f();"));
+}
+
+static void test_an_argument_names_the_type_parameter_it_fills() {
+    assert(test_run_int("func id<T>(x: T): T { return x; }\n"
+                        "func f(): int { return id(7); }\n"
+                        "let r: int = f();") == 7);
+}
+
+static void test_a_type_parameter_no_argument_reaches_is_written() {
+    assert(!test_compiles("func make<T>(n: int): int { return n; }\n"
+                          "func f(): int { return make(1); }\n"
+                          "let r: int = f();"));
+}
+
+static void test_one_type_parameter_reached_two_ways_takes_one_type() {
+    assert(!test_compiles("struct Holder<T> { v: T }\n"
+                          "func both<T>(a: Holder<T>, b: T): int { return 1; }\n"
+                          "func f(): int { let h = Holder<int> { v: 1 }; return both(h, true); }\n"
+                          "let r: int = f();"));
+}
+
+static void test_one_parameter_filled_twice_takes_one_type() {
+    assert(!test_compiles("func pick<T>(a: T, b: T): T { return a; }\n"
+                          "func f(): int { return pick(1, true); }\n"
+                          "let r: int = f();"));
+}
+
+static void test_two_instantiations_of_a_free_function_each_run() {
+    assert(test_run_int("func id<T>(x: T): T { return x; }\n"
+                        "func f(): int { if id<bool>(true) { return id<int>(4); } return 0; }\n"
+                        "let r: int = f();") == 4);
+}
+
+static void test_an_inferred_call_borrows_its_argument() {
+    assert(test_run_int("struct Cell { n: int }\n"
+                        "func read<T>(c: &T): int { return 1; }\n"
+                        "func f(): int { let o: *Cell = box Cell { n: 5 };\n"
+                        "return read(o) + o.n; }\n"
+                        "let r: int = f();") == 6);
+}
+
+static void test_an_inferred_call_moves_what_it_is_given() {
+    assert(test_run_int("struct Cell { n: int }\n"
+                        "func take<T>(c: *T): int { return 2; }\n"
+                        "func f(): int { let o: *Cell = box Cell { n: 0 };\n"
+                        "return take(o); }\n"
+                        "let r: int = f();") == 2);
+}
+
 int main() {
+    test_an_inferred_call_borrows_its_argument();
+    test_an_inferred_call_moves_what_it_is_given();
+    test_a_free_function_takes_type_parameters();
+    test_each_instantiation_of_a_free_function_takes_its_own_type();
+    test_a_free_function_owes_every_type_argument();
+    test_an_argument_names_the_type_parameter_it_fills();
+    test_a_type_parameter_no_argument_reaches_is_written();
+    test_one_type_parameter_reached_two_ways_takes_one_type();
+    test_one_parameter_filled_twice_takes_one_type();
+    test_two_instantiations_of_a_free_function_each_run();
     test_a_generic_that_instantiates_itself_is_rejected();
     test_an_instantiation_reached_from_another_is_emitted();
     test_an_instantiation_that_owns_frees_what_it_holds();
     test_each_instantiation_gets_its_own_body();
+    test_a_function_owned_by_an_instantiation_is_called_through_it();
     test_a_method_on_a_declaration_serves_an_instantiation();
     test_a_generic_field_holds_its_argument();
     test_two_instantiations_are_two_types();

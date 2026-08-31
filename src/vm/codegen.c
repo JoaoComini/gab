@@ -1041,7 +1041,9 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         return;
     }
 
-    if (ast->owner && ast->owner->kind == TYPE_EXPR_APPLY && ast->function->instance != stmt) {
+    bool is_template = (ast->owner && ast->owner->kind == TYPE_EXPR_APPLY) || ast->type_param_count > 0;
+
+    if (is_template && ast->function->instance != stmt) {
         return;
     }
 

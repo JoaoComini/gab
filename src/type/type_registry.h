@@ -59,7 +59,7 @@ typedef struct Deref {
     size_t part_count;
 } Deref;
 
-bool type_registry_declare_method(TypeRegistry *registry, const Type *type, const MethodDecl *method);
+bool type_registry_declare_method(TypeRegistry *registry, const Type *type, Function *method);
 
 Function *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name);
 
@@ -117,5 +117,8 @@ const Type *type_registry_apply(TypeRegistry *registry, const TypeDef *def, cons
                                 size_t arg_count);
 
 const Type *type_registry_block_of(TypeRegistry *registry, const Type *element);
+
+Function *type_registry_specialize(TypeRegistry *registry, const Function *generic, const Type *const *args,
+                                   size_t arg_count);
 
 #endif

@@ -300,23 +300,20 @@ static MethodKey method_key_of(TypeRegistry *registry, const Type *type, const S
     return (MethodKey){.type = generic_form_of(registry, type), .name = name};
 }
 
-static Function *instantiate_method(TypeRegistry *registry, const MethodDecl *method, const Type *const *args,
+static Function *instantiate_method(TypeRegistry *registry, const Function *method, const Type *const *args,
                                     size_t arg_count);
 
-static bool declare_method(TypeRegistry *registry, MethodKey key, const MethodDecl *method) {
+static bool declare_method(TypeRegistry *registry, MethodKey key, Function *method) {
     if (method_decl_key_lookup(registry->methods, key)) {
         return false;
     }
 
-    MethodDecl *owned = arena_alloc(registry->arena, sizeof(MethodDecl));
-    *owned = *method;
-
-    method_decl_key_insert(registry->methods, key, owned);
+    method_decl_key_insert(registry->methods, key, method);
 
     return true;
 }
 
-bool type_registry_declare_method(TypeRegistry *registry, const Type *type, const MethodDecl *method) {
+bool type_registry_declare_method(TypeRegistry *registry, const Type *type, Function *method) {
     assert(type && method && method->name && "a method is a type, a name and a signature");
 
     return declare_method(registry, method_key_of(registry, type, method->name), method);
@@ -324,16 +321,18 @@ bool type_registry_declare_method(TypeRegistry *registry, const Type *type, cons
 
 /* A method whose signature mentions no type parameter is one function for every instantiation of its owner.
  */
-static bool method_is_shared(const MethodDecl *method, const Type *type) {
-    if (!method->function) {
-        return false;
+static bool method_is_shared(const Function *method, const Type *type) {
+    if (type_arg_count(type) == 0) {
+        return true;
     }
 
-    if (method->param_count > 0 && type_has_param(method->params[0])) {
-        return false;
+    for (size_t i = 0; i < method->param_count; i++) {
+        if (type_has_param(method->params[i])) {
+            return false;
+        }
     }
 
-    return !(type_arg_count(type) > 0 && type_has_param(method->result));
+    return !type_has_param(method->return_type);
 }
 
 Function *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name) {
@@ -346,15 +345,15 @@ Function *type_registry_find_method(TypeRegistry *registry, const Type *type, co
         return *cached;
     }
 
-    MethodDecl **declared = method_decl_key_lookup(registry->methods, method_key_of(registry, type, name));
+    Function **declared = method_decl_key_lookup(registry->methods, method_key_of(registry, type, name));
     if (!declared) {
         return NULL;
     }
 
-    const MethodDecl *method = *declared;
+    Function *method = *declared;
 
     if (method_is_shared(method, type)) {
-        return method->function;
+        return method;
     }
 
     const Type *args[GAB_MAX_TYPE_PARAMS];
@@ -493,7 +492,7 @@ static const Type *substitute(TypeRegistry *registry, const Type *type, const Ty
     return type;
 }
 
-static Function *instantiate_method(TypeRegistry *registry, const MethodDecl *method, const Type *const *args,
+static Function *instantiate_method(TypeRegistry *registry, const Function *method, const Type *const *args,
                                     size_t arg_count) {
     Function *function = arena_alloc(registry->arena, sizeof(Function));
 
@@ -509,17 +508,44 @@ static Function *instantiate_method(TypeRegistry *registry, const MethodDecl *me
         owned_args[i] = args[i];
     }
 
-    *function = (Function){
-        .name = method->name,
-        .return_type = substitute(registry, method->result, args, arg_count),
-        .params = params,
-        .param_count = method->param_count,
-        .body_kind = method->body_kind,
-        .body = method->body,
-        .func_index = FUNCTION_NO_BODY,
-        .type_args = owned_args,
-        .type_arg_count = arg_count,
-    };
+    *function = *method;
+
+    function->return_type = substitute(registry, method->return_type, args, arg_count);
+    function->params = params;
+    function->func_index = FUNCTION_NO_BODY;
+    function->instance = NULL;
+    function->type_args = owned_args;
+    function->type_arg_count = arg_count;
+
+    return function;
+}
+
+Function *type_registry_specialize(TypeRegistry *registry, const Function *generic, const Type *const *args,
+                                   size_t arg_count) {
+    Function *function = arena_alloc(registry->arena, sizeof(Function));
+
+    const Type **params = generic->param_count
+                              ? arena_alloc(registry->arena, generic->param_count * sizeof(const Type *))
+                              : NULL;
+
+    for (size_t p = 0; p < generic->param_count; p++) {
+        params[p] = substitute(registry, generic->params[p], args, arg_count);
+    }
+
+    const Type **owned_args = arena_alloc(registry->arena, arg_count * sizeof(const Type *));
+
+    for (size_t i = 0; i < arg_count; i++) {
+        owned_args[i] = args[i];
+    }
+
+    *function = *generic;
+
+    function->params = params;
+    function->return_type = substitute(registry, generic->return_type, args, arg_count);
+    function->type_args = owned_args;
+    function->type_arg_count = arg_count;
+    function->instance = NULL;
+    function->func_index = FUNCTION_NO_BODY;
 
     return function;
 }

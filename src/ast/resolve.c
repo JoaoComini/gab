@@ -43,6 +43,14 @@ typedef struct {
 GAB_LIST(FlowWorkList, flow_work_list, FlowWork)
 
 typedef struct {
+    const Function *generic;
+    Function *function;
+} Specialization;
+
+#define specialization_list_item_free(item) ((void)(item))
+GAB_LIST(SpecializationList, specialization_list, Specialization)
+
+typedef struct {
     const Type *return_type;
 
     unsigned int loop_depth;
@@ -64,6 +72,7 @@ typedef struct {
 
     StructDeclList struct_decls;
     FlowWorkList flow_work;
+    SpecializationList specializations;
 
     StructDeclList resolving;
 
@@ -452,8 +461,172 @@ static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr);
 static void resolve_func_body(ResolverState *state, ASTStmt *stmt);
 static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span);
 
+static void instantiate_body(ResolverState *state, Function *method, Span span);
+
+/* One Function per declaration and argument list, so repeated calls share an instantiation. */
+static Function *find_specialization(ResolverState *state, const Function *generic, const Type *const *args,
+                                     size_t arg_count) {
+    for (size_t i = 0; i < state->specializations.size; i++) {
+        Specialization *at = &state->specializations.data[i];
+
+        if (at->generic != generic || at->function->type_arg_count != arg_count) {
+            continue;
+        }
+
+        bool same = true;
+
+        for (size_t a = 0; a < arg_count; a++) {
+            if (at->function->type_args[a] != args[a]) {
+                same = false;
+                break;
+            }
+        }
+
+        if (same) {
+            return at->function;
+        }
+    }
+
+    return NULL;
+}
+
+/* Matches a declared parameter type against an argument's, binding each type parameter it reaches. */
+static bool infer_type_args(const Type *declared, const Type *actual, const Type **args, size_t owed) {
+    if (!declared || !actual || !type_has_param(declared)) {
+        return true;
+    }
+
+    if (type_kind(declared) == TYPE_PARAM) {
+        size_t index = type_param_index(declared);
+
+        /* The first argument to reach a parameter fixes it; a later disagreement is an argument type error.
+         */
+        if (index < owed && !args[index]) {
+            args[index] = actual;
+        }
+
+        return true;
+    }
+
+    /* An argument is lent or dereferenced to reach a borrowing parameter, so match what each finally names.
+     */
+    if (type_kind(declared) == TYPE_REF) {
+        for (const Type *at = actual;; at = type_pointee(at)) {
+            const Type *attempt[GAB_MAX_TYPE_PARAMS];
+            memcpy(attempt, args, owed * sizeof(const Type *));
+
+            if (infer_type_args(type_pointee(declared), at, attempt, owed)) {
+                memcpy(args, attempt, owed * sizeof(const Type *));
+                return true;
+            }
+
+            if (!type_is_indirect(at)) {
+                return false;
+            }
+        }
+    }
+
+    if (type_kind(declared) != type_kind(actual)) {
+        return false;
+    }
+
+    if (type_is_indirect(declared)) {
+        return infer_type_args(type_pointee(declared), type_pointee(actual), args, owed);
+    }
+
+    if (type_kind(declared) == TYPE_ARRAY) {
+        return infer_type_args(type_array_element(declared), type_array_element(actual), args, owed);
+    }
+
+    if (type_decl(declared) != type_decl(actual) || type_arg_count(declared) != type_arg_count(actual)) {
+        return false;
+    }
+
+    for (size_t i = 0; i < type_arg_count(declared); i++) {
+        if (type_args(declared)[i].kind != TYPE_ARG_TYPE || type_args(actual)[i].kind != TYPE_ARG_TYPE) {
+            continue;
+        }
+
+        if (!infer_type_args(type_args(declared)[i].type, type_args(actual)[i].type, args, owed)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static Function *specialize_call(ResolverState *state, ASTExpr *expr, Function *generic) {
+    const TypeExpr *supplied = expr->call.target->var.owner_type_expr;
+
+    size_t owed = generic->type_param_count;
+
+    const char *name = generic->name ? generic->name->data : "this function";
+
+    const Type *args[GAB_MAX_TYPE_PARAMS] = {0};
+
+    if (supplied) {
+        if (supplied->kind != TYPE_EXPR_APPLY || supplied->apply.args.size != owed) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "'%s' takes %zu type argument(s)", name,
+                       owed);
+            return NULL;
+        }
+
+        for (size_t i = 0; i < owed; i++) {
+            args[i] = resolve_type_expr(state, supplied->apply.args.data[i], expr->span);
+
+            if (is_error_type(args[i])) {
+                return NULL;
+            }
+        }
+    } else {
+        if (expr->call.args.size != generic->param_count) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %zu argument(s), found %zu",
+                       generic->param_count, expr->call.args.size);
+            return NULL;
+        }
+
+        for (size_t i = 0; i < expr->call.args.size; i++) {
+            resolve_expr(state, expr->call.args.data[i], NULL);
+
+            if (is_error_type(expr->call.args.data[i]->type)) {
+                return NULL;
+            }
+
+            infer_type_args(generic->params[i], expr->call.args.data[i]->type, args, owed);
+        }
+
+        for (size_t i = 0; i < owed; i++) {
+            if (!args[i]) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                           "no argument names every type parameter of '%s', so each is written", name);
+                return NULL;
+            }
+        }
+    }
+
+    Function *found = find_specialization(state, generic, args, owed);
+
+    if (found) {
+        return found;
+    }
+
+    Function *specialized =
+        type_registry_specialize(state->current_scope->type_registry, generic, args, owed);
+
+    specialization_list_add(&state->specializations,
+                            (Specialization){.generic = generic, .function = specialized});
+
+    instantiate_body(state, specialized, expr->span);
+
+    return specialized;
+}
+
 static void instantiate_body(ResolverState *state, Function *method, Span span) {
     if (method->body_kind != BODY_GAB || method->instance || !method->body) {
+        return;
+    }
+
+    if (method->type_param_count == 0) {
         return;
     }
 
@@ -474,14 +647,9 @@ static void instantiate_body(ResolverState *state, Function *method, Span span) 
     Scope *enclosing = state->current_scope;
     Scope *params = scope_create(resolver_owner_arena(state), enclosing->strings, enclosing);
 
-    const TypeExpr *owner = clone->func_decl.owner;
-
-    for (size_t i = 0; i < method->type_arg_count && i < owner->apply.args.size; i++) {
-        const TypeExpr *param = owner->apply.args.data[i];
-
-        if (param->kind == TYPE_EXPR_NAME) {
-            scope_bind_argument(params, resolver_intern(state, param->name), method->type_args[i]);
-        }
+    for (size_t i = 0; i < method->type_arg_count && i < clone->func_decl.type_param_count; i++) {
+        scope_bind_argument(params, resolver_intern(state, clone->func_decl.type_params[i]),
+                            method->type_args[i]);
     }
 
     state->current_scope = params;
@@ -918,6 +1086,11 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         break;
     }
     case EXPR_CALL: {
+        if (!expr->call.target && expr->callee) {
+            expr->type = expr->callee->return_type;
+            break;
+        }
+
         if (expr->call.target && expr->call.target->kind == EXPR_FIELD) {
             resolve_method_call(state, expr);
             break;
@@ -930,6 +1103,17 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         resolve_expr(state, expr->call.target, NULL);
 
         Function *callee = expr->call.target->callee;
+
+        if (callee && callee->type_param_count > 0) {
+            callee = specialize_call(state, expr, callee);
+
+            if (!callee) {
+                expr->type = resolver_error_type(state);
+                break;
+            }
+
+            expr->call.target->callee = callee;
+        }
 
         bool params_known = callee && expr->call.args.size == callee->param_count;
 
@@ -1730,8 +1914,14 @@ static void layout_struct(ResolverState *state, StructDecl *decl) {
     type_registry_complete(registry, type_registry_apply(registry, decl->def, NULL, 0));
 }
 
-static const Type *resolve_param_type(ResolverState *state, ASTField *param) {
+/* A type parameter has no width until it is substituted, so a generic signature is checked per instantiation.
+ */
+static const Type *resolve_param_type_in(ResolverState *state, ASTField *param, bool generic) {
     const Type *type = resolve_type_expr(state, param->type_expr, param->span);
+
+    if (generic && type_has_param(type)) {
+        return type;
+    }
 
     if (reject_unsized(state, type, param->span, "a parameter")) {
         return resolver_error_type(state);
@@ -1740,7 +1930,15 @@ static const Type *resolve_param_type(ResolverState *state, ASTField *param) {
     return type;
 }
 
+static const Type *resolve_param_type(ResolverState *state, ASTField *param) {
+    return resolve_param_type_in(state, param, false);
+}
+
 static bool func_decl_is_generic(const ASTStmt *stmt) {
+    if (stmt->func_decl.type_param_count > 0) {
+        return true;
+    }
+
     return stmt->func_decl.owner && stmt->func_decl.owner->kind == TYPE_EXPR_APPLY;
 }
 
@@ -1805,6 +2003,10 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         .params = NULL,
         .param_count = 0,
         .func_index = FUNCTION_NO_BODY,
+        .name = name,
+        .body_kind = BODY_GAB,
+        .body = stmt,
+        .type_param_count = stmt->func_decl.type_param_count,
     };
 
     size_t param_count = stmt->func_decl.params.size;
@@ -1818,17 +2020,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         }
     }
 
-    const MethodDecl method = {
-        .name = name,
-        .body_kind = BODY_GAB,
-        .body = stmt,
-        .result = return_type,
-        .params = func->params,
-        .param_count = param_count,
-        .function = func,
-    };
-
-    if (!type_registry_declare_method(state->current_scope->type_registry, owner, &method)) {
+    if (!type_registry_declare_method(state->current_scope->type_registry, owner, func)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' already has a function '%s'",
                    type_name_of(owner)->data, name->data);
         return;
@@ -1903,12 +2095,29 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
     }
 
     StringRef func_name = stmt->func_decl.name;
+
+    Scope *enclosing = state->current_scope;
+
+    if (stmt->func_decl.type_param_count > 0) {
+        Scope *params = scope_create(resolver_owner_arena(state), enclosing->strings, enclosing);
+
+        for (size_t i = 0; i < stmt->func_decl.type_param_count; i++) {
+            String *param_name = resolver_intern(state, stmt->func_decl.type_params[i]);
+
+            if (!scope_bind_type(params, param_name, type_registry_param(enclosing->type_registry, i))) {
+                diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span,
+                           "duplicate type parameter '%s' on '%s'", param_name->data, param_name->data);
+            }
+        }
+
+        state->current_scope = params;
+    }
+
     const Type *func_return_type = resolve_type_expr(state, stmt->func_decl.return_type, stmt->span);
 
     stmt->func_decl.resolved_return_type = func_return_type;
 
-    Binding *declared =
-        scope_decl_func(state->current_scope, resolver_intern(state, func_name), func_return_type);
+    Binding *declared = scope_decl_func(enclosing, resolver_intern(state, func_name), func_return_type);
 
     if (!declared) {
         char *name = string_ref_to_cstr(func_name);
@@ -1939,9 +2148,19 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
         for (size_t i = 0; i < param_count; i++) {
             ASTField *param = stmt->func_decl.params.data[i];
 
-            func->params[i] = resolve_param_type(state, param);
+            func->params[i] = resolve_param_type_in(state, param, stmt->func_decl.type_param_count > 0);
         }
     }
+
+    if (func && stmt->func_decl.type_param_count > 0) {
+        func->type_param_count = stmt->func_decl.type_param_count;
+        func->name = resolver_intern(state, func_name);
+
+        /* A generic declaration keeps its own statement, which each instantiation clones and resolves. */
+        func->body = stmt;
+    }
+
+    state->current_scope = enclosing;
 }
 
 static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
@@ -2285,6 +2504,7 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
             },
         .struct_decls = struct_decl_list_create(),
         .flow_work = flow_work_list_create(),
+        .specializations = specialization_list_create(),
         .resolving = struct_decl_list_create(),
         .unit = unit,
         .diagnostics = diagnostics,
@@ -2330,6 +2550,7 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
                       work->return_type, diagnostics, work->function, true);
     }
 
+    specialization_list_free(&state.specializations);
     flow_work_list_free(&state.flow_work);
     struct_decl_list_free(&state.struct_decls);
     struct_decl_list_free(&state.resolving);

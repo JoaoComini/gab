@@ -64,6 +64,9 @@ typedef struct {
     ASTFieldList params;
     struct ASTStmt *body;
 
+    StringRef type_params[GAB_MAX_TYPE_PARAMS];
+    size_t type_param_count;
+
     Function *function;
 
     const Type *resolved_return_type;

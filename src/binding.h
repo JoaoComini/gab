@@ -36,6 +36,10 @@ typedef struct Function {
 
     void *body;
 
+    /* How many arguments this declaration is generic over, whether they came from an owner or itself. */
+    size_t type_param_count;
+
+    /* What a specialization was given, one per type parameter; NULL while this is still a declaration. */
     const Type *const *type_args;
     size_t type_arg_count;
 

@@ -27,7 +27,7 @@ typedef struct MethodKey {
 #define method_decl_key_key_dup(key) key
 #define method_decl_key_entry_free(key, value)
 
-GAB_HASH_MAP(MethodTable, method_decl_key, MethodKey, MethodDecl *)
+GAB_HASH_MAP(MethodTable, method_decl_key, MethodKey, Function *)
 
 #define instance_key_hash(key) (((size_t)(key).type * 31) ^ (size_t)(key).name)
 #define instance_key_key_equals(key, other) ((key).type == (other).type && (key).name == (other).name)

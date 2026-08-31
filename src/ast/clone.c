@@ -154,6 +154,12 @@ static ASTStmt *clone_stmt(const ASTStmt *stmt) {
 
         clone->func_decl.owner = clone_type_expr(stmt->func_decl.owner);
 
+        clone->func_decl.type_param_count = stmt->func_decl.type_param_count;
+
+        for (size_t i = 0; i < stmt->func_decl.type_param_count; i++) {
+            clone->func_decl.type_params[i] = stmt->func_decl.type_params[i];
+        }
+
         return clone;
     }
 

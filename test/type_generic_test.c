@@ -218,9 +218,9 @@ static void test_a_declared_method_is_substituted_per_instantiation() {
 
     const Type *receiver[] = {type_registry_apply(registry, &def, &param, 1)};
 
-    MethodDecl method = {
+    Function method = {
         .name = at,
-        .result = param,
+        .return_type = param,
         .params = receiver,
         .param_count = 1,
     };
@@ -266,9 +266,9 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
 
     const Type *receiver[] = {type_registry_apply(registry, &def, &param, 1)};
 
-    MethodDecl method = {
+    Function method = {
         .name = at,
-        .result = param,
+        .return_type = param,
         .params = receiver,
         .param_count = 1,
     };
@@ -301,9 +301,9 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
 
     const Type *receiver[] = {type_registry_apply(registry, &def, &param, 1)};
 
-    MethodDecl method = {
+    Function method = {
         .name = at,
-        .result = param,
+        .return_type = param,
         .params = receiver,
         .param_count = 1,
     };
@@ -312,9 +312,9 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
 
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
 
-    Function other = {0};
+    Function other = {.name = at};
 
-    assert(!type_registry_declare_method(registry, of_int, &(MethodDecl){.name = at, .function = &other}));
+    assert(!type_registry_declare_method(registry, of_int, &other));
 
     assert(type_registry_find_method(registry, of_int, at)->return_type == int_type);
 
@@ -340,14 +340,13 @@ static void test_a_method_declared_on_one_instantiation_answers_on_every_one() {
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
     const Type *of_bool = type_registry_apply(registry, &def, &bool_type, 1);
 
-    Function method = {0};
+    Function method = {.name = name};
 
-    assert(type_registry_declare_method(registry, of_int, &(MethodDecl){.name = name, .function = &method}));
+    assert(type_registry_declare_method(registry, of_int, &method));
 
-    assert(type_registry_find_method(registry, of_bool, name) == &method);
+    assert(type_registry_find_method(registry, of_bool, name)->name == name);
 
-    assert(
-        !type_registry_declare_method(registry, of_bool, &(MethodDecl){.name = name, .function = &method}));
+    assert(!type_registry_declare_method(registry, of_bool, &method));
 
     TypeDef other = {.name = string_from_cstr(&ctx.strings, "Other"), .param_count = 1};
 
@@ -376,9 +375,9 @@ static void test_a_substituted_signature_is_read_once_per_type() {
 
     const Type *receiver[] = {type_registry_apply(registry, &def, &param, 1)};
 
-    MethodDecl method = {
+    Function method = {
         .name = at,
-        .result = param,
+        .return_type = param,
         .params = receiver,
         .param_count = 1,
     };
