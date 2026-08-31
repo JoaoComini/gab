@@ -1,3 +1,4 @@
+#include "function_registry.h"
 #include "type_registry_internal.h"
 
 #include "binding.h"
@@ -217,8 +218,7 @@ TypeRegistry *type_registry_create(Arena *arena, const TypePrimitiveNames *names
     registry->drops = drop_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->derefs = deref_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->layouts = layout_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
-    registry->methods = method_decl_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
-    registry->instances = instance_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->owned = owned_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->applications = type_intern_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
 
@@ -231,8 +231,7 @@ TypeRegistry *type_registry_create(Arena *arena, const TypePrimitiveNames *names
 
 void type_registry_destroy(TypeRegistry *registry) {
     type_intern_destroy(registry->applications);
-    method_decl_key_destroy(registry->methods);
-    instance_key_destroy(registry->instances);
+    owned_key_destroy(registry->owned);
     drop_key_destroy(registry->drops);
     deref_key_destroy(registry->derefs);
 }
@@ -280,95 +279,69 @@ const Type *type_registry_declare_struct(TypeRegistry *registry, String *name, c
     return type_registry_declare(registry, &decl);
 }
 
-static const Type *generic_form_of(TypeRegistry *registry, const Type *type) {
+static OwnedKey owned_key_of(const Type *type, const String *name) {
     const TypeDef *def = type_decl(type);
 
-    if (!def || def->param_count == 0) {
-        return type;
-    }
-
-    const Type *params[GAB_MAX_TYPE_PARAMS];
-
-    for (size_t i = 0; i < def->param_count; i++) {
-        params[i] = type_registry_param(registry, i);
-    }
-
-    return type_registry_apply(registry, def, params, def->param_count);
+    return (OwnedKey){.owner = def ? (const void *)def : (const void *)type, .name = name};
 }
 
-static MethodKey method_key_of(TypeRegistry *registry, const Type *type, const String *name) {
-    return (MethodKey){.type = generic_form_of(registry, type), .name = name};
-}
-
-static Function *instantiate_method(TypeRegistry *registry, const Function *method, const Type *const *args,
-                                    size_t arg_count);
-
-static bool declare_method(TypeRegistry *registry, MethodKey key, Function *method) {
-    if (method_decl_key_lookup(registry->methods, key)) {
+static bool declare_owned(TypeRegistry *registry, OwnedKey key, Function *function) {
+    if (owned_key_lookup(registry->owned, key)) {
         return false;
     }
 
-    method_decl_key_insert(registry->methods, key, method);
+    owned_key_insert(registry->owned, key, function);
 
     return true;
 }
 
-bool type_registry_declare_method(TypeRegistry *registry, const Type *type, Function *method) {
-    assert(type && method && method->name && "a method is a type, a name and a signature");
+bool type_registry_declare_owned(TypeRegistry *registry, const Type *type, Function *function) {
+    assert(type && function && function->name && "a function a type owns has a name and a signature");
 
-    return declare_method(registry, method_key_of(registry, type, method->name), method);
+    return declare_owned(registry, owned_key_of(type, function->name), function);
 }
 
-/* A method whose signature mentions no type parameter is one function for every instantiation of its owner.
- */
-static bool method_is_shared(const Function *method, const Type *type) {
+/* A signature mentioning no type parameter is one function for every instantiation of its owner. */
+static bool owned_is_shared(const Function *declaration, const Type *type) {
     if (type_arg_count(type) == 0) {
         return true;
     }
 
-    for (size_t i = 0; i < method->param_count; i++) {
-        if (type_has_param(method->params[i])) {
+    for (size_t i = 0; i < declaration->param_count; i++) {
+        if (type_has_param(declaration->params[i])) {
             return false;
         }
     }
 
-    return !type_has_param(method->return_type);
+    return !type_has_param(declaration->return_type);
 }
 
-Function *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name) {
+Function *type_registry_find_owned(TypeRegistry *registry, FunctionRegistry *functions, const Type *type,
+                                   const String *name) {
     if (!type) {
         return NULL;
     }
 
-    Function **cached = instance_key_lookup(registry->instances, (InstanceKey){.type = type, .name = name});
-    if (cached) {
-        return *cached;
-    }
-
-    Function **declared = method_decl_key_lookup(registry->methods, method_key_of(registry, type, name));
+    Function **declared = owned_key_lookup(registry->owned, owned_key_of(type, name));
     if (!declared) {
         return NULL;
     }
 
-    Function *method = *declared;
+    Function *declaration = *declared;
 
-    if (method_is_shared(method, type)) {
-        return method;
+    if (owned_is_shared(declaration, type)) {
+        return declaration;
     }
 
     const Type *args[GAB_MAX_TYPE_PARAMS];
 
     for (size_t i = 0; i < type_arg_count(type); i++) {
-        assert(type_args(type)[i].kind == TYPE_ARG_TYPE && "a method's parameters are types");
+        assert(type_args(type)[i].kind == TYPE_ARG_TYPE && "an owner's parameters are types");
 
         args[i] = type_args(type)[i].type;
     }
 
-    Function *function = instantiate_method(registry, method, args, type_arg_count(type));
-
-    instance_key_insert(registry->instances, (InstanceKey){.type = type, .name = name}, function);
-
-    return function;
+    return function_registry_specialize(functions, declaration, args, type_arg_count(type));
 }
 
 static Type *intern(TypeRegistry *registry, const Type *key) {
@@ -445,8 +418,8 @@ const Type *type_registry_param(TypeRegistry *registry, size_t index) {
     return registry->params[index];
 }
 
-static const Type *substitute(TypeRegistry *registry, const Type *type, const Type *const *args,
-                              size_t arg_count) {
+const Type *type_registry_substitute(TypeRegistry *registry, const Type *type, const Type *const *args,
+                                     size_t arg_count) {
     if (!type_has_param(type)) {
         return type;
     }
@@ -461,21 +434,25 @@ static const Type *substitute(TypeRegistry *registry, const Type *type, const Ty
     }
 
     case TYPE_BOX:
-        return type_registry_box_to(registry, substitute(registry, type_pointee(type), args, arg_count));
+        return type_registry_box_to(registry,
+                                    type_registry_substitute(registry, type_pointee(type), args, arg_count));
 
     case TYPE_REF:
-        return type_registry_ref_to(registry, substitute(registry, type_pointee(type), args, arg_count));
+        return type_registry_ref_to(registry,
+                                    type_registry_substitute(registry, type_pointee(type), args, arg_count));
 
     case TYPE_PTR:
-        return type_registry_ptr_to(registry, substitute(registry, type_pointee(type), args, arg_count));
+        return type_registry_ptr_to(registry,
+                                    type_registry_substitute(registry, type_pointee(type), args, arg_count));
 
     case TYPE_BLOCK:
-        return type_registry_block_of(registry, substitute(registry, type_pointee(type), args, arg_count));
+        return type_registry_block_of(
+            registry, type_registry_substitute(registry, type_pointee(type), args, arg_count));
 
     case TYPE_ARRAY:
-        return type_registry_array_of(registry,
-                                      substitute(registry, type_array_element(type), args, arg_count),
-                                      type_array_length(type));
+        return type_registry_array_of(
+            registry, type_registry_substitute(registry, type_array_element(type), args, arg_count),
+            type_array_length(type));
 
     case TYPE_STRUCT: {
         assert(type_decl(type) && "a struct mentioning a parameter is an instantiation");
@@ -490,64 +467,6 @@ static const Type *substitute(TypeRegistry *registry, const Type *type, const Ty
     assert(false && "a type mentioning a parameter is one substitution rebuilds");
 
     return type;
-}
-
-static Function *instantiate_method(TypeRegistry *registry, const Function *method, const Type *const *args,
-                                    size_t arg_count) {
-    Function *function = arena_alloc(registry->arena, sizeof(Function));
-
-    const Type **params = arena_alloc(registry->arena, method->param_count * sizeof(const Type *));
-
-    for (size_t p = 0; p < method->param_count; p++) {
-        params[p] = substitute(registry, method->params[p], args, arg_count);
-    }
-
-    const Type **owned_args = arena_alloc(registry->arena, arg_count * sizeof(const Type *));
-
-    for (size_t i = 0; i < arg_count; i++) {
-        owned_args[i] = args[i];
-    }
-
-    *function = *method;
-
-    function->return_type = substitute(registry, method->return_type, args, arg_count);
-    function->params = params;
-    function->func_index = FUNCTION_NO_BODY;
-    function->instance = NULL;
-    function->type_args = owned_args;
-    function->type_arg_count = arg_count;
-
-    return function;
-}
-
-Function *type_registry_specialize(TypeRegistry *registry, const Function *generic, const Type *const *args,
-                                   size_t arg_count) {
-    Function *function = arena_alloc(registry->arena, sizeof(Function));
-
-    const Type **params = generic->param_count
-                              ? arena_alloc(registry->arena, generic->param_count * sizeof(const Type *))
-                              : NULL;
-
-    for (size_t p = 0; p < generic->param_count; p++) {
-        params[p] = substitute(registry, generic->params[p], args, arg_count);
-    }
-
-    const Type **owned_args = arena_alloc(registry->arena, arg_count * sizeof(const Type *));
-
-    for (size_t i = 0; i < arg_count; i++) {
-        owned_args[i] = args[i];
-    }
-
-    *function = *generic;
-
-    function->params = params;
-    function->return_type = substitute(registry, generic->return_type, args, arg_count);
-    function->type_args = owned_args;
-    function->type_arg_count = arg_count;
-    function->instance = NULL;
-    function->func_index = FUNCTION_NO_BODY;
-
-    return function;
 }
 
 static const TypeFields no_fields = {.fields = NULL, .count = 0};
@@ -585,7 +504,7 @@ const TypeFields *type_registry_fields_of(TypeRegistry *registry, const Type *ty
     for (size_t i = 0; i < def->field_count; i++) {
         fields[i] = (TypeField){
             .name = def->fields[i].name,
-            .type = substitute(registry, def->fields[i].type, args, type_arg_count(type)),
+            .type = type_registry_substitute(registry, def->fields[i].type, args, type_arg_count(type)),
         };
     }
 

@@ -42,6 +42,7 @@ add_library(gab
     src/object.c
     src/type/type.c
     src/type/type_registry.c
+    src/function_registry.c
     src/scope.c
     src/ast/ast.c
     src/ast/resolve.c

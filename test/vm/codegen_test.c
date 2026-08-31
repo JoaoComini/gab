@@ -280,6 +280,16 @@ static void test_if_else_jumps_over_the_else_block() {
     test_program_free(&program);
 }
 
+static void test_one_instantiation_serves_every_call_that_names_it() {
+    TestProgram program = test_compile("func id<T>(x: T): T { return x; }\n"
+                                       "func f(): int { return id<int>(1) + id<int>(2); }\n"
+                                       "let r: int = f();");
+
+    assert(test_func_count(&program) == 3);
+
+    test_program_free(&program);
+}
+
 static void test_a_function_compiles_into_its_own_chunk() {
     TestProgram program = test_compile("func add(a: int, b: int): int { return a + b; }\n");
 
@@ -680,6 +690,7 @@ int main() {
     test_if_else_jumps_over_the_else_block();
     test_every_chunk_ends_in_a_return();
     test_every_jump_lands_inside_its_chunk();
+    test_one_instantiation_serves_every_call_that_names_it();
     test_a_function_compiles_into_its_own_chunk();
     test_a_method_counts_its_receiver();
     test_a_release_names_what_it_frees();

@@ -1,3 +1,4 @@
+#include "function_registry.h"
 #include "object.h"
 #include "support/run.h"
 #include "support/test_context.h"
@@ -441,24 +442,25 @@ static void test_methods_live_beside_the_type_not_in_it() {
     scope_init(&scope, ctx.arena, &ctx.strings, NULL);
 
     TypeRegistry *registry = scope.type_registry;
+    FunctionRegistry *functions = function_registry_create(ctx.arena, registry);
     const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
 
     String *name = string_from_cstr(&ctx.strings, "twice");
 
-    assert(type_registry_find_method(registry, int_type, name) == NULL);
+    assert(type_registry_find_owned(registry, functions, int_type, name) == NULL);
 
     Function method = {.name = name};
 
-    assert(type_registry_declare_method(registry, int_type, &method));
+    assert(type_registry_declare_owned(registry, int_type, &method));
 
-    Function *found = type_registry_find_method(registry, int_type, name);
+    Function *found = type_registry_find_owned(registry, functions, int_type, name);
 
     assert(found && found->name == name);
 
-    assert(!type_registry_declare_method(registry, int_type, &method));
+    assert(!type_registry_declare_owned(registry, int_type, &method));
 
-    assert(type_registry_find_method(registry, type_registry_get_primitive(registry, TYPE_BOOL), name) ==
-           NULL);
+    assert(type_registry_find_owned(registry, functions, type_registry_get_primitive(registry, TYPE_BOOL),
+                                    name) == NULL);
 
     test_context_free(&ctx);
 }

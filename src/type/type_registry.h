@@ -59,9 +59,12 @@ typedef struct Deref {
     size_t part_count;
 } Deref;
 
-bool type_registry_declare_method(TypeRegistry *registry, const Type *type, Function *method);
+bool type_registry_declare_owned(TypeRegistry *registry, const Type *type, Function *function);
 
-Function *type_registry_find_method(TypeRegistry *registry, const Type *type, const String *name);
+typedef struct FunctionRegistry FunctionRegistry;
+
+Function *type_registry_find_owned(TypeRegistry *registry, FunctionRegistry *functions, const Type *type,
+                                   const String *name);
 
 void type_registry_complete(TypeRegistry *registry, const Type *type);
 
@@ -118,7 +121,7 @@ const Type *type_registry_apply(TypeRegistry *registry, const TypeDef *def, cons
 
 const Type *type_registry_block_of(TypeRegistry *registry, const Type *element);
 
-Function *type_registry_specialize(TypeRegistry *registry, const Function *generic, const Type *const *args,
-                                   size_t arg_count);
+const Type *type_registry_substitute(TypeRegistry *registry, const Type *type, const Type *const *args,
+                                     size_t arg_count);
 
 #endif
