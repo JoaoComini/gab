@@ -108,10 +108,6 @@ void flow_set(Flow *flow, Binding *binding, FlowSlot slot) {
     flow_map_insert(flow->slots, binding, slot);
 }
 
-#define flow_for_each(map, entry)                                                                            \
-    for (size_t _i = 0; _i < (map)->capacity; _i++)                                                          \
-        for (FlowMapEntry *entry = (map)->buckets[_i]; entry; entry = entry->next)
-
 /* Field and source arrays are shared until written, so a slot entering a new flow takes its own copy. */
 static FlowSlot slot_copy(Arena *arena, FlowSlot slot) {
     if (slot.borrow_capacity > 0) {
@@ -144,7 +140,9 @@ void flow_copy(Flow *into, const Flow *from) {
 
     flow_map_init_alloc(into->slots, arena_allocator(into->arena), FLOW_INITIAL_CAPACITY);
 
-    flow_for_each(from->slots, entry) { flow_set(into, entry->key, slot_copy(into->arena, entry->value)); }
+    GAB_HASH_MAP_FOR_EACH(from->slots, entry) {
+        flow_set(into, entry->key, slot_copy(into->arena, entry->value));
+    }
 }
 
 static FlowSlot slot_merge(Arena *arena, FlowSlot a, FlowSlot b) {
@@ -209,7 +207,7 @@ void flow_merge(Flow *flow, const Flow *other) {
         return;
     }
 
-    flow_for_each(other->slots, entry) {
+    GAB_HASH_MAP_FOR_EACH(other->slots, entry) {
         flow_set(flow, entry->key, slot_merge(flow->arena, flow_get(flow, entry->key), entry->value));
     }
 }
@@ -230,7 +228,7 @@ static void slot_invalidate_borrows_of(FlowSlot *slot, Binding *freed) {
 }
 
 void flow_invalidate_borrows_of(Flow *flow, Binding *freed) {
-    flow_for_each(flow->slots, entry) { slot_invalidate_borrows_of(&entry->value, freed); }
+    GAB_HASH_MAP_FOR_EACH(flow->slots, entry) { slot_invalidate_borrows_of(&entry->value, freed); }
 }
 
 static bool slot_equals(const FlowSlot *a, const FlowSlot *b) {
@@ -256,7 +254,7 @@ static bool slot_equals(const FlowSlot *a, const FlowSlot *b) {
 
 /* Every slot of one side must equal the other's; a slot absent there reads as unreached. */
 static bool flow_contained_by(const Flow *a, const Flow *b) {
-    flow_for_each(a->slots, entry) {
+    GAB_HASH_MAP_FOR_EACH(a->slots, entry) {
         FlowSlot other = flow_get(b, entry->key);
 
         if (!slot_equals(&entry->value, &other)) {

@@ -5,8 +5,6 @@
 
 #define test_map_hash(key) (size_t)key
 #define test_map_key_equals(key, other) key == other
-#define test_map_key_dup(key) key
-#define test_map_entry_free(key, value)
 
 GAB_HASH_MAP(TestMap, test_map, int, int)
 
@@ -150,6 +148,20 @@ static void test_stress() {
     test_map_destroy(table);
 }
 
+static void test_insert_delete_churn() {
+    TestMap *table = test_map_create(8);
+
+    for (int i = 0; i < 100000; i++) {
+        assert(test_map_insert(table, i, i));
+        assert(test_map_delete(table, i));
+    }
+
+    assert(table->size == 0);
+    assert(table->capacity <= 64);
+
+    test_map_destroy(table);
+}
+
 int main() {
     test_create_and_free();
     test_basic_insert_and_lookup();
@@ -159,6 +171,7 @@ int main() {
     test_resize();
     test_delete_all();
     test_stress();
+    test_insert_delete_churn();
 
     return 0;
 }

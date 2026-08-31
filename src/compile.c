@@ -72,7 +72,7 @@ bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *d
     Scope *target = NULL;
     Scope *staging = NULL;
 
-    StringList imported = string_list_create();
+    StringList imported = string_list_create(DEFAULT_ALLOCATOR);
 
     if (parser_parse(&parser, ast) && check_imports(vm, ast, diagnostics)) {
         module_name = string_from_ref(&vm->env.strings, ast->module_name);
@@ -115,7 +115,7 @@ bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *d
     *out = unit->top_level;
 
     unit->top_level.chunk = NULL;
-    unit->top_level.refs = frame_ref_list_create();
+    unit->top_level.refs = frame_ref_list_create(DEFAULT_ALLOCATOR);
     unit->prototypes.size = 0;
 
     unit_free(unit);

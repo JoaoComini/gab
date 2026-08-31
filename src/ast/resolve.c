@@ -29,7 +29,6 @@ typedef struct StructDecl {
     bool poisoned;
 } StructDecl;
 
-#define struct_decl_list_item_free(item) ((void)(item))
 GAB_LIST(StructDeclList, struct_decl_list, StructDecl *)
 
 typedef struct {
@@ -41,7 +40,6 @@ typedef struct {
     Function *function;
 } FlowWork;
 
-#define flow_work_list_item_free(item) ((void)(item))
 GAB_LIST(FlowWorkList, flow_work_list, FlowWork)
 
 typedef struct {
@@ -2478,9 +2476,9 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
             {
                 .return_type = NULL,
             },
-        .struct_decls = struct_decl_list_create(),
-        .flow_work = flow_work_list_create(),
-        .resolving = struct_decl_list_create(),
+        .struct_decls = struct_decl_list_create(arena_allocator(compile_arena)),
+        .flow_work = flow_work_list_create(arena_allocator(compile_arena)),
+        .resolving = struct_decl_list_create(arena_allocator(compile_arena)),
         .unit = unit,
         .diagnostics = diagnostics,
     };

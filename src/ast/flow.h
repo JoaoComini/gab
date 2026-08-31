@@ -45,8 +45,6 @@ FlowSlot flow_slot_flattened(Arena *arena, const FlowSlot *slot);
 
 #define flow_map_hash(key) ((size_t)(key) >> 4)
 #define flow_map_key_equals(key, other) key == other
-#define flow_map_key_dup(key) key
-#define flow_map_entry_free(key, value)
 
 GAB_HASH_MAP(FlowMap, flow_map, Binding *, FlowSlot)
 

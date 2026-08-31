@@ -33,8 +33,6 @@ static inline bool instance_key_equals(InstanceKey key, InstanceKey other) {
 
 #define instance_key_hash(key) instance_key_hash_of(key)
 #define instance_key_key_equals(key, other) instance_key_equals(key, other)
-#define instance_key_key_dup(key) key
-#define instance_key_entry_free(key, value)
 
 GAB_HASH_MAP(InstanceTable, instance_key, InstanceKey, Function *)
 

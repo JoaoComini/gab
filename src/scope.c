@@ -83,17 +83,11 @@ void scope_init_staging(Scope *scope, Arena *arena, StringPool *strings, Scope *
 }
 
 void scope_merge_staged(Scope *target, Scope *staged) {
-    for (size_t i = 0; i < staged->bindings->capacity; i++) {
-        for (BindingTableEntry *entry = staged->bindings->buckets[i]; entry; entry = entry->next) {
-            binding_table_insert(target->bindings, entry->key, entry->value);
-        }
+    GAB_HASH_MAP_FOR_EACH(staged->bindings, entry) {
+        binding_table_insert(target->bindings, entry->key, entry->value);
     }
 
-    for (size_t i = 0; i < staged->types->capacity; i++) {
-        for (TypeMapEntry *entry = staged->types->buckets[i]; entry; entry = entry->next) {
-            type_map_insert(target->types, entry->key, entry->value);
-        }
-    }
+    GAB_HASH_MAP_FOR_EACH(staged->types, entry) { type_map_insert(target->types, entry->key, entry->value); }
 }
 
 Binding *scope_binding_lookup(Scope *scope, String *name) {

@@ -32,7 +32,6 @@ typedef struct {
 
 #define type_map_hash(key) (size_t)key
 #define type_map_key_equals(key, other) key == other
-#define type_map_key_dup(key) key
 
 GAB_HASH_MAP(TypeMap, type_map, String *, TypeBinding)
 

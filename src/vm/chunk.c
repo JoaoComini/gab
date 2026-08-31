@@ -4,7 +4,7 @@
 
 Chunk *chunk_create() {
     Chunk *chunk = malloc(sizeof(Chunk));
-    chunk->instructions = instruction_list_create();
+    chunk->instructions = instruction_list_create(DEFAULT_ALLOCATOR);
     chunk->const_pool = constpool_create(VM_MAX_CONSTANTS);
     return chunk;
 }

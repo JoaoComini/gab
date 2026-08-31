@@ -21,7 +21,6 @@ typedef struct {
     size_t release_width;
 } FrameRef;
 
-#define frame_ref_list_item_free(item) ((void)(item))
 GAB_LIST(FrameRefList, frame_ref_list, FrameRef)
 
 typedef struct GabArgs GabArgs;
@@ -35,7 +34,6 @@ typedef struct {
     const struct Function *function;
 } ExternProto;
 
-#define extern_proto_list_item_free(item) ((void)(item))
 GAB_LIST(ExternProtoList, extern_proto_list, ExternProto)
 
 typedef struct {
@@ -49,7 +47,6 @@ typedef struct {
 
 void func_proto_free(FuncPrototype *proto);
 
-#define func_proto_list_item_free(item) func_proto_free(item)
 GAB_LIST(FuncProtoList, func_proto_list, FuncPrototype *)
 
 typedef struct HeapShape {
@@ -60,10 +57,8 @@ typedef struct HeapShape {
     size_t release_width;
 } HeapShape;
 
-#define heap_shape_list_item_free(item) ((void)(item))
 GAB_LIST(HeapShapeList, heap_shape_list, HeapShape)
 
-#define string_list_item_free(item) ((void)(item))
 GAB_LIST(StringList, string_list, String *)
 
 typedef struct {
@@ -71,7 +66,6 @@ typedef struct {
     size_t offset;
 } Relocation;
 
-#define relocation_list_item_free(item) ((void)(item))
 GAB_LIST(RelocationList, relocation_list, Relocation)
 
 typedef struct {
@@ -79,7 +73,6 @@ typedef struct {
     size_t local_index;
 } ProtoBinding;
 
-#define proto_binding_list_item_free(item) ((void)(item))
 GAB_LIST(ProtoBindingList, proto_binding_list, ProtoBinding)
 
 typedef struct {
@@ -88,7 +81,6 @@ typedef struct {
     Span span;
 } ExternRequest;
 
-#define extern_request_list_item_free(item) ((void)(item))
 GAB_LIST(ExternRequestList, extern_request_list, ExternRequest)
 
 typedef struct {
@@ -117,7 +109,6 @@ typedef struct {
 
 void unit_free(Unit *unit);
 
-#define top_level_list_item_free(item) func_proto_free(&(item))
 GAB_LIST(TopLevelList, top_level_list, FuncPrototype)
 
 typedef struct {
@@ -126,7 +117,6 @@ typedef struct {
     GabExternFn fn;
 } ExternBinding;
 
-#define extern_binding_list_item_free(item) ((void)(item))
 GAB_LIST(ExternBindingList, extern_binding_list, ExternBinding)
 
 typedef struct {

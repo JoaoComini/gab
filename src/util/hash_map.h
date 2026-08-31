@@ -2,30 +2,42 @@
 #define GAB_HASH_MAP_H
 
 #include "allocator.h"
+#include <assert.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+
+typedef enum HashMapState {
+    HASH_MAP_EMPTY = 0,
+    HASH_MAP_LIVE,
+    HASH_MAP_DEAD,
+} HashMapState;
 
 #define GAB_HASH_MAP(Name, Alias, KeyType, ValueType)                                                        \
     typedef struct Name##Entry {                                                                             \
         KeyType key;                                                                                         \
         size_t hash;                                                                                         \
         ValueType value;                                                                                     \
-        struct Name##Entry *next;                                                                            \
+        unsigned char state;                                                                                 \
     } Name##Entry;                                                                                           \
                                                                                                              \
     typedef struct Name {                                                                                    \
-        Name##Entry **buckets;                                                                               \
+        Name##Entry *entries;                                                                                \
         size_t capacity;                                                                                     \
         size_t size;                                                                                         \
+        /* Live plus tombstoned, so probes stay bounded as deletes accumulate. */                            \
+        size_t occupied;                                                                                     \
         Allocator allocator;                                                                                 \
     } Name;                                                                                                  \
                                                                                                              \
     static void Alias##_init_alloc(Name *map, Allocator allocator, size_t capacity) {                        \
-        map->buckets = allocator.alloc(allocator.ctx, capacity * sizeof(Name##Entry *));                     \
-        memset(map->buckets, 0, capacity * sizeof(Name##Entry *));                                           \
+        assert(capacity > 0 && (capacity & (capacity - 1)) == 0 &&                                           \
+               "probing masks, so capacity is a power of two");                                              \
+        map->entries = allocator.alloc(allocator.ctx, capacity * sizeof(Name##Entry));                       \
+        memset(map->entries, 0, capacity * sizeof(Name##Entry));                                             \
         map->capacity = capacity;                                                                            \
         map->size = 0;                                                                                       \
+        map->occupied = 0;                                                                                   \
         map->allocator = allocator;                                                                          \
     }                                                                                                        \
                                                                                                              \
@@ -43,109 +55,107 @@
         return Alias##_create_alloc(DEFAULT_ALLOCATOR, capacity);                                            \
     }                                                                                                        \
                                                                                                              \
+    /* The slot holding the key, else the first free slot it may be inserted into. */                        \
+    static Name##Entry *Alias##_probe(Name##Entry *entries, size_t capacity, KeyType key, size_t hash) {     \
+        size_t idx = hash & (capacity - 1);                                                                  \
+        Name##Entry *tombstone = NULL;                                                                       \
+                                                                                                             \
+        for (;;) {                                                                                           \
+            Name##Entry *entry = &entries[idx];                                                              \
+                                                                                                             \
+            if (entry->state == HASH_MAP_EMPTY) {                                                            \
+                return tombstone ? tombstone : entry;                                                        \
+            }                                                                                                \
+            if (entry->state == HASH_MAP_DEAD) {                                                             \
+                if (!tombstone) {                                                                            \
+                    tombstone = entry;                                                                       \
+                }                                                                                            \
+            } else if (entry->hash == hash && Alias##_key_equals(key, entry->key)) {                         \
+                return entry;                                                                                \
+            }                                                                                                \
+                                                                                                             \
+            idx = (idx + 1) & (capacity - 1);                                                                \
+        }                                                                                                    \
+    }                                                                                                        \
+                                                                                                             \
+    /* Tombstones alone do not justify a bigger table, so a mostly-dead one is rehashed at its size. */      \
     static void Alias##_resize(Name *map) {                                                                  \
-        size_t new_cap = map->capacity * 2;                                                                  \
-        Name##Entry **new_buckets =                                                                          \
-            map->allocator.alloc(map->allocator.ctx, new_cap * sizeof(Name##Entry *));                       \
-        memset(new_buckets, 0, new_cap * sizeof(Name##Entry *));                                             \
+        size_t new_cap = map->size >= map->capacity * 0.25 ? map->capacity * 2 : map->capacity;              \
+        Name##Entry *new_entries = map->allocator.alloc(map->allocator.ctx, new_cap * sizeof(Name##Entry));  \
+        memset(new_entries, 0, new_cap * sizeof(Name##Entry));                                               \
                                                                                                              \
         for (size_t i = 0; i < map->capacity; i++) {                                                         \
-            Name##Entry *entry = map->buckets[i];                                                            \
-            while (entry) {                                                                                  \
-                Name##Entry *next = entry->next;                                                             \
-                size_t idx = entry->hash % new_cap;                                                          \
-                entry->next = new_buckets[idx];                                                              \
-                new_buckets[idx] = entry;                                                                    \
-                entry = next;                                                                                \
+            Name##Entry *entry = &map->entries[i];                                                           \
+            if (entry->state != HASH_MAP_LIVE) {                                                             \
+                continue;                                                                                    \
             }                                                                                                \
+            *Alias##_probe(new_entries, new_cap, entry->key, entry->hash) = *entry;                          \
         }                                                                                                    \
                                                                                                              \
-        map->allocator.free(map->allocator.ctx, map->buckets, map->capacity * sizeof(Name##Entry *));        \
-        map->buckets = new_buckets;                                                                          \
+        map->allocator.free(map->allocator.ctx, map->entries, map->capacity * sizeof(Name##Entry));          \
+        map->entries = new_entries;                                                                          \
         map->capacity = new_cap;                                                                             \
+        map->occupied = map->size;                                                                           \
     }                                                                                                        \
                                                                                                              \
     static ValueType *Alias##_insert(Name *map, KeyType key, ValueType value) {                              \
-        if (map->size >= map->capacity * 0.5) {                                                              \
+        if (map->occupied >= map->capacity * 0.5) {                                                          \
             Alias##_resize(map);                                                                             \
         }                                                                                                    \
                                                                                                              \
         size_t hash = Alias##_hash(key);                                                                     \
-        size_t idx = hash % map->capacity;                                                                   \
-        Name##Entry *entry = map->buckets[idx];                                                              \
+        Name##Entry *entry = Alias##_probe(map->entries, map->capacity, key, hash);                          \
                                                                                                              \
-        while (entry) {                                                                                      \
-            if (Alias##_key_equals(key, entry->key)) {                                                       \
-                return NULL;                                                                                 \
-            }                                                                                                \
-            entry = entry->next;                                                                             \
+        if (entry->state == HASH_MAP_LIVE) {                                                                 \
+            return NULL;                                                                                     \
         }                                                                                                    \
                                                                                                              \
-        Name##Entry *new_entry = map->allocator.alloc(map->allocator.ctx, sizeof(Name##Entry));              \
-        new_entry->key = Alias##_key_dup(key);                                                               \
-        new_entry->hash = hash;                                                                              \
-        new_entry->value = value;                                                                            \
-        new_entry->next = map->buckets[idx];                                                                 \
-        map->buckets[idx] = new_entry;                                                                       \
+        if (entry->state == HASH_MAP_EMPTY) {                                                                \
+            map->occupied++;                                                                                 \
+        }                                                                                                    \
+                                                                                                             \
+        entry->key = key;                                                                                    \
+        entry->hash = hash;                                                                                  \
+        entry->value = value;                                                                                \
+        entry->state = HASH_MAP_LIVE;                                                                        \
         map->size++;                                                                                         \
-        return &map->buckets[idx]->value;                                                                    \
+        return &entry->value;                                                                                \
     }                                                                                                        \
                                                                                                              \
     static ValueType *Alias##_lookup(Name *map, KeyType key) {                                               \
-        size_t idx = Alias##_hash(key) % map->capacity;                                                      \
-        Name##Entry *entry = map->buckets[idx];                                                              \
+        Name##Entry *entry = Alias##_probe(map->entries, map->capacity, key, Alias##_hash(key));             \
                                                                                                              \
-        while (entry) {                                                                                      \
-            if (Alias##_key_equals(key, entry->key)) {                                                       \
-                return &entry->value;                                                                        \
-            }                                                                                                \
-            entry = entry->next;                                                                             \
-        }                                                                                                    \
-        return NULL;                                                                                         \
+        return entry->state == HASH_MAP_LIVE ? &entry->value : NULL;                                         \
     }                                                                                                        \
                                                                                                              \
     static bool Alias##_delete(Name *map, KeyType key) {                                                     \
-        if (map->size == 0)                                                                                  \
+        if (map->size == 0) {                                                                                \
             return false;                                                                                    \
-                                                                                                             \
-        size_t idx = Alias##_hash(key) % map->capacity;                                                      \
-        Name##Entry *entry = map->buckets[idx];                                                              \
-        Name##Entry *prev = NULL;                                                                            \
-                                                                                                             \
-        while (entry) {                                                                                      \
-            if (Alias##_key_equals(key, entry->key)) {                                                       \
-                if (prev) {                                                                                  \
-                    prev->next = entry->next;                                                                \
-                } else {                                                                                     \
-                    map->buckets[idx] = entry->next;                                                         \
-                }                                                                                            \
-                                                                                                             \
-                map->allocator.free(map->allocator.ctx, entry, sizeof(Name##Entry));                         \
-                map->size--;                                                                                 \
-                return true;                                                                                 \
-            }                                                                                                \
-                                                                                                             \
-            prev = entry;                                                                                    \
-            entry = entry->next;                                                                             \
         }                                                                                                    \
-        return false;                                                                                        \
+                                                                                                             \
+        Name##Entry *entry = Alias##_probe(map->entries, map->capacity, key, Alias##_hash(key));             \
+                                                                                                             \
+        if (entry->state != HASH_MAP_LIVE) {                                                                 \
+            return false;                                                                                    \
+        }                                                                                                    \
+                                                                                                             \
+        entry->state = HASH_MAP_DEAD;                                                                        \
+        map->size--;                                                                                         \
+        return true;                                                                                         \
     }                                                                                                        \
                                                                                                              \
     static void Alias##_free(Name *map) {                                                                    \
-        for (size_t i = 0; i < map->capacity; i++) {                                                         \
-            Name##Entry *entry = map->buckets[i];                                                            \
-            while (entry) {                                                                                  \
-                Name##Entry *next = entry->next;                                                             \
-                map->allocator.free(map->allocator.ctx, entry, sizeof(Name##Entry));                         \
-                entry = next;                                                                                \
-            }                                                                                                \
-        }                                                                                                    \
-        map->allocator.free(map->allocator.ctx, map->buckets, map->capacity * sizeof(Name##Entry *));        \
+        map->allocator.free(map->allocator.ctx, map->entries, map->capacity * sizeof(Name##Entry));          \
     }                                                                                                        \
                                                                                                              \
     static void Alias##_destroy(Name *map) {                                                                 \
         Alias##_free(map);                                                                                   \
         map->allocator.free(map->allocator.ctx, map, sizeof(Name));                                          \
     }
+
+#define GAB_HASH_MAP_FOR_EACH(map, entry)                                                                    \
+    for (size_t _i = 0; _i < (map)->capacity; _i++)                                                          \
+        for (typeof((map)->entries) entry = &(map)->entries[_i]; entry && entry->state == HASH_MAP_LIVE;     \
+             entry = NULL)
 
 #endif
