@@ -21,6 +21,11 @@ typedef struct {
     bool assigning_field;
 
     bool assigning;
+
+    Binding **params;
+    size_t param_count;
+
+    uint32_t returned_params;
 } FlowPass;
 
 static void flow_pass_expr(FlowPass *pass, ASTExpr *expr);
@@ -31,6 +36,15 @@ static void flow_report(FlowPass *pass, Span span, const char *format, const cha
     }
 
     diag_error(pass->diagnostics, GAB_ERR_LIFETIME, span, format, arg);
+}
+
+/* A call's result may name this argument, either because the callee says so or because nothing does. */
+static bool call_result_may_name(const Function *callee, size_t index) {
+    if (!callee || !callee->borrowed_params_known) {
+        return true;
+    }
+
+    return index >= 32 || (callee->borrowed_params & ((uint32_t)1 << index)) != 0;
 }
 
 static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
@@ -70,6 +84,10 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
         int deepest = 0;
 
         for (size_t i = 0; i < expr->call.args.size; i++) {
+            if (!call_result_may_name(expr->callee, i)) {
+                continue;
+            }
+
             int depth = inner_depth(pass, expr->call.args.data[i]);
 
             if (depth > deepest) {
@@ -120,6 +138,16 @@ static void collect_borrow_sources(FlowPass *pass, const ASTExpr *value, FlowSlo
         return;
     }
 
+    if (value->kind == EXPR_CALL) {
+        for (size_t i = 0; i < value->call.args.size; i++) {
+            if (call_result_may_name(value->callee, i)) {
+                collect_borrow_sources(pass, value->call.args.data[i], into);
+            }
+        }
+
+        return;
+    }
+
     if (!value->type || !type_is_indirect(value->type)) {
         return;
     }
@@ -149,6 +177,29 @@ static bool borrows_memory(const Type *type) {
     }
 
     return type_kind(type) == TYPE_REF;
+}
+
+/* Records which parameters a returned borrow reaches, so a caller can attribute the result to them. */
+static void collect_returned_params(FlowPass *pass, const ASTExpr *value) {
+    if (!value || !borrows_memory(pass->return_type)) {
+        return;
+    }
+
+    FlowSlot reached = {0};
+    collect_borrow_sources(pass, value, &reached);
+
+    if (reached.borrows_unknown) {
+        pass->returned_params = UINT32_MAX;
+        return;
+    }
+
+    for (size_t i = 0; i < reached.borrow_count; i++) {
+        for (size_t p = 0; p < pass->param_count; p++) {
+            if (pass->params[p] == reached.borrows_from[i]) {
+                pass->returned_params |= (uint32_t)1 << p;
+            }
+        }
+    }
 }
 
 static void check_borrow_lifetime(FlowPass *pass, ASTExpr *value, int target_depth, Span span,
@@ -284,6 +335,8 @@ static void flow_pass_stmt(FlowPass *pass, ASTStmt *stmt) {
     case STMT_RETURN:
         flow_pass_expr(pass, stmt->ret.result);
 
+        collect_returned_params(pass, stmt->ret.result);
+
         check_stored_lifetime(pass, stmt->ret.result, pass->return_type, 0, stmt->span, "returned");
         break;
     case STMT_VAR_DECL: {
@@ -355,7 +408,7 @@ static void flow_pass_block(FlowPass *pass, CFGBlock *block) {
 }
 
 void flow_pass_run(Arena *arena, TypeRegistry *registry, ASTStmt *body, Binding **params, size_t param_count,
-                   const Type *return_type, Diagnostics *diagnostics) {
+                   const Type *return_type, Diagnostics *diagnostics, Function *function, bool report) {
     CFG *cfg = cfg_build(arena, body);
 
     Flow *entries = arena_alloc(arena, cfg->block_count * sizeof(Flow));
@@ -369,7 +422,13 @@ void flow_pass_run(Arena *arena, TypeRegistry *registry, ASTStmt *body, Binding 
 
     for (size_t i = 0; i < param_count; i++) {
         if (params[i]) {
-            flow_set(&entries[cfg->entry->index], params[i], (FlowSlot){.init = FLOW_INIT, .inner_depth = 0});
+            FlowSlot slot = {.init = FLOW_INIT, .inner_depth = 0};
+
+            if (borrows_memory(params[i]->var.type)) {
+                flow_slot_add_source(&slot, params[i]);
+            }
+
+            flow_set(&entries[cfg->entry->index], params[i], slot);
         }
     }
 
@@ -377,7 +436,9 @@ void flow_pass_run(Arena *arena, TypeRegistry *registry, ASTStmt *body, Binding 
                      .diagnostics = diagnostics,
                      .registry = registry,
                      .reporting = false,
-                     .return_type = return_type};
+                     .return_type = return_type,
+                     .params = params,
+                     .param_count = param_count};
 
     bool changed = true;
 
@@ -420,7 +481,7 @@ void flow_pass_run(Arena *arena, TypeRegistry *registry, ASTStmt *body, Binding 
         }
     }
 
-    pass.reporting = true;
+    pass.reporting = report;
 
     for (size_t i = 0; i < cfg->block_count; i++) {
         if (entries[i].unreachable) {
@@ -433,5 +494,10 @@ void flow_pass_run(Arena *arena, TypeRegistry *registry, ASTStmt *body, Binding 
 
         pass.flow = &exit;
         flow_pass_block(&pass, cfg->blocks[i]);
+    }
+
+    if (function && !report) {
+        function->borrowed_params = pass.returned_params;
+        function->borrowed_params_known = true;
     }
 }

@@ -8,6 +8,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #define BINDING_TABLE_INITIAL_CAPACITY 8
 
@@ -39,6 +40,10 @@ typedef struct Function {
     size_t type_arg_count;
 
     struct ASTStmt *instance;
+
+    /* The parameters a returned borrow may name; unset until the body's flow pass computes it. */
+    uint32_t borrowed_params;
+    bool borrowed_params_known;
 } Function;
 
 static inline bool function_runs_native(const Function *function) { return function->body_kind != BODY_GAB; }

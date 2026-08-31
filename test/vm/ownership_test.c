@@ -252,6 +252,79 @@ static void test_a_ref_declared_from_a_call_carries_the_argument_lifetime() {
                           "}\n"));
 }
 
+static void test_a_returned_borrow_names_only_the_argument_it_came_from() {
+    assert(test_compiles("struct Box { n: int }\n"
+                         "func pick(a: &Box, b: &Box): &Box { return a; }\n"
+                         "func main(): int {\n"
+                         "    let owner: *Box = box Box { n: 0 };\n"
+                         "    let got: &Box = owner;\n"
+                         "    { let inner = Box { n: 1 }; got = pick(owner, inner); }\n"
+                         "    return got.n;\n"
+                         "}\n"));
+}
+
+static void test_a_returned_borrow_names_every_argument_it_may_come_from() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "func choose(a: &Box, b: &Box, flag: bool): &Box {\n"
+                          "    if flag { return a; }\n"
+                          "    return b;\n"
+                          "}\n"
+                          "func main(): int {\n"
+                          "    let owner: *Box = box Box { n: 0 };\n"
+                          "    let got: &Box = owner;\n"
+                          "    { let inner = Box { n: 1 }; got = choose(owner, inner, true); }\n"
+                          "    return got.n;\n"
+                          "}\n"));
+}
+
+static void test_a_recursive_call_names_every_argument() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "func walk(a: &Box, b: &Box, n: int): &Box {\n"
+                          "    if n == 0 { return a; }\n"
+                          "    return walk(b, a, n - 1);\n"
+                          "}\n"
+                          "func main(): int {\n"
+                          "    let owner: *Box = box Box { n: 0 };\n"
+                          "    let got: &Box = owner;\n"
+                          "    { let inner = Box { n: 1 }; got = walk(owner, inner, 1); }\n"
+                          "    return got.n;\n"
+                          "}\n"));
+}
+
+static void test_a_call_without_a_body_names_every_argument() {
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "extern func pick(a: &Box, b: &Box): &Box;\n"
+                          "func main(): int {\n"
+                          "    let owner: *Box = box Box { n: 0 };\n"
+                          "    let got: &Box = owner;\n"
+                          "    { let inner = Box { n: 1 }; got = pick(owner, inner); }\n"
+                          "    return got.n;\n"
+                          "}\n"));
+}
+
+static void test_a_borrow_returned_by_a_function_declared_below_names_its_argument() {
+    assert(test_compiles("struct Box { n: int }\n"
+                         "func main(): int {\n"
+                         "    let owner: *Box = box Box { n: 0 };\n"
+                         "    let got: &Box = owner;\n"
+                         "    { let inner = Box { n: 1 }; got = pick(owner, inner); }\n"
+                         "    return got.n;\n"
+                         "}\n"
+                         "func pick(a: &Box, b: &Box): &Box { return a; }\n"));
+}
+
+static void test_a_lone_borrowed_parameter_is_what_a_bodiless_call_returns() {
+    assert(test_compiles("struct Box { n: int }\n"
+                         "extern func peek(b: &Box, other: Box): &Box;\n"
+                         "func f(): int {\n"
+                         "    let owner: *Box = box Box { n: 0 };\n"
+                         "    let got: &Box;\n"
+                         "    { let scratch = Box { n: 1 }; got = peek(owner, scratch); }\n"
+                         "    return got.n;\n"
+                         "}\n"
+                         "let r: int = f();"));
+}
+
 static void test_a_ref_borrowed_from_a_heap_object_is_accepted() {
     assert(test_run_int("struct Box { n: int }\n"
                         "func borrow(b: &Box): &Box { return b; }\n"
@@ -517,6 +590,12 @@ int main(void) {
     test_a_ref_to_a_local_cannot_be_returned();
     test_a_ref_returned_from_a_call_cannot_outlive_its_argument();
     test_a_ref_declared_from_a_call_carries_the_argument_lifetime();
+    test_a_returned_borrow_names_only_the_argument_it_came_from();
+    test_a_returned_borrow_names_every_argument_it_may_come_from();
+    test_a_recursive_call_names_every_argument();
+    test_a_call_without_a_body_names_every_argument();
+    test_a_borrow_returned_by_a_function_declared_below_names_its_argument();
+    test_a_lone_borrowed_parameter_is_what_a_bodiless_call_returns();
     test_a_ref_borrowed_from_a_heap_object_is_accepted();
     test_a_borrow_does_not_survive_what_it_names();
     test_a_borrowing_field_does_not_survive_what_it_names();

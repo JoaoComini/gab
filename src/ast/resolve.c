@@ -31,6 +31,18 @@ typedef struct StructDecl {
 GAB_LIST(StructDeclList, struct_decl_list, StructDecl *)
 
 typedef struct {
+    TypeRegistry *registry;
+    ASTStmt *body;
+    Binding **params;
+    size_t param_count;
+    const Type *return_type;
+    Function *function;
+} FlowWork;
+
+#define flow_work_list_item_free(item) ((void)(item))
+GAB_LIST(FlowWorkList, flow_work_list, FlowWork)
+
+typedef struct {
     const Type *return_type;
 
     unsigned int loop_depth;
@@ -51,6 +63,7 @@ typedef struct {
     FuncContext func_context;
 
     StructDeclList struct_decls;
+    FlowWorkList flow_work;
 
     StructDeclList resolving;
 
@@ -1971,8 +1984,14 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
             params[count++] = stmt->func_decl.params.data[i]->binding;
         }
 
-        flow_pass_run(state->compile_arena, state->current_scope->type_registry, stmt->func_decl.body, params,
-                      count, stmt->func_decl.resolved_return_type, state->diagnostics);
+        FlowWork work = {.registry = state->current_scope->type_registry,
+                         .body = stmt->func_decl.body,
+                         .params = params,
+                         .param_count = count,
+                         .return_type = stmt->func_decl.resolved_return_type,
+                         .function = stmt->func_decl.function};
+
+        flow_work_list_add(&state->flow_work, work);
     }
 
     resolver_exit_scope(state);
@@ -2265,6 +2284,7 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
                 .return_type = NULL,
             },
         .struct_decls = struct_decl_list_create(),
+        .flow_work = flow_work_list_create(),
         .resolving = struct_decl_list_create(),
         .unit = unit,
         .diagnostics = diagnostics,
@@ -2296,6 +2316,21 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
         resolve_stmt(&state, unit->statements.data[i]);
     }
 
+    for (size_t i = 0; i < state.flow_work.size; i++) {
+        FlowWork *work = &state.flow_work.data[i];
+
+        flow_pass_run(state.compile_arena, work->registry, work->body, work->params, work->param_count,
+                      work->return_type, diagnostics, work->function, false);
+    }
+
+    for (size_t i = 0; i < state.flow_work.size; i++) {
+        FlowWork *work = &state.flow_work.data[i];
+
+        flow_pass_run(state.compile_arena, work->registry, work->body, work->params, work->param_count,
+                      work->return_type, diagnostics, work->function, true);
+    }
+
+    flow_work_list_free(&state.flow_work);
     struct_decl_list_free(&state.struct_decls);
     struct_decl_list_free(&state.resolving);
 

@@ -379,11 +379,15 @@ object has been freed dangles, exactly as a C pointer would.
 
 What the compiler does catch is a borrow moved somewhere that outlives what it
 names — returning a `ref` to a local, or storing one where the pointee dies
-first. A borrow handed back by a call is taken to borrow from its
-shortest-lived argument, since which one it really came from would need a
-per-function summary. What is not caught is a borrow that outlives its pointee
-without ever being moved: holding a `ref` while the object's owner frees it is
-undefined, as holding a C++ reference across the owner's destruction is.
+first. A borrow handed back by a call names the arguments it can actually come
+from: each function's body says which of its parameters a returned borrow
+reaches, and a call site is judged against those alone. Where no body says —
+an `extern`, or a function still being summarized when it calls itself — the
+result names every argument, so the shortest-lived one bounds it.
+
+What is not caught is a borrow that outlives its pointee without ever being
+moved: holding a `ref` while the object's owner frees it is undefined, as
+holding a C++ reference across the owner's destruction is.
 
 That check follows control flow. What a slot names is tracked per path and
 merged where paths rejoin, so a borrow is judged by what holds on every route
@@ -437,7 +441,7 @@ Not yet implemented:
 | Strings | No interpolation, no `substring` or case conversion |
 | Arrays | Fixed length once allocated: no growth and no slice type. `Vec<T>` is what grows |
 | Vectors | `new`, `push`, `at` and `len` only: no removal, no iteration, and no literal |
-| Generics | Only the built-in declarations. A script cannot declare a generic type of its own |
+| Generics | Structs and the methods they own. A free function takes no type parameters |
 | Operators | Bitwise |
 
 ## Building
