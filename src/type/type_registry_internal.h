@@ -11,9 +11,9 @@
 
 GAB_HASH_MAP(TypeInternTable, type_intern, const Type *, Type *)
 
-/* A declaration for a generic owner, so every instantiation finds it; the type itself when it has none. */
+/* Keyed on the declaration rather than the type, so every instantiation of an owner finds the one entry. */
 typedef struct OwnedKey {
-    const void *owner;
+    const TypeDef *owner;
 
     const String *name;
 } OwnedKey;

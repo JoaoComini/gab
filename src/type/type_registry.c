@@ -1,4 +1,3 @@
-#include "function_registry.h"
 #include "type_registry_internal.h"
 
 #include "binding.h"
@@ -16,7 +15,14 @@
 static const TypeLayout empty_layout = {.size = 0, .alignment = 1};
 
 static Type *register_builtin(TypeRegistry *registry, TypeKind kind, String *name) {
-    return type_create(registry->arena, kind, name);
+    Type *type = type_create(registry->arena, kind, name);
+
+    TypeDef *def = arena_alloc(registry->arena, sizeof(TypeDef));
+    *def = (TypeDef){.name = name};
+
+    type->decl = def;
+
+    return type;
 }
 
 static void register_primitives(TypeRegistry *registry, const TypePrimitiveNames *names) {
@@ -280,9 +286,7 @@ const Type *type_registry_declare_struct(TypeRegistry *registry, String *name, c
 }
 
 static OwnedKey owned_key_of(const Type *type, const String *name) {
-    const TypeDef *def = type_decl(type);
-
-    return (OwnedKey){.owner = def ? (const void *)def : (const void *)type, .name = name};
+    return (OwnedKey){.owner = type_decl(type), .name = name};
 }
 
 static bool declare_owned(TypeRegistry *registry, OwnedKey key, Function *function) {
@@ -316,32 +320,18 @@ static bool owned_is_shared(const Function *declaration, const Type *type) {
     return !type_has_param(declaration->return_type);
 }
 
-Function *type_registry_find_owned(TypeRegistry *registry, FunctionRegistry *functions, const Type *type,
-                                   const String *name) {
+Function *type_registry_find_owned(TypeRegistry *registry, const Type *type, const String *name) {
     if (!type) {
         return NULL;
     }
 
     Function **declared = owned_key_lookup(registry->owned, owned_key_of(type, name));
-    if (!declared) {
-        return NULL;
-    }
 
-    Function *declaration = *declared;
+    return declared ? *declared : NULL;
+}
 
-    if (owned_is_shared(declaration, type)) {
-        return declaration;
-    }
-
-    const Type *args[GAB_MAX_TYPE_PARAMS];
-
-    for (size_t i = 0; i < type_arg_count(type); i++) {
-        assert(type_args(type)[i].kind == TYPE_ARG_TYPE && "an owner's parameters are types");
-
-        args[i] = type_args(type)[i].type;
-    }
-
-    return function_registry_specialize(functions, declaration, args, type_arg_count(type));
+bool type_registry_owned_is_shared(const Function *declaration, const Type *type) {
+    return owned_is_shared(declaration, type);
 }
 
 static Type *intern(TypeRegistry *registry, const Type *key) {

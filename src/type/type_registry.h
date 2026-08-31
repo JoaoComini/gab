@@ -61,10 +61,10 @@ typedef struct Deref {
 
 bool type_registry_declare_owned(TypeRegistry *registry, const Type *type, Function *function);
 
-typedef struct FunctionRegistry FunctionRegistry;
+Function *type_registry_find_owned(TypeRegistry *registry, const Type *type, const String *name);
 
-Function *type_registry_find_owned(TypeRegistry *registry, FunctionRegistry *functions, const Type *type,
-                                   const String *name);
+/* True when a declaration's signature names no type parameter, so every instantiation shares it. */
+bool type_registry_owned_is_shared(const Function *declaration, const Type *type);
 
 void type_registry_complete(TypeRegistry *registry, const Type *type);
 

@@ -316,10 +316,28 @@ static const Type *receiver_base_type(const Type *type) {
 
 static const Type *derefs_to(TypeRegistry *registry, const Type *type);
 
+/* A declaration serves every instantiation of its owner, so the one for this type is made on demand. */
+static Function *owned_for(TypeRegistry *registry, FunctionRegistry *functions, const Type *type,
+                           const String *name) {
+    Function *declaration = type_registry_find_owned(registry, type, name);
+
+    if (!declaration || type_registry_owned_is_shared(declaration, type)) {
+        return declaration;
+    }
+
+    const Type *args[GAB_MAX_TYPE_PARAMS];
+
+    for (size_t i = 0; i < type_arg_count(type); i++) {
+        args[i] = type_args(type)[i].type;
+    }
+
+    return function_registry_specialize(functions, declaration, args, type_arg_count(type));
+}
+
 static Function *find_method_on_chain(TypeRegistry *registry, FunctionRegistry *functions, const Type *type,
                                       const String *name, const Type **out_base) {
     for (const Type *at = receiver_base_type(type); at; at = derefs_to(registry, at)) {
-        Function *found = type_registry_find_owned(registry, functions, at, name);
+        Function *found = owned_for(registry, functions, at, name);
 
         if (found) {
             *out_base = at;
@@ -1662,7 +1680,7 @@ static StructDecl *decl_held_by_value(ResolverState *state, const Type *type) {
     }
 
     for (size_t i = 0; i < state->struct_decls.size; i++) {
-        if (type_decl(type) && state->struct_decls.data[i]->def == type_decl(type)) {
+        if (type && state->struct_decls.data[i]->def == type_decl(type)) {
             return state->struct_decls.data[i];
         }
     }
@@ -2032,8 +2050,8 @@ static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
     }
 
     String *member = resolver_intern(state, member_ref);
-    Function *found = type_registry_find_owned(state->current_scope->type_registry,
-                                               state->current_scope->functions, owner, member);
+    Function *found =
+        owned_for(state->current_scope->type_registry, state->current_scope->functions, owner, member);
 
     if (!found) {
         diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "'%s' has no function '%s'",
