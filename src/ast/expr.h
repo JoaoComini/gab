@@ -1,6 +1,7 @@
 #ifndef GAB_AST_EXPR_H
 #define GAB_AST_EXPR_H
 
+#include "arena.h"
 #include "ast/type_expr.h"
 #include "binding.h"
 #include "diagnostics.h"
@@ -60,8 +61,7 @@ typedef enum {
 
 typedef struct ASTExpr ASTExpr;
 
-#define ast_expr_list_item_free(item) (void)(item)
-GAB_LIST(ASTExprList, ast_expr_list, ASTExpr *)
+GAB_LIST_ALLOC(ASTExprList, ast_expr_list, ASTExpr *)
 
 typedef struct {
     StringRef name;
@@ -71,8 +71,7 @@ typedef struct {
     size_t index;
 } ASTFieldInit;
 
-#define ast_field_init_list_item_free(item) (void)(item)
-GAB_LIST(ASTFieldInitList, ast_field_init_list, ASTFieldInit)
+GAB_LIST_ALLOC(ASTFieldInitList, ast_field_init_list, ASTFieldInit)
 
 typedef struct ASTExpr {
     ExprKind kind;
@@ -153,22 +152,21 @@ typedef struct ASTExpr {
     bool moves;
 } ASTExpr;
 
-ASTExpr *ast_literal_expr_create(Span span, Literal value);
-ASTExpr *ast_bin_op_expr_create(Span span, ASTExpr *left, BinOp op, ASTExpr *right);
-ASTExpr *ast_variable_expr_create(Span span, StringRef name);
-ASTExpr *ast_call_expr_create(Span span, ASTExpr *target, ASTExprList args);
-ASTExpr *ast_field_expr_create(Span span, ASTExpr *target, StringRef name);
-ASTExpr *ast_addr_of_expr_create(Span span, ASTExpr *target);
-ASTExpr *ast_deref_expr_create(Span span, ASTExpr *target);
-ASTExpr *ast_lend_expr_create(Span span, ASTExpr *target);
-ASTExpr *ast_neg_expr_create(Span span, ASTExpr *target);
-ASTExpr *ast_not_expr_create(Span span, ASTExpr *target);
-ASTExpr *ast_cast_expr_create(Span span, ASTExpr *operand);
-ASTExpr *ast_box_expr_create(Span span, ASTExpr *value);
-ASTExpr *ast_array_lit_expr_create(Span span, ASTExprList elements);
-ASTExpr *ast_struct_lit_expr_create(Span span, TypeExpr *type_expr, ASTFieldInitList fields);
-void ast_field_init_list_destroy(ASTFieldInitList *fields);
-ASTExpr *ast_index_expr_create(Span span, ASTExpr *target, ASTExpr *index);
+ASTExpr *ast_literal_expr_create(Arena *arena, Span span, Literal value);
+ASTExpr *ast_bin_op_expr_create(Arena *arena, Span span, ASTExpr *left, BinOp op, ASTExpr *right);
+ASTExpr *ast_variable_expr_create(Arena *arena, Span span, StringRef name);
+ASTExpr *ast_call_expr_create(Arena *arena, Span span, ASTExpr *target, ASTExprList args);
+ASTExpr *ast_field_expr_create(Arena *arena, Span span, ASTExpr *target, StringRef name);
+ASTExpr *ast_addr_of_expr_create(Arena *arena, Span span, ASTExpr *target);
+ASTExpr *ast_deref_expr_create(Arena *arena, Span span, ASTExpr *target);
+ASTExpr *ast_lend_expr_create(Arena *arena, Span span, ASTExpr *target);
+ASTExpr *ast_neg_expr_create(Arena *arena, Span span, ASTExpr *target);
+ASTExpr *ast_not_expr_create(Arena *arena, Span span, ASTExpr *target);
+ASTExpr *ast_cast_expr_create(Arena *arena, Span span, ASTExpr *operand);
+ASTExpr *ast_box_expr_create(Arena *arena, Span span, ASTExpr *value);
+ASTExpr *ast_array_lit_expr_create(Arena *arena, Span span, ASTExprList elements);
+ASTExpr *ast_struct_lit_expr_create(Arena *arena, Span span, TypeExpr *type_expr, ASTFieldInitList fields);
+ASTExpr *ast_index_expr_create(Arena *arena, Span span, ASTExpr *target, ASTExpr *index);
 
 const TypeField *ast_field_of(TypeRegistry *registry, const ASTExpr *expr);
 
@@ -176,6 +174,5 @@ Binding *ast_root_local(const ASTExpr *expr);
 
 Binding *ast_binding_of(const ASTExpr *expr);
 void ast_bind(ASTExpr *expr, Binding *binding);
-void ast_expr_free(ASTExpr *node);
 
 #endif

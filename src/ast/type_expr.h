@@ -1,6 +1,7 @@
 #ifndef GAB_AST_TYPE_EXPR_H
 #define GAB_AST_TYPE_EXPR_H
 
+#include "arena.h"
 #include "string/string_ref.h"
 #include "util/list.h"
 
@@ -8,10 +9,7 @@
 
 typedef struct TypeExpr TypeExpr;
 
-void type_expr_destroy(TypeExpr *expr);
-
-#define type_expr_list_item_free(item) type_expr_destroy(item)
-GAB_LIST(TypeExprList, type_expr_list, TypeExpr *)
+GAB_LIST_ALLOC(TypeExprList, type_expr_list, TypeExpr *)
 
 typedef enum {
     TYPE_EXPR_NAME,
@@ -46,9 +44,9 @@ struct TypeExpr {
     };
 };
 
-TypeExpr *type_expr_name(StringRef name);
-TypeExpr *type_expr_indirect(TypeExprKind kind, TypeExpr *inner);
-TypeExpr *type_expr_apply(TypeExpr *base);
-TypeExpr *type_expr_array(TypeExpr *element, int32_t length);
+TypeExpr *type_expr_name(Arena *arena, StringRef name);
+TypeExpr *type_expr_indirect(Arena *arena, TypeExprKind kind, TypeExpr *inner);
+TypeExpr *type_expr_apply(Arena *arena, TypeExpr *base);
+TypeExpr *type_expr_array(Arena *arena, TypeExpr *element, int32_t length);
 
 #endif

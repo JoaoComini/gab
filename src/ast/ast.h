@@ -1,6 +1,7 @@
 #ifndef GAB_AST_H
 #define GAB_AST_H
 
+#include "arena.h"
 #include "ast/stmt.h"
 #include "string/string_ref.h"
 #include "util/list.h"
@@ -10,10 +11,11 @@ typedef struct {
     Span span;
 } ASTImport;
 
-#define ast_import_list_item_free(item) ((void)(item))
-GAB_LIST(ASTImportList, ast_import_list, ASTImport)
+GAB_LIST_ALLOC(ASTImportList, ast_import_list, ASTImport)
 
 typedef struct ASTUnit {
+    Arena *arena;
+
     ASTStmtList statements;
 
     ASTStmtList instances;
@@ -24,8 +26,7 @@ typedef struct ASTUnit {
     ASTImportList imports;
 } ASTUnit;
 
-ASTUnit *ast_unit_create();
+ASTUnit *ast_unit_create(Arena *arena);
 void ast_unit_add_statement(ASTUnit *unit, ASTStmt *stmt);
-void ast_unit_destroy(ASTUnit *unit);
 
 #endif

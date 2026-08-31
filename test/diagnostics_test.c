@@ -19,13 +19,12 @@ static void compile_with_library(TestContext *ctx, const char *source) {
 
     Lexer lexer = lexer_create(test_in_a_module(source), ctx->arena, &vm->env.strings, diagnostics);
     Parser parser = parser_create(&lexer, diagnostics);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx->arena);
 
     if (parser_parse(&parser, unit)) {
         resolve_unit(ctx->arena, unit, &vm->env.global_scope, NULL, diagnostics);
     }
 
-    ast_unit_destroy(unit);
     vm_free(vm);
 }
 
@@ -35,7 +34,7 @@ static void compile(TestContext *ctx, const char *source) {
 
     Lexer lexer = lexer_create(test_in_a_module(source), ctx->arena, &ctx->strings, diagnostics);
     Parser parser = parser_create(&lexer, diagnostics);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx->arena);
 
     Scope global_scope;
     scope_init(&global_scope, arena, &ctx->strings, NULL);
@@ -43,8 +42,6 @@ static void compile(TestContext *ctx, const char *source) {
     if (parser_parse(&parser, unit)) {
         resolve_unit(arena, unit, &global_scope, NULL, diagnostics);
     }
-
-    ast_unit_destroy(unit);
 }
 
 static void test_a_struct_local_without_a_literal_reports_once() {

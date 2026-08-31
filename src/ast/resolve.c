@@ -283,9 +283,6 @@ static void fold_bin_op(ASTExpr *expr) {
         return;
     }
 
-    ast_expr_free(left);
-    ast_expr_free(right);
-
     expr->kind = EXPR_LITERAL;
     expr->lit = folded;
 }
@@ -385,35 +382,32 @@ typedef struct {
     bool address_of;
 } ReceiverAdjustment;
 
-static void lower_method_call(ASTExpr *expr, Function *method, ReceiverAdjustment adjustment) {
+static void lower_method_call(Arena *arena, ASTExpr *expr, Function *method, ReceiverAdjustment adjustment) {
     ASTExpr *target = expr->call.target;
 
     ASTExpr *receiver = target->field.target;
     Span span = receiver->span;
 
     target->field.target = NULL;
-    ast_expr_free(target);
 
     for (size_t i = 0; i < adjustment.derefs; i++) {
         const Type *inner = type_pointee(receiver->type);
 
-        receiver = ast_deref_expr_create(span, receiver);
+        receiver = ast_deref_expr_create(arena, span, receiver);
         receiver->type = inner;
     }
 
     if (adjustment.address_of) {
-        receiver = ast_addr_of_expr_create(span, receiver);
+        receiver = ast_addr_of_expr_create(arena, span, receiver);
         receiver->type = method->params[0];
     }
 
-    ASTExprList args = ast_expr_list_create();
+    ASTExprList args = ast_expr_list_create(arena_allocator(arena));
     ast_expr_list_add(&args, receiver);
 
     for (size_t i = 0; i < expr->call.args.size; i++) {
         ast_expr_list_add(&args, expr->call.args.data[i]);
     }
-
-    ast_expr_list_free(&expr->call.args);
 
     expr->call.target = NULL;
     expr->call.args = args;
@@ -613,7 +607,7 @@ static void instantiate_body(ResolverState *state, Function *method, Span span) 
 
     const ASTStmt *declaration = method->decl->body;
 
-    ASTStmt *clone = ast_clone_stmt(declaration);
+    ASTStmt *clone = ast_clone_stmt(state->compile_arena, declaration);
 
     ast_stmt_list_add(&state->unit->instances, clone);
     method->instance = clone;
@@ -669,9 +663,6 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
             return;
         }
 
-        ast_expr_free(expr->call.target);
-        ast_expr_list_free(&expr->call.args);
-
         expr->kind = EXPR_LITERAL;
         expr->lit = (Literal){.kind = TYPE_INT, .as_int = type_array_length(array)};
         expr->type = type_registry_get_primitive(state->current_scope->type_registry, TYPE_INT);
@@ -720,7 +711,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         return;
     }
 
-    lower_method_call(expr, method, adjustment);
+    lower_method_call(state->compile_arena, expr, method, adjustment);
 
     check_call_args(state, &expr->call.args, method->params);
 
@@ -779,7 +770,7 @@ static bool borrow_into(ResolverState *state, ASTExpr **slot, const Type *destin
            type_pointee(destination) != (*slot)->type) {
         const Type *inner = type_pointee((*slot)->type);
 
-        ASTExpr *hop = ast_deref_expr_create(span, *slot);
+        ASTExpr *hop = ast_deref_expr_create(state->compile_arena, span, *slot);
         hop->type = inner;
         *slot = hop;
     }
@@ -787,7 +778,7 @@ static bool borrow_into(ResolverState *state, ASTExpr **slot, const Type *destin
     if (lends_by_value(state->current_scope->type_registry, destination, (*slot)->type)) {
         const Deref *deref = type_registry_deref(state->current_scope->type_registry, (*slot)->type);
 
-        ASTExpr *lend = ast_lend_expr_create(span, *slot);
+        ASTExpr *lend = ast_lend_expr_create(state->compile_arena, span, *slot);
         lend->type = destination;
 
         lend->lend.parts = deref->parts;
@@ -813,7 +804,7 @@ static bool borrow_into(ResolverState *state, ASTExpr **slot, const Type *destin
         addressed->pinned = true;
     }
 
-    ASTExpr *borrow = ast_addr_of_expr_create(span, *slot);
+    ASTExpr *borrow = ast_addr_of_expr_create(state->compile_arena, span, *slot);
     borrow->type = destination;
     *slot = borrow;
 
@@ -938,17 +929,7 @@ static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
     }
 
     ASTExprList args = expr->call.args;
-    ASTExpr *callee = expr->call.target;
     ASTExpr *operand = args.size == 1 ? args.data[0] : NULL;
-
-    for (size_t i = 0; i < args.size; i++) {
-        if (args.data[i] != operand) {
-            ast_expr_free(args.data[i]);
-        }
-    }
-
-    ast_expr_list_free(&args);
-    ast_expr_free(callee);
 
     expr->kind = EXPR_CAST;
     expr->cast.operand = operand;

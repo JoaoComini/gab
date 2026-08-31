@@ -2,12 +2,16 @@
 #define GAB_ARENA_H
 
 #include "allocator.h"
+#include <stdbool.h>
 #include <stddef.h>
 
 typedef struct ArenaBlock {
     void *memory;
     size_t capacity;
     size_t offset;
+
+    /* Sized for one allocation that no shared block could hold, so growth must never hand it out. */
+    bool dedicated;
 
     struct ArenaBlock *next;
 } ArenaBlock;

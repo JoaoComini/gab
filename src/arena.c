@@ -23,21 +23,40 @@ static ArenaBlock *arena_block_create(size_t size) {
     block->next = NULL;
     block->capacity = size;
     block->offset = 0;
+    block->dedicated = false;
     return block;
 }
 
-static void arena_grow(Arena *arena, size_t size) {
-    if (arena->current_block->next) {
-        ArenaBlock *reused = arena->current_block->next;
+/* An allocation too big for a shared block gets one of its own, linked after the current block rather than
+ * becoming it, so the space left in the current block is still handed out. Its capacity is exactly what was
+ * asked for, so arena_grow must never hand it out again: it stays full until the arena resets. */
+static void *arena_alloc_oversized(Arena *arena, size_t size) {
+    for (ArenaBlock *reused = arena->current_block->next; reused; reused = reused->next) {
+        if (reused->dedicated && reused->offset == 0 && size <= reused->capacity) {
+            reused->offset = size;
+            return reused->memory;
+        }
+    }
 
-        if (size <= reused->capacity) {
+    ArenaBlock *block = arena_block_create(size);
+    block->offset = size;
+    block->dedicated = true;
+
+    block->next = arena->current_block->next;
+    arena->current_block->next = block;
+
+    return block->memory;
+}
+
+static void arena_grow(Arena *arena, size_t size) {
+    for (ArenaBlock *reused = arena->current_block->next; reused; reused = reused->next) {
+        if (!reused->dedicated && size <= reused->capacity) {
             arena->current_block = reused;
             return;
         }
     }
 
-    size_t block_size = arena->block_size > size ? arena->block_size : size * 2;
-    ArenaBlock *block = arena_block_create(block_size);
+    ArenaBlock *block = arena_block_create(arena->block_size);
 
     block->next = arena->current_block->next;
     arena->current_block->next = block;
@@ -74,6 +93,10 @@ void *arena_alloc(Arena *arena, size_t size) {
 
     size_t offset = align_up(block->offset, ARENA_ALIGNMENT);
     if (offset + size > block->capacity) {
+        if (size > arena->block_size) {
+            return arena_alloc_oversized(arena, size);
+        }
+
         arena_grow(arena, size);
 
         block = arena->current_block;
@@ -130,6 +153,15 @@ static void arena_allocator_free(void *ctx, void *ptr) {
     (void)ptr;
 }
 
+static void arena_allocator_free_sized(void *ctx, void *ptr, size_t size) {
+    (void)ctx;
+    (void)ptr;
+    (void)size;
+}
+
 Allocator arena_allocator(Arena *arena) {
-    return (Allocator){.alloc = &arena_allocator_alloc, .free = &arena_allocator_free, .ctx = arena};
+    return (Allocator){.alloc = &arena_allocator_alloc,
+                       .free = &arena_allocator_free,
+                       .free_sized = &arena_allocator_free_sized,
+                       .ctx = arena};
 }

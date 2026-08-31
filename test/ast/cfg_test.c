@@ -14,17 +14,14 @@ static void resolved_script_init(ResolvedScript *resolved, const char *source) {
     test_context_init(&resolved->ctx);
 
     resolved->scope = scope_create(resolved->ctx.arena, &resolved->ctx.strings, NULL);
-    resolved->unit = ast_unit_create();
+    resolved->unit = ast_unit_create(resolved->ctx.arena);
 
     bool ok = test_resolve(&resolved->ctx, resolved->scope, resolved->unit, source);
 
     assert(ok);
 }
 
-static void resolved_script_free(ResolvedScript *resolved) {
-    ast_unit_destroy(resolved->unit);
-    test_context_free(&resolved->ctx);
-}
+static void resolved_script_free(ResolvedScript *resolved) { test_context_free(&resolved->ctx); }
 
 static CFG *first_func_cfg(ResolvedScript *resolved) {
     for (size_t i = 0; i < resolved->unit->statements.size; i++) {

@@ -14,6 +14,8 @@ typedef enum {
 } ExprContext;
 
 typedef struct {
+    Arena *arena;
+
     Lexer *lexer;
 
     Token current;

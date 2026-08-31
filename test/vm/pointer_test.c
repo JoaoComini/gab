@@ -29,7 +29,7 @@ static void test_pointer_types_are_interned() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx.arena);
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Player { health: int }\n"
@@ -46,7 +46,6 @@ static void test_pointer_types_are_interned() {
     const Type *player = scope_type_lookup(scope, string_from_cstr(&ctx.strings, "Player"));
     assert(type_pointee(p) == player);
 
-    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -55,7 +54,7 @@ static void test_pointer_depth_nests() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx.arena);
 
     bool ok = test_resolve(&ctx, scope, unit, "struct Holder { p: *int, q: **int }\n");
     assert(ok);
@@ -66,7 +65,6 @@ static void test_pointer_depth_nests() {
     assert(type_pointee(q) == p);
     assert(type_pointee(p) == scope_type_lookup(scope, string_from_cstr(&ctx.strings, "int")));
 
-    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -75,7 +73,7 @@ static void test_pointer_is_a_word() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx.arena);
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Big { a: int, b: int, c: int, d: int }\n"
@@ -92,7 +90,6 @@ static void test_pointer_is_a_word() {
     assert(type_registry_size_of(registry, q) == type_registry_size_of(registry, p));
     assert(type_registry_align_of(registry, q) == type_registry_align_of(registry, p));
 
-    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -101,7 +98,7 @@ static void test_ref_is_a_distinct_type() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx.arena);
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Node { n: int }\n"
@@ -119,7 +116,6 @@ static void test_ref_is_a_distinct_type() {
     assert(type_pointee(owning) == type_pointee(borrow));
     assert(type_registry_size_of(scope->type_registry, borrow) == sizeof(void *));
 
-    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -128,7 +124,7 @@ static void test_ref_pointers_are_interned() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx.arena);
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Node { n: int }\n"
@@ -141,7 +137,6 @@ static void test_ref_pointers_are_interned() {
 
     assert(a->var.type == b->var.type);
 
-    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 

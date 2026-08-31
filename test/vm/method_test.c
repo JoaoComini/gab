@@ -26,7 +26,7 @@ static void test_method_lands_on_its_receiver_type() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx.arena);
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Player { health: int }\n"
@@ -41,7 +41,6 @@ static void test_method_lands_on_its_receiver_type() {
     assert(type_is_indirect(damage->params[0]));
     assert(type_pointee(damage->params[0]) == lookup_type(&ctx, scope, "Player"));
 
-    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -50,7 +49,7 @@ static void test_method_is_not_reachable_as_a_bare_name() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx.arena);
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Player { health: int }\n"
@@ -59,7 +58,6 @@ static void test_method_is_not_reachable_as_a_bare_name() {
 
     assert(!scope_binding_lookup(scope, string_from_cstr(&ctx.strings, "damage")));
 
-    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -68,7 +66,7 @@ static void test_same_name_on_two_types() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx.arena);
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Player { health: int }\n"
@@ -82,7 +80,6 @@ static void test_same_name_on_two_types() {
 
     assert(player && enemy && player != enemy);
 
-    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -91,7 +88,7 @@ static void test_value_receiver() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx.arena);
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Player { health: int }\n"
@@ -104,7 +101,6 @@ static void test_value_receiver() {
     assert(alive->param_count == 1);
     assert(alive->params[0] == lookup_type(&ctx, scope, "Player"));
 
-    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -113,7 +109,7 @@ static void test_method_declared_above_its_struct() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx.arena);
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "func Player::health_of(p: &Player): int { return p.health; }\n"
@@ -122,7 +118,6 @@ static void test_method_declared_above_its_struct() {
 
     assert(lookup_method(&ctx, scope, "Player", "health_of"));
 
-    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -131,7 +126,7 @@ static void test_receiver_fields_resolve_in_the_body() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx.arena);
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Player { health: int }\n"
@@ -139,7 +134,6 @@ static void test_receiver_fields_resolve_in_the_body() {
                            "func Player::hp2(q: Player): int { return q.health; }\n");
     assert(ok);
 
-    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -148,11 +142,10 @@ static bool fails(const char *source) {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx.arena);
 
     bool ok = test_resolve(&ctx, scope, unit, source);
 
-    ast_unit_destroy(unit);
     test_context_free(&ctx);
 
     return !ok;
