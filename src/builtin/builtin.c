@@ -81,7 +81,7 @@ void builtin_register_method(VM *vm, const Type *declared_on, const Type *receiv
         .func_index = FUNCTION_NO_BODY,
     };
 
-    bool declared = type_registry_declare_method(vm->env.global_scope.type_registry, declared_on, method);
+    bool declared = type_registry_declare_owned(vm->env.global_scope.type_registry, declared_on, method);
 
     assert(declared && "a builtin declares each of its methods once");
     (void)declared;
@@ -102,7 +102,7 @@ void builtin_register_static(VM *vm, const Type *declared_on, const char *name, 
         .body = (void *)body,
     };
 
-    bool ok = type_registry_declare_method(vm->env.global_scope.type_registry, declared_on, function);
+    bool ok = type_registry_declare_owned(vm->env.global_scope.type_registry, declared_on, function);
 
     assert(ok && "a builtin declares each of its functions once");
     (void)ok;

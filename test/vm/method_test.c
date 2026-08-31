@@ -17,8 +17,8 @@ static const Type *lookup_type(TestContext *ctx, Scope *scope, const char *name)
 }
 
 static Function *lookup_method(TestContext *ctx, Scope *scope, const char *type, const char *method) {
-    return type_registry_find_method(scope->type_registry, lookup_type(ctx, scope, type),
-                                     string_from_cstr(&ctx->strings, method));
+    return type_registry_find_owned(scope->type_registry, lookup_type(ctx, scope, type),
+                                    string_from_cstr(&ctx->strings, method));
 }
 
 static void test_method_lands_on_its_receiver_type() {

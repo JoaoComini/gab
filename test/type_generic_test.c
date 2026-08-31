@@ -1,10 +1,29 @@
 #include "binding.h"
+#include "function_registry.h"
 #include "support/test_context.h"
 #include "type/type.h"
 #include "type/type_registry.h"
 
 #include <assert.h>
 #include <stddef.h>
+
+/* Lookup then specialization, as a caller performs them. */
+static Function *owned_for(TypeRegistry *registry, FunctionRegistry *functions, const Type *type,
+                           const String *name) {
+    Function *declaration = type_registry_find_owned(registry, type, name);
+
+    if (!declaration || type_registry_owned_is_shared(declaration, type)) {
+        return declaration;
+    }
+
+    const Type *args[GAB_MAX_TYPE_PARAMS];
+
+    for (size_t i = 0; i < type_arg_count(type); i++) {
+        args[i] = type_args(type)[i].type;
+    }
+
+    return function_registry_specialize(functions, declaration, args, type_arg_count(type));
+}
 
 static void test_a_declared_field_nests_constructors() {
     TestContext ctx;
@@ -207,6 +226,7 @@ static void test_a_declared_method_is_substituted_per_instantiation() {
 
     const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
+    FunctionRegistry *functions = function_registry_create(ctx.arena, registry);
 
     const Type *param = type_registry_param(registry, 0);
     const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
@@ -225,13 +245,13 @@ static void test_a_declared_method_is_substituted_per_instantiation() {
         .param_count = 1,
     };
 
-    type_registry_declare_method(registry, type_registry_apply(registry, &def, &param, 1), &method);
+    type_registry_declare_owned(registry, type_registry_apply(registry, &def, &param, 1), &method);
 
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
     const Type *of_bool = type_registry_apply(registry, &def, &bool_type, 1);
 
-    const Function *from_int = type_registry_find_method(registry, of_int, at);
-    const Function *from_bool = type_registry_find_method(registry, of_bool, at);
+    const Function *from_int = owned_for(registry, functions, of_int, at);
+    const Function *from_bool = owned_for(registry, functions, of_bool, at);
 
     assert(from_int && from_bool);
 
@@ -252,6 +272,7 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
 
     const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
+    FunctionRegistry *functions = function_registry_create(ctx.arena, registry);
 
     const Type *param = type_registry_param(registry, 0);
     const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
@@ -262,7 +283,7 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
 
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
 
-    assert(type_registry_find_method(registry, of_int, at) == NULL);
+    assert(type_registry_find_owned(registry, of_int, at) == NULL);
 
     const Type *receiver[] = {type_registry_apply(registry, &def, &param, 1)};
 
@@ -273,9 +294,9 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
         .param_count = 1,
     };
 
-    type_registry_declare_method(registry, type_registry_apply(registry, &def, &param, 1), &method);
+    type_registry_declare_owned(registry, type_registry_apply(registry, &def, &param, 1), &method);
 
-    const Function *found = type_registry_find_method(registry, of_int, at);
+    const Function *found = owned_for(registry, functions, of_int, at);
 
     assert(found);
     assert(found->return_type == int_type);
@@ -291,6 +312,7 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
 
     const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
+    FunctionRegistry *functions = function_registry_create(ctx.arena, registry);
 
     const Type *param = type_registry_param(registry, 0);
     const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
@@ -308,15 +330,15 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
         .param_count = 1,
     };
 
-    type_registry_declare_method(registry, type_registry_apply(registry, &def, &param, 1), &method);
+    type_registry_declare_owned(registry, type_registry_apply(registry, &def, &param, 1), &method);
 
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
 
     Function other = {.name = at};
 
-    assert(!type_registry_declare_method(registry, of_int, &other));
+    assert(!type_registry_declare_owned(registry, of_int, &other));
 
-    assert(type_registry_find_method(registry, of_int, at)->return_type == int_type);
+    assert(owned_for(registry, functions, of_int, at)->return_type == int_type);
 
     type_registry_destroy(registry);
     string_pool_free(&ctx.strings);
@@ -342,15 +364,15 @@ static void test_a_method_declared_on_one_instantiation_answers_on_every_one() {
 
     Function method = {.name = name};
 
-    assert(type_registry_declare_method(registry, of_int, &method));
+    assert(type_registry_declare_owned(registry, of_int, &method));
 
-    assert(type_registry_find_method(registry, of_bool, name)->name == name);
+    assert(type_registry_find_owned(registry, of_bool, name)->name == name);
 
-    assert(!type_registry_declare_method(registry, of_bool, &method));
+    assert(!type_registry_declare_owned(registry, of_bool, &method));
 
     TypeDef other = {.name = string_from_cstr(&ctx.strings, "Other"), .param_count = 1};
 
-    assert(type_registry_find_method(registry, type_registry_apply(registry, &other, &int_type, 1), name) ==
+    assert(type_registry_find_owned(registry, type_registry_apply(registry, &other, &int_type, 1), name) ==
            NULL);
 
     type_registry_destroy(registry);
@@ -364,6 +386,7 @@ static void test_a_substituted_signature_is_read_once_per_type() {
 
     const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
+    FunctionRegistry *functions = function_registry_create(ctx.arena, registry);
 
     const Type *param = type_registry_param(registry, 0);
     const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
@@ -382,17 +405,15 @@ static void test_a_substituted_signature_is_read_once_per_type() {
         .param_count = 1,
     };
 
-    type_registry_declare_method(registry, type_registry_apply(registry, &def, &param, 1), &method);
+    type_registry_declare_owned(registry, type_registry_apply(registry, &def, &param, 1), &method);
 
     const Type *of_int = type_registry_apply(registry, &def, &int_type, 1);
 
-    assert(type_registry_find_method(registry, of_int, at) ==
-           type_registry_find_method(registry, of_int, at));
+    assert(owned_for(registry, functions, of_int, at) == owned_for(registry, functions, of_int, at));
 
     const Type *of_bool = type_registry_apply(registry, &def, &bool_type, 1);
 
-    assert(type_registry_find_method(registry, of_int, at) !=
-           type_registry_find_method(registry, of_bool, at));
+    assert(owned_for(registry, functions, of_int, at) != owned_for(registry, functions, of_bool, at));
 
     type_registry_destroy(registry);
     string_pool_free(&ctx.strings);

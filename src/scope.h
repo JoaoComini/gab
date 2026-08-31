@@ -5,6 +5,8 @@
 #include "string/string.h"
 #include "type/type_registry.h"
 
+typedef struct FunctionRegistry FunctionRegistry;
+
 #include <stdbool.h>
 
 typedef struct BindingTable BindingTable;
@@ -25,6 +27,8 @@ typedef struct Scope {
     TypeMap *types;
 
     TypeRegistry *type_registry;
+
+    FunctionRegistry *functions;
 
     StringPool *strings;
 

@@ -445,19 +445,19 @@ static void test_methods_live_beside_the_type_not_in_it() {
 
     String *name = string_from_cstr(&ctx.strings, "twice");
 
-    assert(type_registry_find_method(registry, int_type, name) == NULL);
+    assert(type_registry_find_owned(registry, int_type, name) == NULL);
 
     Function method = {.name = name};
 
-    assert(type_registry_declare_method(registry, int_type, &method));
+    assert(type_registry_declare_owned(registry, int_type, &method));
 
-    Function *found = type_registry_find_method(registry, int_type, name);
+    Function *found = type_registry_find_owned(registry, int_type, name);
 
     assert(found && found->name == name);
 
-    assert(!type_registry_declare_method(registry, int_type, &method));
+    assert(!type_registry_declare_owned(registry, int_type, &method));
 
-    assert(type_registry_find_method(registry, type_registry_get_primitive(registry, TYPE_BOOL), name) ==
+    assert(type_registry_find_owned(registry, type_registry_get_primitive(registry, TYPE_BOOL), name) ==
            NULL);
 
     test_context_free(&ctx);

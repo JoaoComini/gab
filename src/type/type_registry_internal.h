@@ -11,35 +11,19 @@
 
 GAB_HASH_MAP(TypeInternTable, type_intern, const Type *, Type *)
 
-typedef struct MethodKey {
-    const Type *type;
+/* Keyed on the declaration rather than the type, so every instantiation of an owner finds the one entry. */
+typedef struct OwnedKey {
+    const TypeDef *owner;
 
     const String *name;
-} MethodKey;
+} OwnedKey;
 
-#define method_key_hash(key) (((size_t)(key).type * 31) ^ (size_t)(key).name)
-#define method_key_key_equals(key, other) ((key).type == (other).type && (key).name == (other).name)
-#define method_key_key_dup(key) key
-#define method_key_entry_free(key, value)
+#define owned_key_hash(key) (((size_t)(key).owner * 31) ^ (size_t)(key).name)
+#define owned_key_key_equals(key, other) ((key).owner == (other).owner && (key).name == (other).name)
+#define owned_key_key_dup(key) key
+#define owned_key_entry_free(key, value)
 
-#define method_decl_key_hash(key) method_key_hash(key)
-#define method_decl_key_key_equals(key, other) method_key_key_equals(key, other)
-#define method_decl_key_key_dup(key) key
-#define method_decl_key_entry_free(key, value)
-
-GAB_HASH_MAP(MethodTable, method_decl_key, MethodKey, Function *)
-
-#define instance_key_hash(key) (((size_t)(key).type * 31) ^ (size_t)(key).name)
-#define instance_key_key_equals(key, other) ((key).type == (other).type && (key).name == (other).name)
-#define instance_key_key_dup(key) key
-#define instance_key_entry_free(key, value)
-
-typedef struct InstanceKey {
-    const Type *type;
-    const String *name;
-} InstanceKey;
-
-GAB_HASH_MAP(InstanceTable, instance_key, InstanceKey, Function *)
+GAB_HASH_MAP(OwnedTable, owned_key, OwnedKey, Function *)
 
 #define drop_key_hash(key) (size_t)key
 #define drop_key_key_equals(key, other) key == other
@@ -79,9 +63,7 @@ typedef struct TypeRegistry {
 
     TypeInternTable *applications;
 
-    MethodTable *methods;
-
-    InstanceTable *instances;
+    OwnedTable *owned;
 
     DropTable *drops;
 

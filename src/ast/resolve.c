@@ -1,5 +1,7 @@
 #include "ast/resolve.h"
 
+#include "function_registry.h"
+
 #include "ast/clone.h"
 
 #include "ast/flow_pass.h"
@@ -43,14 +45,6 @@ typedef struct {
 GAB_LIST(FlowWorkList, flow_work_list, FlowWork)
 
 typedef struct {
-    const Function *generic;
-    Function *function;
-} Specialization;
-
-#define specialization_list_item_free(item) ((void)(item))
-GAB_LIST(SpecializationList, specialization_list, Specialization)
-
-typedef struct {
     const Type *return_type;
 
     unsigned int loop_depth;
@@ -72,7 +66,6 @@ typedef struct {
 
     StructDeclList struct_decls;
     FlowWorkList flow_work;
-    SpecializationList specializations;
 
     StructDeclList resolving;
 
@@ -323,10 +316,28 @@ static const Type *receiver_base_type(const Type *type) {
 
 static const Type *derefs_to(TypeRegistry *registry, const Type *type);
 
-static Function *find_method_on_chain(TypeRegistry *registry, const Type *type, const String *name,
-                                      const Type **out_base) {
+/* A declaration serves every instantiation of its owner, so the one for this type is made on demand. */
+static Function *owned_for(TypeRegistry *registry, FunctionRegistry *functions, const Type *type,
+                           const String *name) {
+    Function *declaration = type_registry_find_owned(registry, type, name);
+
+    if (!declaration || type_registry_owned_is_shared(declaration, type)) {
+        return declaration;
+    }
+
+    const Type *args[GAB_MAX_TYPE_PARAMS];
+
+    for (size_t i = 0; i < type_arg_count(type); i++) {
+        args[i] = type_args(type)[i].type;
+    }
+
+    return function_registry_specialize(functions, declaration, args, type_arg_count(type));
+}
+
+static Function *find_method_on_chain(TypeRegistry *registry, FunctionRegistry *functions, const Type *type,
+                                      const String *name, const Type **out_base) {
     for (const Type *at = receiver_base_type(type); at; at = derefs_to(registry, at)) {
-        Function *found = type_registry_find_method(registry, at, name);
+        Function *found = owned_for(registry, functions, at, name);
 
         if (found) {
             *out_base = at;
@@ -463,33 +474,6 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
 
 static void instantiate_body(ResolverState *state, Function *method, Span span);
 
-/* One Function per declaration and argument list, so repeated calls share an instantiation. */
-static Function *find_specialization(ResolverState *state, const Function *generic, const Type *const *args,
-                                     size_t arg_count) {
-    for (size_t i = 0; i < state->specializations.size; i++) {
-        Specialization *at = &state->specializations.data[i];
-
-        if (at->generic != generic || at->function->type_arg_count != arg_count) {
-            continue;
-        }
-
-        bool same = true;
-
-        for (size_t a = 0; a < arg_count; a++) {
-            if (at->function->type_args[a] != args[a]) {
-                same = false;
-                break;
-            }
-        }
-
-        if (same) {
-            return at->function;
-        }
-    }
-
-    return NULL;
-}
-
 /* Matches a declared parameter type against an argument's, binding each type parameter it reaches. */
 static bool infer_type_args(const Type *declared, const Type *actual, const Type **args, size_t owed) {
     if (!declared || !actual || !type_has_param(declared)) {
@@ -604,17 +588,8 @@ static Function *specialize_call(ResolverState *state, ASTExpr *expr, Function *
         }
     }
 
-    Function *found = find_specialization(state, generic, args, owed);
-
-    if (found) {
-        return found;
-    }
-
     Function *specialized =
-        type_registry_specialize(state->current_scope->type_registry, generic, args, owed);
-
-    specialization_list_add(&state->specializations,
-                            (Specialization){.generic = generic, .function = specialized});
+        function_registry_specialize(state->current_scope->functions, generic, args, owed);
 
     instantiate_body(state, specialized, expr->span);
 
@@ -705,7 +680,8 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 
     const Type *base = NULL;
     Function *method =
-        find_method_on_chain(state->current_scope->type_registry, receiver_type, method_name, &base);
+        find_method_on_chain(state->current_scope->type_registry, state->current_scope->functions,
+                             receiver_type, method_name, &base);
 
     if (!method) {
         diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "%s has no method '%s'",
@@ -1704,7 +1680,7 @@ static StructDecl *decl_held_by_value(ResolverState *state, const Type *type) {
     }
 
     for (size_t i = 0; i < state->struct_decls.size; i++) {
-        if (type_decl(type) && state->struct_decls.data[i]->def == type_decl(type)) {
+        if (type && state->struct_decls.data[i]->def == type_decl(type)) {
             return state->struct_decls.data[i];
         }
     }
@@ -2020,7 +1996,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         }
     }
 
-    if (!type_registry_declare_method(state->current_scope->type_registry, owner, func)) {
+    if (!type_registry_declare_owned(state->current_scope->type_registry, owner, func)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' already has a function '%s'",
                    type_name_of(owner)->data, name->data);
         return;
@@ -2074,7 +2050,8 @@ static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
     }
 
     String *member = resolver_intern(state, member_ref);
-    Function *found = type_registry_find_method(state->current_scope->type_registry, owner, member);
+    Function *found =
+        owned_for(state->current_scope->type_registry, state->current_scope->functions, owner, member);
 
     if (!found) {
         diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "'%s' has no function '%s'",
@@ -2504,7 +2481,6 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
             },
         .struct_decls = struct_decl_list_create(),
         .flow_work = flow_work_list_create(),
-        .specializations = specialization_list_create(),
         .resolving = struct_decl_list_create(),
         .unit = unit,
         .diagnostics = diagnostics,
@@ -2550,7 +2526,6 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
                       work->return_type, diagnostics, work->function, true);
     }
 
-    specialization_list_free(&state.specializations);
     flow_work_list_free(&state.flow_work);
     struct_decl_list_free(&state.struct_decls);
     struct_decl_list_free(&state.resolving);

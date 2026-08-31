@@ -1,6 +1,8 @@
 #include "scope.h"
+
 #include "arena.h"
 #include "binding.h"
+#include "function_registry.h"
 #include "string/string.h"
 #include "type/type_registry.h"
 #include <assert.h>
@@ -38,12 +40,14 @@ void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope 
 
     if (parent && parent->type_registry) {
         scope->type_registry = parent->type_registry;
+        scope->functions = parent->functions;
         return;
     }
 
     const TypePrimitiveNames names = type_primitive_names(strings);
 
     scope->type_registry = type_registry_create(arena, &names);
+    scope->functions = function_registry_create(arena, scope->type_registry);
     scope_declare_primitives(scope);
 }
 
@@ -57,6 +61,7 @@ void scope_init_over(Scope *scope, Arena *arena, StringPool *strings, TypeRegist
     scope->declares_module = false;
 
     scope->type_registry = registry;
+    scope->functions = function_registry_create(arena, registry);
 
     scope_declare_primitives(scope);
 }
