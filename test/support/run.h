@@ -86,11 +86,10 @@ static inline bool test_compiles(const char *source) {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx.arena);
 
     bool ok = test_resolve(&ctx, scope, unit, source);
 
-    ast_unit_destroy(unit);
     test_context_free(&ctx);
 
     return ok;
@@ -101,7 +100,7 @@ static inline bool test_diagnostic_mentions(const char *source, const char *need
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx.arena);
 
     test_resolve(&ctx, scope, unit, source);
 
@@ -114,7 +113,6 @@ static inline bool test_diagnostic_mentions(const char *source, const char *need
         }
     }
 
-    ast_unit_destroy(unit);
     test_context_free(&ctx);
 
     return found;

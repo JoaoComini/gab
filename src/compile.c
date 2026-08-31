@@ -65,7 +65,7 @@ bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *d
 
     Lexer lexer = lexer_create(source, vm->env.compile_arena, &vm->env.strings, diagnostics);
     Parser parser = parser_create(&lexer, diagnostics);
-    ASTUnit *ast = ast_unit_create();
+    ASTUnit *ast = ast_unit_create(vm->env.compile_arena);
 
     Unit *unit = NULL;
     String *module_name = NULL;
@@ -90,8 +90,6 @@ bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *d
                 codegen_generate(ast, vm->env.arena, &vm->env.strings, staging->type_registry, diagnostics);
         }
     }
-
-    ast_unit_destroy(ast);
 
     if (!unit) {
         string_list_free(&imported);

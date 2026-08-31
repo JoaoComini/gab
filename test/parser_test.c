@@ -12,19 +12,18 @@
 #include <stdio.h>
 #include <string.h>
 
-static ASTUnit *assert_parse(const char *code) {
-    TestContext ctx;
-    test_context_init(&ctx);
-    Diagnostics *diagnostics = &ctx.diagnostics;
+/* A parsed unit points into the context's arena, so the context outlives every unit handed back. */
+static TestContext parsed;
 
-    ASTUnit *unit = ast_unit_create();
-    Lexer lexer = lexer_create(test_in_a_module(code), ctx.arena, &ctx.strings, diagnostics);
+static ASTUnit *assert_parse(const char *code) {
+    Diagnostics *diagnostics = &parsed.diagnostics;
+
+    ASTUnit *unit = ast_unit_create(parsed.arena);
+    Lexer lexer = lexer_create(test_in_a_module(code), parsed.arena, &parsed.strings, diagnostics);
     Parser parser = parser_create(&lexer, diagnostics);
     bool ok = parser_parse(&parser, unit);
     assert(ok);
     assert(!diagnostics_has_errors(diagnostics));
-
-    test_context_free(&ctx);
 
     return unit;
 }
@@ -34,7 +33,7 @@ static void assert_parse_error(const char *code, const char *expected_error) {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx.arena);
     Lexer lexer = lexer_create(test_in_a_module(code), ctx.arena, &ctx.strings, diagnostics);
     Parser parser = parser_create(&lexer, diagnostics);
     bool ok = parser_parse(&parser, unit);
@@ -57,7 +56,6 @@ static void assert_parse_error(const char *code, const char *expected_error) {
     assert(found);
 
     test_context_free(&ctx);
-    ast_unit_destroy(unit);
 }
 
 char code_buffer[100];
@@ -77,8 +75,6 @@ static void test_single_number() {
     assert(stmt->expr.value->kind == EXPR_LITERAL);
     assert(stmt->expr.value->lit.kind == TYPE_INT);
     assert(stmt->expr.value->lit.as_int == 42);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_booleans() {
@@ -95,8 +91,6 @@ static void test_booleans() {
     assert(false_stmt->expr.value->kind == EXPR_LITERAL);
     assert(false_stmt->expr.value->lit.kind == TYPE_BOOL);
     assert(false_stmt->expr.value->lit.as_int == 0);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_multiple_statements() {
@@ -107,8 +101,6 @@ static void test_multiple_statements() {
 
     ASTStmt *second = func_unwrap(unit).data[1];
     assert(second->kind == STMT_EXPR);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_simple_addition() {
@@ -121,8 +113,6 @@ static void test_simple_addition() {
     assert(stmt->expr.value->bin_op.left->lit.as_int == 3);
     assert(stmt->expr.value->bin_op.right->kind == EXPR_LITERAL);
     assert(stmt->expr.value->bin_op.right->lit.as_int == 4);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_operator_precedence() {
@@ -145,8 +135,6 @@ static void test_operator_precedence() {
     assert(rhs->bin_op.left->lit.as_int == 4.0);
     assert(rhs->bin_op.right->kind == EXPR_LITERAL);
     assert(rhs->bin_op.right->lit.as_int == 2.0);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_parentheses() {
@@ -170,8 +158,6 @@ static void test_parentheses() {
 
     assert(expr->bin_op.right->kind == EXPR_LITERAL);
     assert(expr->bin_op.right->lit.as_int == 2.0);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_variables() {
@@ -195,8 +181,6 @@ static void test_variables() {
 
     assert(expr->bin_op.left->kind == EXPR_LITERAL);
     assert(expr->bin_op.left->lit.as_int == 2.0);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_var_declaration() {
@@ -219,8 +203,6 @@ static void test_var_declaration() {
     ASTExpr *rhs = initializer->bin_op.right;
     assert(rhs->kind == EXPR_LITERAL);
     assert(rhs->lit.as_int == 3);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_var_uninit_declaration() {
@@ -231,8 +213,6 @@ static void test_var_uninit_declaration() {
 
     assert(string_ref_equals_cstr(stmt->var_decl.name, "x"));
     assert(stmt->var_decl.initializer == NULL);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_var_untyped_uninti_declaration() {
@@ -253,8 +233,6 @@ static void test_struct_declaration() {
     assert(string_ref_equals_cstr(fields.data[0]->type_expr->name, "float"));
     assert(string_ref_equals_cstr(fields.data[1]->name, "y"));
     assert(string_ref_equals_cstr(fields.data[2]->name, "z"));
-
-    ast_unit_destroy(unit);
 }
 
 static void test_struct_trailing_comma() {
@@ -263,8 +241,6 @@ static void test_struct_trailing_comma() {
     ASTStmt *stmt = unit->statements.data[0];
     assert(stmt->kind == STMT_STRUCT_DECL);
     assert(stmt->struct_decl.fields.size == 2);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_empty_struct_declaration() {
@@ -273,8 +249,6 @@ static void test_empty_struct_declaration() {
     ASTStmt *stmt = unit->statements.data[0];
     assert(stmt->kind == STMT_STRUCT_DECL);
     assert(stmt->struct_decl.fields.size == 0);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_struct_missing_name() {
@@ -307,8 +281,6 @@ static void test_func_declaration() {
     ASTStmt *body = stmt->func_decl.body;
     assert(body->kind == STMT_BLOCK);
     assert(body->block.list.data[0]->kind == STMT_RETURN);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_unit_func_declaration() {
@@ -329,8 +301,6 @@ static void test_unit_func_declaration() {
     ASTStmt *body = stmt->func_decl.body;
     assert(body->kind == STMT_BLOCK);
     assert(body->block.list.data[0]->kind == STMT_VAR_DECL);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_no_params_func_declaration() {
@@ -349,8 +319,6 @@ static void test_no_params_func_declaration() {
     ASTStmt *body = stmt->func_decl.body;
     assert(body->kind == STMT_BLOCK);
     assert(body->block.list.data[0]->kind == STMT_RETURN);
-
-    ast_unit_destroy(unit);
 }
 static void test_assignment() {
     ASTUnit *unit = assert_parse(func_wrap("x = 2;"));
@@ -365,8 +333,6 @@ static void test_assignment() {
     ASTExpr *value = stmt->assign.value;
     assert(value->kind == EXPR_LITERAL);
     assert(value->lit.as_int == 2.0);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_block() {
@@ -375,8 +341,6 @@ static void test_block() {
     ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_BLOCK);
     assert(stmt->block.list.size == 2);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_if() {
@@ -395,8 +359,6 @@ static void test_if() {
     ASTStmt *else_block = stmt->ifstmt.else_block;
     assert(else_block->kind == STMT_BLOCK);
     assert(else_block->block.list.data[0]->kind == STMT_EXPR);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_return() {
@@ -409,8 +371,6 @@ static void test_return() {
     assert(result->kind == EXPR_LITERAL);
     assert(result->lit.kind == TYPE_INT);
     assert(result->lit.as_int == 2);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_invalid_token() {
@@ -442,22 +402,19 @@ static void test_module_directive() {
     assert(unit->module_span.line == 1);
 
     assert(unit->statements.size == 1);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_a_unit_must_name_its_module() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx.arena);
     Lexer lexer = lexer_create("func f(): int { return 1; }\n", ctx.arena, &ctx.strings, &ctx.diagnostics);
     Parser parser = parser_create(&lexer, &ctx.diagnostics);
 
     assert(!parser_parse(&parser, unit));
     assert(diagnostics_has_errors(&ctx.diagnostics));
 
-    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -466,8 +423,6 @@ static void test_module_directive_alone() {
 
     assert(unit->module_name.data);
     assert(unit->statements.size == 0);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_module_name_cannot_be_nested() {
@@ -521,8 +476,6 @@ static void test_for_infinite() {
     assert(!stmt->forstmt.condition);
     assert(!stmt->forstmt.post);
     assert(stmt->forstmt.body->kind == STMT_BLOCK);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_for_condition() {
@@ -534,8 +487,6 @@ static void test_for_condition() {
     assert(!stmt->forstmt.init);
     assert(stmt->forstmt.condition->kind == EXPR_BIN_OP);
     assert(!stmt->forstmt.post);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_for_clauses() {
@@ -548,16 +499,12 @@ static void test_for_clauses() {
     assert(stmt->forstmt.condition->kind == EXPR_BIN_OP);
     assert(stmt->forstmt.post->kind == STMT_ASSIGN);
 
-    ast_unit_destroy(unit);
-
     unit = assert_parse(func_wrap("for ; ; { 10; }"));
     stmt = func_unwrap(unit).data[0];
 
     assert(!stmt->forstmt.init);
     assert(!stmt->forstmt.condition);
     assert(!stmt->forstmt.post);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_break_and_continue() {
@@ -570,8 +517,6 @@ static void test_break_and_continue() {
 
     assert(body.data[1]->kind == STMT_JUMP);
     assert(!body.data[1]->jump.is_break);
-
-    ast_unit_destroy(unit);
 }
 
 static void test_a_type_takes_several_arguments() {
@@ -584,8 +529,6 @@ static void test_a_type_takes_several_arguments() {
     assert(apply->apply.args.size == 2);
     assert(string_ref_equals_cstr(apply->apply.args.data[0]->name, "int"));
     assert(string_ref_equals_cstr(apply->apply.args.data[1]->name, "float"));
-
-    ast_unit_destroy(unit);
 }
 
 static void test_an_argument_may_be_an_application() {
@@ -601,8 +544,6 @@ static void test_an_argument_may_be_an_application() {
     assert(inner->kind == TYPE_EXPR_APPLY);
     assert(string_ref_equals_cstr(inner->apply.base->name, "Vec"));
     assert(string_ref_equals_cstr(inner->apply.args.data[0]->name, "int"));
-
-    ast_unit_destroy(unit);
 }
 
 static void test_a_type_is_a_tree() {
@@ -622,11 +563,11 @@ static void test_a_type_is_a_tree() {
     assert(array->array.element->kind == TYPE_EXPR_NAME);
     assert(string_ref_equals_cstr(array->array.element->name, "int"));
     assert(array->array.length == 3);
-
-    ast_unit_destroy(unit);
 }
 
 int main() {
+    test_context_init(&parsed);
+
     test_function_cannot_be_declared_inside_another();
     test_function_cannot_be_declared_inside_a_method();
     test_module_directive();
@@ -675,6 +616,8 @@ int main() {
     test_a_type_is_a_tree();
     test_a_type_takes_several_arguments();
     test_an_argument_may_be_an_application();
+
+    test_context_free(&parsed);
 
     return 0;
 }

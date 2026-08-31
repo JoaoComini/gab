@@ -31,6 +31,7 @@ set(
     vm/field_ownership_test.c
     vm/uninitialized_test.c
     ast/cfg_test.c
+    ast/clone_test.c
     vm/string_test.c
     vm/str_test.c
     vm/array_test.c

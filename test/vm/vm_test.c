@@ -255,7 +255,7 @@ static void test_checking_a_unit_installs_nothing() {
                                "func second(): int { let p: *Only = box Only { a: 0 }; return p.a; }\n",
                                vm->env.compile_arena, &vm->env.strings, &diagnostics);
     Parser parser = parser_create(&lexer, &diagnostics);
-    ASTUnit *ast = ast_unit_create();
+    ASTUnit *ast = ast_unit_create(vm->env.compile_arena);
 
     assert(parser_parse(&parser, ast));
 
@@ -277,7 +277,6 @@ static void test_checking_a_unit_installs_nothing() {
                               string_from_cstr(&vm->env.strings, "second")));
 
     unit_free(unit);
-    ast_unit_destroy(ast);
     diagnostics_free(&diagnostics);
 
     vm_free(vm);

@@ -83,6 +83,59 @@ static void test_reset_then_allocate_larger_than_the_recycled_block() {
     arena_destroy(arena);
 }
 
+static void test_an_oversized_allocation_leaves_the_current_block_fillable() {
+    Arena *arena = arena_create(TEST_BLOCK_SIZE);
+
+    arena_alloc(arena, 8);
+
+    unsigned char *big = arena_alloc(arena, TEST_BLOCK_SIZE * 4);
+    memset(big, 0xEF, TEST_BLOCK_SIZE * 4);
+
+    /* The first block still had room, so what follows the oversized block belongs in it. */
+    unsigned char *after = arena_alloc(arena, 8);
+
+    assert(after > (unsigned char *)arena->first_block->memory);
+    assert(after < (unsigned char *)arena->first_block->memory + TEST_BLOCK_SIZE);
+
+    assert(big[0] == 0xEF && big[TEST_BLOCK_SIZE * 4 - 1] == 0xEF);
+
+    arena_destroy(arena);
+}
+
+static void test_reset_reuses_blocks_after_an_oversized_one() {
+    Arena *arena = arena_create(TEST_BLOCK_SIZE);
+
+    for (int round = 0; round < 3; round++) {
+        arena_alloc(arena, 8);
+        arena_alloc(arena, TEST_BLOCK_SIZE * 4);
+
+        for (int i = 0; i < 8; i++) {
+            arena_alloc(arena, 40);
+        }
+
+        if (round == 0) {
+            continue;
+        }
+
+        arena_reset(arena);
+    }
+
+    size_t settled = block_count(arena);
+
+    arena_reset(arena);
+
+    arena_alloc(arena, 8);
+    arena_alloc(arena, TEST_BLOCK_SIZE * 4);
+
+    for (int i = 0; i < 8; i++) {
+        arena_alloc(arena, 40);
+    }
+
+    assert(block_count(arena) == settled);
+
+    arena_destroy(arena);
+}
+
 static void test_reset_hands_back_the_same_space() {
     Arena *arena = arena_create(TEST_BLOCK_SIZE);
 
@@ -100,6 +153,8 @@ int main(void) {
     test_allocation_larger_than_a_block();
     test_reset_reuses_blocks_instead_of_leaking_them();
     test_reset_then_allocate_larger_than_the_recycled_block();
+    test_an_oversized_allocation_leaves_the_current_block_fillable();
+    test_reset_reuses_blocks_after_an_oversized_one();
     test_reset_hands_back_the_same_space();
 
     printf("All arena tests passed\n");

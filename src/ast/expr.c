@@ -1,7 +1,7 @@
 #include "expr.h"
 
-ASTExpr *ast_expr_create(Span span) {
-    ASTExpr *node = malloc(sizeof(ASTExpr));
+ASTExpr *ast_expr_create(Arena *arena, Span span) {
+    ASTExpr *node = arena_alloc(arena, sizeof(ASTExpr));
     node->span = span;
     node->type = NULL;
     node->binding = NULL;
@@ -11,15 +11,15 @@ ASTExpr *ast_expr_create(Span span) {
     return node;
 }
 
-ASTExpr *ast_literal_expr_create(Span span, Literal value) {
-    ASTExpr *node = ast_expr_create(span);
+ASTExpr *ast_literal_expr_create(Arena *arena, Span span, Literal value) {
+    ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_LITERAL;
     node->lit = value;
     return node;
 }
 
-ASTExpr *ast_bin_op_expr_create(Span span, ASTExpr *left, BinOp op, ASTExpr *right) {
-    ASTExpr *node = ast_expr_create(span);
+ASTExpr *ast_bin_op_expr_create(Arena *arena, Span span, ASTExpr *left, BinOp op, ASTExpr *right) {
+    ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_BIN_OP;
     node->bin_op.left = left;
     node->bin_op.right = right;
@@ -27,24 +27,24 @@ ASTExpr *ast_bin_op_expr_create(Span span, ASTExpr *left, BinOp op, ASTExpr *rig
     return node;
 }
 
-ASTExpr *ast_variable_expr_create(Span span, StringRef name) {
-    ASTExpr *node = ast_expr_create(span);
+ASTExpr *ast_variable_expr_create(Arena *arena, Span span, StringRef name) {
+    ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_VARIABLE;
     node->var.name = name;
     node->var.owner_type_expr = NULL;
     return node;
 }
 
-ASTExpr *ast_call_expr_create(Span span, ASTExpr *target, ASTExprList args) {
-    ASTExpr *node = ast_expr_create(span);
+ASTExpr *ast_call_expr_create(Arena *arena, Span span, ASTExpr *target, ASTExprList args) {
+    ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_CALL;
     node->call.target = target;
     node->call.args = args;
     return node;
 }
 
-ASTExpr *ast_field_expr_create(Span span, ASTExpr *target, StringRef name) {
-    ASTExpr *node = ast_expr_create(span);
+ASTExpr *ast_field_expr_create(Arena *arena, Span span, ASTExpr *target, StringRef name) {
+    ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_FIELD;
     node->field.target = target;
     node->field.name = name;
@@ -53,15 +53,15 @@ ASTExpr *ast_field_expr_create(Span span, ASTExpr *target, StringRef name) {
     return node;
 }
 
-ASTExpr *ast_addr_of_expr_create(Span span, ASTExpr *target) {
-    ASTExpr *node = ast_expr_create(span);
+ASTExpr *ast_addr_of_expr_create(Arena *arena, Span span, ASTExpr *target) {
+    ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_ADDR_OF;
     node->unary.target = target;
     return node;
 }
 
-ASTExpr *ast_lend_expr_create(Span span, ASTExpr *target) {
-    ASTExpr *node = ast_expr_create(span);
+ASTExpr *ast_lend_expr_create(Arena *arena, Span span, ASTExpr *target) {
+    ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_LEND;
     node->lend.target = target;
     node->lend.parts = NULL;
@@ -70,134 +70,64 @@ ASTExpr *ast_lend_expr_create(Span span, ASTExpr *target) {
     return node;
 }
 
-ASTExpr *ast_deref_expr_create(Span span, ASTExpr *target) {
-    ASTExpr *node = ast_expr_create(span);
+ASTExpr *ast_deref_expr_create(Arena *arena, Span span, ASTExpr *target) {
+    ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_DEREF;
     node->unary.target = target;
     return node;
 }
 
-ASTExpr *ast_neg_expr_create(Span span, ASTExpr *target) {
-    ASTExpr *node = ast_expr_create(span);
+ASTExpr *ast_neg_expr_create(Arena *arena, Span span, ASTExpr *target) {
+    ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_NEG;
     node->unary.target = target;
     return node;
 }
 
-ASTExpr *ast_not_expr_create(Span span, ASTExpr *target) {
-    ASTExpr *node = ast_expr_create(span);
+ASTExpr *ast_not_expr_create(Arena *arena, Span span, ASTExpr *target) {
+    ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_NOT;
     node->unary.target = target;
     return node;
 }
 
-ASTExpr *ast_cast_expr_create(Span span, ASTExpr *operand) {
-    ASTExpr *node = ast_expr_create(span);
+ASTExpr *ast_cast_expr_create(Arena *arena, Span span, ASTExpr *operand) {
+    ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_CAST;
     node->cast.operand = operand;
     return node;
 }
 
-ASTExpr *ast_box_expr_create(Span span, ASTExpr *value) {
-    ASTExpr *node = ast_expr_create(span);
+ASTExpr *ast_box_expr_create(Arena *arena, Span span, ASTExpr *value) {
+    ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_BOX;
     node->box_expr.value = value;
     node->box_expr.type = NULL;
     return node;
 }
 
-ASTExpr *ast_array_lit_expr_create(Span span, ASTExprList elements) {
-    ASTExpr *node = ast_expr_create(span);
+ASTExpr *ast_array_lit_expr_create(Arena *arena, Span span, ASTExprList elements) {
+    ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_ARRAY_LIT;
     node->array_lit.elements = elements;
     return node;
 }
 
-ASTExpr *ast_struct_lit_expr_create(Span span, TypeExpr *type_expr, ASTFieldInitList fields) {
-    ASTExpr *node = ast_expr_create(span);
+ASTExpr *ast_struct_lit_expr_create(Arena *arena, Span span, TypeExpr *type_expr, ASTFieldInitList fields) {
+    ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_STRUCT_LIT;
     node->struct_lit.type_expr = type_expr;
     node->struct_lit.fields = fields;
     return node;
 }
 
-void ast_field_init_list_destroy(ASTFieldInitList *fields) {
-    for (size_t i = 0; i < fields->size; i++) {
-        ast_expr_free(fields->data[i].value);
-    }
-
-    ast_field_init_list_free(fields);
-}
-
-ASTExpr *ast_index_expr_create(Span span, ASTExpr *target, ASTExpr *index) {
-    ASTExpr *node = ast_expr_create(span);
+ASTExpr *ast_index_expr_create(Arena *arena, Span span, ASTExpr *target, ASTExpr *index) {
+    ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_INDEX;
     node->index.target = target;
     node->index.index = index;
     node->index.array_type = NULL;
     return node;
-}
-
-void ast_expr_free(ASTExpr *expr) {
-    if (!expr)
-        return;
-
-    switch (expr->kind) {
-    case EXPR_BIN_OP:
-        ast_expr_free(expr->bin_op.left);
-        ast_expr_free(expr->bin_op.right);
-        break;
-    case EXPR_CALL:
-        ast_expr_free(expr->call.target);
-
-        for (size_t i = 0; i < expr->call.args.size; i++) {
-            ast_expr_free(expr->call.args.data[i]);
-        }
-
-        ast_expr_list_free(&expr->call.args);
-        break;
-    case EXPR_FIELD:
-        ast_expr_free(expr->field.target);
-        break;
-    case EXPR_LEND:
-        ast_expr_free(expr->lend.target);
-        break;
-
-    case EXPR_ADDR_OF:
-    case EXPR_DEREF:
-    case EXPR_NEG:
-    case EXPR_NOT:
-        ast_expr_free(expr->unary.target);
-        break;
-    case EXPR_CAST:
-        ast_expr_free(expr->cast.operand);
-        break;
-    case EXPR_BOX:
-        ast_expr_free(expr->box_expr.value);
-        break;
-    case EXPR_ARRAY_LIT:
-        for (size_t i = 0; i < expr->array_lit.elements.size; i++) {
-            ast_expr_free(expr->array_lit.elements.data[i]);
-        }
-        ast_expr_list_free(&expr->array_lit.elements);
-        break;
-    case EXPR_VARIABLE:
-        type_expr_destroy(expr->var.owner_type_expr);
-        break;
-    case EXPR_STRUCT_LIT:
-        type_expr_destroy(expr->struct_lit.type_expr);
-        ast_field_init_list_destroy(&expr->struct_lit.fields);
-        break;
-    case EXPR_INDEX:
-        ast_expr_free(expr->index.target);
-        ast_expr_free(expr->index.index);
-        break;
-        break;
-    default:
-        break;
-    }
-
-    free(expr);
 }
 
 Binding *ast_binding_of(const ASTExpr *expr) { return expr->binding; }

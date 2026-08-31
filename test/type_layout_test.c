@@ -43,7 +43,7 @@ static const Type *resolve_struct(TestContext *ctx, const char *source, const ch
                                   TypeRegistry **out_registry) {
     Lexer lexer = lexer_create(test_in_a_module(source), ctx->arena, &ctx->strings, &ctx->diagnostics);
     Parser parser = parser_create(&lexer, &ctx->diagnostics);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx->arena);
 
     Scope global_scope;
     scope_init(&global_scope, ctx->arena, &ctx->strings, NULL);
@@ -61,8 +61,6 @@ static const Type *resolve_struct(TestContext *ctx, const char *source, const ch
     }
 
     assert(!diagnostics_has_errors(&ctx->diagnostics));
-
-    ast_unit_destroy(unit);
 
     return scope_type_lookup(&global_scope, string_from_cstr(&ctx->strings, name));
 }
@@ -202,7 +200,7 @@ static void test_unknown_field_type_is_not_registered() {
     Lexer lexer = lexer_create("module test;\nstruct Broken { value: Nope }", ctx.arena, &ctx.strings,
                                &ctx.diagnostics);
     Parser parser = parser_create(&lexer, &ctx.diagnostics);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx.arena);
 
     Scope global_scope;
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
@@ -214,7 +212,6 @@ static void test_unknown_field_type_is_not_registered() {
 
     assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "Broken")) == NULL);
 
-    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -343,7 +340,7 @@ static void test_a_failed_field_poisons_what_holds_it() {
                                                 "struct B { a: A }\n"),
                                ctx.arena, &ctx.strings, &ctx.diagnostics);
     Parser parser = parser_create(&lexer, &ctx.diagnostics);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx.arena);
 
     Scope global_scope;
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
@@ -354,7 +351,6 @@ static void test_a_failed_field_poisons_what_holds_it() {
     assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "A")) == NULL);
     assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "B")) == NULL);
 
-    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 
@@ -397,7 +393,7 @@ static void test_rejects_an_array_of_the_struct_declaring_it() {
     Lexer lexer = lexer_create(test_in_a_module("struct A { cells: [A; 2] }"), ctx.arena, &ctx.strings,
                                &ctx.diagnostics);
     Parser parser = parser_create(&lexer, &ctx.diagnostics);
-    ASTUnit *unit = ast_unit_create();
+    ASTUnit *unit = ast_unit_create(ctx.arena);
 
     Scope global_scope;
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
@@ -410,7 +406,6 @@ static void test_rejects_an_array_of_the_struct_declaring_it() {
                   "struct 'A' cannot contain itself: 'A' contains 'A'") == 0);
     assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "A")) == NULL);
 
-    ast_unit_destroy(unit);
     test_context_free(&ctx);
 }
 

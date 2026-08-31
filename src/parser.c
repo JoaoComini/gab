@@ -44,6 +44,7 @@ static void parser_error(Parser *parser, const char *message);
 
 Parser parser_create(Lexer *lexer, Diagnostics *diagnostics) {
     return (Parser){
+        .arena = lexer->arena,
         .lexer = lexer,
         .diagnostics = diagnostics,
     };
@@ -245,7 +246,6 @@ static ASTStmt *parse_decl_statement(Parser *parser) {
     }
 
     if (!parser_expect(parser, TOKEN_SEMICOLON, "expected ';'")) {
-        ast_stmt_destroy(stmt);
         return NULL;
     }
 
@@ -265,7 +265,7 @@ static ASTStmt *parse_statement(Parser *parser) {
     case TOKEN_FUNC: {
         parser_error(parser, "a function cannot be declared inside another; declare it at module level");
 
-        ast_stmt_destroy(parse_func_decl_stmt(parser));
+        parse_func_decl_stmt(parser);
 
         return NULL;
     }
@@ -309,7 +309,6 @@ static ASTStmt *parse_statement(Parser *parser) {
     }
 
     if (!parser_expect(parser, TOKEN_SEMICOLON, "expected ';'")) {
-        ast_stmt_destroy(stmt);
         return NULL;
     }
 
@@ -347,12 +346,11 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser, ExprContext ctx) {
             return NULL;
         }
 
-        return ast_var_decl_stmt_create(span, name.lexeme, spec, NULL);
+        return ast_var_decl_stmt_create(parser->arena, span, name.lexeme, spec, NULL);
     }
 
     if (!parser_expect(parser, TOKEN_ASSIGN, "expected ';' or '='")) {
         if (spec) {
-            type_expr_destroy(spec);
         }
         return NULL;
     }
@@ -362,12 +360,11 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser, ExprContext ctx) {
     ASTExpr *initializer = parse_expression(parser, ctx);
     if (!initializer) {
         if (spec) {
-            type_expr_destroy(spec);
         }
         return NULL;
     }
 
-    return ast_var_decl_stmt_create(span, name.lexeme, spec, initializer);
+    return ast_var_decl_stmt_create(parser->arena, span, name.lexeme, spec, initializer);
 }
 
 /* Inside brackets a '{' cannot open a block, so a struct literal is spelled there even in a header. */
@@ -384,23 +381,20 @@ static ASTStmt *parse_if_stmt(Parser *parser) {
 
     ASTStmt *then_block = parse_block_stmt(parser);
     if (!then_block) {
-        ast_expr_free(condition);
         return NULL;
     }
 
     if (parser->current.type != TOKEN_ELSE) {
-        return ast_if_stmt_create(span, condition, then_block, NULL);
+        return ast_if_stmt_create(parser->arena, span, condition, then_block, NULL);
     }
 
     parser_next_token(parser);
     ASTStmt *else_block = parse_block_stmt(parser);
     if (!else_block) {
-        ast_expr_free(condition);
-        ast_stmt_destroy(then_block);
         return NULL;
     }
 
-    return ast_if_stmt_create(span, condition, then_block, else_block);
+    return ast_if_stmt_create(parser->arena, span, condition, then_block, else_block);
 }
 
 static ASTStmt *parse_for_clause(Parser *parser, TokenType terminator) {
@@ -426,7 +420,7 @@ static ASTStmt *parse_for_stmt(Parser *parser) {
             return NULL;
         }
 
-        return ast_for_stmt_create(span, NULL, NULL, NULL, body);
+        return ast_for_stmt_create(parser->arena, span, NULL, NULL, NULL, body);
     }
 
     ASTStmt *init = NULL;
@@ -443,21 +437,18 @@ static ASTStmt *parse_for_stmt(Parser *parser) {
 
         if (first->kind != STMT_EXPR) {
             parser_error(parser, "a loop condition must be an expression");
-            ast_stmt_destroy(first);
             return NULL;
         }
 
         condition = first->expr.value;
         first->expr.value = NULL;
-        ast_stmt_destroy(first);
 
         ASTStmt *body = parse_block_stmt(parser);
         if (!body) {
-            ast_expr_free(condition);
             return NULL;
         }
 
-        return ast_for_stmt_create(span, NULL, condition, NULL, body);
+        return ast_for_stmt_create(parser->arena, span, NULL, condition, NULL, body);
     }
 
     init = first;
@@ -467,14 +458,11 @@ static ASTStmt *parse_for_stmt(Parser *parser) {
     if (parser->current.type != TOKEN_SEMICOLON) {
         condition = parse_expression(parser, EXPR_NO_STRUCT_LIT);
         if (!condition) {
-            ast_stmt_destroy(init);
             return NULL;
         }
     }
 
     if (!parser_expect(parser, TOKEN_SEMICOLON, "expected ';' after the loop condition")) {
-        ast_stmt_destroy(init);
-        ast_expr_free(condition);
         return NULL;
     }
 
@@ -484,13 +472,10 @@ static ASTStmt *parse_for_stmt(Parser *parser) {
 
     ASTStmt *body = parse_block_stmt(parser);
     if (!body) {
-        ast_stmt_destroy(init);
-        ast_expr_free(condition);
-        ast_stmt_destroy(post);
         return NULL;
     }
 
-    return ast_for_stmt_create(span, init, condition, post, body);
+    return ast_for_stmt_create(parser->arena, span, init, condition, post, body);
 }
 
 static ASTStmt *parse_jump_stmt(Parser *parser) {
@@ -499,7 +484,7 @@ static ASTStmt *parse_jump_stmt(Parser *parser) {
 
     parser_next_token(parser);
 
-    return ast_jump_stmt_create(span, is_break);
+    return ast_jump_stmt_create(parser->arena, span, is_break);
 }
 
 static ASTStmt *parse_block_stmt(Parser *parser) {
@@ -511,11 +496,10 @@ static ASTStmt *parse_block_stmt(Parser *parser) {
 
     parser_next_token(parser);
 
-    ASTStmtList list = ast_stmt_list_create();
+    ASTStmtList list = ast_stmt_list_create(arena_allocator(parser->arena));
     while (parser->current.type != TOKEN_RBRACE) {
         if (parser->current.type == TOKEN_EOF) {
             parser_error_found(parser, "expected '}' to close the block");
-            ast_stmt_list_free(&list);
             return NULL;
         }
 
@@ -531,7 +515,7 @@ static ASTStmt *parse_block_stmt(Parser *parser) {
 
     parser_next_token(parser);
 
-    return ast_block_stmt_create(span, list);
+    return ast_block_stmt_create(parser->arena, span, list);
 }
 
 static ASTField *parse_field(Parser *parser, const char *name_message) {
@@ -554,7 +538,7 @@ static ASTField *parse_field(Parser *parser, const char *name_message) {
         return NULL;
     }
 
-    return ast_field_create(span, name, type);
+    return ast_field_create(parser->arena, span, name, type);
 }
 
 static TypeExpr *parse_type_expr(Parser *parser) {
@@ -568,7 +552,6 @@ static TypeExpr *parse_type_expr(Parser *parser) {
         }
 
         if (!parser_expect(parser, TOKEN_SEMICOLON, "expected ';' and a length, as '[int; 3]'")) {
-            type_expr_destroy(element);
             return NULL;
         }
 
@@ -576,7 +559,6 @@ static TypeExpr *parse_type_expr(Parser *parser) {
 
         if (parser->current.type != TOKEN_INT) {
             parser_error(parser, "an array's length must be an integer literal");
-            type_expr_destroy(element);
             return NULL;
         }
 
@@ -585,13 +567,12 @@ static TypeExpr *parse_type_expr(Parser *parser) {
         parser_next_token(parser);
 
         if (!parser_expect(parser, TOKEN_RBRACKET, "expected ']' after an array's length")) {
-            type_expr_destroy(element);
             return NULL;
         }
 
         parser_next_token(parser);
 
-        return type_expr_array(element, length);
+        return type_expr_array(parser->arena, element, length);
     }
 
     /* In a type '&' borrows and '*' owns; neither is the expression operator that shares its spelling. */
@@ -612,7 +593,7 @@ static TypeExpr *parse_type_expr(Parser *parser) {
             return NULL;
         }
 
-        return type_expr_indirect(kind, inner);
+        return type_expr_indirect(parser->arena, kind, inner);
     }
 
     if (!parser_expect(parser, TOKEN_IDENT, "expected a type")) {
@@ -640,20 +621,19 @@ static TypeExpr *parse_type_expr(Parser *parser) {
         }
     }
 
-    TypeExpr *base = type_expr_name(name);
+    TypeExpr *base = type_expr_name(parser->arena, name);
 
     TypeExpr *type = base;
 
     if (parser->current.type == TOKEN_LESS) {
         parser_next_token(parser);
 
-        TypeExpr *apply = type_expr_apply(base);
+        TypeExpr *apply = type_expr_apply(parser->arena, base);
 
         for (;;) {
             TypeExpr *argument = parse_type_expr(parser);
 
             if (!argument) {
-                type_expr_destroy(apply);
                 return NULL;
             }
 
@@ -667,7 +647,6 @@ static TypeExpr *parse_type_expr(Parser *parser) {
         }
 
         if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after a type's arguments")) {
-            type_expr_destroy(apply);
             return NULL;
         }
 
@@ -731,17 +710,15 @@ static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
 
     parser_next_token(parser);
 
-    ASTFieldList fields = ast_field_list_create();
+    ASTFieldList fields = ast_field_list_create(arena_allocator(parser->arena));
     while (parser->current.type != TOKEN_RBRACE) {
         if (parser->current.type == TOKEN_EOF) {
             parser_error(parser, "expected '}' to close the struct");
-            ast_field_list_free(&fields);
             return NULL;
         }
 
         ASTField *field = parse_field(parser, "expected a field name");
         if (!field) {
-            ast_field_list_free(&fields);
             return NULL;
         }
 
@@ -749,7 +726,6 @@ static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
 
         if (parser->current.type != TOKEN_COMMA && parser->current.type != TOKEN_RBRACE) {
             parser_error_found(parser, "expected ',' or '}' after field");
-            ast_field_list_free(&fields);
             return NULL;
         }
 
@@ -760,7 +736,7 @@ static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
 
     parser_next_token(parser);
 
-    return ast_struct_decl_stmt_create(span, name, params, param_count, fields);
+    return ast_struct_decl_stmt_create(parser->arena, span, name, params, param_count, fields);
 }
 
 /* A declaration names what it is generic over, whether those parameters came from an owner or from itself. */
@@ -798,18 +774,17 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
     TypeExpr *owner = NULL;
 
-    TypeExprList owner_params = type_expr_list_create();
+    TypeExprList owner_params = type_expr_list_create(arena_allocator(parser->arena));
 
     if (parser->current.type == TOKEN_LESS) {
         parser_next_token(parser);
 
         for (;;) {
             if (!parser_expect(parser, TOKEN_IDENT, "expected a type parameter name")) {
-                type_expr_list_free(&owner_params);
                 return NULL;
             }
 
-            type_expr_list_add(&owner_params, type_expr_name(parser->current.lexeme));
+            type_expr_list_add(&owner_params, type_expr_name(parser->arena, parser->current.lexeme));
             parser_next_token(parser);
 
             if (parser->current.type != TOKEN_COMMA) {
@@ -820,7 +795,6 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
         }
 
         if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after a function's type parameters")) {
-            type_expr_list_free(&owner_params);
             return NULL;
         }
 
@@ -831,14 +805,13 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
         parser_next_token(parser);
 
         if (!parser_expect(parser, TOKEN_IDENT, "expected a function name after '::'")) {
-            type_expr_list_free(&owner_params);
             return NULL;
         }
 
-        owner = type_expr_name(func_name);
+        owner = type_expr_name(parser->arena, func_name);
 
         if (owner_params.size > 0) {
-            TypeExpr *apply = type_expr_apply(owner);
+            TypeExpr *apply = type_expr_apply(parser->arena, owner);
             apply->apply.args = owner_params;
             owner = apply;
         }
@@ -849,7 +822,6 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
         if (parser->current.type == TOKEN_COLON_COLON) {
             parser_error(parser, "a function owned by a type has one '::', as 'Type::name'");
-            type_expr_destroy(owner);
             return NULL;
         }
     }
@@ -860,18 +832,15 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
     parser_next_token(parser);
 
-    ASTFieldList func_params = ast_field_list_create();
+    ASTFieldList func_params = ast_field_list_create(arena_allocator(parser->arena));
     while (parser->current.type != TOKEN_RPAREN) {
         ASTField *param = parse_field(parser, "expected a parameter name");
         if (!param) {
-            ast_field_list_free(&func_params);
             return NULL;
         }
 
         if (parser->current.type != TOKEN_COMMA && parser->current.type != TOKEN_RPAREN) {
             parser_error_found(parser, "expected ',' or ')' after parameter");
-            ast_field_destroy(param);
-            ast_field_list_free(&func_params);
             return NULL;
         }
 
@@ -890,7 +859,6 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
         func_type = parse_type_expr(parser);
         if (!func_type) {
-            ast_field_list_free(&func_params);
             return NULL;
         }
     }
@@ -899,20 +867,18 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
         if (parser->current.type == TOKEN_LBRACE) {
             parser_error(parser, "an 'extern' function is defined by the host and cannot have a body");
 
-            type_expr_destroy(func_type);
-            ast_field_list_free(&func_params);
-            ast_stmt_destroy(parse_block_stmt(parser));
+            parse_block_stmt(parser);
 
             return NULL;
         }
 
-        ASTStmt *decl = ast_func_decl_stmt_create(span, func_name, func_type, func_params, NULL);
+        ASTStmt *decl =
+            ast_func_decl_stmt_create(parser->arena, span, func_name, func_type, func_params, NULL);
         decl->func_decl.owner = owner;
 
         func_decl_take_type_params(decl, &owner_params);
 
         if (!owner) {
-            type_expr_list_free(&owner_params);
         }
 
         return decl;
@@ -920,19 +886,17 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
     ASTStmt *func_body = parse_block_stmt(parser);
     if (!func_body) {
-        type_expr_destroy(func_type);
-        ast_field_list_free(&func_params);
 
         return NULL;
     }
 
-    ASTStmt *decl = ast_func_decl_stmt_create(span, func_name, func_type, func_params, func_body);
+    ASTStmt *decl =
+        ast_func_decl_stmt_create(parser->arena, span, func_name, func_type, func_params, func_body);
     decl->func_decl.owner = owner;
 
     func_decl_take_type_params(decl, &owner_params);
 
     if (!owner) {
-        type_expr_list_free(&owner_params);
     }
 
     return decl;
@@ -948,7 +912,7 @@ static ASTStmt *parse_return_stmt(Parser *parser) {
         return NULL;
     }
 
-    return ast_return_stmt_create(span, result);
+    return ast_return_stmt_create(parser->arena, span, result);
 }
 
 static bool compound_assign_op(TokenType type, BinOp *op) {
@@ -992,13 +956,12 @@ static ASTStmt *parse_expr_stmt(Parser *parser, ExprContext ctx) {
     bool compound = compound_assign_op(parser->current.type, NULL);
 
     if (parser->current.type != TOKEN_ASSIGN && !compound) {
-        return ast_expr_stmt_create(span, expr);
+        return ast_expr_stmt_create(parser->arena, span, expr);
     }
 
     if (expr->kind != EXPR_VARIABLE && expr->kind != EXPR_FIELD && expr->kind != EXPR_DEREF &&
         expr->kind != EXPR_INDEX) {
         parser_error(parser, "expression is not assignable");
-        ast_expr_free(expr);
         return NULL;
     }
 
@@ -1009,15 +972,14 @@ static ASTStmt *parse_expr_stmt(Parser *parser, ExprContext ctx) {
 
     ASTExpr *value = parse_expression(parser, ctx);
     if (!value) {
-        ast_expr_free(expr);
         return NULL;
     }
 
     if (compound) {
-        return ast_compound_assign_stmt_create(span, expr, op, value);
+        return ast_compound_assign_stmt_create(parser->arena, span, expr, op, value);
     }
 
-    return ast_assign_stmt_create(span, expr, value);
+    return ast_assign_stmt_create(parser->arena, span, expr, value);
 }
 
 static bool stmt_needs_terminator(ASTStmt *stmt) {
@@ -1037,21 +999,12 @@ static bool stmt_needs_terminator(ASTStmt *stmt) {
 
 static ASTExpr *parse_expression(Parser *parser, ExprContext ctx) { return parse_precedence(parser, 0, ctx); }
 
-static void ast_expr_list_destroy(ASTExprList *list) {
-    for (size_t i = 0; i < list->size; i++) {
-        ast_expr_free(list->data[i]);
-    }
-
-    ast_expr_list_free(list);
-}
-
 static ASTExpr *parse_field_expr(Parser *parser, ASTExpr *target) {
     Span span = parser_span(parser);
 
     parser_next_token(parser);
 
     if (!parser_expect(parser, TOKEN_IDENT, "expected a field name after '.'")) {
-        ast_expr_free(target);
         return NULL;
     }
 
@@ -1063,13 +1016,13 @@ static ASTExpr *parse_field_expr(Parser *parser, ASTExpr *target) {
         return parse_method_call_expr(parser, target, name.lexeme, span);
     }
 
-    return ast_field_expr_create(span, target, name.lexeme);
+    return ast_field_expr_create(parser->arena, span, target, name.lexeme);
 }
 
 static bool parse_call_args(Parser *parser, ASTExprList *out) {
     parser_next_token(parser);
 
-    ASTExprList args = ast_expr_list_create();
+    ASTExprList args = ast_expr_list_create(arena_allocator(parser->arena));
     bool ok = true;
 
     while (ok && parser->current.type != TOKEN_RPAREN) {
@@ -1099,7 +1052,6 @@ static bool parse_call_args(Parser *parser, ASTExprList *out) {
     }
 
     if (!ok) {
-        ast_expr_list_destroy(&args);
         return false;
     }
 
@@ -1170,13 +1122,12 @@ static bool parser_type_args_precede_a_call(Parser *parser) {
 static TypeExpr *parse_type_args_for(Parser *parser, StringRef name) {
     parser_next_token(parser);
 
-    TypeExpr *apply = type_expr_apply(type_expr_name(name));
+    TypeExpr *apply = type_expr_apply(parser->arena, type_expr_name(parser->arena, name));
 
     for (;;) {
         TypeExpr *argument = parse_type_expr(parser);
 
         if (!argument) {
-            type_expr_destroy(apply);
             return NULL;
         }
 
@@ -1190,7 +1141,6 @@ static TypeExpr *parse_type_args_for(Parser *parser, StringRef name) {
     }
 
     if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after a type's arguments")) {
-        type_expr_destroy(apply);
         return NULL;
     }
 
@@ -1239,33 +1189,28 @@ static ASTExpr *parse_struct_lit_expr(Parser *parser, ASTExpr *target) {
     Span span = target->span;
     StringRef name = target->var.name;
 
-    ast_expr_free(target);
-
-    TypeExpr *type_expr =
-        parser->current.type == TOKEN_LESS ? parse_type_args_for(parser, name) : type_expr_name(name);
+    TypeExpr *type_expr = parser->current.type == TOKEN_LESS ? parse_type_args_for(parser, name)
+                                                             : type_expr_name(parser->arena, name);
 
     if (!type_expr) {
         return NULL;
     }
 
     if (!parser_expect(parser, TOKEN_LBRACE, "expected '{' after a struct's name")) {
-        type_expr_destroy(type_expr);
         return NULL;
     }
 
     parser_next_token(parser);
 
-    ASTFieldInitList fields = ast_field_init_list_create();
+    ASTFieldInitList fields = ast_field_init_list_create(arena_allocator(parser->arena));
 
     if (!parse_field_inits(parser, &fields)) {
-        type_expr_destroy(type_expr);
-        ast_field_init_list_destroy(&fields);
         return NULL;
     }
 
     parser_next_token(parser);
 
-    return ast_struct_lit_expr_create(span, type_expr, fields);
+    return ast_struct_lit_expr_create(parser->arena, span, type_expr, fields);
 }
 
 static ASTExpr *parse_call_expr(Parser *parser, ASTExpr *target) {
@@ -1273,23 +1218,21 @@ static ASTExpr *parse_call_expr(Parser *parser, ASTExpr *target) {
 
     ASTExprList args;
     if (!parse_call_args(parser, &args)) {
-        ast_expr_free(target);
         return NULL;
     }
 
-    return ast_call_expr_create(span, target, args);
+    return ast_call_expr_create(parser->arena, span, target, args);
 }
 
 static ASTExpr *parse_method_call_expr(Parser *parser, ASTExpr *receiver, StringRef name, Span span) {
-    ASTExpr *target = ast_field_expr_create(span, receiver, name);
+    ASTExpr *target = ast_field_expr_create(parser->arena, span, receiver, name);
 
     ASTExprList args;
     if (!parse_call_args(parser, &args)) {
-        ast_expr_free(target);
         return NULL;
     }
 
-    return ast_call_expr_create(span, target, args);
+    return ast_call_expr_create(parser->arena, span, target, args);
 }
 
 static ASTExpr *parse_index_expr(Parser *parser, ASTExpr *target) {
@@ -1300,19 +1243,16 @@ static ASTExpr *parse_index_expr(Parser *parser, ASTExpr *target) {
     ASTExpr *index = parse_expression(parser, EXPR_ANY);
 
     if (!index) {
-        ast_expr_free(target);
         return NULL;
     }
 
     if (!parser_expect(parser, TOKEN_RBRACKET, "expected ']' after an index")) {
-        ast_expr_free(target);
-        ast_expr_free(index);
         return NULL;
     }
 
     parser_next_token(parser);
 
-    return ast_index_expr_create(span, target, index);
+    return ast_index_expr_create(parser->arena, span, target, index);
 }
 
 /* A '{' after a plain name opens a literal; '<' does only when the type arguments it opens reach one. */
@@ -1363,7 +1303,7 @@ static ASTExpr *parse_unary(Parser *parser, ExprContext ctx) {
             return NULL;
         }
 
-        return ast_box_expr_create(span, value);
+        return ast_box_expr_create(parser->arena, span, value);
     }
 
     if (parser->current.type == TOKEN_MUL || parser->current.type == TOKEN_MINUS ||
@@ -1379,11 +1319,11 @@ static ASTExpr *parse_unary(Parser *parser, ExprContext ctx) {
 
         switch (prefix) {
         case TOKEN_MUL:
-            return ast_deref_expr_create(span, target);
+            return ast_deref_expr_create(parser->arena, span, target);
         case TOKEN_NOT:
-            return ast_not_expr_create(span, target);
+            return ast_not_expr_create(parser->arena, span, target);
         default:
-            return ast_neg_expr_create(span, target);
+            return ast_neg_expr_create(parser->arena, span, target);
         }
     }
 
@@ -1409,11 +1349,10 @@ static ASTExpr *parse_precedence(Parser *parser, int min_precedence, ExprContext
         ASTExpr *rhs = parse_precedence(parser, precedence + 1, ctx);
 
         if (!rhs) {
-            ast_expr_free(lhs);
             return NULL;
         }
 
-        lhs = ast_bin_op_expr_create(token_span(token), lhs, op, rhs);
+        lhs = ast_bin_op_expr_create(parser->arena, token_span(token), lhs, op, rhs);
     }
 
     return lhs;
@@ -1425,19 +1364,17 @@ static ASTExpr *parse_primary(Parser *parser) {
     case TOKEN_LBRACKET: {
         parser_next_token(parser);
 
-        ASTExprList elements = ast_expr_list_create();
+        ASTExprList elements = ast_expr_list_create(arena_allocator(parser->arena));
 
         while (parser->current.type != TOKEN_RBRACKET) {
             if (parser->current.type == TOKEN_EOF) {
                 parser_error(parser, "expected ']' to close the elements");
-                ast_expr_list_free(&elements);
                 return NULL;
             }
 
             ASTExpr *element = parse_expression(parser, EXPR_ANY);
 
             if (!element) {
-                ast_expr_list_free(&elements);
                 return NULL;
             }
 
@@ -1451,44 +1388,43 @@ static ASTExpr *parse_primary(Parser *parser) {
         }
 
         if (!parser_expect(parser, TOKEN_RBRACKET, "expected ']' after an array's elements")) {
-            ast_expr_list_free(&elements);
             return NULL;
         }
 
         parser_next_token(parser);
 
-        return ast_array_lit_expr_create(span, elements);
+        return ast_array_lit_expr_create(parser->arena, span, elements);
     }
     case TOKEN_INT: {
         int32_t value = parser->current.value.as_int;
 
         parser_next_token(parser);
 
-        return ast_literal_expr_create(span, (Literal){.kind = TYPE_INT, .as_int = value});
+        return ast_literal_expr_create(parser->arena, span, (Literal){.kind = TYPE_INT, .as_int = value});
     }
     case TOKEN_FLOAT: {
         float value = parser->current.value.as_float;
 
         parser_next_token(parser);
 
-        return ast_literal_expr_create(span, (Literal){.kind = TYPE_FLOAT, .as_float = value});
+        return ast_literal_expr_create(parser->arena, span, (Literal){.kind = TYPE_FLOAT, .as_float = value});
     }
     case TOKEN_STRING: {
         String *text = parser->current.value.as_string;
 
         parser_next_token(parser);
 
-        return ast_literal_expr_create(span, (Literal){.kind = TYPE_STR, .as_string = text});
+        return ast_literal_expr_create(parser->arena, span, (Literal){.kind = TYPE_STR, .as_string = text});
     }
     case TOKEN_TRUE: {
         parser_next_token(parser);
 
-        return ast_literal_expr_create(span, (Literal){.kind = TYPE_BOOL, .as_int = 1});
+        return ast_literal_expr_create(parser->arena, span, (Literal){.kind = TYPE_BOOL, .as_int = 1});
     }
     case TOKEN_FALSE: {
         parser_next_token(parser);
 
-        return ast_literal_expr_create(span, (Literal){.kind = TYPE_BOOL, .as_int = 0});
+        return ast_literal_expr_create(parser->arena, span, (Literal){.kind = TYPE_BOOL, .as_int = 0});
     }
     case TOKEN_IDENT: {
         Token name = parser->current;
@@ -1511,7 +1447,6 @@ static ASTExpr *parse_primary(Parser *parser) {
             parser_next_token(parser);
 
             if (!parser_expect(parser, TOKEN_IDENT, "expected a name after '::'")) {
-                type_expr_destroy(owner_type_expr);
                 return NULL;
             }
 
@@ -1522,12 +1457,11 @@ static ASTExpr *parse_primary(Parser *parser) {
 
             if (parser->current.type == TOKEN_COLON_COLON) {
                 parser_error(parser, "a qualified name has one '::', as 'Module::name'");
-                type_expr_destroy(owner_type_expr);
                 return NULL;
             }
         }
 
-        ASTExpr *variable = ast_variable_expr_create(span, lexeme);
+        ASTExpr *variable = ast_variable_expr_create(parser->arena, span, lexeme);
 
         variable->var.owner_type_expr = owner_type_expr;
 
@@ -1543,7 +1477,6 @@ static ASTExpr *parse_primary(Parser *parser) {
         }
 
         if (!parser_expect(parser, TOKEN_RPAREN, "expected ')'")) {
-            ast_expr_free(node);
             return NULL;
         }
 
