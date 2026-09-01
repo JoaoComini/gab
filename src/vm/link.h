@@ -113,6 +113,7 @@ GAB_LIST(TopLevelList, top_level_list, FuncPrototype)
 
 typedef struct {
     String *module;
+    String *owner;
     String *name;
     GabExternFn fn;
 } ExternBinding;

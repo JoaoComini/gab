@@ -31,7 +31,8 @@ bool gab_load(GabVM *vm, const char *name, const char *src, GabError *err);
 typedef struct GabArgs GabArgs;
 typedef void (*GabExternFn)(GabArgs *args);
 
-bool gab_extern(GabVM *vm, const char *module, const char *name, GabExternFn fn, GabError *err);
+bool gab_extern(GabVM *vm, const char *module, const char *type, const char *name, GabExternFn fn,
+                GabError *err);
 
 int32_t gab_arg_get_int(GabArgs *args, int index);
 float gab_arg_get_float(GabArgs *args, int index);

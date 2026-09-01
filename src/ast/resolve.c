@@ -76,6 +76,11 @@ typedef struct {
 
 static Arena *resolver_owner_arena(ResolverState *state) { return state->global_scope->arena; }
 
+static bool resolver_in_prelude(ResolverState *state) {
+    return state->module_name &&
+           state->module_name == string_from_cstr(state->global_scope->strings, GAB_PRELUDE_MODULE);
+}
+
 static const Type *resolver_error_type(ResolverState *state) {
     return type_registry_error_type(state->current_scope->type_registry);
 }
@@ -1927,20 +1932,42 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         return;
     }
 
-    if (type_kind(owner) != TYPE_STRUCT) {
+    bool is_host = stmt->func_decl.body == NULL;
+
+    /* A primitive is declared by no module, so only a host body may claim one as an owner. */
+    bool owner_is_primitive = type_kind(owner) != TYPE_STRUCT && type_names_itself(owner);
+
+    if (owner_is_primitive && !is_host) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
-                   "a function belongs to a struct this module declares, not to %s", type_name(state, owner));
+                   "a function on %s is defined by the host, so it must be 'extern'",
+                   type_name(state, owner));
         return;
     }
 
-    TypeBinding *bound =
-        type_name_of(owner) ? scope_binding_lookup_local(declaring, type_name_of(owner)) : NULL;
-
-    if (!bound || bound->decl != type_decl(owner)) {
+    if (owner_is_primitive && !resolver_in_prelude(state)) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
-                   "cannot declare a function on '%s', which this module does not declare",
+                   "only the '%s' module declares a function on %s", GAB_PRELUDE_MODULE,
                    type_name(state, owner));
         return;
+    }
+
+    if (!owner_is_primitive) {
+        if (type_kind(owner) != TYPE_STRUCT) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
+                       "a function belongs to a struct this module declares, not to %s",
+                       type_name(state, owner));
+            return;
+        }
+
+        TypeBinding *bound =
+            type_name_of(owner) ? scope_binding_lookup_local(declaring, type_name_of(owner)) : NULL;
+
+        if (!bound || bound->decl != type_decl(owner)) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
+                       "cannot declare a function on '%s', which this module does not declare",
+                       type_name(state, owner));
+            return;
+        }
     }
 
     const Type *return_type = resolve_type_expr(state, stmt->func_decl.return_type, stmt->span);
@@ -1956,7 +1983,9 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
     FuncDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(FuncDecl));
     *decl = (FuncDecl){
         .name = name,
-        .body_kind = BODY_GAB,
+        .module = is_host ? state->module_name : NULL,
+        .owner = is_host ? type_name_of(owner) : NULL,
+        .body_kind = is_host ? BODY_HOST : BODY_GAB,
         .body = stmt,
         .type_param_count = stmt->func_decl.type_param_count,
     };

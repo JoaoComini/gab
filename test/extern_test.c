@@ -11,6 +11,14 @@ typedef struct {
     int32_t mana;
 } Player;
 
+typedef struct {
+    int32_t value;
+} Counter;
+
+typedef struct {
+    int32_t reading;
+} Gauge;
+
 static int32_t last_logged = 0;
 
 static void host_log(GabArgs *args) { last_logged = gab_arg_get_int(args, 0); }
@@ -42,7 +50,7 @@ static void test_an_extern_returns_to_its_caller(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "test", "twice", twice, &err));
+    assert(gab_extern(vm, "test", NULL, "twice", twice, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -68,7 +76,7 @@ static void test_an_extern_may_return_nothing(void) {
     last_logged = 0;
 
     GabError err;
-    assert(gab_extern(vm, "test", "log", host_log, &err));
+    assert(gab_extern(vm, "test", NULL, "log", host_log, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -90,8 +98,8 @@ static void test_scalars_cross_the_boundary(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "test", "scale", scale, &err));
-    assert(gab_extern(vm, "test", "negate", negate, &err));
+    assert(gab_extern(vm, "test", NULL, "scale", scale, &err));
+    assert(gab_extern(vm, "test", NULL, "negate", negate, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -120,7 +128,7 @@ static void test_a_struct_crosses_by_value(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "test", "heal", heal, &err));
+    assert(gab_extern(vm, "test", NULL, "heal", heal, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -148,7 +156,7 @@ static void test_a_borrow_is_written_through(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "test", "boost", boost, &err));
+    assert(gab_extern(vm, "test", NULL, "boost", boost, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -198,7 +206,7 @@ static void test_an_extern_must_be_registered_before_the_load(void) {
                      "extern func twice(x: int): int;\n",
                      &err));
 
-    assert(gab_extern(vm, "test", "twice", twice, &err));
+    assert(gab_extern(vm, "test", NULL, "twice", twice, &err));
     assert(gab_load(vm, "<m>",
                     "module test;\n"
                     "extern func twice(x: int): int;\n"
@@ -218,7 +226,7 @@ static void test_a_host_may_call_an_extern_directly(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "test", "twice", twice, &err));
+    assert(gab_extern(vm, "test", NULL, "twice", twice, &err));
     assert(gab_load(vm, "<m>",
                     "module test;\n"
                     "extern func twice(x: int): int;\n",
@@ -242,7 +250,7 @@ static void test_an_extern_may_fail_the_run(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "test", "refuse", refuse, &err));
+    assert(gab_extern(vm, "test", NULL, "refuse", refuse, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -264,7 +272,7 @@ static void test_an_extern_may_not_have_a_body(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "test", "twice", twice, &err));
+    assert(gab_extern(vm, "test", NULL, "twice", twice, &err));
     assert(!gab_load(vm, "<m>",
                      "module test;\n"
                      "extern func twice(x: int): int { return x; }\n",
@@ -289,7 +297,7 @@ static void test_an_extern_lives_in_its_module(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "game", "twice", twice, &err));
+    assert(gab_extern(vm, "game", NULL, "twice", twice, &err));
 
     assert(gab_load(vm, "<m>",
                     "module game;\n"
@@ -308,7 +316,7 @@ static void test_an_extern_may_fail_without_a_message(void) {
     GabVM *vm = gab_vm_new();
     GabError err;
 
-    assert(gab_extern(vm, "test", "refuse", refuse_silently, &err));
+    assert(gab_extern(vm, "test", NULL, "refuse", refuse_silently, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -340,7 +348,7 @@ static void test_a_long_extern_message_is_truncated(void) {
     GabVM *vm = gab_vm_new();
     GabError err;
 
-    assert(gab_extern(vm, "test", "refuse", refuse_at_length, &err));
+    assert(gab_extern(vm, "test", NULL, "refuse", refuse_at_length, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -364,8 +372,8 @@ static void test_a_call_reaches_the_body_its_name_declares(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "test", "twice", twice, &err));
-    assert(gab_extern(vm, "test", "negate", negate, &err));
+    assert(gab_extern(vm, "test", NULL, "twice", twice, &err));
+    assert(gab_extern(vm, "test", NULL, "negate", negate, &err));
     assert(gab_load(vm, "<m>",
                     "module test;\n"
                     "extern func twice(x: int): int;\n"
@@ -389,6 +397,170 @@ static void test_a_call_reaches_the_body_its_name_declares(void) {
     gab_vm_free(vm);
 }
 
+static int32_t counter_get_calls = 0;
+
+static void counter_get(GabArgs *args) {
+    Counter *c = gab_arg_get_pointer(args, 0);
+
+    counter_get_calls++;
+
+    gab_return_int(args, c->value);
+}
+
+static int32_t gauge_get_calls = 0;
+
+static void gauge_get(GabArgs *args) {
+    Gauge *g = gab_arg_get_pointer(args, 0);
+
+    gauge_get_calls++;
+
+    gab_return_int(args, g->reading);
+}
+
+static void test_an_extern_may_be_owned_by_a_struct(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, "test", "Counter", "get", counter_get, &err));
+
+    assert(gab_load(vm, "<m>",
+                    "module test;\n"
+                    "struct Counter { value: int }\n"
+                    "extern func Counter::get(self: &Counter): int;\n"
+                    "func run(): int {\n"
+                    "    let c = Counter { value: 9 };\n"
+                    "    return c.get();\n"
+                    "}\n",
+                    &err));
+
+    GabFunc *fn = gab_lookup(vm, "test", "run", &err);
+    assert(fn);
+
+    GabCall *call = gab_call_init(fn, &err);
+    int32_t out = 0;
+    counter_get_calls = 0;
+    assert(gab_call(vm, call, &out, &err) == GAB_OK);
+    assert(counter_get_calls == 1);
+    assert(out == 9);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
+static void test_two_types_may_own_an_extern_of_one_name(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, "test", "Counter", "get", counter_get, &err));
+    assert(gab_extern(vm, "test", "Gauge", "get", gauge_get, &err));
+
+    assert(gab_load(vm, "<m>",
+                    "module test;\n"
+                    "struct Counter { value: int }\n"
+                    "struct Gauge { reading: int }\n"
+                    "extern func Counter::get(self: &Counter): int;\n"
+                    "extern func Gauge::get(self: &Gauge): int;\n"
+                    "func run(): int {\n"
+                    "    let c = Counter { value: 3 };\n"
+                    "    let g = Gauge { reading: 4 };\n"
+                    "    return c.get() * 10 + g.get();\n"
+                    "}\n",
+                    &err));
+
+    GabFunc *fn = gab_lookup(vm, "test", "run", &err);
+    assert(fn);
+
+    GabCall *call = gab_call_init(fn, &err);
+    int32_t out = 0;
+    counter_get_calls = 0;
+    gauge_get_calls = 0;
+    assert(gab_call(vm, call, &out, &err) == GAB_OK);
+    assert(counter_get_calls == 1);
+    assert(gauge_get_calls == 1);
+    assert(out == 34);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
+static int32_t str_len_calls = 0;
+
+static void str_len(GabArgs *args) {
+    int32_t length = 0;
+    gab_arg_get_string(args, 0, &length);
+
+    str_len_calls++;
+
+    gab_return_int(args, length);
+}
+
+static void test_an_extern_may_be_owned_by_a_primitive(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, "prelude", "str", "length", str_len, &err));
+
+    assert(gab_load(vm, "<m>",
+                    "module prelude;\n"
+                    "extern func str::length(self: &str): int;\n"
+                    "func run(): int { return \"hello\".length(); }\n",
+                    &err));
+
+    GabFunc *fn = gab_lookup(vm, "prelude", "run", &err);
+    assert(fn);
+
+    GabCall *call = gab_call_init(fn, &err);
+    int32_t out = 0;
+    str_len_calls = 0;
+    assert(gab_call(vm, call, &out, &err) == GAB_OK);
+    assert(str_len_calls == 1);
+    assert(out == 5);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
+static void test_a_primitive_is_owned_only_by_a_host_body(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(!gab_load(vm, "<m>",
+                     "module test;\n"
+                     "func str::length(self: &str): int { return 0; }\n",
+                     &err));
+
+    gab_vm_free(vm);
+}
+
+static void test_only_the_prelude_owns_a_primitive(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, "test", "str", "length", str_len, &err));
+
+    assert(!gab_load(vm, "<m>",
+                     "module test;\n"
+                     "extern func str::length(self: &str): int;\n",
+                     &err));
+
+    gab_vm_free(vm);
+}
+
+static void test_an_extern_does_not_claim_a_type_from_another_module(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_load(vm, "a.gab", "module A;\nstruct Counter { value: int }\n", &err));
+
+    assert(!gab_load(vm, "b.gab",
+                     "module B;\n"
+                     "import A;\n"
+                     "extern func A::Counter::get(self: &A::Counter): int;\n",
+                     &err));
+
+    gab_vm_free(vm);
+}
+
 int main(void) {
     test_an_extern_returns_to_its_caller();
     test_an_extern_may_return_nothing();
@@ -405,6 +577,12 @@ int main(void) {
     test_a_plain_func_still_needs_a_body();
     test_an_extern_lives_in_its_module();
     test_a_call_reaches_the_body_its_name_declares();
+    test_an_extern_may_be_owned_by_a_struct();
+    test_two_types_may_own_an_extern_of_one_name();
+    test_an_extern_may_be_owned_by_a_primitive();
+    test_a_primitive_is_owned_only_by_a_host_body();
+    test_only_the_prelude_owns_a_primitive();
+    test_an_extern_does_not_claim_a_type_from_another_module();
 
     printf("extern_test: all tests passed\n");
 

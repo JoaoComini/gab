@@ -72,7 +72,8 @@ static GabExternFn find_extern(const Program *program, const Function *function)
     for (size_t i = 0; i < program->extern_bindings.size; i++) {
         const ExternBinding *binding = &program->extern_bindings.data[i];
 
-        if (binding->name == function->decl->name && binding->module == function->decl->module) {
+        if (binding->name == function->decl->name && binding->module == function->decl->module &&
+            binding->owner == function->decl->owner) {
             return binding->fn;
         }
     }
