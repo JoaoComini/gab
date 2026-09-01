@@ -127,6 +127,8 @@ bool type_is_str_ref(const Type *type);
 
 bool type_is_sized(const Type *type);
 
+bool type_is_primitive(const Type *type);
+
 bool type_names_itself(const Type *type);
 
 bool type_is_indirect(const Type *type);

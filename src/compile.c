@@ -62,7 +62,8 @@ static bool check_imports(VM *vm, const ASTUnit *ast, Diagnostics *diagnostics) 
 
 #define STAGING_ARENA_BLOCK_SIZE 512
 
-bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *diagnostics) {
+static bool compile_unit_with(VM *vm, const char *source, FuncPrototype *out, bool allow_primitive_impls,
+                              Diagnostics *diagnostics) {
     arena_reset(vm->env.compile_arena);
 
     Lexer lexer = lexer_create(source, vm->env.compile_arena, &vm->env.strings, diagnostics);
@@ -89,7 +90,8 @@ bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *d
             string_list_add(&imported, string_from_ref(&vm->env.strings, ast->imports.data[i].name));
         }
 
-        if (resolve_unit(vm->env.compile_arena, ast, staging, vm->env.module_scopes, diagnostics)) {
+        if (resolve_unit(vm->env.compile_arena, ast, staging, vm->env.module_scopes, allow_primitive_impls,
+                         diagnostics)) {
             unit =
                 codegen_generate(ast, vm->env.arena, &vm->env.strings, staging->type_registry, diagnostics);
         }
@@ -128,6 +130,27 @@ bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *d
     unit->prototypes.size = 0;
 
     unit_free(unit);
+
+    return true;
+}
+
+bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *diagnostics) {
+    return compile_unit_with(vm, source, out, false, diagnostics);
+}
+
+bool compile_load_prelude(VM *vm, const char *source, Diagnostics *diagnostics) {
+    FuncPrototype compiled = {0};
+
+    if (!compile_unit_with(vm, source, &compiled, true, diagnostics)) {
+        return false;
+    }
+
+    if (interp_run_top_level(vm, &compiled) != VM_RUN_OK) {
+        func_proto_free(&compiled);
+        return false;
+    }
+
+    top_level_list_add(&vm->program.top_levels, compiled);
 
     return true;
 }

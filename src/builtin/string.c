@@ -1,5 +1,6 @@
 #include "builtin/builtin.h"
 
+#include "compile.h"
 #include "object.h"
 #include "type/type_registry.h"
 #include "vm/args.h"
@@ -187,12 +188,15 @@ static void string_register_str_externs(VM *vm) {
         (void)bound;
     }
 
-    GabError err;
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, vm->env.compile_arena, GAB_PRELUDE_MODULE);
 
-    bool loaded = gab_load((GabVM *)vm, GAB_PRELUDE_MODULE, PRELUDE_STR, &err);
+    bool loaded = compile_load_prelude(vm, PRELUDE_STR, &diagnostics);
 
     assert(loaded && "the prelude compiles");
     (void)loaded;
+
+    diagnostics_free(&diagnostics);
 }
 
 void builtin_register_string(VM *vm) {

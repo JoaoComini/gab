@@ -78,7 +78,7 @@ static inline bool test_resolve(TestContext *ctx, Scope *scope, ASTUnit *unit, c
         return false;
     }
 
-    return resolve_unit(ctx->arena, unit, scope, NULL, &ctx->diagnostics);
+    return resolve_unit(ctx->arena, unit, scope, NULL, false, &ctx->diagnostics);
 }
 
 static inline bool test_compiles(const char *source) {

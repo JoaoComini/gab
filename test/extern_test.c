@@ -483,37 +483,25 @@ static void test_two_types_may_own_an_extern_of_one_name(void) {
     gab_vm_free(vm);
 }
 
-static int32_t str_len_calls = 0;
-
 static void str_len(GabArgs *args) {
     int32_t length = 0;
     gab_arg_get_string(args, 0, &length);
 
-    str_len_calls++;
-
     gab_return_int(args, length);
 }
 
-static void test_an_extern_may_be_owned_by_a_primitive(void) {
+static void test_a_prelude_method_on_a_primitive_reaches_its_host_body(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "prelude", "str", "length", str_len, &err));
+    assert(gab_load(vm, "<m>", "module test;\nfunc run(): int { return \"hello\".len(); }\n", &err));
 
-    assert(gab_load(vm, "<m>",
-                    "module prelude;\n"
-                    "extern func str::length(self: &str): int;\n"
-                    "func run(): int { return \"hello\".length(); }\n",
-                    &err));
-
-    GabFunc *fn = gab_lookup(vm, "prelude", "run", &err);
+    GabFunc *fn = gab_lookup(vm, "test", "run", &err);
     assert(fn);
 
     GabCall *call = gab_call_init(fn, &err);
     int32_t out = 0;
-    str_len_calls = 0;
     assert(gab_call(vm, call, &out, &err) == GAB_OK);
-    assert(str_len_calls == 1);
     assert(out == 5);
 
     gab_call_free(call);
@@ -540,6 +528,20 @@ static void test_only_the_prelude_owns_a_primitive(void) {
 
     assert(!gab_load(vm, "<m>",
                      "module test;\n"
+                     "extern func str::length(self: &str): int;\n",
+                     &err));
+
+    gab_vm_free(vm);
+}
+
+static void test_naming_the_prelude_does_not_own_a_primitive(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, "prelude", "str", "length", str_len, &err));
+
+    assert(!gab_load(vm, "<m>",
+                     "module prelude;\n"
                      "extern func str::length(self: &str): int;\n",
                      &err));
 
@@ -579,9 +581,10 @@ int main(void) {
     test_a_call_reaches_the_body_its_name_declares();
     test_an_extern_may_be_owned_by_a_struct();
     test_two_types_may_own_an_extern_of_one_name();
-    test_an_extern_may_be_owned_by_a_primitive();
+    test_a_prelude_method_on_a_primitive_reaches_its_host_body();
     test_a_primitive_is_owned_only_by_a_host_body();
     test_only_the_prelude_owns_a_primitive();
+    test_naming_the_prelude_does_not_own_a_primitive();
     test_an_extern_does_not_claim_a_type_from_another_module();
 
     printf("extern_test: all tests passed\n");

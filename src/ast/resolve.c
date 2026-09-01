@@ -60,6 +60,8 @@ typedef struct {
 
     String *module_name;
 
+    bool allow_primitive_impls;
+
     FuncContext func_context;
 
     StructDeclList struct_decls;
@@ -75,11 +77,6 @@ typedef struct {
 } ResolverState;
 
 static Arena *resolver_owner_arena(ResolverState *state) { return state->global_scope->arena; }
-
-static bool resolver_in_prelude(ResolverState *state) {
-    return state->module_name &&
-           state->module_name == string_from_cstr(state->global_scope->strings, GAB_PRELUDE_MODULE);
-}
 
 static const Type *resolver_error_type(ResolverState *state) {
     return type_registry_error_type(state->current_scope->type_registry);
@@ -1934,8 +1931,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
 
     bool is_host = stmt->func_decl.body == NULL;
 
-    /* A primitive is declared by no module, so only a host body may claim one as an owner. */
-    bool owner_is_primitive = type_kind(owner) != TYPE_STRUCT && type_names_itself(owner);
+    bool owner_is_primitive = type_is_primitive(owner);
 
     if (owner_is_primitive && !is_host) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
@@ -1944,10 +1940,9 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         return;
     }
 
-    if (owner_is_primitive && !resolver_in_prelude(state)) {
+    if (owner_is_primitive && !state->allow_primitive_impls) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
-                   "only the '%s' module declares a function on %s", GAB_PRELUDE_MODULE,
-                   type_name(state, owner));
+                   "a function on %s is declared by the runtime's prelude", type_name(state, owner));
         return;
     }
 
@@ -2492,7 +2487,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
 }
 
 bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, ModuleScopeMap *module_scopes,
-                  Diagnostics *diagnostics) {
+                  bool allow_primitive_impls, Diagnostics *diagnostics) {
     ResolverState state = {
         .compile_arena = compile_arena,
         .global_scope = global_scope,
@@ -2501,6 +2496,7 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
         .imports = &unit->imports,
         .module_name =
             unit->module_name.data ? string_from_ref(global_scope->strings, unit->module_name) : NULL,
+        .allow_primitive_impls = allow_primitive_impls,
         .func_context =
             {
                 .return_type = NULL,
