@@ -22,7 +22,7 @@ static void compile_with_library(TestContext *ctx, const char *source) {
     ASTUnit *unit = ast_unit_create(ctx->arena);
 
     if (parser_parse(&parser, unit)) {
-        resolve_unit(ctx->arena, unit, &vm->env.global_scope, NULL, diagnostics);
+        resolve_unit(ctx->arena, unit, &vm->env.global_scope, NULL, false, diagnostics);
     }
 
     vm_free(vm);
@@ -40,7 +40,7 @@ static void compile(TestContext *ctx, const char *source) {
     scope_init(&global_scope, arena, &ctx->strings, NULL);
 
     if (parser_parse(&parser, unit)) {
-        resolve_unit(arena, unit, &global_scope, NULL, diagnostics);
+        resolve_unit(arena, unit, &global_scope, NULL, false, diagnostics);
     }
 }
 

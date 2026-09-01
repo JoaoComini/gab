@@ -263,7 +263,7 @@ static void test_checking_a_unit_installs_nothing() {
     scope_init_staging(&staging, vm->env.arena, &vm->env.strings,
                        environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "dry")));
 
-    assert(resolve_unit(vm->env.compile_arena, ast, &staging, vm->env.module_scopes, &diagnostics));
+    assert(resolve_unit(vm->env.compile_arena, ast, &staging, vm->env.module_scopes, false, &diagnostics));
 
     Unit *unit = codegen_generate(ast, vm->env.arena, &vm->env.strings, staging.type_registry, &diagnostics);
     assert(unit);

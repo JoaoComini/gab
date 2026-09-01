@@ -53,7 +53,7 @@ static const Type *resolve_struct(TestContext *ctx, const char *source, const ch
     }
 
     if (parser_parse(&parser, unit)) {
-        resolve_unit(ctx->arena, unit, &global_scope, NULL, &ctx->diagnostics);
+        resolve_unit(ctx->arena, unit, &global_scope, NULL, false, &ctx->diagnostics);
     }
 
     if (diagnostics_has_errors(&ctx->diagnostics)) {
@@ -206,7 +206,7 @@ static void test_unknown_field_type_is_not_registered() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
 
     parser_parse(&parser, unit);
-    resolve_unit(ctx.arena, unit, &global_scope, NULL, &ctx.diagnostics);
+    resolve_unit(ctx.arena, unit, &global_scope, NULL, false, &ctx.diagnostics);
 
     assert(diagnostics_count(&ctx.diagnostics) == 1);
 
@@ -346,7 +346,7 @@ static void test_a_failed_field_poisons_what_holds_it() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
 
     parser_parse(&parser, unit);
-    resolve_unit(ctx.arena, unit, &global_scope, NULL, &ctx.diagnostics);
+    resolve_unit(ctx.arena, unit, &global_scope, NULL, false, &ctx.diagnostics);
 
     assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "A")) == NULL);
     assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "B")) == NULL);
@@ -399,7 +399,7 @@ static void test_rejects_an_array_of_the_struct_declaring_it() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
 
     parser_parse(&parser, unit);
-    resolve_unit(ctx.arena, unit, &global_scope, NULL, &ctx.diagnostics);
+    resolve_unit(ctx.arena, unit, &global_scope, NULL, false, &ctx.diagnostics);
 
     assert(diagnostics_count(&ctx.diagnostics) == 1);
     assert(strcmp(diagnostics_get(&ctx.diagnostics, 0)->message,

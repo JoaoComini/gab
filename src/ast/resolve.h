@@ -8,6 +8,6 @@
 #include <stdbool.h>
 
 bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, ModuleScopeMap *module_scopes,
-                  Diagnostics *diagnostics);
+                  bool allow_primitive_impls, Diagnostics *diagnostics);
 
 #endif
