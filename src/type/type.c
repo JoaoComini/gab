@@ -193,6 +193,19 @@ const TypeArg *type_args(const Type *type) { return type->args; }
 
 size_t type_arg_count(const Type *type) { return type->arg_count; }
 
+bool type_is_primitive(const Type *type) {
+    switch (type->kind) {
+    case TYPE_INT:
+    case TYPE_FLOAT:
+    case TYPE_BOOL:
+    case TYPE_BYTE:
+    case TYPE_STR:
+        return true;
+    default:
+        return false;
+    }
+}
+
 bool type_names_itself(const Type *type) {
     switch (type->kind) {
     case TYPE_INT:

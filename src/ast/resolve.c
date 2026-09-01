@@ -1931,8 +1931,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
 
     bool is_host = stmt->func_decl.body == NULL;
 
-    /* A primitive is declared by no module, so only a host body may claim one as an owner. */
-    bool owner_is_primitive = type_kind(owner) != TYPE_STRUCT && type_names_itself(owner);
+    bool owner_is_primitive = type_is_primitive(owner);
 
     if (owner_is_primitive && !is_host) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
