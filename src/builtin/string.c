@@ -7,6 +7,8 @@
 #include "vm/vm.h"
 
 #include "allocator.h"
+#include "gab.h"
+#include "scope.h"
 
 #include <assert.h>
 #include <stddef.h>
@@ -148,6 +150,51 @@ static void string_from(Args *args) {
     args_return_string_copy(args, string.data, string.length);
 }
 
+static const char PRELUDE_STR[] = "module " GAB_PRELUDE_MODULE ";\n"
+                                  "extern func str::len(self: &str): int;\n"
+                                  "extern func str::is_empty(self: &str): bool;\n"
+                                  "extern func str::at(self: &str, index: int): int;\n"
+                                  "extern func str::starts_with(self: &str, prefix: &str): bool;\n"
+                                  "extern func str::ends_with(self: &str, suffix: &str): bool;\n"
+                                  "extern func str::contains(self: &str, needle: &str): bool;\n"
+                                  "extern func str::index_of(self: &str, needle: &str): int;\n"
+                                  "extern func str::count(self: &str, needle: &str): int;\n"
+                                  "extern func str::to_owned(self: &str): String;\n";
+
+static void string_register_str_externs(VM *vm) {
+    static const struct {
+        const char *name;
+        GabExternFn body;
+    } METHODS[] = {
+        {"len", string_len},
+        {"is_empty", string_is_empty},
+        {"at", string_at},
+        {"starts_with", string_starts_with},
+        {"ends_with", string_ends_with},
+        {"contains", string_contains},
+        {"index_of", string_index_of},
+        {"count", string_count},
+        {"to_owned", string_to_owned},
+    };
+
+    for (size_t i = 0; i < sizeof(METHODS) / sizeof(*METHODS); i++) {
+        GabError err;
+
+        bool bound =
+            gab_extern((GabVM *)vm, GAB_PRELUDE_MODULE, "str", METHODS[i].name, METHODS[i].body, &err);
+
+        assert(bound && "the prelude binds each of its externs once");
+        (void)bound;
+    }
+
+    GabError err;
+
+    bool loaded = gab_load((GabVM *)vm, GAB_PRELUDE_MODULE, PRELUDE_STR, &err);
+
+    assert(loaded && "the prelude compiles");
+    (void)loaded;
+}
+
 void builtin_register_string(VM *vm) {
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
@@ -177,28 +224,12 @@ void builtin_register_string(VM *vm) {
 
     const Type *str_type = type_registry_ref_to(registry, type_registry_get_primitive(registry, TYPE_STR));
 
-    const Type *str_owner = type_registry_get_primitive(registry, TYPE_STR);
-
     const Type *ref_string = type_registry_ref_to(registry, string_type);
 
     const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
-    const Type *bool_type = type_registry_get_primitive(registry, TYPE_BOOL);
-
-    const Type *const int_param[] = {int_type};
     const Type *const string_param[] = {str_type};
 
-    builtin_register_method(vm, str_owner, str_type, "len", string_len, int_type, NULL, 0);
-    builtin_register_method(vm, str_owner, str_type, "is_empty", string_is_empty, bool_type, NULL, 0);
-    builtin_register_method(vm, str_owner, str_type, "at", string_at, int_type, int_param, 1);
-    builtin_register_method(vm, str_owner, str_type, "starts_with", string_starts_with, bool_type,
-                            string_param, 1);
-    builtin_register_method(vm, str_owner, str_type, "ends_with", string_ends_with, bool_type, string_param,
-                            1);
-    builtin_register_method(vm, str_owner, str_type, "contains", string_contains, bool_type, string_param, 1);
-    builtin_register_method(vm, str_owner, str_type, "index_of", string_index_of, int_type, string_param, 1);
-    builtin_register_method(vm, str_owner, str_type, "count", string_count, int_type, string_param, 1);
-
-    builtin_register_method(vm, str_owner, str_type, "to_owned", string_to_owned, string_type, NULL, 0);
+    string_register_str_externs(vm);
 
     builtin_register_static(vm, string_type, "from", string_from, string_type, string_param, 1);
 

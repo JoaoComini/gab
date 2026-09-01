@@ -408,10 +408,12 @@ static void test_a_load_name_replaces_nothing() {
     GabVM *handle = gab_vm_new();
     GabError err;
 
+    size_t loaded = ((VM *)handle)->program.top_levels.size;
+
     assert(gab_load(handle, "same.gab", "module test;\nfunc first(): int { return 1; }\n", &err));
     assert(gab_load(handle, "same.gab", "module test;\nfunc second(): int { return 2; }\n", &err));
 
-    assert(((VM *)handle)->program.top_levels.size == 2);
+    assert(((VM *)handle)->program.top_levels.size == loaded + 2);
 
     gab_vm_free(handle);
 }

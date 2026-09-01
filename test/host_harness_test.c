@@ -66,11 +66,11 @@ static GabVM *harness_vm(void) {
     GabVM *vm = gab_vm_new();
     GabError err;
 
-    assert(gab_extern(vm, "game", "tick", host_tick, &err));
-    assert(gab_extern(vm, "game", "spawn", host_spawn, &err));
-    assert(gab_extern(vm, "game", "buff", host_buff, &err));
-    assert(gab_extern(vm, "game", "log", host_log, &err));
-    assert(gab_extern(vm, "game", "refuse", host_refuse, &err));
+    assert(gab_extern(vm, "game", NULL, "tick", host_tick, &err));
+    assert(gab_extern(vm, "game", NULL, "spawn", host_spawn, &err));
+    assert(gab_extern(vm, "game", NULL, "buff", host_buff, &err));
+    assert(gab_extern(vm, "game", NULL, "log", host_log, &err));
+    assert(gab_extern(vm, "game", NULL, "refuse", host_refuse, &err));
 
     if (!gab_load(vm, "game.gab", SOURCE, &err)) {
         fprintf(stderr, "load failed: line %d: %s\n", err.line, err.message);

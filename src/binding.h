@@ -24,6 +24,7 @@ typedef struct ASTStmt ASTStmt;
 typedef struct FuncDecl {
     String *name;
     String *module;
+    String *owner;
 
     BodyKind body_kind;
 

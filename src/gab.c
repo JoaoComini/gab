@@ -180,7 +180,8 @@ void gab_error(GabArgs *args, const char *message) {
     vm_fail(args->vm, VM_RUN_ERR_EXTERN, message ? message : "the extern function failed");
 }
 
-bool gab_extern(GabVM *handle, const char *module, const char *name, GabExternFn fn, GabError *err) {
+bool gab_extern(GabVM *handle, const char *module, const char *type, const char *name, GabExternFn fn,
+                GabError *err) {
     gab_error_clear(err);
 
     if (!handle || !name || !fn) {
@@ -189,6 +190,8 @@ bool gab_extern(GabVM *handle, const char *module, const char *name, GabExternFn
     }
 
     VM *vm = (VM *)handle;
+
+    String *interned_owner = (type && type[0] != '\0') ? string_from_cstr(&vm->env.strings, type) : NULL;
 
     String *interned_name = string_from_cstr(&vm->env.strings, name);
     String *interned_module =
@@ -202,14 +205,16 @@ bool gab_extern(GabVM *handle, const char *module, const char *name, GabExternFn
     for (size_t i = 0; i < vm->program.extern_bindings.size; i++) {
         const ExternBinding *binding = &vm->program.extern_bindings.data[i];
 
-        if (binding->name == interned_name && binding->module == interned_module) {
+        if (binding->name == interned_name && binding->module == interned_module &&
+            binding->owner == interned_owner) {
             gab_error_set(err, 0, 0, "an extern of this name is already bound in this module");
             return false;
         }
     }
 
-    extern_binding_list_add(&vm->program.extern_bindings,
-                            (ExternBinding){.module = interned_module, .name = interned_name, .fn = fn});
+    extern_binding_list_add(
+        &vm->program.extern_bindings,
+        (ExternBinding){.module = interned_module, .owner = interned_owner, .name = interned_name, .fn = fn});
 
     return true;
 }
