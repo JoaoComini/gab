@@ -76,6 +76,11 @@ size_t gab_ctx_type_count(GabCtx *ctx);
 GabTypeKind gab_ctx_type_kind(GabCtx *ctx, size_t index);
 size_t gab_ctx_type_size(GabCtx *ctx, size_t index);
 
+/* The length and element size of an array parameter, which reaches C as a pointer to its first
+ * element and so carries neither. Both are zero when that parameter is not an array. */
+int32_t gab_ctx_array_length(GabCtx *ctx, int index);
+size_t gab_ctx_array_stride(GabCtx *ctx, int index);
+
 /* Where the call's return value goes, for a body whose declaration returns a type its specialization
  * chose. Such a body is passed the address as its second argument, ahead of the parameters its
  * declaration names, and writes gab_ctx_type_size bytes there rather than returning a value. */

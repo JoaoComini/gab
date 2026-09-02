@@ -14,6 +14,9 @@ uint8_t *args_address(Args *args, int index, const Type **out_type);
 
 uint8_t *args_return_address(Args *args);
 
+/* The declared type of one parameter, or NULL when the declaration has no such parameter. */
+const Type *args_param_type(Args *args, int index);
+
 unsigned int args_type_slots(TypeRegistry *registry, const Type *type);
 
 /* A box of the declared return type's pointee, or NULL with the call failed. */

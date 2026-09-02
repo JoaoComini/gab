@@ -40,6 +40,12 @@ uint8_t *args_address(Args *args, int index, const Type **out_type) {
     return args->vm->stack + args->base + (size_t)slot * VM_SLOT_SIZE;
 }
 
+const Type *args_param_type(Args *args, int index) {
+    const Function *function = args->function;
+
+    return (index >= 0 && (size_t)index < function->param_count) ? function->params[index] : NULL;
+}
+
 uint8_t *args_return_address(Args *args) {
     assert(args && "a C body returned without a frame");
 

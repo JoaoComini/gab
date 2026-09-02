@@ -457,6 +457,33 @@ static void test_a_generic_return_is_sized_by_its_specialization(void) {
     gab_vm_free(vm);
 }
 
+/* One symbol over arrays of two lengths: the body reads how many elements it was given rather than
+   being told, so the same C function answers for both. */
+static int32_t sum_all(GabCtx *ctx, const void *xs) {
+    int32_t total = 0;
+    size_t stride = gab_ctx_array_stride(ctx, 0);
+
+    for (int32_t i = 0; i < gab_ctx_array_length(ctx, 0); i++) {
+        int32_t value = 0;
+
+        memcpy(&value, (const char *)xs + (size_t)i * stride, stride);
+
+        total += value;
+    }
+
+    return total;
+}
+
+static void test_a_body_reads_the_length_of_an_array_it_is_given(void) {
+    assert(call_int("extern func total(xs: [int; 3]): int;",
+                    "func run(): int { let xs: [int; 3] = [1, 2, 3]; return total(xs); }", "total",
+                    (void *)(uintptr_t)sum_all) == 6);
+
+    assert(call_int("extern func total(xs: [int; 5]): int;",
+                    "func run(): int { let xs: [int; 5] = [1, 2, 3, 4, 5]; return total(xs); }", "total",
+                    (void *)(uintptr_t)sum_all) == 15);
+}
+
 int main(void) {
     test_an_int_argument_and_result_cross_to_c();
     test_arguments_arrive_in_order();
@@ -469,6 +496,7 @@ int main(void) {
     test_a_borrow_of_a_struct_is_a_pointer();
     test_a_str_arrives_as_its_value_struct();
     test_an_array_decays_to_a_pointer();
+    test_a_body_reads_the_length_of_an_array_it_is_given();
     test_a_borrow_of_a_scalar_is_a_pointer();
     test_c_writes_through_a_borrow();
     test_a_borrow_of_a_box_is_a_pointer();

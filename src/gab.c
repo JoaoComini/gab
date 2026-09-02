@@ -220,6 +220,23 @@ size_t gab_ctx_type_size(GabCtx *ctx, size_t index) {
     return type_registry_size_of(args->vm->env.global_scope.type_registry, function->type_args[index]);
 }
 
+int32_t gab_ctx_array_length(GabCtx *ctx, int index) {
+    const Type *type = args_param_type((Args *)ctx, index);
+
+    return type && type_kind(type) == TYPE_ARRAY ? type_array_length(type) : 0;
+}
+
+size_t gab_ctx_array_stride(GabCtx *ctx, int index) {
+    Args *args = (Args *)ctx;
+    const Type *type = args_param_type(args, index);
+
+    if (!type || type_kind(type) != TYPE_ARRAY) {
+        return 0;
+    }
+
+    return type_registry_size_of(args->vm->env.global_scope.type_registry, type_array_element(type));
+}
+
 void *gab_ctx_return(GabCtx *ctx) { return args_return_address((Args *)ctx); }
 
 void *gab_box(GabCtx *ctx) { return args_box_return((Args *)ctx); }
