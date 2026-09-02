@@ -509,14 +509,16 @@ static void test_parameter_zero_takes_the_form_it_declares() {
 }
 
 static void test_a_pointer_receiver_is_not_reached_from_another_type() {
-    assert(!test_compiles_on_vm("func f(): int {\n"
+    assert(!test_compiles_on_vm("import std;\n"
+                                "func f(): int {\n"
                                 "    let s: &str = \"hi\";\n"
                                 "    let c: String = s.clone();\n"
                                 "    return 0;\n"
                                 "}\n"));
 
-    assert(test_compiles_on_vm("func f(): int {\n"
-                               "    let o: String = \"hi\".to_owned();\n"
+    assert(test_compiles_on_vm("import std;\n"
+                               "func f(): int {\n"
+                               "    let o: String = String::from(\"hi\");\n"
                                "    let c: String = o.clone();\n"
                                "    return 0;\n"
                                "}\n"));

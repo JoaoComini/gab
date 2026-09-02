@@ -113,27 +113,33 @@ static void test_count_answers_how_many_times_the_characters_occur() {
 }
 
 static void test_string_from_gives_an_owning_copy() {
-    assert(test_run_bool("func f(): bool { let s: String = String::from(\"hi\"); return s == \"hi\"; }\n"
+    assert(test_run_bool("import std;\n"
+                         "func f(): bool { let s: String = String::from(\"hi\"); return s == \"hi\"; }\n"
                          "let r: bool = f();") == true);
 
-    assert(test_run_bool("func f(a: &str): bool { let s: String = String::from(a); return s == \"hi\"; }\n"
+    assert(test_run_bool("import std;\n"
+                         "func f(a: &str): bool { let s: String = String::from(a); return s == \"hi\"; }\n"
                          "let r: bool = f(\"hi\");") == true);
 }
 
-static void test_to_owned_gives_an_owning_copy() {
-    assert(test_run_bool("func f(): bool { let s: String = \"hi\".to_owned(); return s == \"hi\"; }\n"
+static void test_from_gives_an_owning_copy() {
+    assert(test_run_bool("import std;\n"
+                         "func f(): bool { let s: String = String::from(\"hi\"); return s == \"hi\"; }\n"
                          "let r: bool = f();") == true);
 
-    assert(test_run_bool("func f(a: &str): bool { let s: String = a.to_owned(); return s == \"hi\"; }\n"
+    assert(test_run_bool("import std;\n"
+                         "func f(a: &str): bool { let s: String = String::from(a); return s == \"hi\"; }\n"
                          "let r: bool = f(\"hi\");") == true);
 
-    assert(test_run_bool("func f(): bool { let j: String = \"ab\".to_owned(); let s: String = j.clone(); "
+    assert(test_run_bool("import std;\n"
+                         "func f(): bool { let j: String = String::from(\"ab\"); let s: String = j.clone(); "
                          "return s == \"ab\"; }\n"
                          "let r: bool = f();") == true);
 }
 
 static void test_an_owned_copy_is_released_where_its_slot_dies() {
-    TestProgram program = test_compile("func f(): int { let s: String = \"hi\".to_owned(); return 0; }\n");
+    TestProgram program = test_compile("import std;\n"
+                                       "func f(): int { let s: String = String::from(\"hi\"); return 0; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
@@ -143,22 +149,27 @@ static void test_an_owned_copy_is_released_where_its_slot_dies() {
 }
 
 static void test_cloning_an_empty_string_is_empty() {
-    assert(test_run_bool("func f(): bool { let s: String = \"\".to_owned(); return s.is_empty(); }\n"
+    assert(test_run_bool("import std;\n"
+                         "func f(): bool { let s: String = String::from(\"\"); return s.is_empty(); }\n"
                          "let r: bool = f();") == true);
 }
 
 static void test_push_adds_one_character() {
-    assert(test_run_int("func f(): int { let s: String = \"ab\".to_owned(); s.push(99); return s.len(); }\n"
-                        "let r: int = f();") == 3);
+    assert(
+        test_run_int("import std;\n"
+                     "func f(): int { let s: String = String::from(\"ab\"); s.push(99); return s.len(); }\n"
+                     "let r: int = f();") == 3);
 
-    assert(test_run_bool("func f(): bool { let s: String = \"ab\".to_owned(); s.push(99); "
+    assert(test_run_bool("import std;\n"
+                         "func f(): bool { let s: String = String::from(\"ab\"); s.push(99); "
                          "return s == \"abc\"; }\n"
                          "let r: bool = f();") == true);
 }
 
 static void test_pushing_past_the_capacity_keeps_the_characters() {
-    assert(test_run_int("func f(): int {\n"
-                        "    let s: String = \"\".to_owned();\n"
+    assert(test_run_int("import std;\n"
+                        "func f(): int {\n"
+                        "    let s: String = String::from(\"\");\n"
                         "    for let i: int = 0; i < 64; i = i + 1 { s.push(97); }\n"
                         "    return s.len();\n"
                         "}\n"
@@ -166,20 +177,23 @@ static void test_pushing_past_the_capacity_keeps_the_characters() {
 }
 
 static void test_append_spells_one_string_after_the_other() {
-    assert(test_run_bool("func f(): bool { let s: String = \"ab\".to_owned(); s.append(\"cd\"); "
+    assert(test_run_bool("import std;\n"
+                         "func f(): bool { let s: String = String::from(\"ab\"); s.append(\"cd\"); "
                          "return s == \"abcd\"; }\n"
                          "let r: bool = f();") == true);
 }
 
 static void test_appending_an_empty_string_changes_nothing() {
-    assert(test_run_bool("func f(): bool { let s: String = \"ab\".to_owned(); s.append(\"\"); "
+    assert(test_run_bool("import std;\n"
+                         "func f(): bool { let s: String = String::from(\"ab\"); s.append(\"\"); "
                          "return s == \"ab\"; }\n"
                          "let r: bool = f();") == true);
 }
 
 static void test_a_string_assembled_by_appending_owns_its_characters() {
-    assert(test_run_bool("func greet(name: &str): String {\n"
-                         "    let line: String = \"hello, \".to_owned();\n"
+    assert(test_run_bool("import std;\n"
+                         "func greet(name: &str): String {\n"
+                         "    let line: String = String::from(\"hello, \");\n"
                          "    line.append(name);\n"
                          "    return line;\n"
                          "}\n"
@@ -188,7 +202,7 @@ static void test_a_string_assembled_by_appending_owns_its_characters() {
 }
 
 int main(void) {
-    test_to_owned_gives_an_owning_copy();
+    test_from_gives_an_owning_copy();
     test_string_from_gives_an_owning_copy();
     test_cloning_an_empty_string_is_empty();
     test_an_owned_copy_is_released_where_its_slot_dies();

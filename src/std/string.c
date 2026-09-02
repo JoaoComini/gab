@@ -1,4 +1,5 @@
-#include "builtin/builtin.h"
+#include "library.h"
+#include "std/std.h"
 
 #include "compile.h"
 #include "object.h"
@@ -133,12 +134,6 @@ static void string_append(Args *args) {
     DEFAULT_ALLOCATOR.free(DEFAULT_ALLOCATOR.ctx, copy, (size_t)other.length);
 }
 
-static void string_to_owned(Args *args) {
-    GabStrRef string = args_string(args, 0);
-
-    args_return_string_copy(args, string.data, string.length);
-}
-
 static void string_clone(Args *args) {
     GabStringValue string = args_string_at(args, 0);
 
@@ -151,7 +146,7 @@ static void string_from(Args *args) {
     args_return_string_copy(args, string.data, string.length);
 }
 
-static const char PRELUDE_STR[] = "module " GAB_PRELUDE_MODULE ";\n"
+static const char PRELUDE_SRC[] = "module " GAB_PRELUDE_MODULE ";\n"
                                   "impl str {\n"
                                   "    extern func len(self: &str): int;\n"
                                   "    extern func is_empty(self: &str): bool;\n"
@@ -161,10 +156,9 @@ static const char PRELUDE_STR[] = "module " GAB_PRELUDE_MODULE ";\n"
                                   "    extern func contains(self: &str, needle: &str): bool;\n"
                                   "    extern func index_of(self: &str, needle: &str): int;\n"
                                   "    extern func count(self: &str, needle: &str): int;\n"
-                                  "    extern func to_owned(self: &str): String;\n"
                                   "}\n";
 
-static void string_register_str_externs(VM *vm) {
+static void string_register_str(VM *vm) {
     static const struct {
         const char *name;
         GabExternFn body;
@@ -177,31 +171,20 @@ static void string_register_str_externs(VM *vm) {
         {"contains", string_contains},
         {"index_of", string_index_of},
         {"count", string_count},
-        {"to_owned", string_to_owned},
     };
 
+    GabLibrary prelude = library_open(vm, GAB_PRELUDE_MODULE, true);
+
     for (size_t i = 0; i < sizeof(METHODS) / sizeof(*METHODS); i++) {
-        GabError err;
-
-        bool bound =
-            gab_extern((GabVM *)vm, GAB_PRELUDE_MODULE, "str", METHODS[i].name, METHODS[i].body, &err);
-
-        assert(bound && "the prelude binds each of its externs once");
-        (void)bound;
+        library_extern(&prelude, "str", METHODS[i].name, METHODS[i].body);
     }
 
-    Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, vm->env.compile_arena, GAB_PRELUDE_MODULE);
-
-    bool loaded = compile_load_prelude(vm, PRELUDE_STR, &diagnostics);
-
-    assert(loaded && "the prelude compiles");
-    (void)loaded;
-
-    diagnostics_free(&diagnostics);
+    library_declare_source(&prelude, PRELUDE_SRC);
 }
 
-void builtin_register_string(VM *vm) {
+void std_register_string(VM *vm) {
+    GabLibrary std = library_open(vm, GAB_STD_MODULE, false);
+
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
     const TypeFieldSpec fields[] = {
@@ -217,7 +200,7 @@ void builtin_register_string(VM *vm) {
          .size = sizeof(int32_t)},
     };
 
-    const BuiltinTypeSpec spec = {
+    const LibraryTypeSpec spec = {
         .name = "String",
         .fields = fields,
         .field_count = sizeof(fields) / sizeof(*fields),
@@ -226,7 +209,7 @@ void builtin_register_string(VM *vm) {
         .lent_part_count = sizeof(characters_named_by) / sizeof(*characters_named_by),
     };
 
-    const Type *string_type = type_registry_apply(registry, builtin_declare(vm, &spec), NULL, 0);
+    const Type *string_type = type_registry_apply(registry, library_type(&std, &spec), NULL, 0);
 
     const Type *str_type = type_registry_ref_to(registry, type_registry_get_primitive(registry, TYPE_STR));
 
@@ -235,14 +218,14 @@ void builtin_register_string(VM *vm) {
     const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
     const Type *const string_param[] = {str_type};
 
-    string_register_str_externs(vm);
+    string_register_str(vm);
 
-    builtin_register_static(vm, string_type, "from", string_from, string_type, string_param, 1);
+    library_static(&std, string_type, "from", string_from, string_type, string_param, 1);
 
     const Type *const char_param[] = {int_type};
 
-    builtin_register_method(vm, string_type, ref_string, "push", string_push, NULL, char_param, 1);
-    builtin_register_method(vm, string_type, ref_string, "append", string_append, NULL, string_param, 1);
+    library_method(&std, string_type, ref_string, "push", string_push, NULL, char_param, 1);
+    library_method(&std, string_type, ref_string, "append", string_append, NULL, string_param, 1);
 
-    builtin_register_method(vm, string_type, ref_string, "clone", string_clone, string_type, NULL, 0);
+    library_method(&std, string_type, ref_string, "clone", string_clone, string_type, NULL, 0);
 }

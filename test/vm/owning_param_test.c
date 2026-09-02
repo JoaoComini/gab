@@ -144,20 +144,23 @@ static void test_a_method_parameter_may_own() {
 }
 
 static void test_a_by_value_parameter_takes_ownership() {
-    assert(test_compiles_on_vm("func take(s: String): int { return 0; }\n"
+    assert(test_compiles_on_vm("import std;\n"
+                               "func take(s: String): int { return 0; }\n"
                                "func main(): int {\n"
                                "    let s: String = String::from(\"hi\");\n"
                                "    return take(s);\n"
                                "}\n"));
 
-    assert(!test_compiles_on_vm("func take(s: String): int { return 0; }\n"
+    assert(!test_compiles_on_vm("import std;\n"
+                                "func take(s: String): int { return 0; }\n"
                                 "func main(): int {\n"
                                 "    let s: String = String::from(\"hi\");\n"
                                 "    take(s);\n"
                                 "    return take(s);\n"
                                 "}\n"));
 
-    assert(test_compiles_on_vm("func take(s: *String): int { return 0; }\n"
+    assert(test_compiles_on_vm("import std;\n"
+                               "func take(s: *String): int { return 0; }\n"
                                "func main(): int {\n"
                                "    let s: *String = box String::from(\"\");\n"
                                "    return take(s);\n"

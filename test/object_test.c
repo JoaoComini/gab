@@ -307,7 +307,7 @@ static void test_freeing_null_is_a_no_op() {
 static void test_a_block_is_freed_with_the_size_it_was_reserved_with() {
     VM *vm = vm_create();
 
-    Scope *scope = &vm->env.global_scope;
+    Scope *scope = test_std_scope(vm);
     TypeRegistry *registry = scope->type_registry;
 
     const Type *owning = scope_type_lookup(scope, string_from_cstr(&vm->env.strings, "String"));
@@ -333,7 +333,7 @@ static void test_a_string_owns_and_a_reference_to_one_does_not() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope *scope = &vm->env.global_scope;
+    Scope *scope = test_std_scope(vm);
     TypeRegistry *registry = scope->type_registry;
 
     const Type *owning = scope_type_lookup(scope, string_from_cstr(&vm->env.strings, "String"));

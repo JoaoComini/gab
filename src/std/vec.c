@@ -1,4 +1,5 @@
-#include "builtin/builtin.h"
+#include "library.h"
+#include "std/std.h"
 
 #include "allocator.h"
 #include "arena.h"
@@ -11,24 +12,24 @@
 #include <stdint.h>
 #include <string.h>
 
-static const TypeDecl *vec_declare_type(VM *vm) {
-    TypeRegistry *registry = vm->env.global_scope.type_registry;
+static const TypeDecl *vec_declare_type(GabLibrary *lib) {
+    TypeRegistry *registry = lib->vm->env.global_scope.type_registry;
 
     const TypeFieldSpec fields[] = {
         {
-            .name = string_from_cstr(&vm->env.strings, "data"),
+            .name = string_from_cstr(&lib->vm->env.strings, "data"),
             .type = type_registry_block_of(registry, type_registry_param(registry, 0)),
         },
     };
 
-    const BuiltinTypeSpec spec = {
+    const LibraryTypeSpec spec = {
         .name = "Vec",
         .param_count = 1,
         .fields = fields,
         .field_count = sizeof(fields) / sizeof(*fields),
     };
 
-    return builtin_declare(vm, &spec);
+    return library_type(lib, &spec);
 }
 
 typedef struct {
@@ -112,8 +113,10 @@ static void vec_new(Args *args) {
     args_return_struct(args, &vec, sizeof vec);
 }
 
-void builtin_register_vec(VM *vm) {
-    const TypeDecl *vec_def = vec_declare_type(vm);
+void std_register_vec(VM *vm) {
+    GabLibrary std = library_open(vm, GAB_STD_MODULE, false);
+
+    const TypeDecl *vec_def = vec_declare_type(&std);
 
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
@@ -126,11 +129,11 @@ void builtin_register_vec(VM *vm) {
     const Type *const push_params[] = {element};
     const Type *const at_params[] = {an_int};
 
-    builtin_register_method(vm, self, receiver, "push", vec_push, NULL, push_params, 1);
-    builtin_register_method(vm, self, receiver, "at", vec_at, element, at_params, 1);
-    builtin_register_method(vm, self, receiver, "len", vec_len, an_int, NULL, 0);
+    library_method(&std, self, receiver, "push", vec_push, NULL, push_params, 1);
+    library_method(&std, self, receiver, "at", vec_at, element, at_params, 1);
+    library_method(&std, self, receiver, "len", vec_len, an_int, NULL, 0);
 
     const Type *const new_params[] = {an_int};
 
-    builtin_register_static(vm, self, "new", vec_new, self, new_params, 1);
+    library_static(&std, self, "new", vec_new, self, new_params, 1);
 }

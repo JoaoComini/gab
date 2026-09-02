@@ -38,6 +38,8 @@ typedef struct Scope {
 
 #define GAB_PRELUDE_MODULE "prelude"
 
+#define GAB_STD_MODULE "std"
+
 Scope *scope_create(Arena *arena, StringPool *strings, Scope *parent);
 void scope_init(Scope *scope, Arena *arena, StringPool *strings, Scope *parent);
 

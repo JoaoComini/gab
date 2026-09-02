@@ -19,6 +19,10 @@
 #include <stdint.h>
 #include <string.h>
 
+static inline Scope *test_std_scope(VM *vm) {
+    return environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, GAB_STD_MODULE));
+}
+
 static inline void test_run(const char *source, void *out, size_t width) {
     VM *vm = vm_create();
 

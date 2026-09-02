@@ -137,6 +137,32 @@ static Scope *resolver_expr_scope(ResolverState *state, StringRef name) {
     return existing ? *existing : NULL;
 }
 
+static Resolution resolver_resolve_name(ResolverState *state, Scope *scope, String *name) {
+    Resolution resolution = scope ? scope_resolve(scope, name) : (Resolution){0};
+
+    if (resolution.kind != RESOLUTION_NONE || scope != state->current_scope || !state->module_scopes) {
+        return resolution;
+    }
+
+    for (size_t i = 0; i < state->imports->size; i++) {
+        String *module = string_from_ref(state->current_scope->strings, state->imports->data[i].name);
+
+        Scope **imported = module_scope_map_lookup(state->module_scopes, module);
+
+        if (!imported) {
+            continue;
+        }
+
+        Resolution found = scope_resolve(*imported, name);
+
+        if (found.kind != RESOLUTION_NONE) {
+            return found;
+        }
+    }
+
+    return resolution;
+}
+
 static String *resolver_expr_member(ResolverState *state, StringRef name) {
     StringRef module, member;
 
@@ -1516,7 +1542,8 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
 
         String *base_name = base_scope ? resolver_expr_member(state, expr->apply.base->name) : NULL;
 
-        Resolution base_resolution = base_name ? scope_resolve(base_scope, base_name) : (Resolution){0};
+        Resolution base_resolution =
+            base_name ? resolver_resolve_name(state, base_scope, base_name) : (Resolution){0};
 
         const TypeDecl *base_decl =
             base_resolution.kind == RESOLUTION_TYPE_DECL ? base_resolution.decl : NULL;
@@ -1631,8 +1658,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
 
     Scope *scope = resolver_expr_scope(state, expr->name);
 
-    Resolution resolution =
-        scope ? scope_resolve(scope, resolver_expr_member(state, expr->name)) : (Resolution){0};
+    Resolution resolution = resolver_resolve_name(state, scope, resolver_expr_member(state, expr->name));
 
     const Type *type = resolution_type(registry, resolution);
 
@@ -2084,7 +2110,8 @@ static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
             return NULL;
         }
     } else {
-        Resolution resolution = scope_resolve(state->current_scope, resolver_intern(state, owner_ref));
+        Resolution resolution =
+            resolver_resolve_name(state, state->current_scope, resolver_intern(state, owner_ref));
 
         if (resolution.kind == RESOLUTION_TYPE_DECL && resolution.decl->param_count > 0) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "'%s' takes %zu type argument(s), not 0",

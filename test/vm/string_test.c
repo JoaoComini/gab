@@ -6,8 +6,10 @@
 #include <string.h>
 
 static void test_string_names_a_type() {
-    assert(test_compiles_on_vm("func f(s: &String): int { return 0; }\n"));
-    assert(test_compiles_on_vm("struct Person { name: String }\n"));
+    assert(test_compiles_on_vm("import std;\n"
+                               "func f(s: &String): int { return 0; }\n"));
+    assert(test_compiles_on_vm("import std;\n"
+                               "struct Person { name: String }\n"));
 }
 
 static void test_a_literal_is_a_string() {
@@ -22,7 +24,7 @@ static void test_a_string_is_an_address_and_a_length() {
 
     VM *vm = vm_create();
 
-    Scope *scope_ptr = &vm->env.global_scope;
+    Scope *scope_ptr = test_std_scope(vm);
 
     const Type *string_type = scope_type_lookup(scope_ptr, string_from_cstr(&vm->env.strings, "String"));
 
@@ -43,7 +45,7 @@ static void test_a_string_is_one_owning_field() {
 
     VM *vm = vm_create();
 
-    Scope *scope_ptr = &vm->env.global_scope;
+    Scope *scope_ptr = test_std_scope(vm);
 
     const Type *string_type = scope_type_lookup(scope_ptr, string_from_cstr(&vm->env.strings, "String"));
 
@@ -84,8 +86,9 @@ static void test_equal_strings_compare_equal() {
 }
 
 static void test_equal_characters_at_different_addresses() {
-    assert(test_run_bool("func f(): bool {\n"
-                         "    let o: String = \"hi\".to_owned();\n"
+    assert(test_run_bool("import std;\n"
+                         "func f(): bool {\n"
+                         "    let o: String = String::from(\"hi\");\n"
                          "    let a: &str = o;\n"
                          "    let b: &str = \"hi\";\n"
                          "    return a == b;\n"
@@ -138,8 +141,9 @@ static void test_a_struct_field_borrows_its_characters() {
 
 static void test_an_owning_string_field_is_released() {
     TestProgram program =
-        test_compile("struct Doc { body: String }\n"
-                     "func f(a: &str): int { let d = Doc { body: a.to_owned() }; return 0; }\n");
+        test_compile("import std;\n"
+                     "struct Doc { body: String }\n"
+                     "func f(a: &str): int { let d = Doc { body: String::from(a) }; return 0; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
@@ -148,74 +152,87 @@ static void test_an_owning_string_field_is_released() {
     test_program_free(&program);
 
     assert(test_run_bool(
+               "import std;\n"
                "struct Doc { body: String }\n"
-               "func f(a: &str): bool { let d = Doc { body: a.to_owned() }; return d.body == \"ab\"; }\n"
+               "func f(a: &str): bool { let d = Doc { body: String::from(a) }; return d.body == \"ab\"; }\n"
                "let r: bool = f(\"ab\");") == true);
 }
 
 static void test_binding_an_owning_string_transfers_it() {
-    assert(!test_compiles_on_vm("func f(v: &str): int { let a: String = v.to_owned(); let b: String = a; "
+    assert(!test_compiles_on_vm("import std;\n"
+                                "func f(v: &str): int { let a: String = String::from(v); let b: String = a; "
                                 "return a.len(); }\n"));
 
     assert(test_compiles_on_vm(
-        "func f(v: &str): int { let a: String = v.to_owned(); let b: String = a; return b.len(); }\n"));
+        "import std;\n"
+        "func f(v: &str): int { let a: String = String::from(v); let b: String = a; return b.len(); }\n"));
 }
 
 static void test_reassigning_a_string_frees_the_old_characters() {
-    assert(
-        test_run_bool("func f(a: &str): bool { let s: String = a.to_owned(); s = \"d\".to_owned(); return s "
-                      "== \"d\"; }\n"
-                      "let r: bool = f(\"ab\");") == true);
+    assert(test_run_bool(
+               "import std;\n"
+               "func f(a: &str): bool { let s: String = String::from(a); s = String::from(\"d\"); return s "
+               "== \"d\"; }\n"
+               "let r: bool = f(\"ab\");") == true);
 }
 
 static void test_a_string_declared_empty_is_freed_once() {
-    assert(test_run_int("func f(): int {\n"
+    assert(test_run_int("import std;\n"
+                        "func f(): int {\n"
                         "    let s: String = String::from(\"\");\n"
-                        "    s = \"ab\".to_owned();\n"
+                        "    s = String::from(\"ab\");\n"
                         "    return s.len();\n"
                         "}\n"
                         "let r: int = f();") == 2);
 }
 
 static void test_a_new_string_is_empty() {
-    assert(test_run_int("func f(): int { let s: *String = box String::from(\"\"); return (*s).len(); }\n"
+    assert(test_run_int("import std;\n"
+                        "func f(): int { let s: *String = box String::from(\"\"); return (*s).len(); }\n"
                         "let r: int = f();") == 0);
 
     assert(
-        test_run_bool("func f(): bool { let s: *String = box String::from(\"\"); return (*s).is_empty(); }\n"
+        test_run_bool("import std;\n"
+                      "func f(): bool { let s: *String = box String::from(\"\"); return (*s).is_empty(); }\n"
                       "let r: bool = f();") == true);
 }
 
 static void test_a_boxed_string_holds_what_is_stored_through_it() {
-    assert(
-        test_run_bool("func f(a: &str): bool { let s: *String = box String::from(\"\"); *s = a.to_owned(); "
-                      "return *s == \"ab\"; }\n"
-                      "let r: bool = f(\"ab\");") == true);
+    assert(test_run_bool(
+               "import std;\n"
+               "func f(a: &str): bool { let s: *String = box String::from(\"\"); *s = String::from(a); "
+               "return *s == \"ab\"; }\n"
+               "let r: bool = f(\"ab\");") == true);
 
     assert(test_run_bool(
-               "func f(a: &str): bool { let s: *String = box String::from(\"\"); *s = a.to_owned(); *s = "
-               "\"d\".to_owned(); "
+               "import std;\n"
+               "func f(a: &str): bool { let s: *String = box String::from(\"\"); *s = String::from(a); *s = "
+               "String::from(\"d\"); "
                "return *s == \"d\"; }\n"
                "let r: bool = f(\"ab\");") == true);
 }
 
 static void test_a_heap_struct_frees_its_string_field() {
-    assert(test_run_bool("struct D { b: String }\n"
+    assert(test_run_bool("import std;\n"
+                         "struct D { b: String }\n"
                          "func f(a: &str): bool { let d: *D = box D { b: String::from(\"\") }; d.b = "
-                         "a.to_owned(); return d.b == \"ab\"; }\n"
+                         "String::from(a); return d.b == \"ab\"; }\n"
                          "let r: bool = f(\"ab\");") == true);
 }
 
 static void test_an_owning_string_slot_refuses_a_borrow() {
     assert(!test_compiles_on_vm(
+        "import std;\n"
         "func f(): int { let s: *String = box String::from(\"\"); *s = \"ab\"; return 0; }\n"));
 
     assert(!test_compiles_on_vm(
+        "import std;\n"
         "func f(a: &str): int { let s: *String = box String::from(\"\"); *s = a; return 0; }\n"));
 }
 
 static void test_refusing_a_borrow_names_the_remedy() {
-    assert(!test_compiles_on_vm("func f(): int { let a: String = \"hi\"; return 0; }\n"));
+    assert(!test_compiles_on_vm("import std;\n"
+                                "func f(): int { let a: String = \"hi\"; return 0; }\n"));
 
     assert(test_compiles("func f(): int { let a: &str = \"hi\"; return 0; }\n"));
 }
@@ -235,7 +252,8 @@ static void test_a_literal_borrows() {
 }
 
 static void test_an_owning_string_refuses_a_borrow() {
-    assert(!test_compiles_on_vm("func f(): int { let s: String = \"hi\"; return 0; }\n"));
+    assert(!test_compiles_on_vm("import std;\n"
+                                "func f(): int { let s: String = \"hi\"; return 0; }\n"));
 }
 
 int main(void) {

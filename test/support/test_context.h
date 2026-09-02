@@ -29,7 +29,24 @@ static inline const char *test_in_a_module(const char *source) {
         return source;
     }
 
-    int written = snprintf(buffer, sizeof(buffer), "module test;\n%s", source);
+    /* A generated 'module' must precede the imports the source opens with. */
+    const char *imports = source;
+    size_t import_length = 0;
+
+    while (strncmp(source + import_length, "import ", 7) == 0) {
+        const char *end = strchr(source + import_length, '\n');
+
+        if (!end) {
+            break;
+        }
+
+        import_length = (size_t)(end + 1 - source);
+    }
+
+    source += import_length;
+
+    int written =
+        snprintf(buffer, sizeof(buffer), "module test;\n%.*s%s", (int)import_length, imports, source);
 
     assert(written > 0 && (size_t)written < sizeof(buffer));
 

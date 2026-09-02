@@ -177,12 +177,12 @@ word and a `&str` is two. What decides is the pointee, never the reference.
 A `&String` is therefore a different thing again: `String` is sized, so a
 reference to one is the plain address of a slot holding a header. Nothing
 converts it to a `&str` implicitly — deref it and the `String` lends from
-there. A literal borrows the arena; `to_owned()` allocates a `String` that the
-slot it lands in frees:
+there. A literal borrows the arena; `String::from()` allocates a `String` that
+the slot it lands in frees:
 
 ```
 func greet(name: &str): String {
-    let line: String = "hello, ".to_owned();
+    let line: String = String::from("hello, ");
     line.append(name);            // grows in place; the caller owns the result
     return line;
 }
@@ -190,14 +190,13 @@ func greet(name: &str): String {
 let banner: &str = "gab";      // borrows the arena, frees nothing
 ```
 
-`to_owned()` copies the characters a borrow names into a string that owns them,
-which is how anything arena-backed becomes something a `String` slot may hold.
-It is named for what it produces rather than `clone`, since it does not hand
-back its own type: a `&str` yields a `String`.
+`String::from()` copies the characters a borrow names into a string that owns
+them, which is how anything arena-backed becomes something a `String` slot may
+hold.
 
 ```
 let borrowed: &str = "ab";            // borrows the arena
-let copied: String = "ab".to_owned();    // copies the arena's characters
+let copied: String = String::from("ab");   // copies the arena's characters
 ```
 
 A `String` owns a block of characters and counts how many of them are live, the
@@ -208,7 +207,7 @@ when the live characters fill it. What it lends out is unchanged — a `&str`
 is where the characters are and how many, never the capacity they sit in.
 
 ```
-let mut: String = "ab".to_owned();
+let mut: String = String::from("ab");
 mut.push(99);                            // 'abc'
 mut.append("de");                        // 'abcde'
 ```
@@ -296,7 +295,8 @@ tracks that. So a struct local is written as a literal rather than declared
 empty and filled in: `let p: Point;` is refused, and the fields a literal cannot
 spell are reached through what does spell them — `box v` for an owning field, a
 borrow of a live value for a `ref`, `String::from` and `Vec<T>::new` for the
-library's types.
+library's types. Those two live in `std`, so a unit that names them opens with
+`import std;`; `str` and the other primitives need no import.
 
 A generic struct names its arguments the way its type does, as
 `Holder<int> { value: 4 }`.
@@ -347,7 +347,7 @@ let g = h.clone();   // 'h' is still live; 'g' owns a separate object
 ```
 
 `&str` has no `clone`, since a reference already copies by assignment; what it
-needs is `to_owned()`, which changes the type rather than duplicating it.
+needs is `String::from()`, which changes the type rather than duplicating it.
 
 Whether a struct lives on the heap or in a frame does not change what it owns:
 an owning field is freed when the struct holding it goes out of scope, wherever
@@ -433,7 +433,7 @@ more or less, and a second spelling would say nothing the first does not.
 | Conversions | `int(x)` and `float(x)`; nothing converts implicitly |
 | Assignment | `=`, and compound `+=` `-=` `*=` `/=` `%=` on any assignable target |
 | Memory | Unique ownership, `box`, `&` borrows, binding that copies or transfers by type, scope-based free. A top-level variable may not own: nothing closes over it to free what it holds |
-| Modules | `module` names the namespace a unit declares into, `import` the ones it may name |
+| Modules | `module` names the namespace a unit declares into, `import` the ones it may name. `std` holds `String` and `Vec<T>` |
 | Externs | `extern func` declares a host body, bound by name at load |
 | Comments | `// line` and `/* block */`, which do not nest |
 
