@@ -36,7 +36,7 @@ typedef struct Scope {
     bool declares_module;
 } Scope;
 
-#define GAB_PRELUDE_MODULE "prelude"
+#define GAB_CORE_MODULE "core"
 
 #define GAB_STD_MODULE "std"
 

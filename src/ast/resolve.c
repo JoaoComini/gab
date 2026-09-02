@@ -1964,7 +1964,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
 
     if (owner_is_primitive && !state->allow_primitive_impls) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
-                   "a function on %s is declared by the runtime's prelude", type_name(state, owner));
+                   "a function on %s is declared by the runtime's core library", type_name(state, owner));
         return;
     }
 

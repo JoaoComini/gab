@@ -85,7 +85,7 @@ static void string_count(Args *args) {
     args_return_int(args, total);
 }
 
-static const char CORE_SRC[] = "module " GAB_PRELUDE_MODULE ";\n"
+static const char CORE_SRC[] = "module " GAB_CORE_MODULE ";\n"
                                "impl str {\n"
                                "    extern func len(self: &str): int;\n"
                                "    extern func is_empty(self: &str): bool;\n"
@@ -112,11 +112,11 @@ void core_register_str(VM *vm) {
         {"count", string_count},
     };
 
-    GabLibrary prelude = library_open(vm, GAB_PRELUDE_MODULE, true);
+    GabLibrary core = library_open(vm, GAB_CORE_MODULE, true);
 
     for (size_t i = 0; i < sizeof(METHODS) / sizeof(*METHODS); i++) {
-        library_extern(&prelude, "str", METHODS[i].name, METHODS[i].body);
+        library_extern(&core, "str", METHODS[i].name, METHODS[i].body);
     }
 
-    library_declare_source(&prelude, CORE_SRC);
+    library_declare_source(&core, CORE_SRC);
 }

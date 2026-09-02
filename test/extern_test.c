@@ -496,7 +496,7 @@ static void str_len(GabArgs *args) {
     gab_return_int(args, length);
 }
 
-static void test_a_prelude_method_on_a_primitive_reaches_its_host_body(void) {
+static void test_a_core_method_on_a_primitive_reaches_its_host_body(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
@@ -528,7 +528,7 @@ static void test_a_primitive_is_owned_only_by_a_host_body(void) {
     gab_vm_free(vm);
 }
 
-static void test_only_the_prelude_owns_a_primitive(void) {
+static void test_only_the_core_library_owns_a_primitive(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
@@ -544,14 +544,14 @@ static void test_only_the_prelude_owns_a_primitive(void) {
     gab_vm_free(vm);
 }
 
-static void test_naming_the_prelude_does_not_own_a_primitive(void) {
+static void test_naming_the_core_library_does_not_own_a_primitive(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "prelude", "str", "length", str_len, &err));
+    assert(gab_extern(vm, "core", "str", "length", str_len, &err));
 
     assert(!gab_load(vm, "<m>",
-                     "module prelude;\n"
+                     "module core;\n"
                      "impl str {\n"
                      "    extern func length(self: &str): int;\n"
                      "}\n",
@@ -564,10 +564,10 @@ static void test_a_qualified_name_does_not_declare_a_method(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "prelude", "str", "length", str_len, &err));
+    assert(gab_extern(vm, "core", "str", "length", str_len, &err));
 
     assert(!gab_load(vm, "<m>",
-                     "module prelude;\n"
+                     "module core;\n"
                      "extern func str::length(self: &str): int;\n",
                      &err));
 
@@ -609,10 +609,10 @@ int main(void) {
     test_a_call_reaches_the_body_its_name_declares();
     test_an_extern_may_be_owned_by_a_struct();
     test_two_types_may_own_an_extern_of_one_name();
-    test_a_prelude_method_on_a_primitive_reaches_its_host_body();
+    test_a_core_method_on_a_primitive_reaches_its_host_body();
     test_a_primitive_is_owned_only_by_a_host_body();
-    test_only_the_prelude_owns_a_primitive();
-    test_naming_the_prelude_does_not_own_a_primitive();
+    test_only_the_core_library_owns_a_primitive();
+    test_naming_the_core_library_does_not_own_a_primitive();
     test_a_qualified_name_does_not_declare_a_method();
     test_an_extern_does_not_claim_a_type_from_another_module();
 
