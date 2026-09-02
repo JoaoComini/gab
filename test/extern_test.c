@@ -560,7 +560,7 @@ static void test_naming_the_prelude_does_not_own_a_primitive(void) {
     gab_vm_free(vm);
 }
 
-static void test_naming_the_prelude_does_not_own_a_primitive(void) {
+static void test_a_qualified_name_does_not_declare_a_method(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
@@ -613,6 +613,7 @@ int main(void) {
     test_a_primitive_is_owned_only_by_a_host_body();
     test_only_the_prelude_owns_a_primitive();
     test_naming_the_prelude_does_not_own_a_primitive();
+    test_a_qualified_name_does_not_declare_a_method();
     test_an_extern_does_not_claim_a_type_from_another_module();
 
     printf("extern_test: all tests passed\n");
