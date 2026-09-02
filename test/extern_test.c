@@ -624,6 +624,46 @@ static void test_an_extern_does_not_claim_a_type_from_another_module(void) {
     gab_vm_free(vm);
 }
 
+typedef struct {
+    int32_t a;
+    int32_t b;
+} Owned;
+
+static int32_t dropped_sum = 0;
+
+static void consume(GabArgs *args) {
+    Owned *p = gab_arg_get_pointer(args, 0);
+
+    dropped_sum = p->a + p->b;
+
+    gab_drop(args, 0);
+}
+
+static void test_a_host_body_drops_an_owning_parameter(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    dropped_sum = 0;
+
+    assert(gab_extern(vm, "test", NULL, "consume", consume, &err));
+
+    assert(gab_load(vm, "<m>",
+                    "module test;\n"
+                    "struct Owned { a: int, b: int }\n"
+                    "extern func consume(p: *Owned);\n"
+                    "func run() { consume(box Owned { a: 3, b: 4 }); }\n",
+                    &err));
+
+    GabFunc *fn = gab_lookup(vm, "test", "run", &err);
+    GabCall *call = gab_call_init(fn, &err);
+
+    assert(gab_call(vm, call, NULL, &err) == GAB_OK);
+    assert(dropped_sum == 7);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
 int main(void) {
     test_an_extern_returns_to_its_caller();
     test_an_extern_may_return_nothing();
@@ -649,6 +689,7 @@ int main(void) {
     test_naming_the_core_library_does_not_own_a_primitive();
     test_a_qualified_name_does_not_declare_a_method();
     test_an_extern_does_not_claim_a_type_from_another_module();
+    test_a_host_body_drops_an_owning_parameter();
 
     printf("extern_test: all tests passed\n");
 

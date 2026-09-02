@@ -30,6 +30,11 @@ void *args_pointer(Args *args, int index);
 
 void args_struct(Args *args, int index, void *out, size_t size);
 
+void args_drop(Args *args, int index);
+
+/* A box of the declared return type's pointee, or NULL with the call failed. */
+void *args_box_return(Args *args);
+
 void args_return_int(Args *args, int32_t value);
 void args_return_float(Args *args, float value);
 void args_return_bool(Args *args, bool value);

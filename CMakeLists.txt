@@ -67,11 +67,15 @@ add_library(gab
     src/vm/chunk.c
     src/vm/vm.c
     src/vm/link.c
+    src/vm/ffi.c
     src/vm/interp.c
     src/vm/codegen.c
     src/compile.c
     src/gab.c
 )
+
+find_library(FFI_LIBRARY ffi REQUIRED)
+target_link_libraries(gab PRIVATE ${FFI_LIBRARY})
 
 find_library(MATH_LIBRARY m)
 if(MATH_LIBRARY)

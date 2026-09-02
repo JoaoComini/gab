@@ -162,6 +162,16 @@ const char *gab_arg_get_string(GabArgs *args, int index, int32_t *out_length) {
 
 void *gab_arg_get_pointer(GabArgs *args, int index) { return args_pointer(args, index); }
 
+void gab_drop(GabArgs *args, int index) { args_drop(args, index); }
+
+void gab_drop_pointer(void *pointer) {
+    if (!pointer) {
+        return;
+    }
+
+    object_free(&DEFAULT_ALLOCATOR, pointer);
+}
+
 void gab_return_int(GabArgs *args, int32_t value) { args_return_int(args, value); }
 
 void gab_return_float(GabArgs *args, float value) { args_return_float(args, value); }
@@ -180,12 +190,12 @@ void gab_error(GabArgs *args, const char *message) {
     vm_fail(args->vm, VM_RUN_ERR_EXTERN, message ? message : "the extern function failed");
 }
 
-bool gab_extern(GabVM *handle, const char *module, const char *type, const char *name, GabExternFn fn,
-                GabError *err) {
+static bool extern_bind(GabVM *handle, const char *module, const char *type, const char *name, GabExternFn fn,
+                        void *symbol, bool wants_ctx, GabError *err) {
     gab_error_clear(err);
 
-    if (!handle || !name || !fn) {
-        gab_error_set(err, 0, 0, "gab_extern requires a VM, a name, and a function");
+    if (!handle || !name || (!fn && !symbol)) {
+        gab_error_set(err, 0, 0, "binding an extern requires a VM, a name, and a function");
         return false;
     }
 
@@ -212,11 +222,56 @@ bool gab_extern(GabVM *handle, const char *module, const char *type, const char 
         }
     }
 
-    extern_binding_list_add(
-        &vm->program.extern_bindings,
-        (ExternBinding){.module = interned_module, .owner = interned_owner, .name = interned_name, .fn = fn});
+    extern_binding_list_add(&vm->program.extern_bindings, (ExternBinding){.module = interned_module,
+                                                                          .owner = interned_owner,
+                                                                          .name = interned_name,
+                                                                          .fn = fn,
+                                                                          .symbol = symbol,
+                                                                          .wants_ctx = wants_ctx});
 
     return true;
+}
+
+bool gab_extern(GabVM *handle, const char *module, const char *type, const char *name, GabExternFn fn,
+                GabError *err) {
+    return extern_bind(handle, module, type, name, fn, NULL, false, err);
+}
+
+bool gab_extern_c(GabVM *handle, const char *module, const char *type, const char *name, void *symbol,
+                  GabError *err) {
+    return extern_bind(handle, module, type, name, NULL, symbol, false, err);
+}
+
+bool gab_extern_c_ctx(GabVM *handle, const char *module, const char *type, const char *name, void *symbol,
+                      GabError *err) {
+    return extern_bind(handle, module, type, name, NULL, symbol, true, err);
+}
+
+void gab_ctx_fail(GabCtx *ctx, const char *message) { gab_error((GabArgs *)ctx, message); }
+
+size_t gab_ctx_type_count(GabCtx *ctx) { return ctx ? ((GabArgs *)ctx)->function->type_arg_count : 0; }
+
+GabTypeKind gab_ctx_type_kind(GabCtx *ctx, size_t index) {
+    const Function *function = ((GabArgs *)ctx)->function;
+
+    assert(index < function->type_arg_count && "a C body read a type argument its declaration does not have");
+
+    return (GabTypeKind)type_kind(function->type_args[index]);
+}
+
+size_t gab_ctx_type_size(GabCtx *ctx, size_t index) {
+    GabArgs *args = (GabArgs *)ctx;
+    const Function *function = args->function;
+
+    assert(index < function->type_arg_count && "a C body read a type argument its declaration does not have");
+
+    return type_registry_size_of(args->vm->env.global_scope.type_registry, function->type_args[index]);
+}
+
+void *gab_box(GabCtx *ctx) { return args_box_return((GabArgs *)ctx); }
+
+bool gab_ctx_return_string(GabCtx *ctx, const char *data, int32_t length) {
+    return args_return_string_copy((GabArgs *)ctx, data, length);
 }
 
 bool gab_load(GabVM *handle, const char *name, const char *src, GabError *err) {

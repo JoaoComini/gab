@@ -4,6 +4,7 @@
 #include "type/type.h"
 #include "vm/chunk.h"
 #include "vm/constant_pool.h"
+#include "vm/ffi.h"
 #include "vm/opcode.h"
 #include "vm/vm.h"
 #include "vm/vm_dispatch.h"
@@ -314,7 +315,11 @@ bool vm_call_extern(VM *vm, const ExternProto *proto, size_t base) {
     /* A host body may run the VM again, which moves the pointer its caller is still stepping through. */
     const Instruction *resume = vm->instruction_pointer;
 
-    proto->body(&args);
+    if (proto->body) {
+        proto->body(&args);
+    } else {
+        ffi_invoke(proto->signature, &args);
+    }
 
     vm->instruction_pointer = resume;
 

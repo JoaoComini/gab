@@ -13,6 +13,7 @@
 
 struct Binding;
 struct Type;
+struct TypeRegistry;
 
 typedef struct {
     unsigned int slot;
@@ -28,8 +29,13 @@ typedef void (*GabExternFn)(GabArgs *args);
 
 typedef struct GabArgs Args;
 
+typedef struct FfiSignature FfiSignature;
+
 typedef struct {
     GabExternFn body;
+
+    /* Set when the extern names a raw C symbol; 'body' is then NULL and the call goes through libffi. */
+    const FfiSignature *signature;
 
     const struct Function *function;
 } ExternProto;
@@ -115,7 +121,14 @@ typedef struct {
     String *module;
     String *owner;
     String *name;
+
     GabExternFn fn;
+
+    /* The raw C symbol, when this binding was made by gab_extern_c rather than gab_extern. */
+    void *symbol;
+
+    /* Whether the symbol takes a GabCtx * ahead of the parameters its declaration names. */
+    bool wants_ctx;
 } ExternBinding;
 
 GAB_LIST(ExternBindingList, extern_binding_list, ExternBinding)
@@ -136,7 +149,8 @@ typedef struct {
     ExternBindingList extern_bindings;
 } Program;
 
-bool link_check(Program *program, Unit *unit, Diagnostics *diagnostics);
+bool link_check(Program *program, Unit *unit, Arena *arena, struct TypeRegistry *types,
+                Diagnostics *diagnostics);
 
 void link_install(Program *program, Unit *unit);
 

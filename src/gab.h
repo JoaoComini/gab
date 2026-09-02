@@ -28,11 +28,59 @@ void gab_vm_free(GabVM *vm);
 
 bool gab_load(GabVM *vm, const char *name, const char *src, GabError *err);
 
+/* The values match the VM's own type kinds and are stable. */
+typedef enum {
+    GAB_TYPE_INT,
+    GAB_TYPE_FLOAT,
+    GAB_TYPE_BOOL,
+    GAB_TYPE_BYTE,
+    GAB_TYPE_PTR,
+    GAB_TYPE_STR,
+    GAB_TYPE_ARRAY,
+    GAB_TYPE_STRUCT,
+    GAB_TYPE_BOX,
+    GAB_TYPE_REF,
+    GAB_TYPE_BLOCK,
+} GabTypeKind;
+
 typedef struct GabArgs GabArgs;
 typedef void (*GabExternFn)(GabArgs *args);
 
 bool gab_extern(GabVM *vm, const char *module, const char *type, const char *name, GabExternFn fn,
                 GabError *err);
+
+/* Bind an extern to a C symbol called directly, with no shim: the declaration's types are what
+ * describe the call, so a mismatch with the symbol's real signature is undefined at the call. */
+bool gab_extern_c(GabVM *vm, const char *module, const char *type, const char *name, void *symbol,
+                  GabError *err);
+
+/* What the VM knows about one call, handed to a symbol bound by gab_extern_c_ctx as its first
+ * parameter. It is valid only for the duration of that call. */
+typedef struct GabCtx GabCtx;
+
+/* Bind a C symbol that takes a GabCtx * ahead of the parameters its declaration names. A symbol
+ * needs one only to fail the call, to allocate what it returns, or to read what a specialization
+ * chose; a symbol that does none of those is bound by gab_extern_c and keeps its own signature. */
+bool gab_extern_c_ctx(GabVM *vm, const char *module, const char *type, const char *name, void *symbol,
+                      GabError *err);
+
+/* Fail the running call with a message. The C body should return promptly; its return value is
+ * discarded, and the script sees a runtime error rather than a result. */
+void gab_ctx_fail(GabCtx *ctx, const char *message);
+
+/* What the declaration's type parameters were instantiated with, in order. One symbol serves every
+ * specialization, so these are how a body tells them apart. */
+size_t gab_ctx_type_count(GabCtx *ctx);
+GabTypeKind gab_ctx_type_kind(GabCtx *ctx, size_t index);
+size_t gab_ctx_type_size(GabCtx *ctx, size_t index);
+
+/* Allocate a box of the declared return type, owned by the script once the body returns it. Returns
+ * NULL and fails the call when there is no memory, so a body that returns the result unchecked
+ * traps rather than hands back nothing. */
+void *gab_box(GabCtx *ctx);
+
+/* Copy a string into the call's return slot, which the script then owns. */
+bool gab_ctx_return_string(GabCtx *ctx, const char *data, int32_t length);
 
 int32_t gab_arg_get_int(GabArgs *args, int index);
 float gab_arg_get_float(GabArgs *args, int index);
@@ -42,6 +90,17 @@ void gab_arg_get_struct(GabArgs *args, int index, void *out, size_t size);
 
 const char *gab_arg_get_string(GabArgs *args, int index, int32_t *out_length);
 void *gab_arg_get_pointer(GabArgs *args, int index);
+
+/* Free what an owning parameter holds. A C body is given ownership of such a parameter and nothing
+ * else will free it, so a body that neither drops it nor hands it back leaks. Dropping a parameter
+ * whose value the body has returned, or stored where the script can still reach it, frees memory the
+ * script still names. */
+void gab_drop(GabArgs *args, int index);
+
+/* Free an owning pointer a script passed to a C symbol bound by gab_extern_c, which is handed the
+ * pointer alone and so has no GabArgs to name a parameter by index. The pointer must be one the
+ * script gave up ownership of, and must not have been freed already. */
+void gab_drop_pointer(void *pointer);
 
 void gab_return_int(GabArgs *args, int32_t value);
 void gab_return_float(GabArgs *args, float value);

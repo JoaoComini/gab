@@ -132,6 +132,40 @@ void args_struct(Args *args, int index, void *out, size_t size) {
     memcpy(out, at, size);
 }
 
+void args_drop(Args *args, int index) {
+    const Type *type = NULL;
+    uint8_t *at = args_address(args, index, &type);
+
+    assert(type_registry_owns(args_registry(args), type) &&
+           "a C body dropped a parameter its declaration does not own");
+
+    object_release(&DEFAULT_ALLOCATOR, type_registry_drop_of(args_registry(args), type), at);
+
+    memset(at, 0, type_registry_size_of(args_registry(args), type));
+}
+
+void *args_box_return(Args *args) {
+    const Type *return_type = args->function->return_type;
+
+    if (!return_type || !type_owns_through_an_address(return_type)) {
+        vm_fail(args->vm, VM_RUN_ERR_EXTERN, "a C body boxed a value its declaration does not return");
+        return NULL;
+    }
+
+    TypeRegistry *registry = args_registry(args);
+    const Type *pointee = type_pointee(return_type);
+
+    void *object = object_alloc(&DEFAULT_ALLOCATOR, type_registry_size_of(registry, pointee),
+                                type_registry_drop_of(registry, pointee));
+
+    if (!object) {
+        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory boxing a return value");
+        return NULL;
+    }
+
+    return object;
+}
+
 void args_return_int(Args *args, int32_t value) { memcpy(args_return_address(args), &value, sizeof(value)); }
 
 void args_return_float(Args *args, float value) { memcpy(args_return_address(args), &value, sizeof(value)); }

@@ -5,6 +5,7 @@
 #include "scope.h"
 #include "string/string.h"
 #include "vm/chunk.h"
+#include "vm/ffi.h"
 #include "vm/interp.h"
 #include "vm/opcode.h"
 #include "vm/vm.h"
@@ -68,20 +69,20 @@ static void remap_indices(const RelocationList *relocations, const size_t *index
     }
 }
 
-static GabExternFn find_extern(const Program *program, const Function *function) {
+static const ExternBinding *find_extern(const Program *program, const Function *function) {
     for (size_t i = 0; i < program->extern_bindings.size; i++) {
         const ExternBinding *binding = &program->extern_bindings.data[i];
 
         if (binding->name == function->decl->name && binding->module == function->decl->module &&
             binding->owner == function->decl->owner) {
-            return binding->fn;
+            return binding;
         }
     }
 
     return NULL;
 }
 
-bool link_check(Program *program, Unit *unit, Diagnostics *diagnostics) {
+bool link_check(Program *program, Unit *unit, Arena *arena, TypeRegistry *types, Diagnostics *diagnostics) {
     if (program->prototypes.size + unit->prototypes.size > VM_MAX_PROTOTYPES) {
         diag_error(diagnostics, GAB_ERR_CODEGEN, (Span){0}, "too many functions in one program");
         return false;
@@ -120,15 +121,32 @@ bool link_check(Program *program, Unit *unit, Diagnostics *diagnostics) {
 
     for (size_t i = 0; i < unit->externs.size; i++) {
         const ExternRequest *request = &unit->externs.data[i];
-        GabExternFn body = find_extern(program, request->function);
+        const ExternBinding *binding = find_extern(program, request->function);
 
-        if (!body) {
+        if (!binding) {
             diag_error(diagnostics, GAB_ERR_CODEGEN, request->span,
                        "extern function '%s' was never registered", request->function->decl->name->data);
             return false;
         }
 
-        unit->extern_protos.data[request->local_index].body = body;
+        ExternProto *proto = &unit->extern_protos.data[request->local_index];
+
+        if (binding->fn) {
+            proto->body = binding->fn;
+            continue;
+        }
+
+        const char *reason = "the declaration cannot be expressed to C";
+        const FfiSignature *signature = ffi_signature_prepare(arena, types, request->function,
+                                                              binding->symbol, binding->wants_ctx, &reason);
+
+        if (!signature) {
+            diag_error(diagnostics, GAB_ERR_CODEGEN, request->span, "extern function '%s': %s",
+                       request->function->decl->name->data, reason);
+            return false;
+        }
+
+        proto->signature = signature;
     }
 
     return true;

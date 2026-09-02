@@ -54,6 +54,7 @@ set(
     vm/vm_test.c
     gab_api_test.c
     extern_test.c
+    extern_c_test.c
     host_harness_test.c
 )
 
