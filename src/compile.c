@@ -138,10 +138,10 @@ bool compile_unit(VM *vm, const char *source, FuncPrototype *out, Diagnostics *d
     return compile_unit_with(vm, source, out, false, diagnostics);
 }
 
-bool compile_load_prelude(VM *vm, const char *source, Diagnostics *diagnostics) {
+bool compile_load_library(VM *vm, const char *source, bool allow_primitive_impls, Diagnostics *diagnostics) {
     FuncPrototype compiled = {0};
 
-    if (!compile_unit_with(vm, source, &compiled, true, diagnostics)) {
+    if (!compile_unit_with(vm, source, &compiled, allow_primitive_impls, diagnostics)) {
         return false;
     }
 

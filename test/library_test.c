@@ -1,3 +1,4 @@
+#include "scope.h"
 #include "support/run.h"
 #include "vm/vm.h"
 
@@ -12,21 +13,32 @@ static void test_a_primitive_needs_no_library() {
 }
 
 static void test_a_registered_type_needs_the_library() {
-    assert(!test_compiles("func f(): int { let s: String = String::from(\"\"); return 0; }\n"));
-    assert(!test_compiles("func f(): int { let v: Vec<int> = Vec<int>::new(0); return 0; }\n"));
+    assert(!test_compiles("import std;\n"
+                          "func f(): int { let s: String = String::from(\"\"); return 0; }\n"));
+    assert(!test_compiles("import std;\n"
+                          "func f(): int { let v: Vec<int> = Vec<int>::new(0); return 0; }\n"));
+}
 
-    assert(test_compiles_on_vm("func f(): int { let s: String = String::from(\"\"); return 0; }\n"));
-    assert(test_compiles_on_vm("func f(): int { let v: Vec<int> = Vec<int>::new(0); return 0; }\n"));
+static void test_a_library_type_needs_its_import() {
+    assert(!test_compiles_on_vm("func f(): int { let s: String = String::from(\"\"); return 0; }\n"));
+    assert(!test_compiles_on_vm("func f(): int { let v: Vec<int> = Vec<int>::new(0); return 0; }\n"));
+
+    assert(test_compiles_on_vm("import std;\n"
+                               "func f(): int { let s: String = String::from(\"\"); return 0; }\n"));
+    assert(test_compiles_on_vm("import std;\n"
+                               "func f(): int { let v: Vec<int> = Vec<int>::new(0); return 0; }\n"));
 }
 
 static void test_each_vm_declares_its_own() {
     VM *first = vm_create();
     VM *second = vm_create();
 
-    const Type *here =
-        scope_type_lookup(&first->env.global_scope, string_from_cstr(&first->env.strings, "String"));
-    const Type *there =
-        scope_type_lookup(&second->env.global_scope, string_from_cstr(&second->env.strings, "String"));
+    const Type *here = scope_type_lookup(
+        environment_module_scope(&first->env, string_from_cstr(&first->env.strings, GAB_STD_MODULE)),
+        string_from_cstr(&first->env.strings, "String"));
+    const Type *there = scope_type_lookup(
+        environment_module_scope(&second->env, string_from_cstr(&second->env.strings, GAB_STD_MODULE)),
+        string_from_cstr(&second->env.strings, "String"));
 
     assert(here && there);
 
@@ -44,6 +56,7 @@ static void test_each_vm_declares_its_own() {
 int main(void) {
     test_a_primitive_needs_no_library();
     test_a_registered_type_needs_the_library();
+    test_a_library_type_needs_its_import();
     test_each_vm_declares_its_own();
 
     return 0;

@@ -122,6 +122,15 @@ static void test_a_method_on_a_declaration_serves_an_instantiation() {
                         "let r: int = f();") == 3);
 }
 
+static void test_a_parameter_of_the_impl_reaches_a_method_argument() {
+    assert(test_run_int("struct Holder<T> { value: T }\n"
+                        "impl<T> Holder<T> {\n"
+                        "    func set(h: &Holder<T>, v: T): int { h.value = v; return 0; }\n"
+                        "}\n"
+                        "func f(): int { let h = Holder<int> { value: 3 }; h.set(9); return h.value; }\n"
+                        "let r: int = f();") == 9);
+}
+
 static void test_each_instantiation_gets_its_own_body() {
     assert(test_run_int("struct Holder<T> { value: T }\n"
                         "impl<T> Holder<T> {\n"
@@ -247,6 +256,7 @@ int main() {
     test_a_generic_that_instantiates_itself_is_rejected();
     test_an_instantiation_reached_from_another_is_emitted();
     test_an_instantiation_that_owns_frees_what_it_holds();
+    test_a_parameter_of_the_impl_reaches_a_method_argument();
     test_each_instantiation_gets_its_own_body();
     test_a_function_owned_by_an_instantiation_is_called_through_it();
     test_a_method_on_a_declaration_serves_an_instantiation();

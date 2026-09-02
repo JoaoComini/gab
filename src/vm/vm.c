@@ -2,11 +2,12 @@
 
 #include "arena.h"
 #include "ast/ast.h"
-#include "builtin/builtin.h"
+#include "core/core.h"
 #include "lexer.h"
 #include "object.h"
 #include "parser.h"
 #include "scope.h"
+#include "std/std.h"
 #include "string/string.h"
 #include "type/type.h"
 #include "vm/chunk.h"
@@ -103,7 +104,8 @@ VM *vm_create() {
     vm->instruction_pointer = NULL;
     vm->error = (VmError){.status = VM_RUN_OK};
 
-    builtin_register_all(vm);
+    core_register_all(vm);
+    std_register_all(vm);
 
     return vm;
 }

@@ -144,7 +144,14 @@ const Type *resolution_type(TypeRegistry *registry, Resolution resolution) {
 }
 
 TypeBinding *scope_binding_lookup_local(Scope *scope, String *name) {
-    return type_map_lookup(scope->types, name);
+    TypeBinding *bound = type_map_lookup(scope->types, name);
+
+    /* A staging scope stands in for the module scope beneath it, so both name what this module declares. */
+    if (!bound && scope->parent && scope->depth == scope->parent->depth) {
+        return type_map_lookup(scope->parent->types, name);
+    }
+
+    return bound;
 }
 
 bool scope_declares_type(Scope *scope, String *name) {

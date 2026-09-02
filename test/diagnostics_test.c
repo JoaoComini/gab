@@ -22,7 +22,7 @@ static void compile_with_library(TestContext *ctx, const char *source) {
     ASTUnit *unit = ast_unit_create(ctx->arena);
 
     if (parser_parse(&parser, unit)) {
-        resolve_unit(ctx->arena, unit, &vm->env.global_scope, NULL, false, diagnostics);
+        resolve_unit(ctx->arena, unit, &vm->env.global_scope, vm->env.module_scopes, false, diagnostics);
     }
 
     vm_free(vm);
@@ -795,7 +795,8 @@ static void test_reports_returning_a_string_borrow_of_a_local() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile_with_library(&ctx, "func test(a: &str): &str { let s: String = String::from(\"\"); return s; }");
+    compile_with_library(&ctx, "import std;\n"
+                               "func test(a: &str): &str { let s: String = String::from(\"\"); return s; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -812,7 +813,8 @@ static void test_reports_a_string_borrow_escaping_its_block() {
     Diagnostics *diagnostics = &ctx.diagnostics;
 
     compile_with_library(
-        &ctx, "func test(a: &str) { let p: &str; { let s: String = String::from(\"\"); p = s; } }");
+        &ctx, "import std;\n"
+              "func test(a: &str) { let p: &str; { let s: String = String::from(\"\"); p = s; } }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -831,6 +833,7 @@ static void test_reports_a_string_borrow_stored_into_a_heap_object() {
 
     compile_with_library(
         &ctx,
+        "import std;\n"
         "struct Doc { body: &str }\n"
         "func test(a: &str) { let d: *Doc = box Doc { body: \"\" }; let s: String = String::from(\"\"); "
         "d.body = s; }");

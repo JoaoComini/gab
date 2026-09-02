@@ -36,7 +36,9 @@ typedef struct Scope {
     bool declares_module;
 } Scope;
 
-#define GAB_PRELUDE_MODULE "prelude"
+#define GAB_CORE_MODULE "core"
+
+#define GAB_STD_MODULE "std"
 
 Scope *scope_create(Arena *arena, StringPool *strings, Scope *parent);
 void scope_init(Scope *scope, Arena *arena, StringPool *strings, Scope *parent);

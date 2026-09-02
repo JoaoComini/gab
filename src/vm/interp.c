@@ -198,8 +198,8 @@ void vm_conditionali(uint8_t *regs, Instruction instruction, bool (*func)(int32_
 }
 
 bool vm_equals(const uint8_t *regs, size_t r1, size_t r2) {
-    GabStrRef a;
-    GabStrRef b;
+    StrRef a;
+    StrRef b;
 
     memcpy(&a, regs + r1 * VM_SLOT_SIZE, sizeof(a));
     memcpy(&b, regs + r2 * VM_SLOT_SIZE, sizeof(b));
@@ -355,7 +355,7 @@ static void vm_run_loop(VM *vm) {
 
                 const String *text = vm->program.strings.data[string_index];
 
-                GabStrRef value = {.data = text->data, .length = (int32_t)text->length};
+                StrRef value = {.data = text->data, .length = (int32_t)text->length};
 
                 memcpy(regs + rd * VM_SLOT_SIZE, &value, sizeof(value));
                 VM_NEXT();
