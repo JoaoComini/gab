@@ -34,10 +34,4 @@ typedef struct LibraryTypeSpec {
 
 const TypeDecl *library_type(Library *lib, const LibraryTypeSpec *spec);
 
-void library_method(Library *lib, const Type *declared_on, const Type *receiver, const char *name,
-                    GabExternFn body, const Type *return_type, const Type *const *params, size_t param_count);
-
-void library_static(Library *lib, const Type *declared_on, const char *name, GabExternFn body,
-                    const Type *return_type, const Type *const *params, size_t param_count);
-
 #endif
