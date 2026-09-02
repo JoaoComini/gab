@@ -423,12 +423,9 @@ static void test_a_c_symbol_returns_a_box_the_script_owns(void) {
 
 /* A method generic in its return type gets one signature per instantiation, so the same symbol
    answers at whatever width the specialization chose. */
-static int32_t holder_at(GabCtx *ctx, const void *self, int32_t index) {
-    int32_t value = 0;
-
-    memcpy(&value, (const char *)self + (size_t)index * gab_ctx_type_size(ctx, 0), gab_ctx_type_size(ctx, 0));
-
-    return value;
+static void holder_at(GabCtx *ctx, const void *self, int32_t index) {
+    memcpy(gab_ctx_return(ctx), (const char *)self + (size_t)index * gab_ctx_type_size(ctx, 0),
+           gab_ctx_type_size(ctx, 0));
 }
 
 static void test_a_generic_return_is_sized_by_its_specialization(void) {

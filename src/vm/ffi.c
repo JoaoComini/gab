@@ -36,30 +36,39 @@ struct FfiSignature {
 static ffi_type *ffi_type_of(Arena *arena, TypeRegistry *registry, const Function *function, const Type *type,
                              const char **out_reason);
 
-/* A '&str' and an array are an address and a length in one value, so C receives the value struct the
- * VM already holds -- StrRef and ArrayValue -- rather than a pointer to it. */
-static ffi_type *ffi_value_struct_type(Arena *arena, size_t length_offset, size_t size,
+/* A '&str', an array and an owning block are an address with one or two lengths in a single value,
+ * so C receives the value struct the VM already holds rather than a pointer to it. */
+static ffi_type *ffi_value_struct_type(Arena *arena, size_t int_count, const size_t *offsets, size_t size,
                                        const char **out_reason) {
     ffi_type *descriptor = arena_alloc(arena, sizeof(ffi_type));
-    ffi_type **elements = arena_alloc(arena, 3 * sizeof(ffi_type *));
+    ffi_type **elements = arena_alloc(arena, (int_count + 2) * sizeof(ffi_type *));
+    size_t *computed = arena_alloc(arena, (int_count + 1) * sizeof(size_t));
 
-    if (!descriptor || !elements) {
+    if (!descriptor || !elements || !computed) {
         *out_reason = "out of memory";
         return NULL;
     }
 
     elements[0] = &ffi_type_pointer;
-    elements[1] = &ffi_type_sint32;
-    elements[2] = NULL;
+
+    for (size_t i = 0; i < int_count; i++) {
+        elements[1 + i] = &ffi_type_sint32;
+    }
+
+    elements[int_count + 1] = NULL;
 
     *descriptor = (ffi_type){.type = FFI_TYPE_STRUCT, .elements = elements};
 
-    size_t offsets[2];
-
-    if (ffi_get_struct_offsets(FFI_DEFAULT_ABI, descriptor, offsets) != FFI_OK || descriptor->size != size ||
-        offsets[0] != 0 || offsets[1] != length_offset) {
+    if (ffi_get_struct_offsets(FFI_DEFAULT_ABI, descriptor, computed) != FFI_OK || descriptor->size != size) {
         *out_reason = "an address and a length do not reach C as the value struct the VM holds";
         return NULL;
+    }
+
+    for (size_t i = 0; i < int_count + 1; i++) {
+        if (computed[i] != offsets[i]) {
+            *out_reason = "an address and a length do not reach C as the value struct the VM holds";
+            return NULL;
+        }
     }
 
     return descriptor;
@@ -148,7 +157,8 @@ static ffi_type *ffi_type_of(Arena *arena, TypeRegistry *registry, const Functio
     case TYPE_FLOAT:
         return &ffi_type_float;
 
-    /* A bool occupies a whole int32 slot, so C sees the widened value rather than a one-byte _Bool. */
+    /* A bool is one byte in a struct but a whole widened slot on its own, which is what the VM reads
+     * a returned one from and what a parameter's slot holds. */
     case TYPE_BOOL:
         return &ffi_type_sint32;
 
@@ -171,7 +181,16 @@ static ffi_type *ffi_type_of(Arena *arena, TypeRegistry *registry, const Functio
     }
 
     if (type_is_str_ref(type)) {
-        return ffi_value_struct_type(arena, offsetof(StrRef, length), sizeof(StrRef), out_reason);
+        static const size_t offsets[] = {offsetof(StrRef, data), offsetof(StrRef, length)};
+
+        return ffi_value_struct_type(arena, 1, offsets, sizeof(StrRef), out_reason);
+    }
+
+    if (type_kind(type) == TYPE_BLOCK) {
+        static const size_t offsets[] = {offsetof(BlockValue, data), offsetof(BlockValue, capacity),
+                                         offsetof(BlockValue, length)};
+
+        return ffi_value_struct_type(arena, 2, offsets, sizeof(BlockValue), out_reason);
     }
 
     /* A borrow of a type carrying metadata is a value struct, not an address; only the bare-address
@@ -228,9 +247,22 @@ FfiSignature *ffi_signature_prepare(Arena *arena, TypeRegistry *registry, const 
         if (type_kind(function->params[i]) == TYPE_ARRAY) {
             decays |= 1u << i;
         }
+
+        /* A parameter the specialization chose has no one C type across instantiations, so the body
+         * is handed its address and reads gab_ctx_type_size bytes from it. */
+        if (function->decl->params_by_address & (1u << i)) {
+            params[1 + i] = &ffi_type_pointer;
+            decays |= 1u << i;
+        }
     }
 
-    ffi_type *result = ffi_type_of(arena, registry, function, function->return_type, out_reason);
+    /* A declaration returning what its specialization chose has no one C return type across
+     * instantiations, so the body writes the slot through gab_ctx_return and returns nothing. */
+    bool returns_by_slot = function->decl->returns_a_type_param;
+
+    ffi_type *result = returns_by_slot
+                           ? &ffi_type_void
+                           : ffi_type_of(arena, registry, function, function->return_type, out_reason);
 
     if (!result) {
         return NULL;
@@ -244,8 +276,13 @@ FfiSignature *ffi_signature_prepare(Arena *arena, TypeRegistry *registry, const 
     signature->symbol = symbol;
     signature->param_count = function->param_count;
     signature->decays = decays;
-    signature->return_width =
-        function->return_type ? type_registry_size_of(registry, function->return_type) : 0;
+    signature->return_width = (function->return_type && !returns_by_slot)
+                                  ? type_registry_size_of(registry, function->return_type)
+                                  : 0;
+
+    if (function->return_type && type_kind(function->return_type) == TYPE_BOOL) {
+        signature->return_width = sizeof(int32_t);
+    }
     signature->returns_struct = result->type == FFI_TYPE_STRUCT;
 
     return signature;

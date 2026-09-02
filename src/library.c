@@ -1,5 +1,7 @@
 #include "library.h"
 
+#include <stdio.h>
+
 #include "arena.h"
 #include "binding.h"
 #include "string/string.h"
@@ -23,10 +25,10 @@ Library library_open(VM *vm, const char *module, bool is_prelude) {
     return (Library){.vm = vm, .scope = scope, .module = module, .is_prelude = is_prelude};
 }
 
-void library_extern(Library *lib, const char *type, const char *name, GabExternFn body) {
+void library_extern(Library *lib, const char *type, const char *name, void *symbol) {
     GabError err;
 
-    bool bound = gab_extern((GabVM *)lib->vm, lib->module, type, name, body, &err);
+    bool bound = gab_extern_c((GabVM *)lib->vm, lib->module, type, name, symbol, &err);
 
     assert(bound && "a library binds each of its externs once");
     (void)bound;
@@ -38,6 +40,8 @@ void library_declare_source(Library *lib, const char *source) {
 
     bool loaded = compile_load_library(lib->vm, source, lib->is_prelude, &diagnostics);
 
+    if (!loaded && diagnostics_count(&diagnostics))
+        fprintf(stderr, "LIBFAIL %s\n", diagnostics_get(&diagnostics, 0)->message);
     assert(loaded && "a library's declarations compile");
     (void)loaded;
 

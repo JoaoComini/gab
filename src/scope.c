@@ -243,7 +243,9 @@ Binding *scope_decl_func(Scope *scope, String *name, const Type *return_type) {
 
     FuncDecl *func_decl = arena_alloc(scope->arena, sizeof(FuncDecl));
 
-    *func_decl = (FuncDecl){.name = name, .body_kind = BODY_GAB};
+    *func_decl = (FuncDecl){.name = name,
+                            .body_kind = BODY_GAB,
+                            .returns_a_type_param = return_type && type_kind(return_type) == TYPE_PARAM};
 
     binding->func = arena_alloc(scope->arena, sizeof(Function));
 

@@ -180,7 +180,7 @@ void args_return_pointer(Args *args, void *pointer) {
     memcpy(args_return_address(args), &pointer, sizeof(pointer));
 }
 
-bool args_return_string_copy(Args *args, const char *data, int32_t length) {
+bool args_string_copy(Args *args, const char *data, int32_t length, StringValue *out) {
     int32_t capacity = length == 0 ? 1 : length;
 
     char *characters = DEFAULT_ALLOCATOR.alloc(DEFAULT_ALLOCATOR.ctx, (size_t)capacity);
@@ -194,9 +194,7 @@ bool args_return_string_copy(Args *args, const char *data, int32_t length) {
         memcpy(characters, data, (size_t)length);
     }
 
-    StringValue value = {.block = {.data = characters, .capacity = capacity, .length = length}};
-
-    memcpy(args_return_address(args), &value, sizeof(value));
+    *out = (StringValue){.block = {.data = characters, .capacity = capacity, .length = length}};
 
     return true;
 }

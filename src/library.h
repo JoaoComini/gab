@@ -16,7 +16,7 @@ typedef struct Library {
 
 Library library_open(VM *vm, const char *module, bool is_prelude);
 
-void library_extern(Library *lib, const char *type, const char *name, GabExternFn body);
+void library_extern(Library *lib, const char *type, const char *name, void *symbol);
 
 void library_declare_source(Library *lib, const char *source);
 

@@ -17,25 +17,17 @@
 #include <stdint.h>
 #include <string.h>
 
-static void string_push(Args *args) {
-    StringValue string = args_string_at(args, 0);
-    int32_t character = args_int(args, 1);
-
-    if (!block_reserve(&DEFAULT_ALLOCATOR, &string.block, 1, sizeof(char))) {
-        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory growing a string");
+static void string_push(GabCtx *ctx, StringValue *self, int32_t character) {
+    if (!block_reserve(&DEFAULT_ALLOCATOR, &self->block, 1, sizeof(char))) {
+        gab_ctx_fail(ctx, "out of memory growing a string");
         return;
     }
 
-    ((char *)string.block.data)[string.block.length] = (char)character;
-    string.block.length++;
-
-    memcpy(args_pointer(args, 0), &string, sizeof(string));
+    ((char *)self->block.data)[self->block.length] = (char)character;
+    self->block.length++;
 }
 
-static void string_append(Args *args) {
-    StringValue string = args_string_at(args, 0);
-    StrRef other = args_string(args, 1);
-
+static void string_append(GabCtx *ctx, StringValue *self, StrRef other) {
     if (other.length == 0) {
         return;
     }
@@ -43,35 +35,27 @@ static void string_append(Args *args) {
     char *copy = DEFAULT_ALLOCATOR.alloc(DEFAULT_ALLOCATOR.ctx, (size_t)other.length);
 
     if (!copy) {
-        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory appending to a string");
+        gab_ctx_fail(ctx, "out of memory appending to a string");
         return;
     }
 
     memcpy(copy, other.data, (size_t)other.length);
 
-    if (block_reserve(&DEFAULT_ALLOCATOR, &string.block, other.length, sizeof(char))) {
-        memcpy((char *)string.block.data + string.block.length, copy, (size_t)other.length);
-        string.block.length += other.length;
-
-        memcpy(args_pointer(args, 0), &string, sizeof(string));
+    if (block_reserve(&DEFAULT_ALLOCATOR, &self->block, other.length, sizeof(char))) {
+        memcpy((char *)self->block.data + self->block.length, copy, (size_t)other.length);
+        self->block.length += other.length;
     } else {
-        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory appending to a string");
+        gab_ctx_fail(ctx, "out of memory appending to a string");
     }
 
     DEFAULT_ALLOCATOR.free(DEFAULT_ALLOCATOR.ctx, copy, (size_t)other.length);
 }
 
-static void string_clone(Args *args) {
-    StringValue string = args_string_at(args, 0);
-
-    args_return_string_copy(args, string.block.data, string.block.length);
+static GabStr string_clone(GabCtx *ctx, const StringValue *self) {
+    return gab_str_copy(ctx, self->block.data, self->block.length);
 }
 
-static void string_from(Args *args) {
-    StrRef string = args_string(args, 0);
-
-    args_return_string_copy(args, string.data, string.length);
-}
+static GabStr string_from(GabCtx *ctx, StrRef text) { return gab_str_copy(ctx, text.data, text.length); }
 
 static const char STD_SRC[] = "module " GAB_STD_MODULE ";\n"
                               "impl String {\n"
@@ -111,16 +95,16 @@ void std_register_string(VM *vm) {
 
     static const struct {
         const char *name;
-        GabExternFn body;
+        void *symbol;
     } METHODS[] = {
-        {"from", string_from},
-        {"push", string_push},
-        {"append", string_append},
-        {"clone", string_clone},
+        {"from", (void *)(uintptr_t)string_from},
+        {"push", (void *)(uintptr_t)string_push},
+        {"append", (void *)(uintptr_t)string_append},
+        {"clone", (void *)(uintptr_t)string_clone},
     };
 
     for (size_t i = 0; i < sizeof(METHODS) / sizeof(*METHODS); i++) {
-        library_extern(&std, "String", METHODS[i].name, METHODS[i].body);
+        library_extern(&std, "String", METHODS[i].name, METHODS[i].symbol);
     }
 
     library_declare_source(&std, STD_SRC);

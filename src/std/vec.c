@@ -3,6 +3,7 @@
 
 #include "allocator.h"
 #include "arena.h"
+#include "gab.h"
 #include "object.h"
 #include "type/type_registry.h"
 #include "vm/args.h"
@@ -36,81 +37,64 @@ typedef struct {
     BlockValue block;
 } VecHeader;
 
-static VecHeader vec_load(Args *args) {
+static size_t vec_stride(GabCtx *ctx) { return gab_ctx_type_size(ctx, 0); }
+
+/* A slot is four bytes, so a header the stack names is not aligned for a VecHeader and is copied
+ * out and back rather than written through. */
+static void vec_push(GabCtx *ctx, void *self, const void *value) {
+    size_t stride = vec_stride(ctx);
+
     VecHeader vec;
-    memcpy(&vec, args_pointer(args, 0), sizeof(vec));
-
-    return vec;
-}
-
-static void vec_store(Args *args, const VecHeader *vec) { memcpy(args_pointer(args, 0), vec, sizeof(*vec)); }
-
-static size_t vec_stride(Args *args) {
-    const Type *receiver = NULL;
-    args_address(args, 0, &receiver);
-
-    TypeRegistry *registry = args->vm->env.global_scope.type_registry;
-
-    return type_registry_size_of(
-        registry, type_pointee(type_registry_fields_of(registry, type_pointee(receiver))->fields[0].type));
-}
-
-static void vec_push(Args *args) {
-    VecHeader vec = vec_load(args);
-    size_t stride = vec_stride(args);
+    memcpy(&vec, self, sizeof(vec));
 
     if (!block_reserve(&DEFAULT_ALLOCATOR, &vec.block, 1, stride)) {
-        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory growing a vector");
+        gab_ctx_fail(ctx, "out of memory growing a vector");
         return;
     }
-
-    const Type *element = NULL;
-    const uint8_t *value = args_address(args, 1, &element);
 
     memcpy((char *)vec.block.data + (size_t)vec.block.length * stride, value, stride);
 
     vec.block.length++;
 
-    vec_store(args, &vec);
+    memcpy(self, &vec, sizeof(vec));
 }
 
-static void vec_at(Args *args) {
-    VecHeader vec = vec_load(args);
-    int32_t index = args_int(args, 1);
+static void vec_at(GabCtx *ctx, const void *self, int32_t index) {
+    VecHeader vec;
+    memcpy(&vec, self, sizeof(vec));
 
     if (index < 0 || index >= vec.block.length) {
-        vm_fail(args->vm, VM_RUN_ERR_EXTERN, "vector index is out of range");
+        gab_ctx_fail(ctx, "vector index is out of range");
         return;
     }
 
-    size_t stride = vec_stride(args);
+    size_t stride = vec_stride(ctx);
 
-    args_return_struct(args, (const char *)vec.block.data + (size_t)index * stride, stride);
+    memcpy(gab_ctx_return(ctx), (const char *)vec.block.data + (size_t)index * stride, stride);
 }
 
-static void vec_len(Args *args) { args_return_int(args, vec_load(args).block.length); }
+static int32_t vec_len(GabCtx *ctx, const void *self) {
+    (void)ctx;
 
-static void vec_new(Args *args) {
-    int32_t count = args_int(args, 0);
+    VecHeader vec;
+    memcpy(&vec, self, sizeof(vec));
 
-    if (count < 0) {
-        vm_fail(args->vm, VM_RUN_ERR_EXTERN, "a vector cannot reserve a negative count");
-        return;
-    }
+    return vec.block.length;
+}
 
-    TypeRegistry *registry = args->vm->env.global_scope.type_registry;
-
-    size_t stride = type_registry_size_of(
-        registry, type_pointee(type_registry_fields_of(registry, args_return_type(args))->fields[0].type));
-
+static VecHeader vec_new(GabCtx *ctx, int32_t count) {
     VecHeader vec = {0};
 
-    if (count > 0 && !block_reserve(&DEFAULT_ALLOCATOR, &vec.block, count, stride)) {
-        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory reserving a vector");
-        return;
+    if (count < 0) {
+        gab_ctx_fail(ctx, "a vector cannot reserve a negative count");
+        return vec;
     }
 
-    args_return_struct(args, &vec, sizeof vec);
+    if (count > 0 && !block_reserve(&DEFAULT_ALLOCATOR, &vec.block, count, vec_stride(ctx))) {
+        gab_ctx_fail(ctx, "out of memory reserving a vector");
+    }
+
+    return vec;
 }
 
 static const char VEC_SRC[] = "module " GAB_STD_MODULE ";\n"
@@ -128,16 +112,16 @@ void std_register_vec(VM *vm) {
 
     static const struct {
         const char *name;
-        GabExternFn body;
+        void *symbol;
     } METHODS[] = {
-        {"new", vec_new},
-        {"push", vec_push},
-        {"at", vec_at},
-        {"len", vec_len},
+        {"new", (void *)(uintptr_t)vec_new},
+        {"push", (void *)(uintptr_t)vec_push},
+        {"at", (void *)(uintptr_t)vec_at},
+        {"len", (void *)(uintptr_t)vec_len},
     };
 
     for (size_t i = 0; i < sizeof(METHODS) / sizeof(*METHODS); i++) {
-        library_extern(&std, "Vec", METHODS[i].name, METHODS[i].body);
+        library_extern(&std, "Vec", METHODS[i].name, METHODS[i].symbol);
     }
 
     library_declare_source(&std, VEC_SRC);

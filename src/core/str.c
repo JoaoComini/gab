@@ -9,6 +9,7 @@
 #include "vm/interp.h"
 #include "vm/vm.h"
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -27,63 +28,66 @@ static int32_t string_find(StrRef haystack, StrRef needle, int32_t from) {
     return -1;
 }
 
-static void string_len(Args *args) { args_return_int(args, args_string(args, 0).length); }
+static int32_t string_len(GabCtx *ctx, StrRef self) {
+    (void)ctx;
 
-static void string_is_empty(Args *args) { args_return_bool(args, args_string(args, 0).length == 0); }
+    return self.length;
+}
 
-static void string_at(Args *args) {
-    StrRef string = args_string(args, 0);
-    int32_t index = args_int(args, 1);
+static int32_t string_is_empty(GabCtx *ctx, StrRef self) {
+    (void)ctx;
 
-    if (index < 0 || (size_t)index >= (size_t)string.length) {
-        vm_fail(args->vm, VM_RUN_ERR_EXTERN, "string index is out of range");
-        return;
+    return self.length == 0;
+}
+
+static int32_t string_at(GabCtx *ctx, StrRef self, int32_t index) {
+    if (index < 0 || (size_t)index >= (size_t)self.length) {
+        gab_ctx_fail(ctx, "string index is out of range");
+        return 0;
     }
 
-    args_return_int(args, (unsigned char)string.data[index]);
+    return (unsigned char)self.data[index];
 }
 
-static void string_starts_with(Args *args) {
-    StrRef string = args_string(args, 0);
-    StrRef prefix = args_string(args, 1);
+static int32_t string_starts_with(GabCtx *ctx, StrRef self, StrRef prefix) {
+    (void)ctx;
 
-    args_return_bool(args,
-                     prefix.length <= string.length && memcmp(string.data, prefix.data, prefix.length) == 0);
+    return prefix.length <= self.length && memcmp(self.data, prefix.data, prefix.length) == 0;
 }
 
-static void string_ends_with(Args *args) {
-    StrRef string = args_string(args, 0);
-    StrRef suffix = args_string(args, 1);
+static int32_t string_ends_with(GabCtx *ctx, StrRef self, StrRef suffix) {
+    (void)ctx;
 
-    args_return_bool(args,
-                     suffix.length <= string.length && memcmp(string.data + (string.length - suffix.length),
-                                                              suffix.data, suffix.length) == 0);
+    return suffix.length <= self.length &&
+           memcmp(self.data + (self.length - suffix.length), suffix.data, suffix.length) == 0;
 }
 
-static void string_contains(Args *args) {
-    args_return_bool(args, string_find(args_string(args, 0), args_string(args, 1), 0) >= 0);
+static int32_t string_contains(GabCtx *ctx, StrRef self, StrRef needle) {
+    (void)ctx;
+
+    return string_find(self, needle, 0) >= 0;
 }
 
-static void string_index_of(Args *args) {
-    args_return_int(args, string_find(args_string(args, 0), args_string(args, 1), 0));
+static int32_t string_index_of(GabCtx *ctx, StrRef self, StrRef needle) {
+    (void)ctx;
+
+    return string_find(self, needle, 0);
 }
 
-static void string_count(Args *args) {
-    StrRef string = args_string(args, 0);
-    StrRef needle = args_string(args, 1);
+static int32_t string_count(GabCtx *ctx, StrRef self, StrRef needle) {
+    (void)ctx;
 
     if (needle.length == 0) {
-        args_return_int(args, 0);
-        return;
+        return 0;
     }
 
     int32_t total = 0;
 
-    for (int32_t at = 0; (at = string_find(string, needle, at)) >= 0; at += (int32_t)needle.length) {
+    for (int32_t at = 0; (at = string_find(self, needle, at)) >= 0; at += (int32_t)needle.length) {
         total++;
     }
 
-    args_return_int(args, total);
+    return total;
 }
 
 static const char CORE_SRC[] = "module " GAB_CORE_MODULE ";\n"
@@ -101,22 +105,22 @@ static const char CORE_SRC[] = "module " GAB_CORE_MODULE ";\n"
 void core_register_str(VM *vm) {
     static const struct {
         const char *name;
-        GabExternFn body;
+        void *symbol;
     } METHODS[] = {
-        {"len", string_len},
-        {"is_empty", string_is_empty},
-        {"at", string_at},
-        {"starts_with", string_starts_with},
-        {"ends_with", string_ends_with},
-        {"contains", string_contains},
-        {"index_of", string_index_of},
-        {"count", string_count},
+        {"len", (void *)(uintptr_t)string_len},
+        {"is_empty", (void *)(uintptr_t)string_is_empty},
+        {"at", (void *)(uintptr_t)string_at},
+        {"starts_with", (void *)(uintptr_t)string_starts_with},
+        {"ends_with", (void *)(uintptr_t)string_ends_with},
+        {"contains", (void *)(uintptr_t)string_contains},
+        {"index_of", (void *)(uintptr_t)string_index_of},
+        {"count", (void *)(uintptr_t)string_count},
     };
 
     Library core = library_open(vm, GAB_CORE_MODULE, true);
 
     for (size_t i = 0; i < sizeof(METHODS) / sizeof(*METHODS); i++) {
-        library_extern(&core, "str", METHODS[i].name, METHODS[i].body);
+        library_extern(&core, "str", METHODS[i].name, METHODS[i].symbol);
     }
 
     library_declare_source(&core, CORE_SRC);

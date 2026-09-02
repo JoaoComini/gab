@@ -262,10 +262,20 @@ size_t gab_ctx_type_size(GabCtx *ctx, size_t index) {
     return type_registry_size_of(args->vm->env.global_scope.type_registry, function->type_args[index]);
 }
 
+void *gab_ctx_return(GabCtx *ctx) { return args_return_address((GabArgs *)ctx); }
+
 void *gab_box(GabCtx *ctx) { return args_box_return((GabArgs *)ctx); }
 
-bool gab_ctx_return_string(GabCtx *ctx, const char *data, int32_t length) {
-    return args_return_string_copy((GabArgs *)ctx, data, length);
+GabStr gab_str_copy(GabCtx *ctx, const char *data, int32_t length) {
+    GabStr result = {0};
+
+    StringValue value;
+
+    if (args_string_copy((GabArgs *)ctx, data, length, &value)) {
+        memcpy(&result, &value, sizeof(result));
+    }
+
+    return result;
 }
 
 bool gab_load(GabVM *handle, const char *name, const char *src, GabError *err) {

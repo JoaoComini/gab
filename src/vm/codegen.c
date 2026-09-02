@@ -1289,7 +1289,10 @@ static unsigned int codegen_variable_expr(CodegenState *state, ASTExpr *node) {
 static void codegen_emit_call(CodegenState *state, unsigned int dest, Function *callee, Span span) {
     const size_t *local = proto_map_lookup(state->local_protos, callee);
 
-    if (!local && callee->func_index == FUNCTION_NO_BODY && callee->decl->body) {
+    /* A host method's declaration has no body to reserve from, so an instantiation of one is reserved
+     * here or never: its signature is what the specialization chose. */
+    if (!local && callee->func_index == FUNCTION_NO_BODY &&
+        (callee->decl->body || callee->decl->body_kind == BODY_HOST)) {
         local = codegen_reserve_instantiated(state, callee, span);
     }
 

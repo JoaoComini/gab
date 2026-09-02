@@ -41,6 +41,6 @@ void args_return_bool(Args *args, bool value);
 void args_return_pointer(Args *args, void *pointer);
 void args_return_struct(Args *args, const void *data, size_t size);
 
-bool args_return_string_copy(Args *args, const char *data, int32_t length);
+bool args_string_copy(Args *args, const char *data, int32_t length, StringValue *out);
 
 #endif

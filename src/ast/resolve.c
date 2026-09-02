@@ -2005,6 +2005,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         .body_kind = is_host ? BODY_HOST : BODY_GAB,
         .body = stmt,
         .type_param_count = stmt->func_decl.type_param_count,
+        .returns_a_type_param = return_type && type_kind(return_type) == TYPE_PARAM,
     };
 
     Function *func = arena_alloc(resolver_owner_arena(state), sizeof(Function));
@@ -2025,6 +2026,10 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         for (size_t i = 0; i < param_count; i++) {
             func->params[i] = resolve_param_type_in(state, stmt->func_decl.params.data[i],
                                                     stmt->func_decl.type_param_count > 0);
+
+            if (func->params[i] && type_kind(func->params[i]) == TYPE_PARAM && i < 32) {
+                decl->params_by_address |= 1u << i;
+            }
         }
     }
 
@@ -2185,6 +2190,7 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
 
     if (decl) {
         decl->body_kind = stmt->func_decl.body == NULL ? BODY_HOST : BODY_GAB;
+        decl->returns_a_type_param = func_return_type && type_kind(func_return_type) == TYPE_PARAM;
 
         if (decl->body_kind == BODY_HOST) {
             decl->name = resolver_intern(state, func_name);
@@ -2202,6 +2208,9 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
             ASTField *param = stmt->func_decl.params.data[i];
 
             func->params[i] = resolve_param_type_in(state, param, stmt->func_decl.type_param_count > 0);
+            if (func->params[i] && type_kind(func->params[i]) == TYPE_PARAM && i < 32) {
+                decl->params_by_address |= 1u << i;
+            }
         }
     }
 

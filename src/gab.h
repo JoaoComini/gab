@@ -53,6 +53,13 @@ bool gab_extern(GabVM *vm, const char *module, const char *type, const char *nam
  * only for the duration of that call. */
 typedef struct GabCtx GabCtx;
 
+/* A string the script owns: the same layout the VM holds, so a body returns one by value. */
+typedef struct {
+    void *data;
+    int32_t capacity;
+    int32_t length;
+} GabStr;
+
 /* Bind an extern to a C symbol called directly, with no shim. The symbol takes a GabCtx * ahead of
  * the parameters its declaration names, and the declaration's types describe the rest of the call,
  * so a mismatch with the symbol's real signature is undefined at the call. */
@@ -69,13 +76,20 @@ size_t gab_ctx_type_count(GabCtx *ctx);
 GabTypeKind gab_ctx_type_kind(GabCtx *ctx, size_t index);
 size_t gab_ctx_type_size(GabCtx *ctx, size_t index);
 
+/* Where the call's return value goes, for a body whose declaration returns a type its specialization
+ * chose. Such a body is passed the address as its second argument, ahead of the parameters its
+ * declaration names, and writes gab_ctx_type_size bytes there rather than returning a value. */
+void *gab_ctx_return(GabCtx *ctx);
+
 /* Allocate a box of the declared return type, owned by the script once the body returns it. Returns
  * NULL and fails the call when there is no memory, so a body that returns the result unchecked
  * traps rather than hands back nothing. */
 void *gab_box(GabCtx *ctx);
 
-/* Copy a string into the call's return slot, which the script then owns. */
-bool gab_ctx_return_string(GabCtx *ctx, const char *data, int32_t length);
+/* Copy a string into memory the script owns once the body returns it. The result is the value the
+ * body returns, not a slot written behind its back. On failure the call is failed and the result is
+ * empty, so a body that returns it unchecked traps rather than hands back memory it does not own. */
+GabStr gab_str_copy(GabCtx *ctx, const char *data, int32_t length);
 
 int32_t gab_arg_get_int(GabArgs *args, int index);
 float gab_arg_get_float(GabArgs *args, int index);

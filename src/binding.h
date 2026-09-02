@@ -32,6 +32,13 @@ typedef struct FuncDecl {
 
     /* How many arguments this declaration is generic over, whether they came from an owner or itself. */
     size_t type_param_count;
+
+    /* Whether the declared return names a type parameter, so no one C return type spans its
+     * instantiations and a host body writes the slot itself. */
+    bool returns_a_type_param;
+
+    /* Which declared parameters name a type parameter, for the same reason, one bit each. */
+    uint32_t params_by_address;
 } FuncDecl;
 
 typedef struct Function {
