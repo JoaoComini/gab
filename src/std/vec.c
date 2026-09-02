@@ -113,27 +113,32 @@ static void vec_new(Args *args) {
     args_return_struct(args, &vec, sizeof vec);
 }
 
+static const char VEC_SRC[] = "module " GAB_STD_MODULE ";\n"
+                              "impl<T> Vec<T> {\n"
+                              "    extern func new(count: int): Vec<T>;\n"
+                              "    extern func push(self: &Vec<T>, value: T);\n"
+                              "    extern func at(self: &Vec<T>, index: int): T;\n"
+                              "    extern func len(self: &Vec<T>): int;\n"
+                              "}\n";
+
 void std_register_vec(VM *vm) {
     Library std = library_open(vm, GAB_STD_MODULE, false);
 
-    const TypeDecl *vec_def = vec_declare_type(&std);
+    vec_declare_type(&std);
 
-    TypeRegistry *registry = vm->env.global_scope.type_registry;
+    static const struct {
+        const char *name;
+        GabExternFn body;
+    } METHODS[] = {
+        {"new", vec_new},
+        {"push", vec_push},
+        {"at", vec_at},
+        {"len", vec_len},
+    };
 
-    const Type *element = type_registry_param(registry, 0);
-    const Type *self = type_registry_apply(registry, vec_def, &element, 1);
-    const Type *receiver = type_registry_ref_to(registry, self);
+    for (size_t i = 0; i < sizeof(METHODS) / sizeof(*METHODS); i++) {
+        library_extern(&std, "Vec", METHODS[i].name, METHODS[i].body);
+    }
 
-    const Type *an_int = type_registry_get_primitive(registry, TYPE_INT);
-
-    const Type *const push_params[] = {element};
-    const Type *const at_params[] = {an_int};
-
-    library_method(&std, self, receiver, "push", vec_push, NULL, push_params, 1);
-    library_method(&std, self, receiver, "at", vec_at, element, at_params, 1);
-    library_method(&std, self, receiver, "len", vec_len, an_int, NULL, 0);
-
-    const Type *const new_params[] = {an_int};
-
-    library_static(&std, self, "new", vec_new, self, new_params, 1);
+    library_declare_source(&std, VEC_SRC);
 }

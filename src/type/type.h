@@ -86,7 +86,6 @@ typedef enum {
 
     BODY_HOST,
 
-    BODY_NATIVE,
 } BodyKind;
 
 typedef struct TypeDecl {

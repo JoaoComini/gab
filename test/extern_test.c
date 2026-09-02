@@ -496,6 +496,39 @@ static void str_len(GabArgs *args) {
     gab_return_int(args, length);
 }
 
+static void count_of(GabArgs *args) { gab_return_int(args, 7); }
+
+static void test_each_specialization_of_a_host_method_reaches_one_body(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, "m", "Pair", "count", count_of, &err));
+
+    assert(gab_load(vm, "<m>",
+                    "module m;\n"
+                    "struct Pair<T> { a: T, b: T }\n"
+                    "impl<T> Pair<T> {\n"
+                    "    extern func count(self: &Pair<T>): int;\n"
+                    "}\n"
+                    "func run(): int {\n"
+                    "    let ints = Pair<int> { a: 1, b: 2 };\n"
+                    "    let bools = Pair<bool> { a: true, b: false };\n"
+                    "    return ints.count() + bools.count();\n"
+                    "}\n",
+                    &err));
+
+    GabFunc *fn = gab_lookup(vm, "m", "run", &err);
+    assert(fn);
+
+    GabCall *call = gab_call_init(fn, &err);
+    int32_t out = 0;
+    assert(gab_call(vm, call, &out, &err) == GAB_OK);
+    assert(out == 14);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
 static void test_a_core_method_on_a_primitive_reaches_its_host_body(void) {
     GabVM *vm = gab_vm_new();
 
@@ -610,6 +643,7 @@ int main(void) {
     test_an_extern_may_be_owned_by_a_struct();
     test_two_types_may_own_an_extern_of_one_name();
     test_a_core_method_on_a_primitive_reaches_its_host_body();
+    test_each_specialization_of_a_host_method_reaches_one_body();
     test_a_primitive_is_owned_only_by_a_host_body();
     test_only_the_core_library_owns_a_primitive();
     test_naming_the_core_library_does_not_own_a_primitive();
