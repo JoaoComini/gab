@@ -126,9 +126,6 @@ typedef struct {
 
     /* The raw C symbol, when this binding was made by gab_extern_c rather than gab_extern. */
     void *symbol;
-
-    /* Whether the symbol takes a GabCtx * ahead of the parameters its declaration names. */
-    bool wants_ctx;
 } ExternBinding;
 
 GAB_LIST(ExternBindingList, extern_binding_list, ExternBinding)

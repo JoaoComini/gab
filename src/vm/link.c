@@ -137,8 +137,8 @@ bool link_check(Program *program, Unit *unit, Arena *arena, TypeRegistry *types,
         }
 
         const char *reason = "the declaration cannot be expressed to C";
-        const FfiSignature *signature = ffi_signature_prepare(arena, types, request->function,
-                                                              binding->symbol, binding->wants_ctx, &reason);
+        const FfiSignature *signature =
+            ffi_signature_prepare(arena, types, request->function, binding->symbol, &reason);
 
         if (!signature) {
             diag_error(diagnostics, GAB_ERR_CODEGEN, request->span, "extern function '%s': %s",

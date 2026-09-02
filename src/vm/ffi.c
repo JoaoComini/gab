@@ -21,9 +21,6 @@ struct FfiSignature {
 
     size_t param_count;
 
-    /* Whether a GabCtx * leads the declared parameters. */
-    bool wants_ctx;
-
     /* An array decays to the address of its elements, so its argument is the slot itself rather than
      * what the slot holds; libffi is handed a cell pointing at it. */
     uint32_t decays;
@@ -36,7 +33,8 @@ struct FfiSignature {
     bool returns_struct;
 };
 
-static ffi_type *ffi_type_of(Arena *arena, TypeRegistry *registry, const Type *type, const char **out_reason);
+static ffi_type *ffi_type_of(Arena *arena, TypeRegistry *registry, const Function *function, const Type *type,
+                             const char **out_reason);
 
 /* A '&str' and an array are an address and a length in one value, so C receives the value struct the
  * VM already holds -- StrRef and ArrayValue -- rather than a pointer to it. */
@@ -67,9 +65,6 @@ static ffi_type *ffi_value_struct_type(Arena *arena, size_t length_offset, size_
     return descriptor;
 }
 
-/* libffi computes a struct's layout from its element list, and the language's premise is that the
- * result is the C layout the registry already recorded. Disagreement means one of the two is wrong
- * about the ABI, so the load fails rather than the call passing bytes the callee reads differently. */
 static bool ffi_struct_layout_agrees(Arena *arena, TypeRegistry *registry, const Type *type,
                                      ffi_type *descriptor, const char **out_reason) {
     const TypeFields *fields = type_registry_fields_of(registry, type);
@@ -102,8 +97,8 @@ static bool ffi_struct_layout_agrees(Arena *arena, TypeRegistry *registry, const
     return true;
 }
 
-static ffi_type *ffi_struct_type_of(Arena *arena, TypeRegistry *registry, const Type *type,
-                                    const char **out_reason) {
+static ffi_type *ffi_struct_type_of(Arena *arena, TypeRegistry *registry, const Function *function,
+                                    const Type *type, const char **out_reason) {
     const TypeFields *fields = type_registry_fields_of(registry, type);
 
     if (!fields || fields->count == 0) {
@@ -122,7 +117,7 @@ static ffi_type *ffi_struct_type_of(Arena *arena, TypeRegistry *registry, const 
     }
 
     for (size_t i = 0; i < fields->count; i++) {
-        elements[i] = ffi_type_of(arena, registry, fields->fields[i].type, out_reason);
+        elements[i] = ffi_type_of(arena, registry, function, fields->fields[i].type, out_reason);
 
         if (!elements[i]) {
             return NULL;
@@ -140,7 +135,7 @@ static ffi_type *ffi_struct_type_of(Arena *arena, TypeRegistry *registry, const 
     return descriptor;
 }
 
-static ffi_type *ffi_type_of(Arena *arena, TypeRegistry *registry, const Type *type,
+static ffi_type *ffi_type_of(Arena *arena, TypeRegistry *registry, const Function *function, const Type *type,
                              const char **out_reason) {
     if (!type) {
         return &ffi_type_void;
@@ -164,7 +159,7 @@ static ffi_type *ffi_type_of(Arena *arena, TypeRegistry *registry, const Type *t
         return &ffi_type_pointer;
 
     case TYPE_STRUCT:
-        return ffi_struct_type_of(arena, registry, type, out_reason);
+        return ffi_struct_type_of(arena, registry, function, type, out_reason);
 
     default:
         break;
@@ -192,7 +187,7 @@ static ffi_type *ffi_type_of(Arena *arena, TypeRegistry *registry, const Type *t
 }
 
 FfiSignature *ffi_signature_prepare(Arena *arena, TypeRegistry *registry, const Function *function,
-                                    void *symbol, bool wants_ctx, const char **out_reason) {
+                                    void *symbol, const char **out_reason) {
     FfiSignature *signature = arena_alloc(arena, sizeof(FfiSignature));
 
     if (!signature) {
@@ -200,8 +195,8 @@ FfiSignature *ffi_signature_prepare(Arena *arena, TypeRegistry *registry, const 
         return NULL;
     }
 
-    /* A context spends one leading element ahead of the declared parameters. */
-    size_t max_args = function->param_count + (wants_ctx ? 1 : 0);
+    /* The context spends one leading element ahead of the declared parameters. */
+    size_t max_args = function->param_count + 1;
 
     if (max_args > FFI_MAX_PARAMS) {
         *out_reason = "a C symbol cannot be declared with more than 32 parameters";
@@ -219,18 +214,14 @@ FfiSignature *ffi_signature_prepare(Arena *arena, TypeRegistry *registry, const 
         }
     }
 
-    size_t lead = wants_ctx ? 1 : 0;
-
-    if (wants_ctx) {
-        params[0] = &ffi_type_pointer;
-    }
+    params[0] = &ffi_type_pointer;
 
     uint32_t decays = 0;
 
     for (size_t i = 0; i < function->param_count; i++) {
-        params[lead + i] = ffi_type_of(arena, registry, function->params[i], out_reason);
+        params[1 + i] = ffi_type_of(arena, registry, function, function->params[i], out_reason);
 
-        if (!params[lead + i]) {
+        if (!params[1 + i]) {
             return NULL;
         }
 
@@ -239,15 +230,7 @@ FfiSignature *ffi_signature_prepare(Arena *arena, TypeRegistry *registry, const 
         }
     }
 
-    /* An owning return is only sound when the body allocates it through the VM, which needs a context
-     * to reach gab_box; without one the VM would drop memory C allocated with its own allocator. */
-    if (!wants_ctx && function->return_type && type_registry_owns(registry, function->return_type)) {
-        *out_reason = "a C symbol returning an owning value must be bound with gab_extern_c_ctx and "
-                      "allocate it with gab_box";
-        return NULL;
-    }
-
-    ffi_type *result = ffi_type_of(arena, registry, function->return_type, out_reason);
+    ffi_type *result = ffi_type_of(arena, registry, function, function->return_type, out_reason);
 
     if (!result) {
         return NULL;
@@ -260,7 +243,6 @@ FfiSignature *ffi_signature_prepare(Arena *arena, TypeRegistry *registry, const 
 
     signature->symbol = symbol;
     signature->param_count = function->param_count;
-    signature->wants_ctx = wants_ctx;
     signature->decays = decays;
     signature->return_width =
         function->return_type ? type_registry_size_of(registry, function->return_type) : 0;
@@ -273,16 +255,12 @@ void ffi_invoke(const FfiSignature *signature, Args *args) {
     void *values[FFI_MAX_PARAMS];
     void *addresses[FFI_MAX_PARAMS];
 
-    size_t lead = signature->wants_ctx ? 1 : 0;
-
-    if (signature->wants_ctx) {
-        values[0] = (void *)&args;
-    }
+    values[0] = (void *)&args;
 
     for (size_t i = 0; i < signature->param_count; i++) {
         addresses[i] = args_address(args, (int)i, NULL);
 
-        values[lead + i] = (signature->decays >> i) & 1u ? (void *)&addresses[i] : addresses[i];
+        values[1 + i] = (signature->decays >> i) & 1u ? (void *)&addresses[i] : addresses[i];
     }
 
     if (!signature->return_width) {

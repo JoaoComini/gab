@@ -191,7 +191,7 @@ void gab_error(GabArgs *args, const char *message) {
 }
 
 static bool extern_bind(GabVM *handle, const char *module, const char *type, const char *name, GabExternFn fn,
-                        void *symbol, bool wants_ctx, GabError *err) {
+                        void *symbol, GabError *err) {
     gab_error_clear(err);
 
     if (!handle || !name || (!fn && !symbol)) {
@@ -226,25 +226,19 @@ static bool extern_bind(GabVM *handle, const char *module, const char *type, con
                                                                           .owner = interned_owner,
                                                                           .name = interned_name,
                                                                           .fn = fn,
-                                                                          .symbol = symbol,
-                                                                          .wants_ctx = wants_ctx});
+                                                                          .symbol = symbol});
 
     return true;
 }
 
 bool gab_extern(GabVM *handle, const char *module, const char *type, const char *name, GabExternFn fn,
                 GabError *err) {
-    return extern_bind(handle, module, type, name, fn, NULL, false, err);
+    return extern_bind(handle, module, type, name, fn, NULL, err);
 }
 
 bool gab_extern_c(GabVM *handle, const char *module, const char *type, const char *name, void *symbol,
                   GabError *err) {
-    return extern_bind(handle, module, type, name, NULL, symbol, false, err);
-}
-
-bool gab_extern_c_ctx(GabVM *handle, const char *module, const char *type, const char *name, void *symbol,
-                      GabError *err) {
-    return extern_bind(handle, module, type, name, NULL, symbol, true, err);
+    return extern_bind(handle, module, type, name, NULL, symbol, err);
 }
 
 void gab_ctx_fail(GabCtx *ctx, const char *message) { gab_error((GabArgs *)ctx, message); }

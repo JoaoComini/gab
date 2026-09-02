@@ -1044,7 +1044,11 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
 
     size_t func_index = *local;
 
-    if (ast->function->decl->body_kind == BODY_HOST) {
+    bool is_template = (ast->owner && ast->owner->kind == TYPE_EXPR_APPLY) || ast->type_param_count > 0;
+
+    /* A template's own declaration names its type parameters rather than any type, so only its
+     * instantiations have a signature to bind; each is reserved as it is specialized. */
+    if (ast->function->decl->body_kind == BODY_HOST && !is_template) {
         state->unit->extern_protos.data[func_index] = (ExternProto){.function = ast->function};
 
         extern_request_list_add(
@@ -1054,7 +1058,9 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
         return;
     }
 
-    bool is_template = (ast->owner && ast->owner->kind == TYPE_EXPR_APPLY) || ast->type_param_count > 0;
+    if (ast->function->decl->body_kind == BODY_HOST) {
+        return;
+    }
 
     if (is_template && ast->function->instance != stmt) {
         return;

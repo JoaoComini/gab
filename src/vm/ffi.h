@@ -13,7 +13,7 @@ typedef struct FfiSignature FfiSignature;
 /* The call interface for 'function' calling 'symbol', or NULL with 'out_reason' set to why the
  * declaration cannot be expressed to C. */
 FfiSignature *ffi_signature_prepare(Arena *arena, TypeRegistry *registry, const Function *function,
-                                    void *symbol, bool wants_ctx, const char **out_reason);
+                                    void *symbol, const char **out_reason);
 
 void ffi_invoke(const FfiSignature *signature, Args *args);
 

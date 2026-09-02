@@ -49,20 +49,15 @@ typedef void (*GabExternFn)(GabArgs *args);
 bool gab_extern(GabVM *vm, const char *module, const char *type, const char *name, GabExternFn fn,
                 GabError *err);
 
-/* Bind an extern to a C symbol called directly, with no shim: the declaration's types are what
- * describe the call, so a mismatch with the symbol's real signature is undefined at the call. */
-bool gab_extern_c(GabVM *vm, const char *module, const char *type, const char *name, void *symbol,
-                  GabError *err);
-
-/* What the VM knows about one call, handed to a symbol bound by gab_extern_c_ctx as its first
- * parameter. It is valid only for the duration of that call. */
+/* What the VM knows about one call, handed to every bound symbol as its first parameter. It is valid
+ * only for the duration of that call. */
 typedef struct GabCtx GabCtx;
 
-/* Bind a C symbol that takes a GabCtx * ahead of the parameters its declaration names. A symbol
- * needs one only to fail the call, to allocate what it returns, or to read what a specialization
- * chose; a symbol that does none of those is bound by gab_extern_c and keeps its own signature. */
-bool gab_extern_c_ctx(GabVM *vm, const char *module, const char *type, const char *name, void *symbol,
-                      GabError *err);
+/* Bind an extern to a C symbol called directly, with no shim. The symbol takes a GabCtx * ahead of
+ * the parameters its declaration names, and the declaration's types describe the rest of the call,
+ * so a mismatch with the symbol's real signature is undefined at the call. */
+bool gab_extern_c(GabVM *vm, const char *module, const char *type, const char *name, void *symbol,
+                  GabError *err);
 
 /* Fail the running call with a message. The C body should return promptly; its return value is
  * discarded, and the script sees a runtime error rather than a result. */
