@@ -1,8 +1,16 @@
 #include "core/core.h"
 #include "library.h"
 
+#include "gab.h"
+#include "object.h"
+#include "scope.h"
 #include "vm/args.h"
 #include "vm/interp.h"
+#include "vm/vm.h"
+
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
 
 static int32_t string_find(GabStrRef haystack, GabStrRef needle, int32_t from) {
     if (needle.length > haystack.length) {

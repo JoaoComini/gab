@@ -1,8 +1,16 @@
 #include "library.h"
 #include "std/std.h"
 
+#include "allocator.h"
+#include "gab.h"
+#include "object.h"
+#include "scope.h"
+#include "string/string.h"
+#include "type/type.h"
+#include "type/type_registry.h"
 #include "vm/args.h"
 #include "vm/interp.h"
+#include "vm/vm.h"
 
 #include <assert.h>
 #include <stddef.h>
