@@ -5,6 +5,16 @@
 
 #include "vm/opcode.h"
 
+/* The interpreter's guards are all cold: telling the compiler so moves them out of the dispatch loop's
+ * straight-line path, which is worth more than the branch prediction it also buys. */
+#if defined(__GNUC__) || defined(__clang__)
+#define VM_UNLIKELY(cond) __builtin_expect(!!(cond), 0)
+#define VM_LIKELY(cond) __builtin_expect(!!(cond), 1)
+#else
+#define VM_UNLIKELY(cond) (cond)
+#define VM_LIKELY(cond) (cond)
+#endif
+
 #if defined(GAB_FORCE_SWITCH)
 #define VM_COMPUTED_GOTO 0
 #elif defined(__GNUC__) || defined(__clang__)

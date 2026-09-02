@@ -29,11 +29,11 @@ size_t vm_live_stack_end(const VM *vm) {
 
 static bool vm_push_frame(VM *vm, const FuncPrototype *proto, size_t base, const Instruction *return_ip,
                           unsigned int dest) {
-    if (vm->frame_count == VM_MAX_CALL_DEPTH) {
+    if (VM_UNLIKELY(vm->frame_count == VM_MAX_CALL_DEPTH)) {
         return false;
     }
 
-    if (!vm_reserve_stack(vm, base / VM_SLOT_SIZE + proto->max_registers)) {
+    if (VM_UNLIKELY(!vm_reserve_stack(vm, base / VM_SLOT_SIZE + proto->max_registers))) {
         return false;
     }
 
@@ -321,10 +321,15 @@ bool vm_call_extern(VM *vm, const ExternProto *proto, size_t base) {
     return vm->error.status == VM_RUN_OK;
 }
 
-static bool vm_check_divisor(const uint8_t *regs, VM *vm, Instruction instruction, const char *zero_message,
-                             const char *overflow_message) {
+static inline bool vm_check_divisor(const uint8_t *regs, VM *vm, Instruction instruction,
+                                    const char *zero_message, const char *overflow_message) {
     int32_t divisor = vm_operand2i(regs, instruction);
-    int32_t dividend = vm_read_i32_at(regs, VM_DECODE_R_R1(instruction));
+
+    /* 0 and -1 are the only divisors a division can trap on, and the only two whose unsigned successor is
+     * at most 1, so one comparison clears the path that is always taken. */
+    if (VM_LIKELY((uint32_t)divisor + 1u > 1u)) {
+        return true;
+    }
 
     if (divisor == 0) {
         vm_fail(vm, VM_RUN_ERR_DIVIDE_BY_ZERO, zero_message);
@@ -333,7 +338,7 @@ static bool vm_check_divisor(const uint8_t *regs, VM *vm, Instruction instructio
         return false;
     }
 
-    if (dividend == INT32_MIN && divisor == -1) {
+    if (vm_read_i32_at(regs, VM_DECODE_R_R1(instruction)) == INT32_MIN) {
         vm_fail(vm, VM_RUN_ERR_DIVIDE_OVERFLOW, overflow_message);
         vm_unwind(vm);
 
@@ -578,7 +583,7 @@ static void vm_run_loop(VM *vm) {
 
                 void *object = object_alloc(&DEFAULT_ALLOCATOR, shape->size, shape->drop);
 
-                if (!object) {
+                if (VM_UNLIKELY(!object)) {
                     vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory");
 
                     vm_unwind(vm);
@@ -612,7 +617,7 @@ static void vm_run_loop(VM *vm) {
 
                 size_t base = vm->frames[vm->frame_count - 1].base + dest * VM_SLOT_SIZE;
 
-                if (!vm_push_frame(vm, proto, base, pc, dest)) {
+                if (VM_UNLIKELY(!vm_push_frame(vm, proto, base, pc, dest))) {
                     vm_fail(vm, VM_RUN_ERR_CALL_DEPTH, "call depth exceeded");
 
                     vm_unwind(vm);
@@ -628,7 +633,8 @@ static void vm_run_loop(VM *vm) {
 
                 const ExternProto *proto = &vm->program.extern_protos.data[extern_index];
 
-                if (!vm_call_extern(vm, proto, vm->frames[vm->frame_count - 1].base + dest * VM_SLOT_SIZE)) {
+                if (VM_UNLIKELY(!vm_call_extern(
+                        vm, proto, vm->frames[vm->frame_count - 1].base + dest * VM_SLOT_SIZE))) {
                     vm_unwind(vm);
 
                     VM_RETRY();
@@ -724,7 +730,7 @@ static void vm_run_loop(VM *vm) {
                 int32_t count;
                 memcpy(&count, VM_REG(r1), sizeof(count));
 
-                if (count < 0) {
+                if (VM_UNLIKELY(count < 0)) {
                     vm_fail(vm, VM_RUN_ERR_BOUNDS, "an array's length cannot be negative");
 
                     vm_unwind(vm);
@@ -735,7 +741,7 @@ static void vm_run_loop(VM *vm) {
 
                 void *block = DEFAULT_ALLOCATOR.alloc(DEFAULT_ALLOCATOR.ctx, bytes);
 
-                if (!block) {
+                if (VM_UNLIKELY(!block)) {
                     vm_fail(vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory allocating an array");
 
                     vm_unwind(vm);
@@ -776,7 +782,7 @@ static void vm_run_loop(VM *vm) {
                 int32_t index;
                 memcpy(&index, VM_REG(r1), sizeof(index));
 
-                if (index < 0 || index >= length) {
+                if (VM_UNLIKELY(index < 0 || index >= length)) {
                     vm_fail(vm, VM_RUN_ERR_BOUNDS, "array index is out of range");
 
                     vm_unwind(vm);
