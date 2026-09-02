@@ -12,7 +12,7 @@
 #include <stdint.h>
 #include <string.h>
 
-static const TypeDecl *vec_declare_type(GabLibrary *lib) {
+static const TypeDecl *vec_declare_type(Library *lib) {
     TypeRegistry *registry = lib->vm->env.global_scope.type_registry;
 
     const TypeFieldSpec fields[] = {
@@ -33,7 +33,7 @@ static const TypeDecl *vec_declare_type(GabLibrary *lib) {
 }
 
 typedef struct {
-    GabBlockValue block;
+    BlockValue block;
 } VecHeader;
 
 static VecHeader vec_load(Args *args) {
@@ -114,7 +114,7 @@ static void vec_new(Args *args) {
 }
 
 void std_register_vec(VM *vm) {
-    GabLibrary std = library_open(vm, GAB_STD_MODULE, false);
+    Library std = library_open(vm, GAB_STD_MODULE, false);
 
     const TypeDecl *vec_def = vec_declare_type(&std);
 

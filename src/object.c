@@ -46,7 +46,7 @@ static void drop_array_at(const Allocator *allocator, const DropPlan *plan, void
 }
 
 static void drop_block_at(const Allocator *allocator, const DropPlan *plan, void *value) {
-    GabBlockValue block;
+    BlockValue block;
     memcpy(&block, value, sizeof(block));
 
     if (!block.data) {
@@ -93,7 +93,7 @@ static void drop_run(const Allocator *allocator, const DropPlan *plan, void *val
 
 #define BLOCK_INITIAL_CAPACITY 8
 
-bool block_reserve(const Allocator *allocator, GabBlockValue *block, int32_t extra, size_t stride) {
+bool block_reserve(const Allocator *allocator, BlockValue *block, int32_t extra, size_t stride) {
     if (extra <= 0) {
         return true;
     }

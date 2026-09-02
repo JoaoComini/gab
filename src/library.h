@@ -7,18 +7,18 @@
 
 #include <stddef.h>
 
-typedef struct GabLibrary {
+typedef struct Library {
     VM *vm;
     Scope *scope;
     const char *module;
     bool is_prelude;
-} GabLibrary;
+} Library;
 
-GabLibrary library_open(VM *vm, const char *module, bool is_prelude);
+Library library_open(VM *vm, const char *module, bool is_prelude);
 
-void library_extern(GabLibrary *lib, const char *type, const char *name, GabExternFn body);
+void library_extern(Library *lib, const char *type, const char *name, GabExternFn body);
 
-void library_declare_source(GabLibrary *lib, const char *source);
+void library_declare_source(Library *lib, const char *source);
 
 typedef struct LibraryTypeSpec {
     const char *name;
@@ -32,12 +32,12 @@ typedef struct LibraryTypeSpec {
     size_t lent_part_count;
 } LibraryTypeSpec;
 
-const TypeDecl *library_type(GabLibrary *lib, const LibraryTypeSpec *spec);
+const TypeDecl *library_type(Library *lib, const LibraryTypeSpec *spec);
 
-void library_method(GabLibrary *lib, const Type *declared_on, const Type *receiver, const char *name,
+void library_method(Library *lib, const Type *declared_on, const Type *receiver, const char *name,
                     GabExternFn body, const Type *return_type, const Type *const *params, size_t param_count);
 
-void library_static(GabLibrary *lib, const Type *declared_on, const char *name, GabExternFn body,
+void library_static(Library *lib, const Type *declared_on, const char *name, GabExternFn body,
                     const Type *return_type, const Type *const *params, size_t param_count);
 
 #endif

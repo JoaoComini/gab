@@ -30,8 +30,8 @@ static void test_a_string_is_an_address_and_a_length() {
 
     const TypeLayout *layout = type_registry_layout_of(scope_ptr->type_registry, string_type);
 
-    assert(layout->size == sizeof(GabStringValue));
-    assert(layout->alignment == _Alignof(GabStringValue));
+    assert(layout->size == sizeof(StringValue));
+    assert(layout->alignment == _Alignof(StringValue));
 
     assert(layout->size == VM_STRING_SLOTS * VM_SLOT_SIZE);
 
@@ -59,7 +59,7 @@ static void test_a_string_is_one_owning_field() {
     const TypeLayout *layout = type_registry_layout_of(scope_ptr->type_registry, string_type);
 
     assert(layout->offsets[data - type_registry_fields_of(scope_ptr->type_registry, string_type)->fields] ==
-           offsetof(GabStringValue, block));
+           offsetof(StringValue, block));
 
     assert(type_registry_owns(scope_ptr->type_registry, data->type));
 

@@ -15,15 +15,15 @@
 #include <assert.h>
 #include <stddef.h>
 
-GabLibrary library_open(VM *vm, const char *module, bool is_prelude) {
+Library library_open(VM *vm, const char *module, bool is_prelude) {
     Scope *scope = is_prelude
                        ? &vm->env.global_scope
                        : environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, module));
 
-    return (GabLibrary){.vm = vm, .scope = scope, .module = module, .is_prelude = is_prelude};
+    return (Library){.vm = vm, .scope = scope, .module = module, .is_prelude = is_prelude};
 }
 
-void library_extern(GabLibrary *lib, const char *type, const char *name, GabExternFn body) {
+void library_extern(Library *lib, const char *type, const char *name, GabExternFn body) {
     GabError err;
 
     bool bound = gab_extern((GabVM *)lib->vm, lib->module, type, name, body, &err);
@@ -32,7 +32,7 @@ void library_extern(GabLibrary *lib, const char *type, const char *name, GabExte
     (void)bound;
 }
 
-void library_declare_source(GabLibrary *lib, const char *source) {
+void library_declare_source(Library *lib, const char *source) {
     Diagnostics diagnostics;
     diagnostics_init(&diagnostics, lib->vm->env.compile_arena, lib->module);
 
@@ -44,7 +44,7 @@ void library_declare_source(GabLibrary *lib, const char *source) {
     diagnostics_free(&diagnostics);
 }
 
-const TypeDecl *library_type(GabLibrary *lib, const LibraryTypeSpec *spec) {
+const TypeDecl *library_type(Library *lib, const LibraryTypeSpec *spec) {
     VM *vm = lib->vm;
     Arena *arena = vm->env.arena;
 
@@ -110,7 +110,7 @@ static FuncDecl *library_func_decl(VM *vm, const char *name, GabExternFn body) {
     return decl;
 }
 
-void library_method(GabLibrary *lib, const Type *declared_on, const Type *receiver, const char *name,
+void library_method(Library *lib, const Type *declared_on, const Type *receiver, const char *name,
                     GabExternFn body, const Type *return_type, const Type *const *params,
                     size_t param_count) {
     VM *vm = lib->vm;
@@ -131,7 +131,7 @@ void library_method(GabLibrary *lib, const Type *declared_on, const Type *receiv
     (void)declared;
 }
 
-void library_static(GabLibrary *lib, const Type *declared_on, const char *name, GabExternFn body,
+void library_static(Library *lib, const Type *declared_on, const char *name, GabExternFn body,
                     const Type *return_type, const Type *const *params, size_t param_count) {
     VM *vm = lib->vm;
 

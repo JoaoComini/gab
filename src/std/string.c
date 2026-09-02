@@ -18,7 +18,7 @@
 #include <string.h>
 
 static void string_push(Args *args) {
-    GabStringValue string = args_string_at(args, 0);
+    StringValue string = args_string_at(args, 0);
     int32_t character = args_int(args, 1);
 
     if (!block_reserve(&DEFAULT_ALLOCATOR, &string.block, 1, sizeof(char))) {
@@ -33,8 +33,8 @@ static void string_push(Args *args) {
 }
 
 static void string_append(Args *args) {
-    GabStringValue string = args_string_at(args, 0);
-    GabStrRef other = args_string(args, 1);
+    StringValue string = args_string_at(args, 0);
+    StrRef other = args_string(args, 1);
 
     if (other.length == 0) {
         return;
@@ -62,13 +62,13 @@ static void string_append(Args *args) {
 }
 
 static void string_clone(Args *args) {
-    GabStringValue string = args_string_at(args, 0);
+    StringValue string = args_string_at(args, 0);
 
     args_return_string_copy(args, string.block.data, string.block.length);
 }
 
 static void string_from(Args *args) {
-    GabStrRef string = args_string(args, 0);
+    StrRef string = args_string(args, 0);
 
     args_return_string_copy(args, string.data, string.length);
 }
@@ -82,7 +82,7 @@ static const char STD_SRC[] = "module " GAB_STD_MODULE ";\n"
                               "}\n";
 
 void std_register_string(VM *vm) {
-    GabLibrary std = library_open(vm, GAB_STD_MODULE, false);
+    Library std = library_open(vm, GAB_STD_MODULE, false);
 
     TypeRegistry *registry = vm->env.global_scope.type_registry;
 
@@ -94,9 +94,8 @@ void std_register_string(VM *vm) {
     };
 
     const LentPart characters_named_by[] = {
-        {.offset = offsetof(GabStringValue, block) + offsetof(GabBlockValue, data), .size = sizeof(void *)},
-        {.offset = offsetof(GabStringValue, block) + offsetof(GabBlockValue, length),
-         .size = sizeof(int32_t)},
+        {.offset = offsetof(StringValue, block) + offsetof(BlockValue, data), .size = sizeof(void *)},
+        {.offset = offsetof(StringValue, block) + offsetof(BlockValue, length), .size = sizeof(int32_t)},
     };
 
     const LibraryTypeSpec spec = {

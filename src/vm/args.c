@@ -77,32 +77,32 @@ bool args_bool(Args *args, int index) {
     return value != 0;
 }
 
-GabStrRef args_string(Args *args, int index) {
+StrRef args_string(Args *args, int index) {
     const Type *type = NULL;
     uint8_t *at = args_address(args, index, &type);
 
     assert(type_is_str_ref(type) &&
            "a C body read a parameter as a borrowed string when it was not declared one");
 
-    GabStrRef value;
+    StrRef value;
     memcpy(&value, at, sizeof(value));
 
     return value;
 }
 
-GabStringValue args_string_at(Args *args, int index) {
+StringValue args_string_at(Args *args, int index) {
     const uint8_t *at = args_pointer(args, index);
 
     assert(at && "a C body read a string through a pointer holding nothing");
 
-    GabStringValue value;
+    StringValue value;
     memcpy(&value, at, sizeof(value));
 
     return value;
 }
 
-GabArrayValue args_array(Args *args, int index) {
-    GabArrayValue value;
+ArrayValue args_array(Args *args, int index) {
+    ArrayValue value;
     memcpy(&value, args_address_of_kind(args, index, TYPE_ARRAY), sizeof(value));
 
     return value;
@@ -160,7 +160,7 @@ bool args_return_string_copy(Args *args, const char *data, int32_t length) {
         memcpy(characters, data, (size_t)length);
     }
 
-    GabStringValue value = {.block = {.data = characters, .capacity = capacity, .length = length}};
+    StringValue value = {.block = {.data = characters, .capacity = capacity, .length = length}};
 
     memcpy(args_return_address(args), &value, sizeof(value));
 

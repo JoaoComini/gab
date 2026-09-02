@@ -13,7 +13,7 @@
 #include <stdint.h>
 #include <string.h>
 
-static int32_t string_find(GabStrRef haystack, GabStrRef needle, int32_t from) {
+static int32_t string_find(StrRef haystack, StrRef needle, int32_t from) {
     if (needle.length > haystack.length) {
         return -1;
     }
@@ -32,7 +32,7 @@ static void string_len(Args *args) { args_return_int(args, args_string(args, 0).
 static void string_is_empty(Args *args) { args_return_bool(args, args_string(args, 0).length == 0); }
 
 static void string_at(Args *args) {
-    GabStrRef string = args_string(args, 0);
+    StrRef string = args_string(args, 0);
     int32_t index = args_int(args, 1);
 
     if (index < 0 || (size_t)index >= (size_t)string.length) {
@@ -44,16 +44,16 @@ static void string_at(Args *args) {
 }
 
 static void string_starts_with(Args *args) {
-    GabStrRef string = args_string(args, 0);
-    GabStrRef prefix = args_string(args, 1);
+    StrRef string = args_string(args, 0);
+    StrRef prefix = args_string(args, 1);
 
     args_return_bool(args,
                      prefix.length <= string.length && memcmp(string.data, prefix.data, prefix.length) == 0);
 }
 
 static void string_ends_with(Args *args) {
-    GabStrRef string = args_string(args, 0);
-    GabStrRef suffix = args_string(args, 1);
+    StrRef string = args_string(args, 0);
+    StrRef suffix = args_string(args, 1);
 
     args_return_bool(args,
                      suffix.length <= string.length && memcmp(string.data + (string.length - suffix.length),
@@ -69,8 +69,8 @@ static void string_index_of(Args *args) {
 }
 
 static void string_count(Args *args) {
-    GabStrRef string = args_string(args, 0);
-    GabStrRef needle = args_string(args, 1);
+    StrRef string = args_string(args, 0);
+    StrRef needle = args_string(args, 1);
 
     if (needle.length == 0) {
         args_return_int(args, 0);
@@ -113,7 +113,7 @@ void core_register_str(VM *vm) {
         {"count", string_count},
     };
 
-    GabLibrary core = library_open(vm, GAB_CORE_MODULE, true);
+    Library core = library_open(vm, GAB_CORE_MODULE, true);
 
     for (size_t i = 0; i < sizeof(METHODS) / sizeof(*METHODS); i++) {
         library_extern(&core, "str", METHODS[i].name, METHODS[i].body);

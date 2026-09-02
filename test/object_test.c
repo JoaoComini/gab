@@ -315,7 +315,7 @@ static void test_a_block_is_freed_with_the_size_it_was_reserved_with() {
     AllocCounts counts = {0};
     Allocator allocator = counting_allocator(&counts);
 
-    GabStringValue string = {0};
+    StringValue string = {0};
 
     assert(block_reserve(&allocator, &string.block, 8, sizeof(char)));
 

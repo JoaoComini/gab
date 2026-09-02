@@ -21,11 +21,11 @@ unsigned int args_type_slots(TypeRegistry *registry, const Type *type);
 int32_t args_int(Args *args, int index);
 float args_float(Args *args, int index);
 bool args_bool(Args *args, int index);
-GabStrRef args_string(Args *args, int index);
+StrRef args_string(Args *args, int index);
 
-GabStringValue args_string_at(Args *args, int index);
+StringValue args_string_at(Args *args, int index);
 
-GabArrayValue args_array(Args *args, int index);
+ArrayValue args_array(Args *args, int index);
 void *args_pointer(Args *args, int index);
 
 void args_struct(Args *args, int index, void *out, size_t size);

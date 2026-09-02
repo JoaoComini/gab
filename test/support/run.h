@@ -42,7 +42,7 @@ static inline void test_run_string(const char *source, char *out, size_t capacit
 
     assert(vm->frame_count == 0);
 
-    GabStrRef value;
+    StrRef value;
     memcpy(&value, vm_slot_at(vm, 0), sizeof(value));
 
     assert((size_t)value.length < capacity);
