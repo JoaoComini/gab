@@ -16,4 +16,8 @@ bool vm_call_extern(VM *vm, const ExternProto *proto, size_t base);
 
 void vm_fail(VM *vm, VmRunStatus status, const char *message);
 
+bool vm_reserve_stack(const VM *vm, size_t needed);
+
+size_t vm_live_stack_end(const VM *vm);
+
 #endif

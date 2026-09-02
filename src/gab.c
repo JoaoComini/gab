@@ -636,10 +636,15 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
     assert(func_index < (runs_native ? vm->program.extern_protos.size : vm->program.prototypes.size) &&
            "an installed index names a body in its own table");
 
-    size_t base_slot = vm->stack_capacity / 2;
-    size_t base = base_slot * VM_SLOT_SIZE;
+    /* A host body may call back in, so this call nests above the frames already running. */
+    VmRunStatus saved_status = vm->error.status;
 
-    vm->frame_count = 0;
+    size_t base = vm_live_stack_end(vm);
+
+    if (!vm_reserve_stack(vm, base / VM_SLOT_SIZE + fn->arg_slots + 1)) {
+        gab_error_set(err, 0, 0, "out of stack space");
+        return GAB_ERR_RUNTIME;
+    }
 
     memcpy(vm->stack + base + VM_SLOT_SIZE, call->args + VM_SLOT_SIZE, fn->arg_slots * VM_SLOT_SIZE);
 
@@ -647,10 +652,15 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
                              ? interp_run_extern(vm, &vm->program.extern_protos.data[func_index], base)
                              : interp_run_frame(vm, vm->program.prototypes.data[func_index], base, 0);
 
+    /* The nested run reports its failure through 'err', so the caller it returns into keeps running. */
     if (status != VM_RUN_OK) {
         gab_error_set(err, 0, 0, vm->error.message);
+        vm->error.status = saved_status;
+
         return GAB_ERR_RUNTIME;
     }
+
+    vm->error.status = saved_status;
 
     if (ret) {
         memcpy(ret, vm->stack + base, fn->return_size);

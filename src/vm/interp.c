@@ -15,7 +15,17 @@
 #include <stdint.h>
 #include <string.h>
 
-static bool vm_reserve_stack(const VM *vm, size_t needed) { return needed <= vm->stack_capacity; }
+bool vm_reserve_stack(const VM *vm, size_t needed) { return needed <= vm->stack_capacity; }
+
+size_t vm_live_stack_end(const VM *vm) {
+    if (vm->frame_count == 0) {
+        return (vm->stack_capacity / 2) * VM_SLOT_SIZE;
+    }
+
+    const CallFrame *top = &vm->frames[vm->frame_count - 1];
+
+    return top->base + (size_t)top->proto->max_registers * VM_SLOT_SIZE;
+}
 
 static bool vm_push_frame(VM *vm, const FuncPrototype *proto, size_t base, const Instruction *return_ip,
                           unsigned int dest) {
@@ -61,7 +71,7 @@ static void vm_release_frame_refs(VM *vm, const CallFrame *frame) {
 }
 
 static void vm_unwind(VM *vm) {
-    while (vm->frame_count > 0) {
+    while (vm->frame_count > vm->frame_floor) {
         vm_release_frame_refs(vm, &vm->frames[vm->frame_count - 1]);
         vm_pop_frame(vm);
     }
@@ -70,7 +80,7 @@ static void vm_unwind(VM *vm) {
 static void vm_pop_frame(VM *vm) {
     CallFrame frame = vm->frames[--vm->frame_count];
 
-    if (vm->frame_count == 0) {
+    if (vm->frame_count == vm->frame_floor) {
         return;
     }
 
@@ -301,7 +311,12 @@ void vm_fail(VM *vm, VmRunStatus status, const char *message) {
 bool vm_call_extern(VM *vm, const ExternProto *proto, size_t base) {
     Args args = {.vm = vm, .function = proto->function, .base = base};
 
+    /* A host body may run the VM again, which moves the pointer its caller is still stepping through. */
+    const Instruction *resume = vm->instruction_pointer;
+
     proto->body(&args);
+
+    vm->instruction_pointer = resume;
 
     return vm->error.status == VM_RUN_OK;
 }
@@ -334,6 +349,9 @@ static void vm_run_loop(VM *vm) {
     Instruction instruction;
     OpCode op;
     uint8_t *regs = NULL;
+
+    /* This run returns to its own floor, which no frame it pushes can change. */
+    const size_t frame_floor = vm->frame_floor;
 
     VM_RELOAD();
 
@@ -630,7 +648,7 @@ static void vm_run_loop(VM *vm) {
                 size_t frame_base = frame->base;
                 vm_pop_frame(vm);
 
-                if (vm->frame_count == 0) {
+                if (vm->frame_count == vm->frame_floor) {
                     memcpy(vm->stack + frame_base, result, slots * VM_SLOT_SIZE);
                     VM_RETRY();
                 }
@@ -849,7 +867,7 @@ static void vm_run_loop(VM *vm) {
 
     VM_EXIT()
 
-    while (vm->frame_count > 0) {
+    while (vm->frame_count > vm->frame_floor) {
         vm_pop_frame(vm);
     }
 }
@@ -857,12 +875,18 @@ static void vm_run_loop(VM *vm) {
 VmRunStatus interp_run_frame(VM *vm, const FuncPrototype *proto, size_t base, unsigned int dest) {
     vm->error = (VmError){.status = VM_RUN_OK};
 
+    size_t floor = vm->frame_floor;
+    vm->frame_floor = vm->frame_count;
+
     if (!vm_push_frame(vm, proto, base, 0, dest)) {
+        vm->frame_floor = floor;
         vm_fail(vm, VM_RUN_ERR_STACK_OVERFLOW, "out of stack space");
         return vm->error.status;
     }
 
     vm_run_loop(vm);
+
+    vm->frame_floor = floor;
 
     return vm->error.status;
 }
@@ -877,6 +901,7 @@ VmRunStatus interp_run_extern(VM *vm, const ExternProto *proto, size_t base) {
 
 VmRunStatus interp_run_top_level(VM *vm, const FuncPrototype *top_level) {
     vm->frame_count = 0;
+    vm->frame_floor = 0;
 
     return interp_run_frame(vm, top_level, 0, 0);
 }

@@ -47,6 +47,24 @@ static void host_log(GabArgs *args) {
 
 static void host_refuse(GabArgs *args) { gab_error(args, "refused by the host"); }
 
+static GabVM *reentrant_vm;
+
+static void host_reenter(GabArgs *args) {
+    GabError err;
+    GabFunc *doubled = gab_lookup(reentrant_vm, "game", "doubled", &err);
+    assert(doubled != NULL);
+
+    GabCall *call = gab_call_init(doubled, &err);
+    assert(gab_arg_int(call, 0, 21));
+
+    int32_t out = 0;
+    assert(gab_call(reentrant_vm, call, &out, &err) == GAB_OK);
+
+    gab_call_free(call);
+
+    gab_return_int(args, out);
+}
+
 static const char *const SOURCE = "module game;\n"
                                   "struct Player { health: int, mana: int }\n"
                                   "extern func tick(): int;\n"
@@ -60,7 +78,10 @@ static const char *const SOURCE = "module game;\n"
                                   "    let b: Player = buff(p, t);\n"
                                   "    return b.health + spawn(1);\n"
                                   "}\n"
-                                  "func fails(): int { return refuse(); }\n";
+                                  "func fails(): int { return refuse(); }\n"
+                                  "extern func reenter(): int;\n"
+                                  "func doubled(n: int): int { return n * 2; }\n"
+                                  "func through_host(): int { return reenter() + 1; }\n";
 
 static GabVM *harness_vm(void) {
     GabVM *vm = gab_vm_new();
@@ -71,6 +92,7 @@ static GabVM *harness_vm(void) {
     assert(gab_extern(vm, "game", NULL, "buff", host_buff, &err));
     assert(gab_extern(vm, "game", NULL, "log", host_log, &err));
     assert(gab_extern(vm, "game", NULL, "refuse", host_refuse, &err));
+    assert(gab_extern(vm, "game", NULL, "reenter", host_reenter, &err));
 
     if (!gab_load(vm, "game.gab", SOURCE, &err)) {
         fprintf(stderr, "load failed: line %d: %s\n", err.line, err.message);
@@ -145,10 +167,73 @@ static void test_an_extern_can_fail_the_run(void) {
     gab_vm_free(vm);
 }
 
+static void host_reenter_failing(GabArgs *args) {
+    GabError err;
+    GabFunc *fails = gab_lookup(reentrant_vm, "game", "fails", &err);
+    assert(fails != NULL);
+
+    GabCall *call = gab_call_init(fails, &err);
+    int32_t out = 0;
+
+    assert(gab_call(reentrant_vm, call, &out, &err) != GAB_OK);
+
+    gab_call_free(call);
+
+    gab_return_int(args, 5);
+}
+
+static void test_a_nested_failure_leaves_its_caller_running(void) {
+    GabVM *vm = gab_vm_new();
+    GabError err;
+
+    reentrant_vm = vm;
+
+    assert(gab_extern(vm, "game", NULL, "tick", host_tick, &err));
+    assert(gab_extern(vm, "game", NULL, "spawn", host_spawn, &err));
+    assert(gab_extern(vm, "game", NULL, "buff", host_buff, &err));
+    assert(gab_extern(vm, "game", NULL, "log", host_log, &err));
+    assert(gab_extern(vm, "game", NULL, "refuse", host_refuse, &err));
+    assert(gab_extern(vm, "game", NULL, "reenter", host_reenter_failing, &err));
+    assert(gab_load(vm, "game.gab", SOURCE, &err));
+
+    GabFunc *through = gab_lookup(vm, "game", "through_host", &err);
+    assert(through != NULL);
+
+    GabCall *call = gab_call_init(through, &err);
+    int32_t result = 0;
+
+    assert(gab_call(vm, call, &result, &err) == GAB_OK);
+    assert(result == 6);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
+static void test_a_host_body_calls_back_into_the_vm(void) {
+    GabVM *vm = harness_vm();
+    GabError err;
+
+    reentrant_vm = vm;
+
+    GabFunc *through = gab_lookup(vm, "game", "through_host", &err);
+    assert(through != NULL);
+
+    GabCall *call = gab_call_init(through, &err);
+    int32_t result = 0;
+
+    assert(gab_call(vm, call, &result, &err) == GAB_OK);
+    assert(result == 43);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
 int main(void) {
     test_script_layout_matches_the_host_struct();
     test_a_frame_loop_calls_script_which_calls_back();
     test_an_extern_can_fail_the_run();
+    test_a_host_body_calls_back_into_the_vm();
+    test_a_nested_failure_leaves_its_caller_running();
 
     return 0;
 }

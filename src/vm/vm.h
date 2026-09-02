@@ -86,6 +86,10 @@ typedef struct VM {
     const Instruction *instruction_pointer;
 
     VmError error;
+
+    /* The run loop returns once it pops back to here, so a host body calling in does not unwind its caller.
+     */
+    size_t frame_floor;
 } VM;
 
 struct GabArgs {
