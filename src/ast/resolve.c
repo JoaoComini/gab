@@ -1914,10 +1914,6 @@ static const Type *resolve_param_type_in(ResolverState *state, ASTField *param, 
     return type;
 }
 
-static const Type *resolve_param_type(ResolverState *state, ASTField *param) {
-    return resolve_param_type_in(state, param, false);
-}
-
 static bool func_decl_is_generic(const ASTStmt *stmt) {
     if (stmt->func_decl.type_param_count > 0) {
         return true;
@@ -2027,7 +2023,8 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         func->param_count = param_count;
 
         for (size_t i = 0; i < param_count; i++) {
-            func->params[i] = resolve_param_type(state, stmt->func_decl.params.data[i]);
+            func->params[i] = resolve_param_type_in(state, stmt->func_decl.params.data[i],
+                                                    stmt->func_decl.type_param_count > 0);
         }
     }
 
