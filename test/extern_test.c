@@ -21,36 +21,51 @@ typedef struct {
 
 static int32_t last_logged = 0;
 
-static void host_log(GabArgs *args) { last_logged = gab_arg_get_int(args, 0); }
+static void host_log(GabCtx *ctx, int32_t value) {
+    (void)ctx;
 
-static void twice(GabArgs *args) { gab_return_int(args, gab_arg_get_int(args, 0) * 2); }
+    last_logged = value;
+}
 
-static void scale(GabArgs *args) { gab_return_float(args, gab_arg_get_float(args, 0) * 2.0f); }
+static int32_t twice(GabCtx *ctx, int32_t x) {
+    (void)ctx;
 
-static void negate(GabArgs *args) { gab_return_bool(args, !gab_arg_get_bool(args, 0)); }
+    return x * 2;
+}
 
-static void heal(GabArgs *args) {
-    Player p;
-    gab_arg_get_struct(args, 0, &p, sizeof p);
+static float scale(GabCtx *ctx, float x) {
+    (void)ctx;
+
+    return x * 2.0f;
+}
+
+static int32_t negate(GabCtx *ctx, int32_t x) {
+    (void)ctx;
+
+    return !x;
+}
+
+static Player heal(GabCtx *ctx, Player p) {
+    (void)ctx;
 
     p.health += 10;
 
-    gab_return_struct(args, &p, sizeof p);
+    return p;
 }
 
-static void boost(GabArgs *args) {
-    Player *p = gab_arg_get_pointer(args, 0);
+static void boost(GabCtx *ctx, Player *p) {
+    (void)ctx;
 
     p->mana += 5;
 }
 
-static void refuse(GabArgs *args) { gab_error(args, "the host refused"); }
+static void refuse(GabCtx *ctx) { gab_ctx_fail(ctx, "the host refused"); }
 
 static void test_an_extern_returns_to_its_caller(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "test", NULL, "twice", twice, &err));
+    assert(gab_extern_c(vm, "test", NULL, "twice", (void *)(uintptr_t)twice, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -76,7 +91,7 @@ static void test_an_extern_may_return_nothing(void) {
     last_logged = 0;
 
     GabError err;
-    assert(gab_extern(vm, "test", NULL, "log", host_log, &err));
+    assert(gab_extern_c(vm, "test", NULL, "log", (void *)(uintptr_t)host_log, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -98,8 +113,8 @@ static void test_scalars_cross_the_boundary(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "test", NULL, "scale", scale, &err));
-    assert(gab_extern(vm, "test", NULL, "negate", negate, &err));
+    assert(gab_extern_c(vm, "test", NULL, "scale", (void *)(uintptr_t)scale, &err));
+    assert(gab_extern_c(vm, "test", NULL, "negate", (void *)(uintptr_t)negate, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -128,7 +143,7 @@ static void test_a_struct_crosses_by_value(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "test", NULL, "heal", heal, &err));
+    assert(gab_extern_c(vm, "test", NULL, "heal", (void *)(uintptr_t)heal, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -156,7 +171,7 @@ static void test_a_borrow_is_written_through(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "test", NULL, "boost", boost, &err));
+    assert(gab_extern_c(vm, "test", NULL, "boost", (void *)(uintptr_t)boost, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -206,7 +221,7 @@ static void test_an_extern_must_be_registered_before_the_load(void) {
                      "extern func twice(x: int): int;\n",
                      &err));
 
-    assert(gab_extern(vm, "test", NULL, "twice", twice, &err));
+    assert(gab_extern_c(vm, "test", NULL, "twice", (void *)(uintptr_t)twice, &err));
     assert(gab_load(vm, "<m>",
                     "module test;\n"
                     "extern func twice(x: int): int;\n"
@@ -226,7 +241,7 @@ static void test_a_host_may_call_an_extern_directly(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "test", NULL, "twice", twice, &err));
+    assert(gab_extern_c(vm, "test", NULL, "twice", (void *)(uintptr_t)twice, &err));
     assert(gab_load(vm, "<m>",
                     "module test;\n"
                     "extern func twice(x: int): int;\n",
@@ -250,7 +265,7 @@ static void test_an_extern_may_fail_the_run(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "test", NULL, "refuse", refuse, &err));
+    assert(gab_extern_c(vm, "test", NULL, "refuse", (void *)(uintptr_t)refuse, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -272,7 +287,7 @@ static void test_an_extern_may_not_have_a_body(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "test", NULL, "twice", twice, &err));
+    assert(gab_extern_c(vm, "test", NULL, "twice", (void *)(uintptr_t)twice, &err));
     assert(!gab_load(vm, "<m>",
                      "module test;\n"
                      "extern func twice(x: int): int { return x; }\n",
@@ -297,7 +312,7 @@ static void test_an_extern_lives_in_its_module(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "game", NULL, "twice", twice, &err));
+    assert(gab_extern_c(vm, "game", NULL, "twice", (void *)(uintptr_t)twice, &err));
 
     assert(gab_load(vm, "<m>",
                     "module game;\n"
@@ -310,13 +325,13 @@ static void test_an_extern_lives_in_its_module(void) {
     gab_vm_free(vm);
 }
 
-static void refuse_silently(GabArgs *args) { gab_error(args, NULL); }
+static void refuse_silently(GabCtx *ctx) { gab_ctx_fail(ctx, NULL); }
 
 static void test_an_extern_may_fail_without_a_message(void) {
     GabVM *vm = gab_vm_new();
     GabError err;
 
-    assert(gab_extern(vm, "test", NULL, "refuse", refuse_silently, &err));
+    assert(gab_extern_c(vm, "test", NULL, "refuse", (void *)(uintptr_t)refuse_silently, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -334,21 +349,21 @@ static void test_an_extern_may_fail_without_a_message(void) {
     gab_vm_free(vm);
 }
 
-static void refuse_at_length(GabArgs *args) {
+static void refuse_at_length(GabCtx *ctx) {
     char message[512];
 
     memset(message, 'x', sizeof(message) - 1);
     message[sizeof(message) - 1] = '\0';
     memcpy(message, "far too long", strlen("far too long"));
 
-    gab_error(args, message);
+    gab_ctx_fail(ctx, message);
 }
 
 static void test_a_long_extern_message_is_truncated(void) {
     GabVM *vm = gab_vm_new();
     GabError err;
 
-    assert(gab_extern(vm, "test", NULL, "refuse", refuse_at_length, &err));
+    assert(gab_extern_c(vm, "test", NULL, "refuse", (void *)(uintptr_t)refuse_at_length, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -372,8 +387,8 @@ static void test_a_call_reaches_the_body_its_name_declares(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "test", NULL, "twice", twice, &err));
-    assert(gab_extern(vm, "test", NULL, "negate", negate, &err));
+    assert(gab_extern_c(vm, "test", NULL, "twice", (void *)(uintptr_t)twice, &err));
+    assert(gab_extern_c(vm, "test", NULL, "negate", (void *)(uintptr_t)negate, &err));
     assert(gab_load(vm, "<m>",
                     "module test;\n"
                     "extern func twice(x: int): int;\n"
@@ -399,29 +414,29 @@ static void test_a_call_reaches_the_body_its_name_declares(void) {
 
 static int32_t counter_get_calls = 0;
 
-static void counter_get(GabArgs *args) {
-    Counter *c = gab_arg_get_pointer(args, 0);
+static int32_t counter_get(GabCtx *ctx, const Counter *c) {
+    (void)ctx;
 
     counter_get_calls++;
 
-    gab_return_int(args, c->value);
+    return c->value;
 }
 
 static int32_t gauge_get_calls = 0;
 
-static void gauge_get(GabArgs *args) {
-    Gauge *g = gab_arg_get_pointer(args, 0);
+static int32_t gauge_get(GabCtx *ctx, const Gauge *g) {
+    (void)ctx;
 
     gauge_get_calls++;
 
-    gab_return_int(args, g->reading);
+    return g->reading;
 }
 
 static void test_an_extern_may_be_owned_by_a_struct(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "test", "Counter", "get", counter_get, &err));
+    assert(gab_extern_c(vm, "test", "Counter", "get", (void *)(uintptr_t)counter_get, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -453,8 +468,8 @@ static void test_two_types_may_own_an_extern_of_one_name(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "test", "Counter", "get", counter_get, &err));
-    assert(gab_extern(vm, "test", "Gauge", "get", gauge_get, &err));
+    assert(gab_extern_c(vm, "test", "Counter", "get", (void *)(uintptr_t)counter_get, &err));
+    assert(gab_extern_c(vm, "test", "Gauge", "get", (void *)(uintptr_t)gauge_get, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -489,20 +504,24 @@ static void test_two_types_may_own_an_extern_of_one_name(void) {
     gab_vm_free(vm);
 }
 
-static void str_len(GabArgs *args) {
-    int32_t length = 0;
-    gab_arg_get_string(args, 0, &length);
+static int32_t str_len(GabCtx *ctx, GabStrRef text) {
+    (void)ctx;
 
-    gab_return_int(args, length);
+    return text.length;
 }
 
-static void count_of(GabArgs *args) { gab_return_int(args, 7); }
+static int32_t count_of(GabCtx *ctx, const void *self) {
+    (void)ctx;
+    (void)self;
+
+    return 7;
+}
 
 static void test_each_specialization_of_a_host_method_reaches_one_body(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "m", "Pair", "count", count_of, &err));
+    assert(gab_extern_c(vm, "m", "Pair", "count", (void *)(uintptr_t)count_of, &err));
 
     assert(gab_load(vm, "<m>",
                     "module m;\n"
@@ -565,7 +584,7 @@ static void test_only_the_core_library_owns_a_primitive(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "test", "str", "length", str_len, &err));
+    assert(gab_extern_c(vm, "test", "str", "length", (void *)(uintptr_t)str_len, &err));
 
     assert(!gab_load(vm, "<m>",
                      "module test;\n"
@@ -581,7 +600,7 @@ static void test_naming_the_core_library_does_not_own_a_primitive(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "core", "str", "length", str_len, &err));
+    assert(gab_extern_c(vm, "core", "str", "length", (void *)(uintptr_t)str_len, &err));
 
     assert(!gab_load(vm, "<m>",
                      "module core;\n"
@@ -597,7 +616,7 @@ static void test_a_qualified_name_does_not_declare_a_method(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern(vm, "core", "str", "length", str_len, &err));
+    assert(gab_extern_c(vm, "core", "str", "length", (void *)(uintptr_t)str_len, &err));
 
     assert(!gab_load(vm, "<m>",
                      "module core;\n"
@@ -631,12 +650,12 @@ typedef struct {
 
 static int32_t dropped_sum = 0;
 
-static void consume(GabArgs *args) {
-    Owned *p = gab_arg_get_pointer(args, 0);
+static void consume(GabCtx *ctx, Owned *p) {
+    (void)ctx;
 
     dropped_sum = p->a + p->b;
 
-    gab_drop(args, 0);
+    gab_drop_pointer(p);
 }
 
 static void test_a_host_body_drops_an_owning_parameter(void) {
@@ -645,7 +664,7 @@ static void test_a_host_body_drops_an_owning_parameter(void) {
     GabError err;
     dropped_sum = 0;
 
-    assert(gab_extern(vm, "test", NULL, "consume", consume, &err));
+    assert(gab_extern_c(vm, "test", NULL, "consume", (void *)(uintptr_t)consume, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"

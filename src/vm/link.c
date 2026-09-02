@@ -131,11 +131,6 @@ bool link_check(Program *program, Unit *unit, Arena *arena, TypeRegistry *types,
 
         ExternProto *proto = &unit->extern_protos.data[request->local_index];
 
-        if (binding->fn) {
-            proto->body = binding->fn;
-            continue;
-        }
-
         const char *reason = "the declaration cannot be expressed to C";
         const FfiSignature *signature =
             ffi_signature_prepare(arena, types, request->function, binding->symbol, &reason);

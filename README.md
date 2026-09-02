@@ -82,13 +82,44 @@ Four properties are worth knowing before you build against it:
   `gab_field_offset` exist so a host can assert the script's layout against its
   own `sizeof` and `offsetof`.
 - **Externs are bound at load.** A script declares `extern func f(x: int):
-  int;` and the host supplies the body with `gab_extern`. The binding is
-  resolved while the unit loads, so an extern nothing supplies is a load
-  failure naming the function rather than a trap the first time that branch
-  runs. Registrations outlive every load.
+  int;` and the host supplies a C function with `gab_extern_c`. The call is
+  built from the declaration's types through libffi, so the body is written in
+  C rather than against an argument-unpacking API: it takes a `GabCtx *` and
+  then the parameters as C spells them. The binding and its signature are both
+  resolved while the unit loads, so an extern nothing supplies -- or one whose
+  declaration C cannot express -- is a load failure naming the function rather
+  than a trap the first time that branch runs. Registrations outlive every
+  load.
 - **Objects have one owner.** A host allocates a struct itself, at the size and
   alignment `gab_type_size` and `gab_type_align` report. A pointer staged with
   `gab_arg_pointer` is borrowed for the call, so the host goes on owning it.
+
+### Calling into the host
+
+A script's `extern` is a C function, bound by name and called through libffi.
+The declaration's types describe the call, so the body is ordinary C:
+
+```c
+static int32_t damage_taken(GabCtx *ctx, Player *p, int32_t amount) {
+    (void)ctx;
+
+    p->health -= amount;
+
+    return p->health;
+}
+
+gab_extern_c(vm, "game", NULL, "damage_taken", (void *)(uintptr_t)damage_taken, &err);
+```
+
+```
+extern func damage_taken(p: &Player, amount: int): int;
+```
+
+The `GabCtx *` comes first on every body and carries what only the VM knows:
+`gab_ctx_fail` to fail the run, `gab_box` to allocate a return the script goes
+on to own, and `gab_ctx_type_kind` and `gab_ctx_type_size` to tell one
+instantiation of a generic declaration from another. A body that needs none of
+them ignores it.
 
 ## The language
 

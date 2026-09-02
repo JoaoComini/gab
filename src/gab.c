@@ -140,30 +140,6 @@ void gab_vm_free(GabVM *handle) {
     vm_free(vm);
 }
 
-int32_t gab_arg_get_int(GabArgs *args, int index) { return args_int(args, index); }
-
-float gab_arg_get_float(GabArgs *args, int index) { return args_float(args, index); }
-
-bool gab_arg_get_bool(GabArgs *args, int index) { return args_bool(args, index); }
-
-void gab_arg_get_struct(GabArgs *args, int index, void *out, size_t size) {
-    args_struct(args, index, out, size);
-}
-
-const char *gab_arg_get_string(GabArgs *args, int index, int32_t *out_length) {
-    StrRef value = args_string(args, index);
-
-    if (out_length) {
-        *out_length = value.length;
-    }
-
-    return value.data;
-}
-
-void *gab_arg_get_pointer(GabArgs *args, int index) { return args_pointer(args, index); }
-
-void gab_drop(GabArgs *args, int index) { args_drop(args, index); }
-
 void gab_drop_pointer(void *pointer) {
     if (!pointer) {
         return;
@@ -172,30 +148,12 @@ void gab_drop_pointer(void *pointer) {
     object_free(&DEFAULT_ALLOCATOR, pointer);
 }
 
-void gab_return_int(GabArgs *args, int32_t value) { args_return_int(args, value); }
-
-void gab_return_float(GabArgs *args, float value) { args_return_float(args, value); }
-
-void gab_return_bool(GabArgs *args, bool value) { args_return_bool(args, value); }
-
-void gab_return_struct(GabArgs *args, const void *data, size_t size) { args_return_struct(args, data, size); }
-
-void gab_return_pointer(GabArgs *args, void *pointer) { args_return_pointer(args, pointer); }
-
-void gab_error(GabArgs *args, const char *message) {
-    if (!args) {
-        return;
-    }
-
-    vm_fail(args->vm, VM_RUN_ERR_EXTERN, message ? message : "the extern function failed");
-}
-
-static bool extern_bind(GabVM *handle, const char *module, const char *type, const char *name, GabExternFn fn,
-                        void *symbol, GabError *err) {
+static bool extern_bind(GabVM *handle, const char *module, const char *type, const char *name, void *symbol,
+                        GabError *err) {
     gab_error_clear(err);
 
-    if (!handle || !name || (!fn && !symbol)) {
-        gab_error_set(err, 0, 0, "binding an extern requires a VM, a name, and a function");
+    if (!handle || !name || !symbol) {
+        gab_error_set(err, 0, 0, "binding an extern requires a VM, a name, and a symbol");
         return false;
     }
 
@@ -225,28 +183,28 @@ static bool extern_bind(GabVM *handle, const char *module, const char *type, con
     extern_binding_list_add(&vm->program.extern_bindings, (ExternBinding){.module = interned_module,
                                                                           .owner = interned_owner,
                                                                           .name = interned_name,
-                                                                          .fn = fn,
                                                                           .symbol = symbol});
 
     return true;
 }
 
-bool gab_extern(GabVM *handle, const char *module, const char *type, const char *name, GabExternFn fn,
-                GabError *err) {
-    return extern_bind(handle, module, type, name, fn, NULL, err);
-}
-
 bool gab_extern_c(GabVM *handle, const char *module, const char *type, const char *name, void *symbol,
                   GabError *err) {
-    return extern_bind(handle, module, type, name, NULL, symbol, err);
+    return extern_bind(handle, module, type, name, symbol, err);
 }
 
-void gab_ctx_fail(GabCtx *ctx, const char *message) { gab_error((GabArgs *)ctx, message); }
+void gab_ctx_fail(GabCtx *ctx, const char *message) {
+    if (!ctx) {
+        return;
+    }
 
-size_t gab_ctx_type_count(GabCtx *ctx) { return ctx ? ((GabArgs *)ctx)->function->type_arg_count : 0; }
+    vm_fail(((Args *)ctx)->vm, VM_RUN_ERR_EXTERN, message ? message : "the extern function failed");
+}
+
+size_t gab_ctx_type_count(GabCtx *ctx) { return ctx ? ((Args *)ctx)->function->type_arg_count : 0; }
 
 GabTypeKind gab_ctx_type_kind(GabCtx *ctx, size_t index) {
-    const Function *function = ((GabArgs *)ctx)->function;
+    const Function *function = ((Args *)ctx)->function;
 
     assert(index < function->type_arg_count && "a C body read a type argument its declaration does not have");
 
@@ -254,7 +212,7 @@ GabTypeKind gab_ctx_type_kind(GabCtx *ctx, size_t index) {
 }
 
 size_t gab_ctx_type_size(GabCtx *ctx, size_t index) {
-    GabArgs *args = (GabArgs *)ctx;
+    Args *args = (Args *)ctx;
     const Function *function = args->function;
 
     assert(index < function->type_arg_count && "a C body read a type argument its declaration does not have");
@@ -262,16 +220,16 @@ size_t gab_ctx_type_size(GabCtx *ctx, size_t index) {
     return type_registry_size_of(args->vm->env.global_scope.type_registry, function->type_args[index]);
 }
 
-void *gab_ctx_return(GabCtx *ctx) { return args_return_address((GabArgs *)ctx); }
+void *gab_ctx_return(GabCtx *ctx) { return args_return_address((Args *)ctx); }
 
-void *gab_box(GabCtx *ctx) { return args_box_return((GabArgs *)ctx); }
+void *gab_box(GabCtx *ctx) { return args_box_return((Args *)ctx); }
 
 GabStr gab_str_copy(GabCtx *ctx, const char *data, int32_t length) {
     GabStr result = {0};
 
     StringValue value;
 
-    if (args_string_copy((GabArgs *)ctx, data, length, &value)) {
+    if (args_string_copy((Args *)ctx, data, length, &value)) {
         memcpy(&result, &value, sizeof(result));
     }
 

@@ -43,15 +43,15 @@ typedef enum {
     GAB_TYPE_BLOCK,
 } GabTypeKind;
 
-typedef struct GabArgs GabArgs;
-typedef void (*GabExternFn)(GabArgs *args);
-
-bool gab_extern(GabVM *vm, const char *module, const char *type, const char *name, GabExternFn fn,
-                GabError *err);
-
 /* What the VM knows about one call, handed to every bound symbol as its first parameter. It is valid
  * only for the duration of that call. */
 typedef struct GabCtx GabCtx;
+
+/* A borrowed string: the same layout the VM holds, so a body takes a '&str' parameter by value. */
+typedef struct {
+    const char *data;
+    int32_t length;
+} GabStrRef;
 
 /* A string the script owns: the same layout the VM holds, so a body returns one by value. */
 typedef struct {
@@ -91,33 +91,11 @@ void *gab_box(GabCtx *ctx);
  * empty, so a body that returns it unchecked traps rather than hands back memory it does not own. */
 GabStr gab_str_copy(GabCtx *ctx, const char *data, int32_t length);
 
-int32_t gab_arg_get_int(GabArgs *args, int index);
-float gab_arg_get_float(GabArgs *args, int index);
-bool gab_arg_get_bool(GabArgs *args, int index);
-
-void gab_arg_get_struct(GabArgs *args, int index, void *out, size_t size);
-
-const char *gab_arg_get_string(GabArgs *args, int index, int32_t *out_length);
-void *gab_arg_get_pointer(GabArgs *args, int index);
-
-/* Free what an owning parameter holds. A C body is given ownership of such a parameter and nothing
- * else will free it, so a body that neither drops it nor hands it back leaks. Dropping a parameter
- * whose value the body has returned, or stored where the script can still reach it, frees memory the
+/* Free an owning pointer a script passed in. A body is given ownership of such a parameter and
+ * nothing else will free it, so one that neither drops it nor hands it back leaks. Dropping a
+ * pointer the body has returned, or stored where the script can still reach it, frees memory the
  * script still names. */
-void gab_drop(GabArgs *args, int index);
-
-/* Free an owning pointer a script passed to a C symbol bound by gab_extern_c, which is handed the
- * pointer alone and so has no GabArgs to name a parameter by index. The pointer must be one the
- * script gave up ownership of, and must not have been freed already. */
 void gab_drop_pointer(void *pointer);
-
-void gab_return_int(GabArgs *args, int32_t value);
-void gab_return_float(GabArgs *args, float value);
-void gab_return_bool(GabArgs *args, bool value);
-void gab_return_struct(GabArgs *args, const void *data, size_t size);
-void gab_return_pointer(GabArgs *args, void *pointer);
-
-void gab_error(GabArgs *args, const char *message);
 
 const GabType *gab_find_type(GabVM *vm, const char *module, const char *name);
 

@@ -92,7 +92,7 @@ typedef struct VM {
     size_t frame_floor;
 } VM;
 
-struct GabArgs {
+struct GabCtx {
     VM *vm;
 
     const struct Function *function;

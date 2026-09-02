@@ -1019,9 +1019,6 @@ static const size_t *codegen_reserve_instantiated(CodegenState *state, Function 
 
         extern_request_list_add(&state->unit->externs,
                                 (ExternRequest){.local_index = local, .function = function, .span = span});
-    } else {
-        state->unit->extern_protos.data[local] =
-            (ExternProto){.body = (GabExternFn)function->decl->body, .function = function};
     }
 
     return proto_map_lookup(state->local_protos, function);

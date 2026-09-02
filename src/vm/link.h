@@ -24,17 +24,11 @@ typedef struct {
 
 GAB_LIST(FrameRefList, frame_ref_list, FrameRef)
 
-typedef struct GabArgs GabArgs;
-typedef void (*GabExternFn)(GabArgs *args);
-
-typedef struct GabArgs Args;
+typedef struct GabCtx Args;
 
 typedef struct FfiSignature FfiSignature;
 
 typedef struct {
-    GabExternFn body;
-
-    /* Set when the extern names a raw C symbol; 'body' is then NULL and the call goes through libffi. */
     const FfiSignature *signature;
 
     const struct Function *function;
@@ -122,9 +116,7 @@ typedef struct {
     String *owner;
     String *name;
 
-    GabExternFn fn;
-
-    /* The raw C symbol, when this binding was made by gab_extern_c rather than gab_extern. */
+    /* The C symbol this name is bound to. */
     void *symbol;
 } ExternBinding;
 

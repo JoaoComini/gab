@@ -46,104 +46,6 @@ uint8_t *args_return_address(Args *args) {
     return args->vm->stack + args->base;
 }
 
-static uint8_t *args_address_of_kind(Args *args, int index, TypeKind kind) {
-    const Type *type = NULL;
-    uint8_t *at = args_address(args, index, &type);
-
-    assert(type && type_kind(type) == kind && "a C body read a parameter as a type it was not declared");
-    (void)kind;
-
-    return at;
-}
-
-int32_t args_int(Args *args, int index) {
-    int32_t value;
-    memcpy(&value, args_address_of_kind(args, index, TYPE_INT), sizeof(value));
-
-    return value;
-}
-
-float args_float(Args *args, int index) {
-    float value;
-    memcpy(&value, args_address_of_kind(args, index, TYPE_FLOAT), sizeof(value));
-
-    return value;
-}
-
-bool args_bool(Args *args, int index) {
-    int32_t value;
-    memcpy(&value, args_address_of_kind(args, index, TYPE_BOOL), sizeof(value));
-
-    return value != 0;
-}
-
-StrRef args_string(Args *args, int index) {
-    const Type *type = NULL;
-    uint8_t *at = args_address(args, index, &type);
-
-    assert(type_is_str_ref(type) &&
-           "a C body read a parameter as a borrowed string when it was not declared one");
-
-    StrRef value;
-    memcpy(&value, at, sizeof(value));
-
-    return value;
-}
-
-StringValue args_string_at(Args *args, int index) {
-    const uint8_t *at = args_pointer(args, index);
-
-    assert(at && "a C body read a string through a pointer holding nothing");
-
-    StringValue value;
-    memcpy(&value, at, sizeof(value));
-
-    return value;
-}
-
-ArrayValue args_array(Args *args, int index) {
-    ArrayValue value;
-    memcpy(&value, args_address_of_kind(args, index, TYPE_ARRAY), sizeof(value));
-
-    return value;
-}
-
-void *args_pointer(Args *args, int index) {
-    const Type *type = NULL;
-    uint8_t *at = args_address(args, index, &type);
-
-    assert(type && type_is_indirect(type) && "a C body read a parameter as a type it was not declared");
-
-    void *pointer;
-    memcpy(&pointer, at, sizeof(pointer));
-
-    return pointer;
-}
-
-void args_struct(Args *args, int index, void *out, size_t size) {
-    const Type *type = NULL;
-    const uint8_t *at = args_address(args, index, &type);
-
-    assert(out && "a C body read a struct argument into nothing");
-    assert(type && type_registry_size_of(args_registry(args), type) == size &&
-           "a struct argument was read at a size its type does not have");
-    (void)size;
-
-    memcpy(out, at, size);
-}
-
-void args_drop(Args *args, int index) {
-    const Type *type = NULL;
-    uint8_t *at = args_address(args, index, &type);
-
-    assert(type_registry_owns(args_registry(args), type) &&
-           "a C body dropped a parameter its declaration does not own");
-
-    object_release(&DEFAULT_ALLOCATOR, type_registry_drop_of(args_registry(args), type), at);
-
-    memset(at, 0, type_registry_size_of(args_registry(args), type));
-}
-
 void *args_box_return(Args *args) {
     const Type *return_type = args->function->return_type;
 
@@ -166,20 +68,6 @@ void *args_box_return(Args *args) {
     return object;
 }
 
-void args_return_int(Args *args, int32_t value) { memcpy(args_return_address(args), &value, sizeof(value)); }
-
-void args_return_float(Args *args, float value) { memcpy(args_return_address(args), &value, sizeof(value)); }
-
-void args_return_bool(Args *args, bool value) {
-    int32_t widened = value ? 1 : 0;
-
-    memcpy(args_return_address(args), &widened, sizeof(widened));
-}
-
-void args_return_pointer(Args *args, void *pointer) {
-    memcpy(args_return_address(args), &pointer, sizeof(pointer));
-}
-
 bool args_string_copy(Args *args, const char *data, int32_t length, StringValue *out) {
     int32_t capacity = length == 0 ? 1 : length;
 
@@ -197,19 +85,4 @@ bool args_string_copy(Args *args, const char *data, int32_t length, StringValue 
     *out = (StringValue){.block = {.data = characters, .capacity = capacity, .length = length}};
 
     return true;
-}
-
-const Type *args_return_type(Args *args) { return args->function->return_type; }
-
-void args_return_struct(Args *args, const void *data, size_t size) {
-    assert(data && "a C body returned a struct from nothing");
-
-    const Type *return_type = args->function->return_type;
-
-    assert(return_type && type_registry_size_of(args_registry(args), return_type) == size &&
-           "a struct was returned at a size the declared return type does not have");
-    (void)return_type;
-    (void)size;
-
-    memcpy(args_return_address(args), data, size);
 }

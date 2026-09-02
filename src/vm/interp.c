@@ -315,11 +315,7 @@ bool vm_call_extern(VM *vm, const ExternProto *proto, size_t base) {
     /* A host body may run the VM again, which moves the pointer its caller is still stepping through. */
     const Instruction *resume = vm->instruction_pointer;
 
-    if (proto->body) {
-        proto->body(&args);
-    } else {
-        ffi_invoke(proto->signature, &args);
-    }
+    ffi_invoke(proto->signature, &args);
 
     vm->instruction_pointer = resume;
 
