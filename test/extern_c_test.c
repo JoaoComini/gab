@@ -347,7 +347,7 @@ static void test_one_symbol_serves_every_specialization(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern_c(vm, "m", "Pair", "total", (void *)(uintptr_t)generic_total, &err));
+    assert(gab_extern_fn(vm, "m", "Pair", "total", generic_total, &err, GAB_CTX, (const void *)0));
 
     assert(gab_load(vm, "<m>",
                     "module m;\n"
@@ -383,7 +383,7 @@ static void test_a_c_symbol_fails_the_run(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern_c(vm, "test", NULL, "refuse", (void *)(uintptr_t)always_fails, &err));
+    assert(gab_extern_fn(vm, "test", NULL, "refuse", always_fails, &err, GAB_CTX, 0));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -432,7 +432,7 @@ static void test_a_generic_return_is_sized_by_its_specialization(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern_c(vm, "m", "Holder", "at", (void *)(uintptr_t)holder_at, &err));
+    assert(gab_extern_fn(vm, "m", "Holder", "at", holder_at, &err, GAB_CTX, (const void *)0, 0));
 
     assert(gab_load(vm, "<m>",
                     "module m;\n"

@@ -66,6 +66,21 @@ typedef struct {
 bool gab_extern_c(GabVM *vm, const char *module, const char *type, const char *name, void *symbol,
                   GabError *err);
 
+/* A GabCtx * of no value, for naming the leading argument in gab_extern_fn's signature list. */
+#define GAB_CTX ((GabCtx *)0)
+
+/* Bind 'symbol' as gab_extern_c does, having checked it can be called with the arguments listed
+ * after it -- values of the right types, starting with GAB_CTX:
+ *
+ *     gab_extern_fn(vm, "m", NULL, "damage", damage, &err, GAB_CTX, (Player *)0, 0);
+ *
+ * A missing context and a wrong arity are compile errors. An argument the compiler converts
+ * silently is not, because the call sits unevaluated, and neither is a body that disagrees with the
+ * script's declaration rather than with this list. */
+#define gab_extern_fn(vm, module, type, name, symbol, err, ...)                                              \
+    ((void)sizeof(((void)((symbol)(__VA_ARGS__)), 0)),                                                       \
+     gab_extern_c((vm), (module), (type), (name), (void *)(uintptr_t)(symbol), (err)))
+
 /* Fail the running call with a message. The C body should return promptly; its return value is
  * discarded, and the script sees a runtime error rather than a result. */
 void gab_ctx_fail(GabCtx *ctx, const char *message);
