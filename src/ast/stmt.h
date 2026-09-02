@@ -31,6 +31,7 @@ typedef enum {
     STMT_VAR_DECL,
     STMT_FUNC_DECL,
     STMT_STRUCT_DECL,
+    STMT_IMPL,
     STMT_ASSIGN,
     STMT_COMPOUND_ASSIGN,
     STMT_BLOCK,
@@ -82,6 +83,11 @@ typedef struct {
 } ASTStructDecl;
 
 typedef struct {
+    TypeExpr *type;
+    ASTStmtList members;
+} ASTImplStmt;
+
+typedef struct {
     ASTExpr *target;
     ASTExpr *value;
 } ASTAssignStmt;
@@ -129,6 +135,7 @@ typedef struct ASTStmt {
         ASTVarDecl var_decl;
         ASTFuncDecl func_decl;
         ASTStructDecl struct_decl;
+        ASTImplStmt impl;
         ASTAssignStmt assign;
         ASTCompoundAssignStmt compound_assign;
         ASTIfStmt ifstmt;
@@ -155,6 +162,7 @@ ASTStmt *ast_if_stmt_create(Arena *arena, Span span, ASTExpr *condition, ASTStmt
 ASTStmt *ast_for_stmt_create(Arena *arena, Span span, ASTStmt *init, ASTExpr *condition, ASTStmt *post,
                              ASTStmt *body);
 ASTStmt *ast_jump_stmt_create(Arena *arena, Span span, bool is_break);
+ASTStmt *ast_impl_stmt_create(Arena *arena, Span span, TypeExpr *type, ASTStmtList members);
 ASTStmt *ast_block_stmt_create(Arena *arena, Span span, ASTStmtList list);
 ASTStmt *ast_return_stmt_create(Arena *arena, Span span, ASTExpr *result);
 

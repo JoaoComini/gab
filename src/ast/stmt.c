@@ -57,6 +57,14 @@ ASTStmt *ast_struct_decl_stmt_create(Arena *arena, Span span, StringRef name, co
     return stmt;
 }
 
+ASTStmt *ast_impl_stmt_create(Arena *arena, Span span, TypeExpr *type, ASTStmtList members) {
+    ASTStmt *stmt = ast_stmt_create(arena, span);
+    stmt->kind = STMT_IMPL;
+    stmt->impl.type = type;
+    stmt->impl.members = members;
+    return stmt;
+}
+
 ASTStmt *ast_assign_stmt_create(Arena *arena, Span span, ASTExpr *target, ASTExpr *value) {
     ASTStmt *stmt = ast_stmt_create(arena, span);
     stmt->kind = STMT_ASSIGN;

@@ -16,6 +16,7 @@ static ASTStmt *parse_statement(Parser *parser);
 static ASTStmt *parse_var_decl_stmt(Parser *parser, ExprContext ctx);
 static ASTStmt *parse_func_decl_stmt(Parser *parser);
 static ASTStmt *parse_struct_decl_stmt(Parser *parser);
+static ASTStmt *parse_impl_stmt(Parser *parser);
 static ASTField *parse_field(Parser *parser, const char *name_message);
 static TypeExpr *parse_type_expr(Parser *parser);
 static ASTExpr *parse_index_expr(Parser *parser, ASTExpr *target);
@@ -200,6 +201,7 @@ static void parser_synchronize(Parser *parser) {
         case TOKEN_FUNC:
         case TOKEN_EXTERN:
         case TOKEN_STRUCT:
+        case TOKEN_IMPL:
         case TOKEN_MODULE:
         case TOKEN_IF:
         case TOKEN_FOR:
@@ -231,8 +233,12 @@ static ASTStmt *parse_decl_statement(Parser *parser) {
         stmt = parse_struct_decl_stmt(parser);
         break;
     }
+    case TOKEN_IMPL: {
+        stmt = parse_impl_stmt(parser);
+        break;
+    }
     default: {
-        parser_error_found(parser, "expected a declaration ('let', 'func', 'extern', or 'struct')");
+        parser_error_found(parser, "expected a declaration ('let', 'func', 'extern', 'struct', or 'impl')");
         return NULL;
     }
     }
@@ -272,6 +278,14 @@ static ASTStmt *parse_statement(Parser *parser) {
     case TOKEN_STRUCT: {
         stmt = parse_struct_decl_stmt(parser);
         break;
+    }
+    case TOKEN_IMPL: {
+        parser_error(parser,
+                     "an 'impl' block cannot be declared inside a function; declare it at module level");
+
+        parse_impl_stmt(parser);
+
+        return NULL;
     }
     case TOKEN_IF: {
         stmt = parse_if_stmt(parser);
@@ -739,7 +753,6 @@ static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
     return ast_struct_decl_stmt_create(parser->arena, span, name, params, param_count, fields);
 }
 
-/* A declaration names what it is generic over, whether those parameters came from an owner or from itself. */
 static void func_decl_take_type_params(ASTStmt *decl, TypeExprList *params) {
     for (size_t i = 0; i < params->size && i < GAB_MAX_TYPE_PARAMS; i++) {
         if (params->data[i]->kind != TYPE_EXPR_NAME) {
@@ -772,9 +785,7 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
     StringRef func_name = parser->current.lexeme;
     parser_next_token(parser);
 
-    TypeExpr *owner = NULL;
-
-    TypeExprList owner_params = type_expr_list_create(arena_allocator(parser->arena));
+    TypeExprList type_params = type_expr_list_create(arena_allocator(parser->arena));
 
     if (parser->current.type == TOKEN_LESS) {
         parser_next_token(parser);
@@ -784,7 +795,7 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
                 return NULL;
             }
 
-            type_expr_list_add(&owner_params, type_expr_name(parser->arena, parser->current.lexeme));
+            type_expr_list_add(&type_params, type_expr_name(parser->arena, parser->current.lexeme));
             parser_next_token(parser);
 
             if (parser->current.type != TOKEN_COMMA) {
@@ -802,28 +813,8 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
     }
 
     if (parser->current.type == TOKEN_COLON_COLON) {
-        parser_next_token(parser);
-
-        if (!parser_expect(parser, TOKEN_IDENT, "expected a function name after '::'")) {
-            return NULL;
-        }
-
-        owner = type_expr_name(parser->arena, func_name);
-
-        if (owner_params.size > 0) {
-            TypeExpr *apply = type_expr_apply(parser->arena, owner);
-            apply->apply.args = owner_params;
-            owner = apply;
-        }
-
-        func_name = parser->current.lexeme;
-
-        parser_next_token(parser);
-
-        if (parser->current.type == TOKEN_COLON_COLON) {
-            parser_error(parser, "a function owned by a type has one '::', as 'Type::name'");
-            return NULL;
-        }
+        parser_error(parser, "a function on a type is declared in an 'impl' block for that type");
+        return NULL;
     }
 
     if (!parser_expect(parser, TOKEN_LPAREN, "expected '(' after function name")) {
@@ -874,12 +865,8 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
         ASTStmt *decl =
             ast_func_decl_stmt_create(parser->arena, span, func_name, func_type, func_params, NULL);
-        decl->func_decl.owner = owner;
 
-        func_decl_take_type_params(decl, &owner_params);
-
-        if (!owner) {
-        }
+        func_decl_take_type_params(decl, &type_params);
 
         return decl;
     }
@@ -892,14 +879,96 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
     ASTStmt *decl =
         ast_func_decl_stmt_create(parser->arena, span, func_name, func_type, func_params, func_body);
-    decl->func_decl.owner = owner;
 
-    func_decl_take_type_params(decl, &owner_params);
-
-    if (!owner) {
-    }
+    func_decl_take_type_params(decl, &type_params);
 
     return decl;
+}
+
+static ASTStmt *parse_impl_stmt(Parser *parser) {
+    Span span = parser_span(parser);
+
+    parser_next_token(parser);
+
+    TypeExprList params = type_expr_list_create(arena_allocator(parser->arena));
+
+    if (parser->current.type == TOKEN_LESS) {
+        parser_next_token(parser);
+
+        for (;;) {
+            if (!parser_expect(parser, TOKEN_IDENT, "expected a type parameter name")) {
+                return NULL;
+            }
+
+            type_expr_list_add(&params, type_expr_name(parser->arena, parser->current.lexeme));
+            parser_next_token(parser);
+
+            if (parser->current.type != TOKEN_COMMA) {
+                break;
+            }
+
+            parser_next_token(parser);
+        }
+
+        if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after an impl's type parameters")) {
+            return NULL;
+        }
+
+        parser_next_token(parser);
+    }
+
+    TypeExpr *type = parse_type_expr(parser);
+    if (!type) {
+        return NULL;
+    }
+
+    if (!parser_expect(parser, TOKEN_LBRACE, "expected '{' after the type an 'impl' block is for")) {
+        return NULL;
+    }
+
+    parser_next_token(parser);
+
+    ASTStmtList members = ast_stmt_list_create(arena_allocator(parser->arena));
+
+    while (parser->current.type != TOKEN_RBRACE) {
+        if (parser->current.type == TOKEN_EOF) {
+            parser_error(parser, "expected '}' to close the impl block");
+            return NULL;
+        }
+
+        if (parser->current.type != TOKEN_FUNC && parser->current.type != TOKEN_EXTERN) {
+            parser_error_found(parser, "expected a function in an 'impl' block");
+            return NULL;
+        }
+
+        ASTStmt *member = parse_func_decl_stmt(parser);
+        if (!member) {
+            return NULL;
+        }
+
+        if (member->func_decl.owner) {
+            parser_error(parser, "a function in an 'impl' block is named without its type");
+            return NULL;
+        }
+
+        member->func_decl.owner = type;
+
+        func_decl_take_type_params(member, &params);
+
+        if (stmt_needs_terminator(member)) {
+            if (!parser_expect(parser, TOKEN_SEMICOLON, "expected ';'")) {
+                return NULL;
+            }
+
+            parser_next_token(parser);
+        }
+
+        ast_stmt_list_add(&members, member);
+    }
+
+    parser_next_token(parser);
+
+    return ast_impl_stmt_create(parser->arena, span, type, members);
 }
 
 static ASTStmt *parse_return_stmt(Parser *parser) {
@@ -988,6 +1057,7 @@ static bool stmt_needs_terminator(ASTStmt *stmt) {
     case STMT_FOR:
     case STMT_BLOCK:
     case STMT_STRUCT_DECL:
+    case STMT_IMPL:
         return false;
 
     case STMT_FUNC_DECL:

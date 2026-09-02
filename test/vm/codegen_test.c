@@ -316,7 +316,9 @@ static void test_a_function_compiles_into_its_own_chunk() {
 
 static void test_a_method_counts_its_receiver() {
     TestProgram program = test_compile("struct Point { x: int }\n"
-                                       "func Point::scaled(v: &Point, by: int): int { return v.x * by; }\n");
+                                       "impl Point {\n"
+                                       "    func scaled(v: &Point, by: int): int { return v.x * by; }\n"
+                                       "}\n");
 
     assert(test_func_count(&program) == 1);
     assert(test_func_proto(&program, 0)->arity == 2);

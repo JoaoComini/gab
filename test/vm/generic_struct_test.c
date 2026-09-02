@@ -64,14 +64,18 @@ static void test_a_declaration_reaches_one_declared_below_it() {
 
 static void test_a_declaration_holds_a_function_over_its_parameters() {
     assert(test_compiles("struct Holder<T> { value: T }\n"
-                         "extern func Holder<T>::get(h: &Holder<T>): T;\n"
+                         "impl<T> Holder<T> {\n"
+                         "    extern func get(h: &Holder<T>): T;\n"
+                         "}\n"
                          "func f(): int { return 1; }\n"
                          "let r: int = f();"));
 }
 
 static void test_a_parameter_names_the_declaration_it_belongs_to() {
     assert(!test_compiles("struct Holder<T> { value: T }\n"
-                          "extern func Holder<U>::get(h: &Holder<T>): int;\n"
+                          "impl<U> Holder<U> {\n"
+                          "    extern func get(h: &Holder<T>): int;\n"
+                          "}\n"
                           "func f(): int { return 1; }\n"
                           "let r: int = f();"));
 }
@@ -102,21 +106,27 @@ static void test_a_parameter_is_the_element_of_an_array() {
 
 static void test_a_function_owned_by_an_instantiation_is_called_through_it() {
     assert(test_run_int("struct Holder<T> { value: T }\n"
-                        "func Holder<T>::make(n: int): int { return n + 1; }\n"
+                        "impl<T> Holder<T> {\n"
+                        "    func make(n: int): int { return n + 1; }\n"
+                        "}\n"
                         "func f(): int { return Holder<int>::make(6); }\n"
                         "let r: int = f();") == 7);
 }
 
 static void test_a_method_on_a_declaration_serves_an_instantiation() {
     assert(test_run_int("struct Holder<T> { value: T }\n"
-                        "func Holder<T>::get(h: &Holder<T>): T { return h.value; }\n"
+                        "impl<T> Holder<T> {\n"
+                        "    func get(h: &Holder<T>): T { return h.value; }\n"
+                        "}\n"
                         "func f(): int { let h = Holder<int> { value: 3 }; return h.get(); }\n"
                         "let r: int = f();") == 3);
 }
 
 static void test_each_instantiation_gets_its_own_body() {
     assert(test_run_int("struct Holder<T> { value: T }\n"
-                        "func Holder<T>::get(h: &Holder<T>): T { return h.value; }\n"
+                        "impl<T> Holder<T> {\n"
+                        "    func get(h: &Holder<T>): T { return h.value; }\n"
+                        "}\n"
                         "func f(): int { let a = Holder<int> { value: 4 };\n"
                         "let b = Holder<bool> { value: true };\n"
                         "if b.get() { return a.get(); } return 0; }\n"
@@ -126,7 +136,9 @@ static void test_each_instantiation_gets_its_own_body() {
 static void test_an_instantiation_that_owns_frees_what_it_holds() {
     assert(test_run_int("struct Cell { n: int }\n"
                         "struct Holder<T> { value: T }\n"
-                        "func Holder<T>::read(h: &Holder<T>): int { return 1; }\n"
+                        "impl<T> Holder<T> {\n"
+                        "    func read(h: &Holder<T>): int { return 1; }\n"
+                        "}\n"
                         "func f(): int { let h = Holder<*Cell> { value: box Cell { n: 0 } };\n"
                         "h.value.n = 8; return h.read() + h.value.n; }\n"
                         "let r: int = f();") == 9);
@@ -135,8 +147,12 @@ static void test_an_instantiation_that_owns_frees_what_it_holds() {
 static void test_an_instantiation_reached_from_another_is_emitted() {
     assert(test_run_int("struct Holder<T> { value: T }\n"
                         "struct Wrap<T> { inner: Holder<T> }\n"
-                        "func Holder<T>::get(h: &Holder<T>): T { return h.value; }\n"
-                        "func Wrap<T>::unwrap(w: &Wrap<T>): T { return w.inner.get(); }\n"
+                        "impl<T> Holder<T> {\n"
+                        "    func get(h: &Holder<T>): T { return h.value; }\n"
+                        "}\n"
+                        "impl<T> Wrap<T> {\n"
+                        "    func unwrap(w: &Wrap<T>): T { return w.inner.get(); }\n"
+                        "}\n"
                         "func f(): int { let w = Wrap<int> { inner: Holder<int> { value: 6 } };\n"
                         "return w.unwrap(); }\n"
                         "let r: int = f();") == 6);
@@ -144,8 +160,10 @@ static void test_an_instantiation_reached_from_another_is_emitted() {
 
 static void test_a_generic_that_instantiates_itself_is_rejected() {
     assert(!test_compiles("struct Holder<T> { value: T }\n"
-                          "func Holder<T>::deeper(h: &Holder<T>): int {\n"
-                          "    let n: Holder<*T>; return n.deeper(); }\n"
+                          "impl<T> Holder<T> {\n"
+                          "    func deeper(h: &Holder<T>): int {\n"
+                          "        let n: Holder<*T>; return n.deeper(); }\n"
+                          "}\n"
                           "func f(): int { let h = Holder<int> { value: 0 }; return h.deeper(); }\n"
                           "let r: int = f();"));
 }

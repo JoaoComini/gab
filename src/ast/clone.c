@@ -108,6 +108,11 @@ static ASTStmt *clone_stmt(Arena *arena, const ASTStmt *stmt) {
         return ast_var_decl_stmt_create(arena, stmt->span, stmt->var_decl.name, stmt->var_decl.type_expr,
                                         clone_expr(arena, stmt->var_decl.initializer));
 
+    case STMT_IMPL:
+        assert(false && "a generic instantiation clones a member, not its impl block");
+
+        return NULL;
+
     case STMT_FUNC_DECL: {
         ASTFieldList params = ast_field_list_create(arena_allocator(arena));
 
