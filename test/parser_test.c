@@ -457,11 +457,19 @@ static void test_function_cannot_be_declared_inside_another() {
                        "a function cannot be declared inside another; declare it at module level");
 }
 
+static void test_a_function_on_a_type_is_declared_in_an_impl_block() {
+    assert_parse_error("struct P { n: int }\n"
+                       "func P::m(p: &P): int { return 0; }\n",
+                       "a function on a type is declared in an 'impl' block for that type");
+}
+
 static void test_function_cannot_be_declared_inside_a_method() {
     assert_parse_error("struct P { n: int }\n"
-                       "func P::m(p: &P): int {\n"
-                       "    func inner(): int { return 1; }\n"
-                       "    return 0;\n"
+                       "impl P {\n"
+                       "    func m(p: &P): int {\n"
+                       "        func inner(): int { return 1; }\n"
+                       "        return 0;\n"
+                       "    }\n"
                        "}\n",
                        "a function cannot be declared inside another; declare it at module level");
 }
@@ -569,6 +577,7 @@ int main() {
     test_context_init(&parsed);
 
     test_function_cannot_be_declared_inside_another();
+    test_a_function_on_a_type_is_declared_in_an_impl_block();
     test_function_cannot_be_declared_inside_a_method();
     test_module_directive();
     test_a_unit_must_name_its_module();

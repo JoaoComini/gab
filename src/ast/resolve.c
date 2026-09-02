@@ -2014,6 +2014,37 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
     stmt->func_decl.function = func;
 }
 
+static Scope *impl_param_scope(ResolverState *state, ASTStmt *stmt) {
+    return owner_param_scope(state, stmt->impl.type);
+}
+
+static void declare_impl(ResolverState *state, ASTStmt *stmt) {
+    Scope *enclosing = state->current_scope;
+    Scope *params = impl_param_scope(state, stmt);
+
+    if (params) {
+        state->current_scope = params;
+    }
+
+    for (size_t i = 0; i < stmt->impl.members.size; i++) {
+        ASTStmt *member = stmt->impl.members.data[i];
+
+        if (member && member->kind == STMT_FUNC_DECL) {
+            declare_owned_in_scope(state, enclosing, member);
+
+            member->func_decl.declared = true;
+        }
+    }
+
+    state->current_scope = enclosing;
+}
+
+static void resolve_impl(ResolverState *state, ASTStmt *stmt) {
+    for (size_t i = 0; i < stmt->impl.members.size; i++) {
+        resolve_stmt(state, stmt->impl.members.data[i]);
+    }
+}
+
 static void declare_owned(ResolverState *state, ASTStmt *stmt) {
     Scope *enclosing = state->current_scope;
     Scope *params = owner_param_scope(state, stmt->func_decl.owner);
@@ -2317,6 +2348,10 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         }
         break;
     }
+    case STMT_IMPL: {
+        resolve_impl(state, stmt);
+        break;
+    }
     case STMT_STRUCT_DECL: {
         if (!stmt->struct_decl.declared) {
             StructDecl *decl = declare_struct(state, stmt);
@@ -2527,6 +2562,10 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
 
         if (stmt && stmt->kind == STMT_FUNC_DECL) {
             declare_func(&state, stmt);
+        }
+
+        if (stmt && stmt->kind == STMT_IMPL) {
+            declare_impl(&state, stmt);
         }
     }
 

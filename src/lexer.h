@@ -53,6 +53,7 @@ typedef enum {
     TOKEN_FUNC,
     TOKEN_EXTERN,
     TOKEN_STRUCT,
+    TOKEN_IMPL,
     TOKEN_MODULE,
     TOKEN_IMPORT,
     TOKEN_RETURN,

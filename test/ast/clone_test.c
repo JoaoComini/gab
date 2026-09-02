@@ -8,6 +8,16 @@ static const ASTStmt *find_func(const ASTStmtList *list, const char *name) {
     for (size_t i = 0; i < list->size; i++) {
         const ASTStmt *stmt = list->data[i];
 
+        if (stmt && stmt->kind == STMT_IMPL) {
+            const ASTStmt *found = find_func(&stmt->impl.members, name);
+
+            if (found) {
+                return found;
+            }
+
+            continue;
+        }
+
         if (stmt && stmt->kind == STMT_FUNC_DECL &&
             strncmp(stmt->func_decl.name.data, name, stmt->func_decl.name.length) == 0) {
             return stmt;
@@ -26,7 +36,9 @@ static void test_an_instance_shares_the_type_expressions_it_was_cloned_from() {
 
     bool ok = test_resolve(&ctx, scope, unit,
                            "struct Holder<T> { held: T }\n"
-                           "func Holder<T>::get(h: &Holder<T>): T { return h.held; }\n"
+                           "impl<T> Holder<T> {\n"
+                           "    func get(h: &Holder<T>): T { return h.held; }\n"
+                           "}\n"
                            "func main(): int { let h = Holder<int> { held: 7 }; return h.get(); }\n");
     assert(ok);
 

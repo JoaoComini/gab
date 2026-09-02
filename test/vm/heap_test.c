@@ -59,15 +59,17 @@ static void test_two_objects_are_distinct() {
 }
 
 static void test_method_on_a_heap_object() {
-    assert(test_run_int(
-               "struct Player { health: int }\n"
-               "func Player::hurt(p: &Player, n: int): int { p.health = p.health - n; return p.health; }\n"
-               "func main(): int {\n"
-               "    let p: *Player = box Player { health: 0 };\n"
-               "    p.health = 50;\n"
-               "    return p.hurt(8);\n"
-               "}\n"
-               "let r: int = main();") == 42);
+    assert(
+        test_run_int("struct Player { health: int }\n"
+                     "impl Player {\n"
+                     "    func hurt(p: &Player, n: int): int { p.health = p.health - n; return p.health; }\n"
+                     "}\n"
+                     "func main(): int {\n"
+                     "    let p: *Player = box Player { health: 0 };\n"
+                     "    p.health = 50;\n"
+                     "    return p.hurt(8);\n"
+                     "}\n"
+                     "let r: int = main();") == 42);
 }
 
 static void test_an_object_can_hold_another() {
@@ -205,7 +207,9 @@ static void test_an_owned_argument_is_freed_by_the_call_site() {
 
 static void test_an_owned_receiver_is_freed_by_the_call_site() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func Box::get(b: &Box): int { return b.n + 2; }\n"
+                        "impl Box {\n"
+                        "    func get(b: &Box): int { return b.n + 2; }\n"
+                        "}\n"
                         "func main(): int { return (box Box { n: 0 }).get(); }\n"
                         "let r: int = main();") == 2);
 }

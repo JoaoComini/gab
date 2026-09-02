@@ -147,7 +147,9 @@ static void test_a_field_reaches_through_every_pointer_level() {
 
 static void test_a_method_reaches_through_every_pointer_level() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func Box::bump(b: &Box): int { b.n = b.n + 1; return b.n; }\n"
+                        "impl Box {\n"
+                        "    func bump(b: &Box): int { b.n = b.n + 1; return b.n; }\n"
+                        "}\n"
                         "func poke(s: &*Box): int { return s.bump(); }\n"
                         "func main(): int {\n"
                         "    let o: *Box = box Box { n: 0 };\n"

@@ -244,6 +244,12 @@ Unit *codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, TypeRegi
         if (stmt && stmt->kind == STMT_FUNC_DECL) {
             codegen_reserve_proto(&state, &stmt->func_decl);
         }
+
+        if (stmt && stmt->kind == STMT_IMPL) {
+            for (size_t m = 0; m < stmt->impl.members.size; m++) {
+                codegen_reserve_proto(&state, &stmt->impl.members.data[m]->func_decl);
+            }
+        }
     }
 
     for (size_t i = 0; i < ast->instances.size; i++) {
@@ -354,6 +360,11 @@ static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
         break;
     case STMT_STRUCT_DECL:
 
+        break;
+    case STMT_IMPL:
+        for (size_t i = 0; i < ast->impl.members.size; i++) {
+            codegen_stmt(state, ast->impl.members.data[i]);
+        }
         break;
     }
 
@@ -729,6 +740,7 @@ static bool stmt_may_assign(const ASTStmt *stmt, const Binding *binding) {
     case STMT_EXPR:
     case STMT_FUNC_DECL:
     case STMT_STRUCT_DECL:
+    case STMT_IMPL:
     case STMT_JUMP:
     case STMT_RETURN:
         return false;

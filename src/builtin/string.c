@@ -152,15 +152,17 @@ static void string_from(Args *args) {
 }
 
 static const char PRELUDE_STR[] = "module " GAB_PRELUDE_MODULE ";\n"
-                                  "extern func str::len(self: &str): int;\n"
-                                  "extern func str::is_empty(self: &str): bool;\n"
-                                  "extern func str::at(self: &str, index: int): int;\n"
-                                  "extern func str::starts_with(self: &str, prefix: &str): bool;\n"
-                                  "extern func str::ends_with(self: &str, suffix: &str): bool;\n"
-                                  "extern func str::contains(self: &str, needle: &str): bool;\n"
-                                  "extern func str::index_of(self: &str, needle: &str): int;\n"
-                                  "extern func str::count(self: &str, needle: &str): int;\n"
-                                  "extern func str::to_owned(self: &str): String;\n";
+                                  "impl str {\n"
+                                  "    extern func len(self: &str): int;\n"
+                                  "    extern func is_empty(self: &str): bool;\n"
+                                  "    extern func at(self: &str, index: int): int;\n"
+                                  "    extern func starts_with(self: &str, prefix: &str): bool;\n"
+                                  "    extern func ends_with(self: &str, suffix: &str): bool;\n"
+                                  "    extern func contains(self: &str, needle: &str): bool;\n"
+                                  "    extern func index_of(self: &str, needle: &str): int;\n"
+                                  "    extern func count(self: &str, needle: &str): int;\n"
+                                  "    extern func to_owned(self: &str): String;\n"
+                                  "}\n";
 
 static void string_register_str_externs(VM *vm) {
     static const struct {

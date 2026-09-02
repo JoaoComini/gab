@@ -426,7 +426,9 @@ static void test_an_extern_may_be_owned_by_a_struct(void) {
     assert(gab_load(vm, "<m>",
                     "module test;\n"
                     "struct Counter { value: int }\n"
-                    "extern func Counter::get(self: &Counter): int;\n"
+                    "impl Counter {\n"
+                    "    extern func get(self: &Counter): int;\n"
+                    "}\n"
                     "func run(): int {\n"
                     "    let c = Counter { value: 9 };\n"
                     "    return c.get();\n"
@@ -458,8 +460,12 @@ static void test_two_types_may_own_an_extern_of_one_name(void) {
                     "module test;\n"
                     "struct Counter { value: int }\n"
                     "struct Gauge { reading: int }\n"
-                    "extern func Counter::get(self: &Counter): int;\n"
-                    "extern func Gauge::get(self: &Gauge): int;\n"
+                    "impl Counter {\n"
+                    "    extern func get(self: &Counter): int;\n"
+                    "}\n"
+                    "impl Gauge {\n"
+                    "    extern func get(self: &Gauge): int;\n"
+                    "}\n"
                     "func run(): int {\n"
                     "    let c = Counter { value: 3 };\n"
                     "    let g = Gauge { reading: 4 };\n"
@@ -514,7 +520,9 @@ static void test_a_primitive_is_owned_only_by_a_host_body(void) {
     GabError err;
     assert(!gab_load(vm, "<m>",
                      "module test;\n"
-                     "func str::length(self: &str): int { return 0; }\n",
+                     "impl str {\n"
+                     "    func length(self: &str): int { return 0; }\n"
+                     "}\n",
                      &err));
 
     gab_vm_free(vm);
@@ -528,7 +536,9 @@ static void test_only_the_prelude_owns_a_primitive(void) {
 
     assert(!gab_load(vm, "<m>",
                      "module test;\n"
-                     "extern func str::length(self: &str): int;\n",
+                     "impl str {\n"
+                     "    extern func length(self: &str): int;\n"
+                     "}\n",
                      &err));
 
     gab_vm_free(vm);
@@ -542,7 +552,9 @@ static void test_naming_the_prelude_does_not_own_a_primitive(void) {
 
     assert(!gab_load(vm, "<m>",
                      "module prelude;\n"
-                     "extern func str::length(self: &str): int;\n",
+                     "impl str {\n"
+                     "    extern func length(self: &str): int;\n"
+                     "}\n",
                      &err));
 
     gab_vm_free(vm);
@@ -557,7 +569,9 @@ static void test_an_extern_does_not_claim_a_type_from_another_module(void) {
     assert(!gab_load(vm, "b.gab",
                      "module B;\n"
                      "import A;\n"
-                     "extern func A::Counter::get(self: &A::Counter): int;\n",
+                     "impl A::Counter {\n"
+                     "    extern func get(self: &A::Counter): int;\n"
+                     "}\n",
                      &err));
 
     gab_vm_free(vm);

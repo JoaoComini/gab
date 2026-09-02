@@ -23,6 +23,7 @@ set(
     vm/encoding_test.c
     vm/pointer_test.c
     vm/method_test.c
+    vm/impl_test.c
     vm/generic_struct_test.c
     vm/owned_func_test.c
     vm/heap_test.c

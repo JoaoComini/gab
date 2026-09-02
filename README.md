@@ -110,8 +110,10 @@ func heal(p: &Player, amount: int) {
     p.health = p.health + amount;
 }
 
-func Player::is_alive(p: &Player): bool {
-    return p.health > 0;
+impl Player {
+    func is_alive(p: &Player): bool {
+        return p.health > 0;
+    }
 }
 ```
 
@@ -149,10 +151,10 @@ caller gave it up, so returning it transfers rather than duplicating — while a
 `&T` may not become a `*T` return, which would hand out ownership nobody
 granted.
 
-A function a type owns is declared `func Type::name(...)`, and one whose first
-parameter is that type may also be called on a value: `p.is_alive()` is
-`Player::is_alive(p)`. The sugar borrows and derefs to reach parameter zero, but
-never hands ownership over — a function taking `*T` first consumes it, so it
+A function a type owns is declared in an `impl` block for that type, and one
+whose first parameter is that type may also be called on a value: `p.is_alive()`
+is `Player::is_alive(p)`. The sugar borrows and derefs to reach parameter zero,
+but never hands ownership over — a function taking `*T` first consumes it, so it
 is called as `Type::name(v)`, where the argument is an argument like any other.
 
 Only something with a home in memory can be borrowed. A call result is a
@@ -423,7 +425,7 @@ more or less, and a second spelling would say nothing the first does not.
 | | |
 | --- | --- |
 | Types | `int` (32-bit), `float` (32-bit), `bool`, `String` and characters named by `&str`, `[T; N]`, `Vec<T>`, structs, owning `*T`, borrows `&T` |
-| Declarations | `let` with inferred or annotated type, `func`, `struct`, `module`. A struct local is written as a literal |
+| Declarations | `let` with inferred or annotated type, `func`, `struct`, `impl`, `module`. A struct local is written as a literal |
 | Generics | Structs, the methods they own, and free functions. A call infers its type arguments from what it is given, or names them as `id<int>(x)` |
 | Functions | Parameters and returns of any type, structs by value, functions a type owns, recursion, forward references |
 | Control flow | `if` / `else`, `for` in three forms, `break`, `continue`, `return`, nested blocks with shadowing |

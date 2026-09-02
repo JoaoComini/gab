@@ -108,7 +108,9 @@ static void test_a_borrow_cannot_be_laundered_into_an_owned_return() {
 
 static void test_parameter_zero_may_own() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func Box::take(b: *Box): int { return b.n; }\n"
+                        "impl Box {\n"
+                        "    func take(b: *Box): int { return b.n; }\n"
+                        "}\n"
                         "func main(): int {\n"
                         "    let a: *Box = box Box { n: 0 };\n"
                         "    a.n = 4;\n"
@@ -117,7 +119,9 @@ static void test_parameter_zero_may_own() {
                         "let r: int = main();") == 4);
 
     assert(!test_compiles("struct Box { n: int }\n"
-                          "func Box::take(b: *Box): int { return b.n; }\n"
+                          "impl Box {\n"
+                          "    func take(b: *Box): int { return b.n; }\n"
+                          "}\n"
                           "func main(): int {\n"
                           "    let a: *Box = box Box { n: 0 };\n"
                           "    a.take();\n"
@@ -127,7 +131,9 @@ static void test_parameter_zero_may_own() {
 
 static void test_a_method_parameter_may_own() {
     assert(test_run_int("struct Box { n: int }\n"
-                        "func Box::adopt(b: &Box, other: *Box): int { return other.n; }\n"
+                        "impl Box {\n"
+                        "    func adopt(b: &Box, other: *Box): int { return other.n; }\n"
+                        "}\n"
                         "func main(): int {\n"
                         "    let host: *Box = box Box { n: 0 };\n"
                         "    let gift: *Box = box Box { n: 0 };\n"
