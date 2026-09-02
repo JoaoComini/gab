@@ -32,7 +32,7 @@
 
 #define VM_FETCH()                                                                                           \
     do {                                                                                                     \
-        if (vm->frame_count == 0) {                                                                          \
+        if (vm->frame_count == frame_floor) {                                                                \
             goto vm_done;                                                                                    \
         }                                                                                                    \
                                                                                                              \
