@@ -3,6 +3,6 @@
 
 #include "vm/vm.h"
 
-void core_register_str(VM *vm);
+void core_register_all(VM *vm);
 
 #endif

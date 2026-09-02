@@ -1,3 +1,4 @@
+#include "core/str.h"
 #include "core/core.h"
 #include "library.h"
 
