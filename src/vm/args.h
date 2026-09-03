@@ -10,7 +10,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-uint8_t *args_address(Args *args, int index, const Type **out_type);
+uint8_t *args_address(Args *args, int index);
+
+/* The declared type of one parameter, or NULL when the declaration has no such parameter. */
+const Type *args_param_type(Args *args, int index);
 
 uint8_t *args_return_address(Args *args);
 

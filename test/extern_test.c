@@ -21,30 +21,30 @@ typedef struct {
 
 static int32_t last_logged = 0;
 
-static void host_log(GabArgs *args) { last_logged = gab_arg_get_int(args, 0); }
+static void host_log(GabCtx *ctx) { last_logged = gab_arg_get_int(ctx, 0); }
 
-static void twice(GabArgs *args) { gab_return_int(args, gab_arg_get_int(args, 0) * 2); }
+static void twice(GabCtx *ctx) { gab_return_int(ctx, gab_arg_get_int(ctx, 0) * 2); }
 
-static void scale(GabArgs *args) { gab_return_float(args, gab_arg_get_float(args, 0) * 2.0f); }
+static void scale(GabCtx *ctx) { gab_return_float(ctx, gab_arg_get_float(ctx, 0) * 2.0f); }
 
-static void negate(GabArgs *args) { gab_return_bool(args, !gab_arg_get_bool(args, 0)); }
+static void negate(GabCtx *ctx) { gab_return_bool(ctx, !gab_arg_get_bool(ctx, 0)); }
 
-static void heal(GabArgs *args) {
+static void heal(GabCtx *ctx) {
     Player p;
-    gab_arg_get_struct(args, 0, &p, sizeof p);
+    gab_arg_get_struct(ctx, 0, &p, sizeof p);
 
     p.health += 10;
 
-    gab_return_struct(args, &p, sizeof p);
+    gab_return_struct(ctx, &p, sizeof p);
 }
 
-static void boost(GabArgs *args) {
-    Player *p = gab_arg_get_pointer(args, 0);
+static void boost(GabCtx *ctx) {
+    Player *p = gab_arg_get_pointer(ctx, 0);
 
     p->mana += 5;
 }
 
-static void refuse(GabArgs *args) { gab_error(args, "the host refused"); }
+static void refuse(GabCtx *ctx) { gab_ctx_fail(ctx, "the host refused"); }
 
 static void test_an_extern_returns_to_its_caller(void) {
     GabVM *vm = gab_vm_new();
@@ -152,16 +152,16 @@ static void test_a_struct_crosses_by_value(void) {
     gab_vm_free(vm);
 }
 
-static void after_a_wide_parameter(GabArgs *args) {
+static void after_a_wide_parameter(GabCtx *ctx) {
     Player first;
     Player second;
 
-    gab_arg_get_struct(args, 0, &first, sizeof first);
-    int32_t middle = gab_arg_get_int(args, 1);
-    gab_arg_get_struct(args, 2, &second, sizeof second);
-    int32_t last = gab_arg_get_int(args, 3);
+    gab_arg_get_struct(ctx, 0, &first, sizeof first);
+    int32_t middle = gab_arg_get_int(ctx, 1);
+    gab_arg_get_struct(ctx, 2, &second, sizeof second);
+    int32_t last = gab_arg_get_int(ctx, 3);
 
-    gab_return_int(args, first.health * 1000 + middle * 100 + second.health * 10 + last);
+    gab_return_int(ctx, first.health * 1000 + middle * 100 + second.health * 10 + last);
 }
 
 static void test_a_parameter_after_a_wide_one_is_found(void) {
@@ -348,7 +348,7 @@ static void test_an_extern_lives_in_its_module(void) {
     gab_vm_free(vm);
 }
 
-static void refuse_silently(GabArgs *args) { gab_error(args, NULL); }
+static void refuse_silently(GabCtx *ctx) { gab_ctx_fail(ctx, NULL); }
 
 static void test_an_extern_may_fail_without_a_message(void) {
     GabVM *vm = gab_vm_new();
@@ -372,14 +372,14 @@ static void test_an_extern_may_fail_without_a_message(void) {
     gab_vm_free(vm);
 }
 
-static void refuse_at_length(GabArgs *args) {
+static void refuse_at_length(GabCtx *ctx) {
     char message[512];
 
     memset(message, 'x', sizeof(message) - 1);
     message[sizeof(message) - 1] = '\0';
     memcpy(message, "far too long", strlen("far too long"));
 
-    gab_error(args, message);
+    gab_ctx_fail(ctx, message);
 }
 
 static void test_a_long_extern_message_is_truncated(void) {
@@ -437,22 +437,22 @@ static void test_a_call_reaches_the_body_its_name_declares(void) {
 
 static int32_t counter_get_calls = 0;
 
-static void counter_get(GabArgs *args) {
-    Counter *c = gab_arg_get_pointer(args, 0);
+static void counter_get(GabCtx *ctx) {
+    Counter *c = gab_arg_get_pointer(ctx, 0);
 
     counter_get_calls++;
 
-    gab_return_int(args, c->value);
+    gab_return_int(ctx, c->value);
 }
 
 static int32_t gauge_get_calls = 0;
 
-static void gauge_get(GabArgs *args) {
-    Gauge *g = gab_arg_get_pointer(args, 0);
+static void gauge_get(GabCtx *ctx) {
+    Gauge *g = gab_arg_get_pointer(ctx, 0);
 
     gauge_get_calls++;
 
-    gab_return_int(args, g->reading);
+    gab_return_int(ctx, g->reading);
 }
 
 static void test_an_extern_may_be_owned_by_a_struct(void) {
@@ -527,14 +527,14 @@ static void test_two_types_may_own_an_extern_of_one_name(void) {
     gab_vm_free(vm);
 }
 
-static void str_len(GabArgs *args) {
+static void str_len(GabCtx *ctx) {
     int32_t length = 0;
-    gab_arg_get_string(args, 0, &length);
+    gab_arg_get_string(ctx, 0, &length);
 
-    gab_return_int(args, length);
+    gab_return_int(ctx, length);
 }
 
-static void count_of(GabArgs *args) { gab_return_int(args, 7); }
+static void count_of(GabCtx *ctx) { gab_return_int(ctx, 7); }
 
 static void test_each_specialization_of_a_host_method_reaches_one_body(void) {
     GabVM *vm = gab_vm_new();
@@ -662,6 +662,67 @@ static void test_an_extern_does_not_claim_a_type_from_another_module(void) {
     gab_vm_free(vm);
 }
 
+static void body_tells_specializations_apart(GabCtx *ctx) {
+    gab_return_int(ctx, gab_ctx_type_kind(ctx, 0) == GAB_TYPE_FLOAT ? 1 : 0);
+}
+
+static void test_a_body_reads_what_its_specialization_chose(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, "m", "Holder", "tag", body_tells_specializations_apart, &err));
+
+    assert(gab_load(vm, "<m>",
+                    "module m;\n"
+                    "struct Holder<T> { a: T }\n"
+                    "impl<T> Holder<T> {\n"
+                    "    extern func tag(self: &Holder<T>): int;\n"
+                    "}\n"
+                    "func run(): int {\n"
+                    "    let i = Holder<int> { a: 1 };\n"
+                    "    let f = Holder<float> { a: 1.0 };\n"
+                    "    return i.tag() * 10 + f.tag();\n"
+                    "}\n",
+                    &err));
+
+    GabFunc *fn = gab_lookup(vm, "m", "run", &err);
+    GabCall *call = gab_call_init(fn, &err);
+
+    int32_t out = 0;
+    assert(gab_call(vm, call, &out, &err) == GAB_OK);
+    assert(out == 1);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
+static void body_measures_its_array(GabCtx *ctx) {
+    gab_return_int(ctx, gab_ctx_array_length(ctx, 0) * 100 + (int32_t)gab_ctx_array_stride(ctx, 0));
+}
+
+static void test_a_body_reads_the_shape_of_an_array_it_is_given(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, "test", NULL, "shape", body_measures_its_array, &err));
+
+    assert(gab_load(vm, "<m>",
+                    "module test;\n"
+                    "extern func shape(xs: [int; 3]): int;\n"
+                    "func run(): int { return shape([1, 2, 3]); }\n",
+                    &err));
+
+    GabFunc *fn = gab_lookup(vm, "test", "run", &err);
+    GabCall *call = gab_call_init(fn, &err);
+
+    int32_t out = 0;
+    assert(gab_call(vm, call, &out, &err) == GAB_OK);
+    assert(out == 304);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
 int main(void) {
     test_an_extern_returns_to_its_caller();
     test_an_extern_may_return_nothing();
@@ -683,6 +744,8 @@ int main(void) {
     test_two_types_may_own_an_extern_of_one_name();
     test_a_core_method_on_a_primitive_reaches_its_host_body();
     test_each_specialization_of_a_host_method_reaches_one_body();
+    test_a_body_reads_what_its_specialization_chose();
+    test_a_body_reads_the_shape_of_an_array_it_is_given();
     test_a_primitive_is_owned_only_by_a_host_body();
     test_only_the_core_library_owns_a_primitive();
     test_naming_the_core_library_does_not_own_a_primitive();

@@ -24,10 +24,10 @@ typedef struct {
 
 GAB_LIST(FrameRefList, frame_ref_list, FrameRef)
 
-typedef struct GabArgs GabArgs;
-typedef void (*GabExternFn)(GabArgs *args);
+typedef struct GabCtx GabCtx;
+typedef void (*GabExternFn)(GabCtx *args);
 
-typedef struct GabArgs Args;
+typedef struct GabCtx Args;
 
 typedef struct {
     GabExternFn body;
@@ -36,6 +36,11 @@ typedef struct {
 
     /* Each parameter's byte offset from the frame base, so reading one does not walk those before it. */
     const size_t *param_offsets;
+
+    /* The size of each type argument the specialization chose, and the element size of each array
+     * parameter, both fixed once the binding resolves. */
+    const size_t *type_arg_sizes;
+    const size_t *param_strides;
 } ExternProto;
 
 GAB_LIST(ExternProtoList, extern_proto_list, ExternProto)

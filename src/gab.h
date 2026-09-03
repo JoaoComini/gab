@@ -28,28 +28,54 @@ void gab_vm_free(GabVM *vm);
 
 bool gab_load(GabVM *vm, const char *name, const char *src, GabError *err);
 
-typedef struct GabArgs GabArgs;
-typedef void (*GabExternFn)(GabArgs *args);
+typedef struct GabCtx GabCtx;
+typedef void (*GabExternFn)(GabCtx *ctx);
 
 bool gab_extern(GabVM *vm, const char *module, const char *type, const char *name, GabExternFn fn,
                 GabError *err);
 
-int32_t gab_arg_get_int(GabArgs *args, int index);
-float gab_arg_get_float(GabArgs *args, int index);
-bool gab_arg_get_bool(GabArgs *args, int index);
+int32_t gab_arg_get_int(GabCtx *ctx, int index);
+float gab_arg_get_float(GabCtx *ctx, int index);
+bool gab_arg_get_bool(GabCtx *ctx, int index);
 
-void gab_arg_get_struct(GabArgs *args, int index, void *out, size_t size);
+void gab_arg_get_struct(GabCtx *ctx, int index, void *out, size_t size);
 
-const char *gab_arg_get_string(GabArgs *args, int index, int32_t *out_length);
-void *gab_arg_get_pointer(GabArgs *args, int index);
+const char *gab_arg_get_string(GabCtx *ctx, int index, int32_t *out_length);
+void *gab_arg_get_pointer(GabCtx *ctx, int index);
 
-void gab_return_int(GabArgs *args, int32_t value);
-void gab_return_float(GabArgs *args, float value);
-void gab_return_bool(GabArgs *args, bool value);
-void gab_return_struct(GabArgs *args, const void *data, size_t size);
-void gab_return_pointer(GabArgs *args, void *pointer);
+void gab_return_int(GabCtx *ctx, int32_t value);
+void gab_return_float(GabCtx *ctx, float value);
+void gab_return_bool(GabCtx *ctx, bool value);
+void gab_return_struct(GabCtx *ctx, const void *data, size_t size);
+void gab_return_pointer(GabCtx *ctx, void *pointer);
 
-void gab_error(GabArgs *args, const char *message);
+void gab_ctx_fail(GabCtx *ctx, const char *message);
+
+/* The values match the VM's own type kinds and are stable. */
+typedef enum {
+    GAB_TYPE_INT,
+    GAB_TYPE_FLOAT,
+    GAB_TYPE_BOOL,
+    GAB_TYPE_BYTE,
+    GAB_TYPE_PTR,
+    GAB_TYPE_STR,
+    GAB_TYPE_ARRAY,
+    GAB_TYPE_STRUCT,
+    GAB_TYPE_BOX,
+    GAB_TYPE_REF,
+    GAB_TYPE_BLOCK,
+} GabTypeKind;
+
+/* What the declaration's type parameters were instantiated with, in order. One body serves every
+ * specialization, so these are how it tells them apart. */
+size_t gab_ctx_type_count(GabCtx *ctx);
+GabTypeKind gab_ctx_type_kind(GabCtx *ctx, size_t index);
+size_t gab_ctx_type_size(GabCtx *ctx, size_t index);
+
+/* The length and element size of an array parameter. Both are zero when that parameter is not an
+ * array. */
+int32_t gab_ctx_array_length(GabCtx *ctx, int index);
+size_t gab_ctx_array_stride(GabCtx *ctx, int index);
 
 const GabType *gab_find_type(GabVM *vm, const char *module, const char *name);
 
