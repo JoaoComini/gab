@@ -6,6 +6,7 @@
 #include "string/string.h"
 #include "type/type.h"
 #include "type/type_layout.h"
+#include "type/type_registry.h"
 #include "util/list.h"
 #include "vm/chunk.h"
 
@@ -32,6 +33,9 @@ typedef struct {
     GabExternFn body;
 
     const struct Function *function;
+
+    /* Each parameter's byte offset from the frame base, so reading one does not walk those before it. */
+    const size_t *param_offsets;
 } ExternProto;
 
 GAB_LIST(ExternProtoList, extern_proto_list, ExternProto)
@@ -136,7 +140,7 @@ typedef struct {
     ExternBindingList extern_bindings;
 } Program;
 
-bool link_check(Program *program, Unit *unit, Diagnostics *diagnostics);
+bool link_check(Program *program, Unit *unit, TypeRegistry *registry, Diagnostics *diagnostics);
 
 void link_install(Program *program, Unit *unit);
 

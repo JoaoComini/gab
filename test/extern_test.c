@@ -152,6 +152,44 @@ static void test_a_struct_crosses_by_value(void) {
     gab_vm_free(vm);
 }
 
+static void after_a_wide_parameter(GabArgs *args) {
+    Player first;
+    Player second;
+
+    gab_arg_get_struct(args, 0, &first, sizeof first);
+    int32_t middle = gab_arg_get_int(args, 1);
+    gab_arg_get_struct(args, 2, &second, sizeof second);
+    int32_t last = gab_arg_get_int(args, 3);
+
+    gab_return_int(args, first.health * 1000 + middle * 100 + second.health * 10 + last);
+}
+
+static void test_a_parameter_after_a_wide_one_is_found(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, "test", NULL, "f", after_a_wide_parameter, &err));
+
+    assert(gab_load(vm, "<m>",
+                    "module test;\n"
+                    "struct Player { health: int, mana: int }\n"
+                    "extern func f(p: Player, x: int, q: Player, y: int): int;\n"
+                    "func run(): int {\n"
+                    "    return f(Player { health: 1, mana: 0 }, 2, Player { health: 3, mana: 0 }, 4);\n"
+                    "}\n",
+                    &err));
+
+    GabFunc *fn = gab_lookup(vm, "test", "run", &err);
+    GabCall *call = gab_call_init(fn, &err);
+
+    int32_t out = 0;
+    assert(gab_call(vm, call, &out, &err) == GAB_OK);
+    assert(out == 1234);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
 static void test_a_borrow_is_written_through(void) {
     GabVM *vm = gab_vm_new();
 
@@ -629,6 +667,7 @@ int main(void) {
     test_an_extern_may_return_nothing();
     test_scalars_cross_the_boundary();
     test_a_struct_crosses_by_value();
+    test_a_parameter_after_a_wide_one_is_found();
     test_a_borrow_is_written_through();
     test_an_unbound_extern_fails_the_load();
     test_an_extern_must_be_registered_before_the_load();

@@ -27,17 +27,11 @@ uint8_t *args_address(Args *args, int index, const Type **out_type) {
     assert(index >= 0 && (size_t)index < function->param_count &&
            "a C body read a parameter its declaration does not have");
 
-    unsigned int slot = 1;
-
-    for (int i = 0; i < index; i++) {
-        slot += args_type_slots(args_registry(args), function->params[i]);
-    }
-
     if (out_type) {
         *out_type = function->params[index];
     }
 
-    return args->vm->stack + args->base + (size_t)slot * VM_SLOT_SIZE;
+    return args->vm->stack + args->base + args->param_offsets[index];
 }
 
 uint8_t *args_return_address(Args *args) {

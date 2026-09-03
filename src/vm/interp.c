@@ -309,7 +309,7 @@ void vm_fail(VM *vm, VmRunStatus status, const char *message) {
 }
 
 bool vm_call_extern(VM *vm, const ExternProto *proto, size_t base) {
-    Args args = {.vm = vm, .function = proto->function, .base = base};
+    Args args = {.vm = vm, .function = proto->function, .base = base, .param_offsets = proto->param_offsets};
 
     /* A host body may run the VM again, which moves the pointer its caller is still stepping through. */
     const Instruction *resume = vm->instruction_pointer;
