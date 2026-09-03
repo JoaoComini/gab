@@ -95,12 +95,12 @@ static GabVM *harness_vm(void) {
     GabVM *vm = gab_vm_new();
     GabError err;
 
-    assert(gab_extern_c(vm, "game", NULL, "tick", (void *)(uintptr_t)host_tick, &err));
-    assert(gab_extern_c(vm, "game", NULL, "spawn", (void *)(uintptr_t)host_spawn, &err));
-    assert(gab_extern_c(vm, "game", NULL, "buff", (void *)(uintptr_t)host_buff, &err));
-    assert(gab_extern_c(vm, "game", NULL, "log", (void *)(uintptr_t)host_log, &err));
-    assert(gab_extern_c(vm, "game", NULL, "refuse", (void *)(uintptr_t)host_refuse, &err));
-    assert(gab_extern_c(vm, "game", NULL, "reenter", (void *)(uintptr_t)host_reenter, &err));
+    assert(gab_extern(vm, "game", NULL, "tick", (GabExternFn)host_tick, &err));
+    assert(gab_extern(vm, "game", NULL, "spawn", (GabExternFn)host_spawn, &err));
+    assert(gab_extern(vm, "game", NULL, "buff", (GabExternFn)host_buff, &err));
+    assert(gab_extern(vm, "game", NULL, "log", (GabExternFn)host_log, &err));
+    assert(gab_extern(vm, "game", NULL, "refuse", (GabExternFn)host_refuse, &err));
+    assert(gab_extern(vm, "game", NULL, "reenter", (GabExternFn)host_reenter, &err));
 
     if (!gab_load(vm, "game.gab", SOURCE, &err)) {
         fprintf(stderr, "load failed: line %d: %s\n", err.line, err.message);
@@ -198,12 +198,12 @@ static void test_a_nested_failure_leaves_its_caller_running(void) {
 
     reentrant_vm = vm;
 
-    assert(gab_extern_c(vm, "game", NULL, "tick", (void *)(uintptr_t)host_tick, &err));
-    assert(gab_extern_c(vm, "game", NULL, "spawn", (void *)(uintptr_t)host_spawn, &err));
-    assert(gab_extern_c(vm, "game", NULL, "buff", (void *)(uintptr_t)host_buff, &err));
-    assert(gab_extern_c(vm, "game", NULL, "log", (void *)(uintptr_t)host_log, &err));
-    assert(gab_extern_c(vm, "game", NULL, "refuse", (void *)(uintptr_t)host_refuse, &err));
-    assert(gab_extern_c(vm, "game", NULL, "reenter", (void *)(uintptr_t)host_reenter_failing, &err));
+    assert(gab_extern(vm, "game", NULL, "tick", (GabExternFn)host_tick, &err));
+    assert(gab_extern(vm, "game", NULL, "spawn", (GabExternFn)host_spawn, &err));
+    assert(gab_extern(vm, "game", NULL, "buff", (GabExternFn)host_buff, &err));
+    assert(gab_extern(vm, "game", NULL, "log", (GabExternFn)host_log, &err));
+    assert(gab_extern(vm, "game", NULL, "refuse", (GabExternFn)host_refuse, &err));
+    assert(gab_extern(vm, "game", NULL, "reenter", (GabExternFn)host_reenter_failing, &err));
     assert(gab_load(vm, "game.gab", SOURCE, &err));
 
     GabFunc *through = gab_lookup(vm, "game", "through_host", &err);

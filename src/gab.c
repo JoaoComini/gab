@@ -188,9 +188,9 @@ static bool extern_bind(GabVM *handle, const char *module, const char *type, con
     return true;
 }
 
-bool gab_extern_c(GabVM *handle, const char *module, const char *type, const char *name, void *symbol,
-                  GabError *err) {
-    return extern_bind(handle, module, type, name, symbol, err);
+bool gab_extern(GabVM *handle, const char *module, const char *type, const char *name, GabExternFn symbol,
+                GabError *err) {
+    return extern_bind(handle, module, type, name, (void *)(uintptr_t)symbol, err);
 }
 
 void gab_ctx_fail(GabCtx *ctx, const char *message) {

@@ -112,12 +112,12 @@ void std_register_vec(VM *vm) {
 
     static const struct {
         const char *name;
-        void *symbol;
+        GabExternFn symbol;
     } METHODS[] = {
-        {"new", (void *)(uintptr_t)vec_new},
-        {"push", (void *)(uintptr_t)vec_push},
-        {"at", (void *)(uintptr_t)vec_at},
-        {"len", (void *)(uintptr_t)vec_len},
+        {"new", (GabExternFn)vec_new},
+        {"push", (GabExternFn)vec_push},
+        {"at", (GabExternFn)vec_at},
+        {"len", (GabExternFn)vec_len},
     };
 
     for (size_t i = 0; i < sizeof(METHODS) / sizeof(*METHODS); i++) {

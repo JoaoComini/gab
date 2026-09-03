@@ -25,10 +25,10 @@ Library library_open(VM *vm, const char *module, bool is_prelude) {
     return (Library){.vm = vm, .scope = scope, .module = module, .is_prelude = is_prelude};
 }
 
-void library_extern(Library *lib, const char *type, const char *name, void *symbol) {
+void library_extern(Library *lib, const char *type, const char *name, GabExternFn symbol) {
     GabError err;
 
-    bool bound = gab_extern_c((GabVM *)lib->vm, lib->module, type, name, symbol, &err);
+    bool bound = gab_extern((GabVM *)lib->vm, lib->module, type, name, symbol, &err);
 
     assert(bound && "a library binds each of its externs once");
     (void)bound;

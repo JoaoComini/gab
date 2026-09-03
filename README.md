@@ -82,7 +82,7 @@ Four properties are worth knowing before you build against it:
   `gab_field_offset` exist so a host can assert the script's layout against its
   own `sizeof` and `offsetof`.
 - **Externs are bound at load.** A script declares `extern func f(x: int):
-  int;` and the host supplies a C function with `gab_extern_c`. The call is
+  int;` and the host supplies a C function with `gab_extern`. The call is
   built from the declaration's types through libffi, so the body is written in
   C rather than against an argument-unpacking API: it takes a `GabCtx *` and
   then the parameters as C spells them. The binding and its signature are both
@@ -108,7 +108,7 @@ static int32_t damage_taken(GabCtx *ctx, Player *p, int32_t amount) {
     return p->health;
 }
 
-gab_extern_c(vm, "game", NULL, "damage_taken", (void *)(uintptr_t)damage_taken, &err);
+gab_extern(vm, "game", NULL, "damage_taken", (GabExternFn)damage_taken, &err);
 ```
 
 ```

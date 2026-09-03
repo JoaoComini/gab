@@ -47,6 +47,10 @@ typedef enum {
  * only for the duration of that call. */
 typedef struct GabCtx GabCtx;
 
+/* Any bound symbol, cast to one shape for binding: the VM calls it through the declaration's types,
+ * not through this one. */
+typedef void (*GabExternFn)(void);
+
 /* A borrowed string: the same layout the VM holds, so a body takes a '&str' parameter by value. */
 typedef struct {
     const char *data;
@@ -63,23 +67,8 @@ typedef struct {
 /* Bind an extern to a C symbol called directly, with no shim. The symbol takes a GabCtx * ahead of
  * the parameters its declaration names, and the declaration's types describe the rest of the call,
  * so a mismatch with the symbol's real signature is undefined at the call. */
-bool gab_extern_c(GabVM *vm, const char *module, const char *type, const char *name, void *symbol,
-                  GabError *err);
-
-/* A GabCtx * of no value, for naming the leading argument in gab_extern_fn's signature list. */
-#define GAB_CTX ((GabCtx *)0)
-
-/* Bind 'symbol' as gab_extern_c does, having checked it can be called with the arguments listed
- * after it -- values of the right types, starting with GAB_CTX:
- *
- *     gab_extern_fn(vm, "m", NULL, "damage", damage, &err, GAB_CTX, (Player *)0, 0);
- *
- * A missing context and a wrong arity are compile errors. An argument the compiler converts
- * silently is not, because the call sits unevaluated, and neither is a body that disagrees with the
- * script's declaration rather than with this list. */
-#define gab_extern_fn(vm, module, type, name, symbol, err, ...)                                              \
-    ((void)sizeof(((void)((symbol)(__VA_ARGS__)), 0)),                                                       \
-     gab_extern_c((vm), (module), (type), (name), (void *)(uintptr_t)(symbol), (err)))
+bool gab_extern(GabVM *vm, const char *module, const char *type, const char *name, GabExternFn symbol,
+                GabError *err);
 
 /* Fail the running call with a message. The C body should return promptly; its return value is
  * discarded, and the script sees a runtime error rather than a result. */

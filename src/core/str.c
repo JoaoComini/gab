@@ -105,16 +105,16 @@ static const char CORE_SRC[] = "module " GAB_CORE_MODULE ";\n"
 void core_register_str(VM *vm) {
     static const struct {
         const char *name;
-        void *symbol;
+        GabExternFn symbol;
     } METHODS[] = {
-        {"len", (void *)(uintptr_t)string_len},
-        {"is_empty", (void *)(uintptr_t)string_is_empty},
-        {"at", (void *)(uintptr_t)string_at},
-        {"starts_with", (void *)(uintptr_t)string_starts_with},
-        {"ends_with", (void *)(uintptr_t)string_ends_with},
-        {"contains", (void *)(uintptr_t)string_contains},
-        {"index_of", (void *)(uintptr_t)string_index_of},
-        {"count", (void *)(uintptr_t)string_count},
+        {"len", (GabExternFn)string_len},
+        {"is_empty", (GabExternFn)string_is_empty},
+        {"at", (GabExternFn)string_at},
+        {"starts_with", (GabExternFn)string_starts_with},
+        {"ends_with", (GabExternFn)string_ends_with},
+        {"contains", (GabExternFn)string_contains},
+        {"index_of", (GabExternFn)string_index_of},
+        {"count", (GabExternFn)string_count},
     };
 
     Library core = library_open(vm, GAB_CORE_MODULE, true);

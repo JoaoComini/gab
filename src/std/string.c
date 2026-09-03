@@ -95,12 +95,12 @@ void std_register_string(VM *vm) {
 
     static const struct {
         const char *name;
-        void *symbol;
+        GabExternFn symbol;
     } METHODS[] = {
-        {"from", (void *)(uintptr_t)string_from},
-        {"push", (void *)(uintptr_t)string_push},
-        {"append", (void *)(uintptr_t)string_append},
-        {"clone", (void *)(uintptr_t)string_clone},
+        {"from", (GabExternFn)string_from},
+        {"push", (GabExternFn)string_push},
+        {"append", (GabExternFn)string_append},
+        {"clone", (GabExternFn)string_clone},
     };
 
     for (size_t i = 0; i < sizeof(METHODS) / sizeof(*METHODS); i++) {

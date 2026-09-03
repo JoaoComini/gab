@@ -7,11 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int32_t call_int(const char *decl, const char *body, const char *name, void *symbol) {
+static int32_t call_int(const char *decl, const char *body, const char *name, GabExternFn symbol) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern_c(vm, "test", NULL, name, symbol, &err));
+    assert(gab_extern(vm, "test", NULL, name, symbol, &err));
 
     char source[512];
     snprintf(source, sizeof source, "module test;\n%s\n%s\n", decl, body);
@@ -39,7 +39,7 @@ static int32_t absolute(GabCtx *ctx, int32_t x) {
 
 static void test_an_int_argument_and_result_cross_to_c(void) {
     assert(call_int("extern func abs(x: int): int;", "func run(): int { return abs(0 - 7); }", "abs",
-                    (void *)(uintptr_t)absolute) == 7);
+                    (GabExternFn)absolute) == 7);
 }
 
 static int32_t subtract(GabCtx *ctx, int32_t a, int32_t b) {
@@ -50,7 +50,7 @@ static int32_t subtract(GabCtx *ctx, int32_t a, int32_t b) {
 
 static void test_arguments_arrive_in_order(void) {
     assert(call_int("extern func sub(a: int, b: int): int;", "func run(): int { return sub(10, 3); }", "sub",
-                    (void *)(uintptr_t)subtract) == 7);
+                    (GabExternFn)subtract) == 7);
 }
 
 static float root_of(GabCtx *ctx, float x) {
@@ -63,7 +63,7 @@ static void test_a_float_crosses_to_c(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern_c(vm, "test", NULL, "root", (void *)(uintptr_t)root_of, &err));
+    assert(gab_extern(vm, "test", NULL, "root", (GabExternFn)root_of, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -96,7 +96,7 @@ static void test_a_c_symbol_may_return_nothing(void) {
     GabError err;
     counted = 0;
 
-    assert(gab_extern_c(vm, "test", NULL, "bump", (void *)(uintptr_t)bump, &err));
+    assert(gab_extern(vm, "test", NULL, "bump", (GabExternFn)bump, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -129,7 +129,7 @@ static void test_a_struct_crosses_by_value(void) {
     assert(call_int("struct Pair { a: int, b: int }\n"
                     "extern func sum(p: Pair): int;",
                     "func run(): int { return sum(Pair { a: 4, b: 5 }); }", "sum",
-                    (void *)(uintptr_t)pair_sum) == 9);
+                    (GabExternFn)pair_sum) == 9);
 }
 
 typedef struct {
@@ -149,7 +149,7 @@ static void test_a_struct_comes_back_by_value(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern_c(vm, "test", NULL, "reverse", (void *)(uintptr_t)quad_reversed, &err));
+    assert(gab_extern(vm, "test", NULL, "reverse", (GabExternFn)quad_reversed, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -185,7 +185,7 @@ static void test_a_struct_of_floats_uses_its_own_registers(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern_c(vm, "test", NULL, "total", (void *)(uintptr_t)vec3_sum, &err));
+    assert(gab_extern(vm, "test", NULL, "total", (GabExternFn)vec3_sum, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -221,7 +221,7 @@ static void test_a_nested_struct_crosses_by_value(void) {
                     "struct Tagged { inner: Pair, tag: int }\n"
                     "extern func total(t: Tagged): int;",
                     "func run(): int { return total(Tagged { inner: Pair { a: 1, b: 2 }, tag: 4 }); }",
-                    "total", (void *)(uintptr_t)tagged_sum) == 7);
+                    "total", (GabExternFn)tagged_sum) == 7);
 }
 
 static int32_t pair_first(GabCtx *ctx, const Pair *p) {
@@ -235,7 +235,7 @@ static void test_a_borrow_of_a_struct_is_a_pointer(void) {
         call_int("struct Pair { a: int, b: int }\n"
                  "extern func first(p: &Pair): int;",
                  "func run(): int { let p: Pair = Pair { a: 8, b: 9 }; let r: &Pair = p; return first(r); }",
-                 "first", (void *)(uintptr_t)pair_first) == 8);
+                 "first", (GabExternFn)pair_first) == 8);
 }
 
 typedef struct {
@@ -258,7 +258,7 @@ static int32_t count_char(GabCtx *ctx, StrRef s, int32_t target) {
 static void test_a_str_arrives_as_its_value_struct(void) {
     assert(call_int("extern func count(s: &str, c: int): int;",
                     "func run(): int { return count(\"banana\", 97); }", "count",
-                    (void *)(uintptr_t)count_char) == 3);
+                    (GabExternFn)count_char) == 3);
 }
 
 static int32_t sum_four(GabCtx *ctx, const int32_t *xs) {
@@ -270,7 +270,7 @@ static int32_t sum_four(GabCtx *ctx, const int32_t *xs) {
 static void test_an_array_decays_to_a_pointer(void) {
     assert(call_int("extern func total(xs: [int; 4]): int;",
                     "func run(): int { let xs: [int; 4] = [1, 2, 3, 4]; return total(xs); }", "total",
-                    (void *)(uintptr_t)sum_four) == 10);
+                    (GabExternFn)sum_four) == 10);
 }
 
 static int32_t deref_int(GabCtx *ctx, const int32_t *p) {
@@ -282,7 +282,7 @@ static int32_t deref_int(GabCtx *ctx, const int32_t *p) {
 static void test_a_borrow_of_a_scalar_is_a_pointer(void) {
     assert(call_int("extern func peek(p: &int): int;",
                     "func run(): int { let x: int = 5; let p: &int = x; return peek(p); }", "peek",
-                    (void *)(uintptr_t)deref_int) == 5);
+                    (GabExternFn)deref_int) == 5);
 }
 
 static int32_t write_int(GabCtx *ctx, int32_t *p) {
@@ -296,7 +296,7 @@ static int32_t write_int(GabCtx *ctx, int32_t *p) {
 static void test_c_writes_through_a_borrow(void) {
     assert(call_int("extern func poke(p: &int): int;",
                     "func run(): int { let x: int = 1; let p: &int = x; poke(p); return x; }", "poke",
-                    (void *)(uintptr_t)write_int) == 42);
+                    (GabExternFn)write_int) == 42);
 }
 
 static int32_t first_field(GabCtx *ctx, const Pair *p) {
@@ -311,7 +311,7 @@ static void test_a_borrow_of_a_box_is_a_pointer(void) {
             "struct Pair { a: int, b: int }\n"
             "extern func first(p: &Pair): int;",
             "func run(): int { let p: *Pair = box Pair { a: 3, b: 4 }; let r: &Pair = p; return first(r); }",
-            "first", (void *)(uintptr_t)first_field) == 3);
+            "first", (GabExternFn)first_field) == 3);
 }
 
 static int32_t pair_total(GabCtx *ctx, Pair *p) {
@@ -328,7 +328,7 @@ static void test_a_c_symbol_drops_an_owning_parameter(void) {
     assert(call_int("struct Pair { a: int, b: int }\n"
                     "extern func total(p: *Pair): int;",
                     "func run(): int { return total(box Pair { a: 3, b: 4 }); }", "total",
-                    (void *)(uintptr_t)pair_total) == 7);
+                    (GabExternFn)pair_total) == 7);
 }
 
 static int32_t generic_total(GabCtx *ctx, const void *p) {
@@ -347,7 +347,7 @@ static void test_one_symbol_serves_every_specialization(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern_fn(vm, "m", "Pair", "total", generic_total, &err, GAB_CTX, (const void *)0));
+    assert(gab_extern(vm, "m", "Pair", "total", (GabExternFn)generic_total, &err));
 
     assert(gab_load(vm, "<m>",
                     "module m;\n"
@@ -383,7 +383,7 @@ static void test_a_c_symbol_fails_the_run(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern_fn(vm, "test", NULL, "refuse", always_fails, &err, GAB_CTX, 0));
+    assert(gab_extern(vm, "test", NULL, "refuse", (GabExternFn)always_fails, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
@@ -418,7 +418,7 @@ static void test_a_c_symbol_returns_a_box_the_script_owns(void) {
     assert(call_int("struct Pair { a: int, b: int }\n"
                     "extern func make(a: int, b: int): *Pair;",
                     "func run(): int { let p: *Pair = make(3, 4); return p.a + p.b; }", "make",
-                    (void *)(uintptr_t)make_pair) == 7);
+                    (GabExternFn)make_pair) == 7);
 }
 
 /* A method generic in its return type gets one signature per instantiation, so the same symbol
@@ -432,7 +432,7 @@ static void test_a_generic_return_is_sized_by_its_specialization(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_extern_fn(vm, "m", "Holder", "at", holder_at, &err, GAB_CTX, (const void *)0, 0));
+    assert(gab_extern(vm, "m", "Holder", "at", (GabExternFn)holder_at, &err));
 
     assert(gab_load(vm, "<m>",
                     "module m;\n"
@@ -477,11 +477,11 @@ static int32_t sum_all(GabCtx *ctx, const void *xs) {
 static void test_a_body_reads_the_length_of_an_array_it_is_given(void) {
     assert(call_int("extern func total(xs: [int; 3]): int;",
                     "func run(): int { let xs: [int; 3] = [1, 2, 3]; return total(xs); }", "total",
-                    (void *)(uintptr_t)sum_all) == 6);
+                    (GabExternFn)sum_all) == 6);
 
     assert(call_int("extern func total(xs: [int; 5]): int;",
                     "func run(): int { let xs: [int; 5] = [1, 2, 3, 4, 5]; return total(xs); }", "total",
-                    (void *)(uintptr_t)sum_all) == 15);
+                    (GabExternFn)sum_all) == 15);
 }
 
 int main(void) {
