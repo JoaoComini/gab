@@ -84,10 +84,10 @@ static void string_from(GabCtx *ctx) {
 }
 
 static const char STRING_SRC[] = "impl String {\n"
-                                 "    extern func from(text: &str): String;\n"
-                                 "    extern func push(self: &String, character: int);\n"
-                                 "    extern func append(self: &String, other: &str);\n"
-                                 "    extern func clone(self: &String): String;\n"
+                                 "    extern func from(text: &str): Self;\n"
+                                 "    extern func push(self: &Self, character: int);\n"
+                                 "    extern func append(self: &Self, other: &str);\n"
+                                 "    extern func clone(self: &Self): Self;\n"
                                  "}\n";
 
 void std_register_string(GabVM *vm) {

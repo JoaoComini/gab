@@ -225,6 +225,8 @@ TypeRegistry *type_registry_create(Arena *arena, const TypePrimitiveNames *names
     registry->derefs = deref_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->layouts = layout_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->owned = owned_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    registry->conformances =
+        conformance_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->applications = type_intern_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->arena = arena;
 
@@ -305,6 +307,18 @@ bool type_registry_declare_owned(TypeRegistry *registry, const Type *type, Funct
            "a function a type owns has a name and a signature");
 
     return declare_owned(registry, owned_key_of(type, function->decl->name), function);
+}
+
+bool type_registry_declare_conformance(TypeRegistry *registry, const Type *type, const String *interface) {
+    OwnedKey key = owned_key_of(type, interface);
+
+    if (conformance_key_lookup(registry->conformances, key)) {
+        return false;
+    }
+
+    conformance_key_insert(registry->conformances, key, true);
+
+    return true;
 }
 
 /* A signature mentioning no type parameter is one function for every instantiation of its owner. */

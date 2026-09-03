@@ -109,6 +109,7 @@ static ASTStmt *clone_stmt(Arena *arena, const ASTStmt *stmt) {
                                         clone_expr(arena, stmt->var_decl.initializer));
 
     case STMT_IMPL:
+    case STMT_INTERFACE_DECL:
         assert(false && "a generic instantiation clones a member, not its impl block");
 
         return NULL;

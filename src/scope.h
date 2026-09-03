@@ -13,6 +13,21 @@ typedef struct BindingTable BindingTable;
 typedef struct Binding Binding;
 typedef struct Scope Scope;
 
+typedef struct ASTStmt ASTStmt;
+
+typedef struct Interface {
+    String *name;
+
+    /* The signatures as written: each is resolved per implementor, with 'Self' bound to it. */
+    ASTStmt *const *methods;
+    size_t method_count;
+} Interface;
+
+#define interface_map_hash(key) (size_t)key
+#define interface_map_key_equals(key, other) key == other
+
+GAB_HASH_MAP(InterfaceMap, interface_map, String *, Interface *)
+
 #define module_scope_map_hash(key) (size_t)key
 #define module_scope_map_key_equals(key, other) key == other
 
@@ -23,6 +38,8 @@ typedef struct Scope {
 
     BindingTable *bindings;
     TypeMap *types;
+
+    InterfaceMap *interfaces;
 
     TypeRegistry *type_registry;
 
@@ -89,6 +106,10 @@ bool scope_bind_type(Scope *scope, String *name, const Type *type);
 bool scope_bind_argument(Scope *scope, String *name, const Type *type);
 
 bool scope_bind_decl(Scope *scope, String *name, const TypeDecl *decl);
+
+bool scope_bind_interface(Scope *scope, String *name, Interface *interface);
+
+Interface *scope_interface_lookup(Scope *scope, String *name);
 
 void scope_init_staging(Scope *scope, Arena *arena, StringPool *strings, Scope *target);
 

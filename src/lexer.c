@@ -127,6 +127,10 @@ const char *token_description(TokenType type) {
         return "'struct'";
     case TOKEN_IMPL:
         return "'impl'";
+    case TOKEN_INTERFACE:
+        return "'interface'";
+    case TOKEN_AS:
+        return "'as'";
     case TOKEN_BOX:
         return "'box'";
     case TOKEN_MODULE:
@@ -332,6 +336,14 @@ static Token lexer_identifier(Lexer *lexer) {
 
     if (string_ref_equals_cstr(ref, "impl")) {
         return token_create_ref(lexer, TOKEN_IMPL, ref);
+    }
+
+    if (string_ref_equals_cstr(ref, "interface")) {
+        return token_create_ref(lexer, TOKEN_INTERFACE, ref);
+    }
+
+    if (string_ref_equals_cstr(ref, "as")) {
+        return token_create_ref(lexer, TOKEN_AS, ref);
     }
 
     if (string_ref_equals_cstr(ref, "extern")) {

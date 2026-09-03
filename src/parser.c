@@ -15,8 +15,10 @@ static ASTStmt *parse_decl_statement(Parser *parser);
 static ASTStmt *parse_statement(Parser *parser);
 static ASTStmt *parse_var_decl_stmt(Parser *parser, ExprContext ctx);
 static ASTStmt *parse_func_decl_stmt(Parser *parser);
+static ASTStmt *parse_func_signature_stmt(Parser *parser);
 static ASTStmt *parse_struct_decl_stmt(Parser *parser);
 static ASTStmt *parse_impl_stmt(Parser *parser);
+static ASTStmt *parse_interface_decl_stmt(Parser *parser);
 static ASTField *parse_field(Parser *parser, const char *name_message);
 static TypeExpr *parse_type_expr(Parser *parser);
 static ASTExpr *parse_index_expr(Parser *parser, ASTExpr *target);
@@ -237,8 +239,13 @@ static ASTStmt *parse_decl_statement(Parser *parser) {
         stmt = parse_impl_stmt(parser);
         break;
     }
+    case TOKEN_INTERFACE: {
+        stmt = parse_interface_decl_stmt(parser);
+        break;
+    }
     default: {
-        parser_error_found(parser, "expected a declaration ('let', 'func', 'extern', 'struct', or 'impl')");
+        parser_error_found(
+            parser, "expected a declaration ('let', 'func', 'extern', 'struct', 'impl', or 'interface')");
         return NULL;
     }
     }
@@ -284,6 +291,14 @@ static ASTStmt *parse_statement(Parser *parser) {
                      "an 'impl' block cannot be declared inside a function; declare it at module level");
 
         parse_impl_stmt(parser);
+
+        return NULL;
+    }
+    case TOKEN_INTERFACE: {
+        parser_error(parser,
+                     "an 'interface' cannot be declared inside a function; declare it at module level");
+
+        parse_interface_decl_stmt(parser);
 
         return NULL;
     }
@@ -763,12 +778,12 @@ static void func_decl_take_type_params(ASTStmt *decl, TypeExprList *params) {
     }
 }
 
-static ASTStmt *parse_func_decl_stmt(Parser *parser) {
+static ASTStmt *parse_func_decl_stmt_inner(Parser *parser, bool signature_only) {
     Span span = parser_span(parser);
 
-    bool is_extern = parser->current.type == TOKEN_EXTERN;
+    bool is_extern = signature_only || parser->current.type == TOKEN_EXTERN;
 
-    if (is_extern) {
+    if (is_extern && !signature_only) {
         parser_next_token(parser);
 
         if (!parser_expect(parser, TOKEN_FUNC, "expected 'func' after 'extern'")) {
@@ -856,7 +871,9 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
     if (is_extern) {
         if (parser->current.type == TOKEN_LBRACE) {
-            parser_error(parser, "an 'extern' function is defined by the host and cannot have a body");
+            parser_error(parser, signature_only
+                                     ? "an interface declares a signature, which has no body"
+                                     : "an 'extern' function is defined by the host and cannot have a body");
 
             parse_block_stmt(parser);
 
@@ -884,6 +901,10 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
 
     return decl;
 }
+
+static ASTStmt *parse_func_decl_stmt(Parser *parser) { return parse_func_decl_stmt_inner(parser, false); }
+
+static ASTStmt *parse_func_signature_stmt(Parser *parser) { return parse_func_decl_stmt_inner(parser, true); }
 
 static ASTStmt *parse_impl_stmt(Parser *parser) {
     Span span = parser_span(parser);
@@ -920,6 +941,22 @@ static ASTStmt *parse_impl_stmt(Parser *parser) {
     TypeExpr *type = parse_type_expr(parser);
     if (!type) {
         return NULL;
+    }
+
+    StringRef interface_name = {0};
+    Span interface_span = span;
+
+    if (parser->current.type == TOKEN_AS) {
+        parser_next_token(parser);
+
+        if (!parser_expect(parser, TOKEN_IDENT, "expected the name of an interface after 'as'")) {
+            return NULL;
+        }
+
+        interface_name = parser->current.lexeme;
+        interface_span = parser_span(parser);
+
+        parser_next_token(parser);
     }
 
     if (!parser_expect(parser, TOKEN_LBRACE, "expected '{' after the type an 'impl' block is for")) {
@@ -968,7 +1005,63 @@ static ASTStmt *parse_impl_stmt(Parser *parser) {
 
     parser_next_token(parser);
 
-    return ast_impl_stmt_create(parser->arena, span, type, members);
+    ASTStmt *stmt = ast_impl_stmt_create(parser->arena, span, type, members);
+
+    stmt->impl.interface_name = interface_name;
+    stmt->impl.interface_span = interface_span;
+
+    return stmt;
+}
+
+static ASTStmt *parse_interface_decl_stmt(Parser *parser) {
+    Span span = parser_span(parser);
+
+    parser_next_token(parser);
+
+    if (!parser_expect(parser, TOKEN_IDENT, "expected an interface name")) {
+        return NULL;
+    }
+
+    StringRef name = parser->current.lexeme;
+
+    parser_next_token(parser);
+
+    if (!parser_expect(parser, TOKEN_LBRACE, "expected '{' after an interface's name")) {
+        return NULL;
+    }
+
+    parser_next_token(parser);
+
+    ASTStmtList members = ast_stmt_list_create(arena_allocator(parser->arena));
+
+    while (parser->current.type != TOKEN_RBRACE) {
+        if (parser->current.type == TOKEN_EOF) {
+            parser_error(parser, "expected '}' to close the interface");
+            return NULL;
+        }
+
+        if (parser->current.type != TOKEN_FUNC) {
+            parser_error_found(parser, "expected a function signature in an interface");
+            return NULL;
+        }
+
+        ASTStmt *member = parse_func_signature_stmt(parser);
+        if (!member) {
+            return NULL;
+        }
+
+        if (!parser_expect(parser, TOKEN_SEMICOLON, "expected ';'")) {
+            return NULL;
+        }
+
+        parser_next_token(parser);
+
+        ast_stmt_list_add(&members, member);
+    }
+
+    parser_next_token(parser);
+
+    return ast_interface_decl_stmt_create(parser->arena, span, name, members);
 }
 
 static ASTStmt *parse_return_stmt(Parser *parser) {
@@ -1058,6 +1151,7 @@ static bool stmt_needs_terminator(ASTStmt *stmt) {
     case STMT_BLOCK:
     case STMT_STRUCT_DECL:
     case STMT_IMPL:
+    case STMT_INTERFACE_DECL:
         return false;
 
     case STMT_FUNC_DECL:

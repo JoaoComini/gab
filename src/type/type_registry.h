@@ -62,6 +62,9 @@ bool type_registry_declare_owned(TypeRegistry *registry, const Type *type, Funct
 
 Function *type_registry_find_owned(TypeRegistry *registry, const Type *type, const String *name);
 
+/* False when this type already implements the interface, which it may do only once. */
+bool type_registry_declare_conformance(TypeRegistry *registry, const Type *type, const String *interface);
+
 /* True when a declaration's signature names no type parameter, so every instantiation shares it. */
 bool type_registry_owned_is_shared(const Function *declaration, const Type *type);
 

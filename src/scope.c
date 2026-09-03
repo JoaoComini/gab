@@ -34,6 +34,7 @@ void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope 
     scope->strings = strings;
     scope->bindings = binding_table_create_alloc(arena_allocator(arena), BINDING_TABLE_INITIAL_CAPACITY);
     scope->types = type_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    scope->interfaces = interface_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     scope->parent = parent;
     scope->depth = depth;
     scope->declares_module = false;
@@ -56,6 +57,7 @@ void scope_init_over(Scope *scope, Arena *arena, StringPool *strings, TypeRegist
     scope->strings = strings;
     scope->bindings = binding_table_create_alloc(arena_allocator(arena), BINDING_TABLE_INITIAL_CAPACITY);
     scope->types = type_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    scope->interfaces = interface_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     scope->parent = NULL;
     scope->depth = 0;
     scope->declares_module = false;
@@ -88,6 +90,10 @@ void scope_merge_staged(Scope *target, Scope *staged) {
     }
 
     GAB_HASH_MAP_FOR_EACH(staged->types, entry) { type_map_insert(target->types, entry->key, entry->value); }
+
+    GAB_HASH_MAP_FOR_EACH(staged->interfaces, entry) {
+        interface_map_insert(target->interfaces, entry->key, entry->value);
+    }
 }
 
 Binding *scope_binding_lookup(Scope *scope, String *name) {
@@ -200,6 +206,28 @@ bool scope_bind_argument(Scope *scope, String *name, const Type *type) {
     type_map_insert(scope->types, name, (TypeBinding){.type = type});
 
     return true;
+}
+
+bool scope_bind_interface(Scope *scope, String *name, Interface *interface) {
+    if (interface_map_lookup(scope->interfaces, name)) {
+        return false;
+    }
+
+    interface_map_insert(scope->interfaces, name, interface);
+
+    return true;
+}
+
+Interface *scope_interface_lookup(Scope *scope, String *name) {
+    for (Scope *s = scope; s; s = s->parent) {
+        Interface **found = interface_map_lookup(s->interfaces, name);
+
+        if (found) {
+            return *found;
+        }
+    }
+
+    return NULL;
 }
 
 bool scope_bind_decl(Scope *scope, String *name, const TypeDecl *decl) {
