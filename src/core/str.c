@@ -1,19 +1,27 @@
 #include "core/str.h"
-#include "core/core.h"
-#include "library.h"
 
 #include "gab.h"
-#include "object.h"
+#include "library.h"
 #include "scope.h"
-#include "vm/args.h"
-#include "vm/interp.h"
-#include "vm/vm.h"
 
+#include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
-static int32_t string_find(StrRef haystack, StrRef needle, int32_t from) {
+typedef struct {
+    const char *data;
+    int32_t length;
+} Str;
+
+static Str str_arg(GabCtx *ctx, int index) {
+    Str str = {0};
+    str.data = gab_ctx_string(ctx, index, &str.length);
+
+    return str;
+}
+
+static int32_t string_find(Str haystack, Str needle, int32_t from) {
     if (needle.length > haystack.length) {
         return -1;
     }
@@ -27,53 +35,53 @@ static int32_t string_find(StrRef haystack, StrRef needle, int32_t from) {
     return -1;
 }
 
-static void string_len(Args *args) { args_return_int(args, args_string(args, 0).length); }
+static void string_len(GabCtx *ctx) { gab_ctx_return_int(ctx, str_arg(ctx, 0).length); }
 
-static void string_is_empty(Args *args) { args_return_bool(args, args_string(args, 0).length == 0); }
+static void string_is_empty(GabCtx *ctx) { gab_ctx_return_bool(ctx, str_arg(ctx, 0).length == 0); }
 
-static void string_at(Args *args) {
-    StrRef string = args_string(args, 0);
-    int32_t index = args_int(args, 1);
+static void string_at(GabCtx *ctx) {
+    Str string = str_arg(ctx, 0);
+    int32_t index = gab_ctx_int(ctx, 1);
 
     if (index < 0 || (size_t)index >= (size_t)string.length) {
-        vm_fail(args->vm, VM_RUN_ERR_EXTERN, "string index is out of range");
+        gab_ctx_fail(ctx, GAB_FAIL_RUNTIME, "string index is out of range");
         return;
     }
 
-    args_return_int(args, (unsigned char)string.data[index]);
+    gab_ctx_return_int(ctx, (unsigned char)string.data[index]);
 }
 
-static void string_starts_with(Args *args) {
-    StrRef string = args_string(args, 0);
-    StrRef prefix = args_string(args, 1);
+static void string_starts_with(GabCtx *ctx) {
+    Str string = str_arg(ctx, 0);
+    Str prefix = str_arg(ctx, 1);
 
-    args_return_bool(args,
-                     prefix.length <= string.length && memcmp(string.data, prefix.data, prefix.length) == 0);
+    gab_ctx_return_bool(ctx, prefix.length <= string.length &&
+                                 memcmp(string.data, prefix.data, prefix.length) == 0);
 }
 
-static void string_ends_with(Args *args) {
-    StrRef string = args_string(args, 0);
-    StrRef suffix = args_string(args, 1);
+static void string_ends_with(GabCtx *ctx) {
+    Str string = str_arg(ctx, 0);
+    Str suffix = str_arg(ctx, 1);
 
-    args_return_bool(args,
-                     suffix.length <= string.length && memcmp(string.data + (string.length - suffix.length),
-                                                              suffix.data, suffix.length) == 0);
+    gab_ctx_return_bool(
+        ctx, suffix.length <= string.length &&
+                 memcmp(string.data + (string.length - suffix.length), suffix.data, suffix.length) == 0);
 }
 
-static void string_contains(Args *args) {
-    args_return_bool(args, string_find(args_string(args, 0), args_string(args, 1), 0) >= 0);
+static void string_contains(GabCtx *ctx) {
+    gab_ctx_return_bool(ctx, string_find(str_arg(ctx, 0), str_arg(ctx, 1), 0) >= 0);
 }
 
-static void string_index_of(Args *args) {
-    args_return_int(args, string_find(args_string(args, 0), args_string(args, 1), 0));
+static void string_index_of(GabCtx *ctx) {
+    gab_ctx_return_int(ctx, string_find(str_arg(ctx, 0), str_arg(ctx, 1), 0));
 }
 
-static void string_count(Args *args) {
-    StrRef string = args_string(args, 0);
-    StrRef needle = args_string(args, 1);
+static void string_count(GabCtx *ctx) {
+    Str string = str_arg(ctx, 0);
+    Str needle = str_arg(ctx, 1);
 
     if (needle.length == 0) {
-        args_return_int(args, 0);
+        gab_ctx_return_int(ctx, 0);
         return;
     }
 
@@ -83,11 +91,10 @@ static void string_count(Args *args) {
         total++;
     }
 
-    args_return_int(args, total);
+    gab_ctx_return_int(ctx, total);
 }
 
-static const char CORE_SRC[] = "module " GAB_CORE_MODULE ";\n"
-                               "impl str {\n"
+static const char CORE_SRC[] = "impl str {\n"
                                "    extern func len(self: &str): int;\n"
                                "    extern func is_empty(self: &str): bool;\n"
                                "    extern func at(self: &str, index: int): int;\n"
@@ -113,11 +120,20 @@ void core_register_str(VM *vm) {
         {"count", string_count},
     };
 
-    Library core = library_open(vm, GAB_CORE_MODULE, true);
+    GabError err;
+    GabLib *core = library_open_prelude(vm, GAB_CORE_MODULE);
 
     for (size_t i = 0; i < sizeof(METHODS) / sizeof(*METHODS); i++) {
-        library_extern(&core, "str", METHODS[i].name, METHODS[i].body);
+        bool bound = gab_lib_bind(core, "str", METHODS[i].name, METHODS[i].body, &err);
+
+        assert(bound && "a library binds each of its externs once");
+        (void)bound;
     }
 
-    library_declare_source(&core, CORE_SRC);
+    bool loaded = gab_lib_source(core, CORE_SRC, &err);
+
+    assert(loaded && "a library's declarations compile");
+    (void)loaded;
+
+    gab_lib_close(core);
 }

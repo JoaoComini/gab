@@ -1,123 +1,103 @@
-#include "library.h"
-#include "std/std.h"
+#include "std.h"
 
 #include "gab.h"
 
-#include "allocator.h"
-#include "arena.h"
-#include "object.h"
-#include "type/type_registry.h"
-#include "vm/args.h"
-#include "vm/interp.h"
-#include "vm/vm.h"
-
+#include <assert.h>
 #include <stdint.h>
 #include <string.h>
 
-static const TypeDecl *vec_declare_type(Library *lib) {
-    TypeRegistry *registry = lib->vm->env.global_scope.type_registry;
-
-    const TypeFieldSpec fields[] = {
-        {
-            .name = string_from_cstr(&lib->vm->env.strings, "data"),
-            .type = type_registry_block_of(registry, type_registry_param(registry, 0)),
-        },
-    };
-
-    const LibraryTypeSpec spec = {
-        .name = "Vec",
-        .param_count = 1,
-        .fields = fields,
-        .field_count = sizeof(fields) / sizeof(*fields),
-    };
-
-    return library_type(lib, &spec);
-}
-
 typedef struct {
-    BlockValue block;
-} VecHeader;
+    GabBlock block;
+} Vec;
 
-static VecHeader vec_load(Args *args) {
-    VecHeader vec;
-    memcpy(&vec, args_pointer(args, 0), sizeof(vec));
+static Vec vec_load(GabCtx *ctx) {
+    Vec vec;
+    memcpy(&vec, gab_ctx_self(ctx), sizeof(vec));
 
     return vec;
 }
 
-static void vec_store(Args *args, const VecHeader *vec) { memcpy(args_pointer(args, 0), vec, sizeof(*vec)); }
+static void vec_store(GabCtx *ctx, const Vec *vec) { memcpy(gab_ctx_self(ctx), vec, sizeof(*vec)); }
 
-static size_t vec_stride(Args *args) { return gab_ctx_type_size(args, 0); }
+static void vec_push(GabCtx *ctx) {
+    Vec vec = vec_load(ctx);
+    size_t stride = gab_ctx_type_size(ctx, 0);
 
-static void vec_push(Args *args) {
-    VecHeader vec = vec_load(args);
-    size_t stride = vec_stride(args);
-
-    if (!block_reserve(&DEFAULT_ALLOCATOR, &vec.block, 1, stride)) {
-        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory growing a vector");
+    if (!gab_block_reserve(ctx, &vec.block, 1, stride)) {
+        gab_ctx_fail(ctx, GAB_FAIL_OUT_OF_MEMORY, "out of memory growing a vector");
         return;
     }
 
-    const uint8_t *value = args_address(args, 1);
-
-    memcpy((char *)vec.block.data + (size_t)vec.block.length * stride, value, stride);
+    memcpy((char *)vec.block.data + (size_t)vec.block.length * stride, gab_ctx_address(ctx, 1), stride);
 
     vec.block.length++;
 
-    vec_store(args, &vec);
+    vec_store(ctx, &vec);
 }
 
-static void vec_at(Args *args) {
-    VecHeader vec = vec_load(args);
-    int32_t index = args_int(args, 1);
+static void vec_at(GabCtx *ctx) {
+    Vec vec = vec_load(ctx);
+    int32_t index = gab_ctx_int(ctx, 1);
 
     if (index < 0 || index >= vec.block.length) {
-        vm_fail(args->vm, VM_RUN_ERR_EXTERN, "vector index is out of range");
+        gab_ctx_fail(ctx, GAB_FAIL_RUNTIME, "vector index is out of range");
         return;
     }
 
-    size_t stride = vec_stride(args);
+    size_t stride = gab_ctx_type_size(ctx, 0);
 
-    args_return_struct(args, (const char *)vec.block.data + (size_t)index * stride, stride);
+    gab_ctx_return_struct(ctx, (const char *)vec.block.data + (size_t)index * stride, stride);
 }
 
-static void vec_len(Args *args) { args_return_int(args, vec_load(args).block.length); }
+static void vec_len(GabCtx *ctx) { gab_ctx_return_int(ctx, vec_load(ctx).block.length); }
 
-static void vec_new(Args *args) {
-    int32_t count = args_int(args, 0);
+static void vec_new(GabCtx *ctx) {
+    int32_t count = gab_ctx_int(ctx, 0);
 
     if (count < 0) {
-        vm_fail(args->vm, VM_RUN_ERR_EXTERN, "a vector cannot reserve a negative count");
+        gab_ctx_fail(ctx, GAB_FAIL_RUNTIME, "a vector cannot reserve a negative count");
         return;
     }
 
-    TypeRegistry *registry = args->vm->env.global_scope.type_registry;
+    size_t stride = gab_ctx_type_size(ctx, 0);
 
-    size_t stride = type_registry_size_of(
-        registry, type_pointee(type_registry_fields_of(registry, args_return_type(args))->fields[0].type));
+    Vec vec = {0};
 
-    VecHeader vec = {0};
-
-    if (count > 0 && !block_reserve(&DEFAULT_ALLOCATOR, &vec.block, count, stride)) {
-        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory reserving a vector");
+    if (count > 0 && !gab_block_reserve(ctx, &vec.block, count, stride)) {
+        gab_ctx_fail(ctx, GAB_FAIL_OUT_OF_MEMORY, "out of memory reserving a vector");
         return;
     }
 
-    args_return_struct(args, &vec, sizeof vec);
+    gab_ctx_return_struct(ctx, &vec, sizeof vec);
 }
 
-static const char VEC_SRC[] = "module " GAB_STD_MODULE ";\n"
-                              "impl<T> Vec<T> {\n"
+static const char VEC_SRC[] = "impl<T> Vec<T> {\n"
                               "    extern func new(count: int): Vec<T>;\n"
                               "    extern func push(self: &Vec<T>, value: T);\n"
                               "    extern func at(self: &Vec<T>, index: int): T;\n"
                               "    extern func len(self: &Vec<T>): int;\n"
                               "}\n";
 
-void std_register_vec(VM *vm) {
-    Library std = library_open(vm, GAB_STD_MODULE, false);
+void std_register_vec(GabVM *vm) {
+    GabError err;
 
-    vec_declare_type(&std);
+    GabLib *std = gab_lib_open(vm, "std", &err);
+    assert(std && "the standard library opens");
+
+    const GabFieldSpec fields[] = {
+        {"data", gab_lib_block_of(std, gab_lib_param(std, 0))},
+    };
+
+    const GabTypeSpec spec = {
+        .name = "Vec",
+        .params = 1,
+        .fields = fields,
+        .field_count = sizeof(fields) / sizeof(*fields),
+    };
+
+    bool ok = gab_lib_type(std, &spec, &err) == NULL;
+    assert(ok && "a generic type declares without instantiating");
+    (void)ok;
 
     static const struct {
         const char *name;
@@ -130,8 +110,16 @@ void std_register_vec(VM *vm) {
     };
 
     for (size_t i = 0; i < sizeof(METHODS) / sizeof(*METHODS); i++) {
-        library_extern(&std, "Vec", METHODS[i].name, METHODS[i].body);
+        bool bound = gab_lib_bind(std, "Vec", METHODS[i].name, METHODS[i].body, &err);
+
+        assert(bound && "a library binds each of its externs once");
+        (void)bound;
     }
 
-    library_declare_source(&std, VEC_SRC);
+    bool loaded = gab_lib_source(std, VEC_SRC, &err);
+
+    assert(loaded && "a library's declarations compile");
+    (void)loaded;
+
+    gab_lib_close(std);
 }
