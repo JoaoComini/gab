@@ -65,6 +65,14 @@ ASTStmt *ast_impl_stmt_create(Arena *arena, Span span, TypeExpr *type, ASTStmtLi
     return stmt;
 }
 
+ASTStmt *ast_interface_decl_stmt_create(Arena *arena, Span span, StringRef name, ASTStmtList members) {
+    ASTStmt *stmt = ast_stmt_create(arena, span);
+    stmt->kind = STMT_INTERFACE_DECL;
+    stmt->interface_decl.name = name;
+    stmt->interface_decl.members = members;
+    return stmt;
+}
+
 ASTStmt *ast_assign_stmt_create(Arena *arena, Span span, ASTExpr *target, ASTExpr *value) {
     ASTStmt *stmt = ast_stmt_create(arena, span);
     stmt->kind = STMT_ASSIGN;

@@ -359,6 +359,7 @@ static void codegen_stmt(CodegenState *state, ASTStmt *ast) {
         codegen_func_decl_stmt(state, ast);
         break;
     case STMT_STRUCT_DECL:
+    case STMT_INTERFACE_DECL:
 
         break;
     case STMT_IMPL:
@@ -740,6 +741,7 @@ static bool stmt_may_assign(const ASTStmt *stmt, const Binding *binding) {
     case STMT_EXPR:
     case STMT_FUNC_DECL:
     case STMT_STRUCT_DECL:
+    case STMT_INTERFACE_DECL:
     case STMT_IMPL:
     case STMT_JUMP:
     case STMT_RETURN:

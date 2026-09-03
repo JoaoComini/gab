@@ -54,6 +54,8 @@ typedef enum {
     TOKEN_EXTERN,
     TOKEN_STRUCT,
     TOKEN_IMPL,
+    TOKEN_INTERFACE,
+    TOKEN_AS,
     TOKEN_MODULE,
     TOKEN_IMPORT,
     TOKEN_RETURN,

@@ -72,10 +72,10 @@ static void vec_new(GabCtx *ctx) {
 }
 
 static const char VEC_SRC[] = "impl<T> Vec<T> {\n"
-                              "    extern func new(count: int): Vec<T>;\n"
-                              "    extern func push(self: &Vec<T>, value: T);\n"
-                              "    extern func at(self: &Vec<T>, index: int): T;\n"
-                              "    extern func len(self: &Vec<T>): int;\n"
+                              "    extern func new(count: int): Self;\n"
+                              "    extern func push(self: &Self, value: T);\n"
+                              "    extern func at(self: &Self, index: int): T;\n"
+                              "    extern func len(self: &Self): int;\n"
                               "}\n";
 
 void std_register_vec(GabVM *vm) {

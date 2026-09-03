@@ -192,6 +192,41 @@ is `Player::is_alive(p)`. The sugar borrows and derefs to reach parameter zero,
 but never hands ownership over — a function taking `*T` first consumes it, so it
 is called as `Type::name(v)`, where the argument is an argument like any other.
 
+Inside an `impl` block, `Self` names the type the block is for, so a generic
+one does not repeat its own arguments. The name is reserved: nothing else may
+be declared `Self`, and naming it where no `impl` block encloses it is an
+error saying so.
+
+```
+impl<T> Holder<T> {
+    func get(self: &Self): T { return self.value; }
+}
+```
+
+An `interface` names a set of signatures, and a type says it supplies them with
+`impl Type as Name`. The implementation is checked where it is written rather
+than where it is called, so a missing method, or one whose signature disagrees,
+is a compile error naming what differed. `Self` in a signature is the
+implementing type:
+
+```
+interface Countable {
+    func count(self: &Self): int;
+}
+
+struct Bag { n: int }
+
+impl Bag as Countable {
+    func count(self: &Self): int { return self.n; }
+}
+```
+
+A type implements a given interface once, and the methods are called the way
+any other method is — an interface adds no representation, so `b.count()`
+costs what it did before. Naming an interface in a type parameter's bound is
+not yet spelled, so an interface today states what a type supplies rather than
+what a generic requires.
+
 Only something with a home in memory can be borrowed. A call result is a
 temporary with no address to name, so it must be bound to a variable first. A
 string literal is the exception: its characters live in the unit's arena, which
@@ -460,7 +495,8 @@ more or less, and a second spelling would say nothing the first does not.
 | | |
 | --- | --- |
 | Types | `int` (32-bit), `float` (32-bit), `bool`, `String` and characters named by `&str`, `[T; N]`, `Vec<T>`, structs, owning `*T`, borrows `&T` |
-| Declarations | `let` with inferred or annotated type, `func`, `struct`, `impl`, `module`. A struct local is written as a literal |
+| Declarations | `let` with inferred or annotated type, `func`, `struct`, `impl`, `interface`, `module`. A struct local is written as a literal |
+| Interfaces | `interface` names signatures, `impl T as I` supplies them and is checked at the declaration. `Self` is reserved, and names the type an `impl` block is for |
 | Generics | Structs, the methods they own, and free functions. A call infers its type arguments from what it is given, or names them as `id<int>(x)` |
 | Functions | Parameters and returns of any type, structs by value, functions a type owns, recursion, forward references |
 | Control flow | `if` / `else`, `for` in three forms, `break`, `continue`, `return`, nested blocks with shadowing |
@@ -479,6 +515,7 @@ Not yet implemented:
 | Strings | No interpolation, no `substring` or case conversion |
 | Arrays | Fixed length once allocated: no growth and no slice type. `Vec<T>` is what grows |
 | Vectors | `new`, `push`, `at` and `len` only: no removal, no iteration, and no literal |
+| Interfaces | No bounds on type parameters, so generic code cannot yet require one; no associated types and no dynamic dispatch |
 | Operators | Bitwise |
 
 ## Building

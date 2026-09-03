@@ -21,6 +21,12 @@ typedef struct OwnedKey {
 
 GAB_HASH_MAP(OwnedTable, owned_key, OwnedKey, Function *)
 
+/* Keyed on the declaration too, so implementing a generic covers every instantiation of it. */
+#define conformance_key_hash(key) owned_key_hash(key)
+#define conformance_key_key_equals(key, other) owned_key_key_equals(key, other)
+
+GAB_HASH_MAP(ConformanceTable, conformance_key, OwnedKey, bool)
+
 #define drop_key_hash(key) (size_t)key
 #define drop_key_key_equals(key, other) key == other
 
@@ -54,6 +60,8 @@ typedef struct TypeRegistry {
     TypeInternTable *applications;
 
     OwnedTable *owned;
+
+    ConformanceTable *conformances;
 
     DropTable *drops;
 
