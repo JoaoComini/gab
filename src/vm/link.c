@@ -138,17 +138,41 @@ bool link_check(Program *program, Unit *unit, TypeRegistry *registry, Diagnostic
             return false;
         }
 
+        size_t *strides = arena_alloc(unit->arena, function->param_count * sizeof(size_t));
+
+        if (function->param_count && !strides) {
+            return false;
+        }
+
         unsigned int slot = 1;
 
         for (size_t p = 0; p < function->param_count; p++) {
+            const Type *param = function->params[p];
+
             offsets[p] = (size_t)slot * VM_SLOT_SIZE;
-            slot += args_type_slots(registry, function->params[p]);
+            strides[p] = type_kind(param) == TYPE_ARRAY
+                             ? type_registry_size_of(registry, type_array_element(param))
+                             : 0;
+
+            slot += args_type_slots(registry, param);
+        }
+
+        size_t *type_arg_sizes = arena_alloc(unit->arena, function->type_arg_count * sizeof(size_t));
+
+        if (function->type_arg_count && !type_arg_sizes) {
+            return false;
+        }
+
+        for (size_t t = 0; t < function->type_arg_count; t++) {
+            type_arg_sizes[t] = type_registry_size_of(registry, function->type_args[t]);
         }
 
         ExternProto *proto = &unit->extern_protos.data[request->local_index];
 
         proto->body = body;
         proto->param_offsets = offsets;
+        proto->param_strides = strides;
+        proto->type_arg_sizes = type_arg_sizes;
     }
 
     return true;

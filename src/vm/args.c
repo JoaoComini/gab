@@ -19,7 +19,7 @@ unsigned int args_type_slots(TypeRegistry *registry, const Type *type) {
 
 static TypeRegistry *args_registry(Args *args) { return args->vm->env.global_scope.type_registry; }
 
-uint8_t *args_address(Args *args, int index, const Type **out_type) {
+uint8_t *args_address(Args *args, int index) {
     assert(args && "a C body was called without a frame");
 
     const Function *function = args->function;
@@ -27,11 +27,13 @@ uint8_t *args_address(Args *args, int index, const Type **out_type) {
     assert(index >= 0 && (size_t)index < function->param_count &&
            "a C body read a parameter its declaration does not have");
 
-    if (out_type) {
-        *out_type = function->params[index];
-    }
-
     return args->vm->stack + args->base + args->param_offsets[index];
+}
+
+const Type *args_param_type(Args *args, int index) {
+    const Function *function = args->function;
+
+    return (index >= 0 && (size_t)index < function->param_count) ? function->params[index] : NULL;
 }
 
 uint8_t *args_return_address(Args *args) {
@@ -41,8 +43,8 @@ uint8_t *args_return_address(Args *args) {
 }
 
 static uint8_t *args_address_of_kind(Args *args, int index, TypeKind kind) {
-    const Type *type = NULL;
-    uint8_t *at = args_address(args, index, &type);
+    const Type *type = args_param_type(args, index);
+    uint8_t *at = args_address(args, index);
 
     assert(type && type_kind(type) == kind && "a C body read a parameter as a type it was not declared");
     (void)kind;
@@ -72,8 +74,8 @@ bool args_bool(Args *args, int index) {
 }
 
 StrRef args_string(Args *args, int index) {
-    const Type *type = NULL;
-    uint8_t *at = args_address(args, index, &type);
+    const Type *type = args_param_type(args, index);
+    uint8_t *at = args_address(args, index);
 
     assert(type_is_str_ref(type) &&
            "a C body read a parameter as a borrowed string when it was not declared one");
@@ -103,8 +105,8 @@ ArrayValue args_array(Args *args, int index) {
 }
 
 void *args_pointer(Args *args, int index) {
-    const Type *type = NULL;
-    uint8_t *at = args_address(args, index, &type);
+    const Type *type = args_param_type(args, index);
+    uint8_t *at = args_address(args, index);
 
     assert(type && type_is_indirect(type) && "a C body read a parameter as a type it was not declared");
 
@@ -115,8 +117,8 @@ void *args_pointer(Args *args, int index) {
 }
 
 void args_struct(Args *args, int index, void *out, size_t size) {
-    const Type *type = NULL;
-    const uint8_t *at = args_address(args, index, &type);
+    const Type *type = args_param_type(args, index);
+    const uint8_t *at = args_address(args, index);
 
     assert(out && "a C body read a struct argument into nothing");
     assert(type && type_registry_size_of(args_registry(args), type) == size &&

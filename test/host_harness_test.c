@@ -18,38 +18,38 @@ typedef struct {
 
 static World world;
 
-static void host_tick(GabArgs *args) { gab_return_int(args, world.tick); }
+static void host_tick(GabCtx *ctx) { gab_return_int(ctx, world.tick); }
 
-static void host_spawn(GabArgs *args) {
-    int32_t count = gab_arg_get_int(args, 0);
+static void host_spawn(GabCtx *ctx) {
+    int32_t count = gab_arg_get_int(ctx, 0);
 
     world.spawned += count;
 
-    gab_return_int(args, world.spawned);
+    gab_return_int(ctx, world.spawned);
 }
 
-static void host_buff(GabArgs *args) {
+static void host_buff(GabCtx *ctx) {
     Player p;
-    gab_arg_get_struct(args, 0, &p, sizeof p);
+    gab_arg_get_struct(ctx, 0, &p, sizeof p);
 
-    p.health += gab_arg_get_int(args, 1);
+    p.health += gab_arg_get_int(ctx, 1);
 
-    gab_return_struct(args, &p, sizeof p);
+    gab_return_struct(ctx, &p, sizeof p);
 }
 
-static void host_log(GabArgs *args) {
+static void host_log(GabCtx *ctx) {
     int32_t length = 0;
-    const char *text = gab_arg_get_string(args, 0, &length);
+    const char *text = gab_arg_get_string(ctx, 0, &length);
 
     assert(text != NULL);
     world.logged += length;
 }
 
-static void host_refuse(GabArgs *args) { gab_error(args, "refused by the host"); }
+static void host_refuse(GabCtx *ctx) { gab_ctx_fail(ctx, "refused by the host"); }
 
 static GabVM *reentrant_vm;
 
-static void host_reenter(GabArgs *args) {
+static void host_reenter(GabCtx *ctx) {
     GabError err;
     GabFunc *doubled = gab_lookup(reentrant_vm, "game", "doubled", &err);
     assert(doubled != NULL);
@@ -62,7 +62,7 @@ static void host_reenter(GabArgs *args) {
 
     gab_call_free(call);
 
-    gab_return_int(args, out);
+    gab_return_int(ctx, out);
 }
 
 static const char *const SOURCE = "module game;\n"
@@ -167,7 +167,7 @@ static void test_an_extern_can_fail_the_run(void) {
     gab_vm_free(vm);
 }
 
-static void host_reenter_failing(GabArgs *args) {
+static void host_reenter_failing(GabCtx *ctx) {
     GabError err;
     GabFunc *fails = gab_lookup(reentrant_vm, "game", "fails", &err);
     assert(fails != NULL);
@@ -179,7 +179,7 @@ static void host_reenter_failing(GabArgs *args) {
 
     gab_call_free(call);
 
-    gab_return_int(args, 5);
+    gab_return_int(ctx, 5);
 }
 
 static void test_a_nested_failure_leaves_its_caller_running(void) {

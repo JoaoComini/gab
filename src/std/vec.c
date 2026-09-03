@@ -1,6 +1,8 @@
 #include "library.h"
 #include "std/std.h"
 
+#include "gab.h"
+
 #include "allocator.h"
 #include "arena.h"
 #include "object.h"
@@ -45,15 +47,7 @@ static VecHeader vec_load(Args *args) {
 
 static void vec_store(Args *args, const VecHeader *vec) { memcpy(args_pointer(args, 0), vec, sizeof(*vec)); }
 
-static size_t vec_stride(Args *args) {
-    const Type *receiver = NULL;
-    args_address(args, 0, &receiver);
-
-    TypeRegistry *registry = args->vm->env.global_scope.type_registry;
-
-    return type_registry_size_of(
-        registry, type_pointee(type_registry_fields_of(registry, type_pointee(receiver))->fields[0].type));
-}
+static size_t vec_stride(Args *args) { return gab_ctx_type_size(args, 0); }
 
 static void vec_push(Args *args) {
     VecHeader vec = vec_load(args);
@@ -64,8 +58,7 @@ static void vec_push(Args *args) {
         return;
     }
 
-    const Type *element = NULL;
-    const uint8_t *value = args_address(args, 1, &element);
+    const uint8_t *value = args_address(args, 1);
 
     memcpy((char *)vec.block.data + (size_t)vec.block.length * stride, value, stride);
 

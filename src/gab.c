@@ -140,18 +140,18 @@ void gab_vm_free(GabVM *handle) {
     vm_free(vm);
 }
 
-int32_t gab_arg_get_int(GabArgs *args, int index) { return args_int(args, index); }
+int32_t gab_arg_get_int(GabCtx *ctx, int index) { return args_int(ctx, index); }
 
-float gab_arg_get_float(GabArgs *args, int index) { return args_float(args, index); }
+float gab_arg_get_float(GabCtx *ctx, int index) { return args_float(ctx, index); }
 
-bool gab_arg_get_bool(GabArgs *args, int index) { return args_bool(args, index); }
+bool gab_arg_get_bool(GabCtx *ctx, int index) { return args_bool(ctx, index); }
 
-void gab_arg_get_struct(GabArgs *args, int index, void *out, size_t size) {
-    args_struct(args, index, out, size);
+void gab_arg_get_struct(GabCtx *ctx, int index, void *out, size_t size) {
+    args_struct(ctx, index, out, size);
 }
 
-const char *gab_arg_get_string(GabArgs *args, int index, int32_t *out_length) {
-    StrRef value = args_string(args, index);
+const char *gab_arg_get_string(GabCtx *ctx, int index, int32_t *out_length) {
+    StrRef value = args_string(ctx, index);
 
     if (out_length) {
         *out_length = value.length;
@@ -160,24 +160,54 @@ const char *gab_arg_get_string(GabArgs *args, int index, int32_t *out_length) {
     return value.data;
 }
 
-void *gab_arg_get_pointer(GabArgs *args, int index) { return args_pointer(args, index); }
+void *gab_arg_get_pointer(GabCtx *ctx, int index) { return args_pointer(ctx, index); }
 
-void gab_return_int(GabArgs *args, int32_t value) { args_return_int(args, value); }
+void gab_return_int(GabCtx *ctx, int32_t value) { args_return_int(ctx, value); }
 
-void gab_return_float(GabArgs *args, float value) { args_return_float(args, value); }
+void gab_return_float(GabCtx *ctx, float value) { args_return_float(ctx, value); }
 
-void gab_return_bool(GabArgs *args, bool value) { args_return_bool(args, value); }
+void gab_return_bool(GabCtx *ctx, bool value) { args_return_bool(ctx, value); }
 
-void gab_return_struct(GabArgs *args, const void *data, size_t size) { args_return_struct(args, data, size); }
+void gab_return_struct(GabCtx *ctx, const void *data, size_t size) { args_return_struct(ctx, data, size); }
 
-void gab_return_pointer(GabArgs *args, void *pointer) { args_return_pointer(args, pointer); }
+void gab_return_pointer(GabCtx *ctx, void *pointer) { args_return_pointer(ctx, pointer); }
 
-void gab_error(GabArgs *args, const char *message) {
-    if (!args) {
+size_t gab_ctx_type_count(GabCtx *ctx) { return ctx ? ctx->function->type_arg_count : 0; }
+
+GabTypeKind gab_ctx_type_kind(GabCtx *ctx, size_t index) {
+    const Function *function = ctx->function;
+
+    assert(index < function->type_arg_count &&
+           "a host body read a type argument its declaration does not have");
+
+    return (GabTypeKind)type_kind(function->type_args[index]);
+}
+
+size_t gab_ctx_type_size(GabCtx *ctx, size_t index) {
+    const Function *function = ctx->function;
+
+    assert(index < function->type_arg_count &&
+           "a host body read a type argument its declaration does not have");
+
+    return ctx->type_arg_sizes[index];
+}
+
+int32_t gab_ctx_array_length(GabCtx *ctx, int index) {
+    const Type *type = args_param_type(ctx, index);
+
+    return type && type_kind(type) == TYPE_ARRAY ? type_array_length(type) : 0;
+}
+
+size_t gab_ctx_array_stride(GabCtx *ctx, int index) {
+    return (index >= 0 && (size_t)index < ctx->function->param_count) ? ctx->param_strides[index] : 0;
+}
+
+void gab_ctx_fail(GabCtx *ctx, const char *message) {
+    if (!ctx) {
         return;
     }
 
-    vm_fail(args->vm, VM_RUN_ERR_EXTERN, message ? message : "the extern function failed");
+    vm_fail(ctx->vm, VM_RUN_ERR_EXTERN, message ? message : "the extern function failed");
 }
 
 bool gab_extern(GabVM *handle, const char *module, const char *type, const char *name, GabExternFn fn,
