@@ -463,7 +463,10 @@ const Type *type_registry_substitute(TypeRegistry *registry, const Type *type, c
     case TYPE_STRUCT: {
         assert(type_decl(type) && "a struct mentioning a parameter is an instantiation");
 
-        return type_registry_apply(registry, type_decl(type), args, arg_count);
+        /* A caller may hold more arguments than this struct takes, when a method adds its own. */
+        assert(type_decl(type)->param_count <= arg_count && "an instantiation is given every argument");
+
+        return type_registry_apply(registry, type_decl(type), args, type_decl(type)->param_count);
     }
 
     default:
