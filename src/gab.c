@@ -1,5 +1,6 @@
 #include "gab.h"
 
+#include "allocator.h"
 #include "binding.h"
 #include "compile.h"
 #include "diagnostics.h"
@@ -140,17 +141,15 @@ void gab_vm_free(GabVM *handle) {
     vm_free(vm);
 }
 
-int32_t gab_arg_get_int(GabCtx *ctx, int index) { return args_int(ctx, index); }
+int32_t gab_ctx_int(GabCtx *ctx, int index) { return args_int(ctx, index); }
 
-float gab_arg_get_float(GabCtx *ctx, int index) { return args_float(ctx, index); }
+float gab_ctx_float(GabCtx *ctx, int index) { return args_float(ctx, index); }
 
-bool gab_arg_get_bool(GabCtx *ctx, int index) { return args_bool(ctx, index); }
+bool gab_ctx_bool(GabCtx *ctx, int index) { return args_bool(ctx, index); }
 
-void gab_arg_get_struct(GabCtx *ctx, int index, void *out, size_t size) {
-    args_struct(ctx, index, out, size);
-}
+void gab_ctx_struct(GabCtx *ctx, int index, void *out, size_t size) { args_struct(ctx, index, out, size); }
 
-const char *gab_arg_get_string(GabCtx *ctx, int index, int32_t *out_length) {
+const char *gab_ctx_string(GabCtx *ctx, int index, int32_t *out_length) {
     StrRef value = args_string(ctx, index);
 
     if (out_length) {
@@ -160,17 +159,27 @@ const char *gab_arg_get_string(GabCtx *ctx, int index, int32_t *out_length) {
     return value.data;
 }
 
-void *gab_arg_get_pointer(GabCtx *ctx, int index) { return args_pointer(ctx, index); }
+void *gab_ctx_pointer(GabCtx *ctx, int index) { return args_pointer(ctx, index); }
 
-void gab_return_int(GabCtx *ctx, int32_t value) { args_return_int(ctx, value); }
+const void *gab_ctx_address(GabCtx *ctx, int index) { return args_address(ctx, index); }
 
-void gab_return_float(GabCtx *ctx, float value) { args_return_float(ctx, value); }
+void *gab_ctx_self(GabCtx *ctx) { return args_pointer(ctx, 0); }
 
-void gab_return_bool(GabCtx *ctx, bool value) { args_return_bool(ctx, value); }
+void gab_ctx_return_int(GabCtx *ctx, int32_t value) { args_return_int(ctx, value); }
 
-void gab_return_struct(GabCtx *ctx, const void *data, size_t size) { args_return_struct(ctx, data, size); }
+void gab_ctx_return_float(GabCtx *ctx, float value) { args_return_float(ctx, value); }
 
-void gab_return_pointer(GabCtx *ctx, void *pointer) { args_return_pointer(ctx, pointer); }
+void gab_ctx_return_bool(GabCtx *ctx, bool value) { args_return_bool(ctx, value); }
+
+void gab_ctx_return_struct(GabCtx *ctx, const void *data, size_t size) {
+    args_return_struct(ctx, data, size);
+}
+
+void gab_ctx_return_pointer(GabCtx *ctx, void *pointer) { args_return_pointer(ctx, pointer); }
+
+bool gab_ctx_return_string(GabCtx *ctx, const char *data, int32_t length) {
+    return args_return_string_copy(ctx, data, length);
+}
 
 size_t gab_ctx_type_count(GabCtx *ctx) { return ctx ? ctx->function->type_arg_count : 0; }
 
@@ -202,12 +211,35 @@ size_t gab_ctx_array_stride(GabCtx *ctx, int index) {
     return (index >= 0 && (size_t)index < ctx->function->param_count) ? ctx->param_strides[index] : 0;
 }
 
-void gab_ctx_fail(GabCtx *ctx, const char *message) {
+GabVM *gab_ctx_vm(GabCtx *ctx) { return ctx ? (GabVM *)ctx->vm : NULL; }
+
+static VmRunStatus gab_failure_status(GabFailure failure) {
+    switch (failure) {
+    case GAB_FAIL_OUT_OF_MEMORY:
+        return VM_RUN_ERR_OUT_OF_MEMORY;
+    case GAB_FAIL_BOUNDS:
+        return VM_RUN_ERR_BOUNDS;
+    case GAB_FAIL_RUNTIME:
+        break;
+    }
+
+    return VM_RUN_ERR_EXTERN;
+}
+
+void gab_ctx_fail(GabCtx *ctx, GabFailure failure, const char *message) {
     if (!ctx) {
         return;
     }
 
-    vm_fail(ctx->vm, VM_RUN_ERR_EXTERN, message ? message : "the extern function failed");
+    vm_fail(ctx->vm, gab_failure_status(failure), message ? message : "the extern function failed");
+}
+
+bool gab_block_reserve(GabCtx *ctx, GabBlock *block, int32_t extra, size_t stride) {
+    (void)ctx;
+
+    _Static_assert(sizeof(GabBlock) == sizeof(BlockValue), "a block's public layout is the VM's layout");
+
+    return block_reserve(&DEFAULT_ALLOCATOR, (BlockValue *)block, extra, stride);
 }
 
 bool gab_extern(GabVM *handle, const char *module, const char *type, const char *name, GabExternFn fn,
@@ -249,11 +281,11 @@ bool gab_extern(GabVM *handle, const char *module, const char *type, const char 
     return true;
 }
 
-bool gab_load(GabVM *handle, const char *name, const char *src, GabError *err) {
+bool gab_vm_load(GabVM *handle, const char *name, const char *src, GabError *err) {
     gab_error_clear(err);
 
     if (!handle || !src) {
-        gab_error_set(err, 0, 0, "gab_load requires a VM and a source string");
+        gab_error_set(err, 0, 0, "gab_vm_load requires a VM and a source string");
         return false;
     }
 
@@ -300,7 +332,7 @@ static Scope *gab_namespace(VM *vm, const char *module) {
     return found ? *found : NULL;
 }
 
-const GabType *gab_find_type(GabVM *handle, const char *module, const char *name) {
+const GabType *gab_vm_find_type(GabVM *handle, const char *module, const char *name) {
     if (!handle || !name) {
         return NULL;
     }
@@ -334,7 +366,7 @@ size_t gab_type_align(GabVM *vm, const GabType *type) {
     return type && vm ? type_registry_align_of(gab_registry(vm), (const Type *)type) : 0;
 }
 
-bool gab_field_offset(GabVM *handle, const GabType *type_handle, const char *field, size_t *out_offset) {
+bool gab_type_field_offset(GabVM *handle, const GabType *type_handle, const char *field, size_t *out_offset) {
     if (!handle || !type_handle || !field) {
         return false;
     }
@@ -359,11 +391,11 @@ bool gab_field_offset(GabVM *handle, const GabType *type_handle, const char *fie
     return false;
 }
 
-GabFunc *gab_lookup(GabVM *handle, const char *module, const char *name, GabError *err) {
+GabFunc *gab_vm_lookup(GabVM *handle, const char *module, const char *name, GabError *err) {
     gab_error_clear(err);
 
     if (!handle || !name) {
-        gab_error_set(err, 0, 0, "gab_lookup requires a VM and a name");
+        gab_error_set(err, 0, 0, "gab_vm_lookup requires a VM and a name");
         return NULL;
     }
 
@@ -560,7 +592,7 @@ static uint8_t *gab_arg_slot(GabCall *call, int index, TypeKind expected) {
     return gab_arg_slot_where(call, index, accepts_kind, expected);
 }
 
-bool gab_arg_int(GabCall *call, int index, int32_t value) {
+bool gab_call_int(GabCall *call, int index, int32_t value) {
     uint8_t *slot = gab_arg_slot(call, index, TYPE_INT);
     if (!slot) {
         return false;
@@ -571,7 +603,7 @@ bool gab_arg_int(GabCall *call, int index, int32_t value) {
     return true;
 }
 
-bool gab_arg_float(GabCall *call, int index, float value) {
+bool gab_call_float(GabCall *call, int index, float value) {
     uint8_t *slot = gab_arg_slot(call, index, TYPE_FLOAT);
     if (!slot) {
         return false;
@@ -582,7 +614,7 @@ bool gab_arg_float(GabCall *call, int index, float value) {
     return true;
 }
 
-bool gab_arg_bool(GabCall *call, int index, bool value) {
+bool gab_call_bool(GabCall *call, int index, bool value) {
     uint8_t *slot = gab_arg_slot(call, index, TYPE_BOOL);
     if (!slot) {
         return false;
@@ -595,7 +627,7 @@ bool gab_arg_bool(GabCall *call, int index, bool value) {
     return true;
 }
 
-bool gab_arg_struct(GabCall *call, int index, const void *data, size_t size) {
+bool gab_call_struct(GabCall *call, int index, const void *data, size_t size) {
     if (call && index >= 0 && (size_t)index < call->fn->sig_param_count) {
         const Type *param = call->fn->sig_params[index];
 
@@ -615,7 +647,7 @@ bool gab_arg_struct(GabCall *call, int index, const void *data, size_t size) {
     return true;
 }
 
-bool gab_arg_pointer(GabCall *call, int index, void *pointer, const GabType *inner) {
+bool gab_call_pointer(GabCall *call, int index, void *pointer, const GabType *inner) {
     if (call && index >= 0 && (size_t)index < call->fn->sig_param_count) {
         const Type *param = call->fn->sig_params[index];
 

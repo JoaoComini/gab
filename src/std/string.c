@@ -1,113 +1,123 @@
-#include "library.h"
-#include "std/std.h"
+#include "std.h"
 
-#include "allocator.h"
 #include "gab.h"
-#include "object.h"
-#include "scope.h"
-#include "string/string.h"
-#include "type/type.h"
-#include "type/type_registry.h"
-#include "vm/args.h"
-#include "vm/interp.h"
-#include "vm/vm.h"
 
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
-static void string_push(Args *args) {
-    StringValue string = args_string_at(args, 0);
-    int32_t character = args_int(args, 1);
+typedef struct {
+    GabBlock block;
+} String;
 
-    if (!block_reserve(&DEFAULT_ALLOCATOR, &string.block, 1, sizeof(char))) {
-        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory growing a string");
+static String string_load(GabCtx *ctx) {
+    String string;
+    memcpy(&string, gab_ctx_self(ctx), sizeof(string));
+
+    return string;
+}
+
+static void string_store(GabCtx *ctx, const String *string) {
+    memcpy(gab_ctx_self(ctx), string, sizeof(*string));
+}
+
+static void string_push(GabCtx *ctx) {
+    String string = string_load(ctx);
+    int32_t character = gab_ctx_int(ctx, 1);
+
+    if (!gab_block_reserve(ctx, &string.block, 1, sizeof(char))) {
+        gab_ctx_fail(ctx, GAB_FAIL_OUT_OF_MEMORY, "out of memory growing a string");
         return;
     }
 
     ((char *)string.block.data)[string.block.length] = (char)character;
     string.block.length++;
 
-    memcpy(args_pointer(args, 0), &string, sizeof(string));
+    string_store(ctx, &string);
 }
 
-static void string_append(Args *args) {
-    StringValue string = args_string_at(args, 0);
-    StrRef other = args_string(args, 1);
+static void string_append(GabCtx *ctx) {
+    String string = string_load(ctx);
 
-    if (other.length == 0) {
+    int32_t length = 0;
+    const char *other = gab_ctx_string(ctx, 1, &length);
+
+    if (length == 0) {
         return;
     }
 
-    char *copy = DEFAULT_ALLOCATOR.alloc(DEFAULT_ALLOCATOR.ctx, (size_t)other.length);
+    /* 'other' may name this string's own bytes, which the reserve is free to move. */
+    char *copy = malloc((size_t)length);
 
     if (!copy) {
-        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory appending to a string");
+        gab_ctx_fail(ctx, GAB_FAIL_OUT_OF_MEMORY, "out of memory appending to a string");
         return;
     }
 
-    memcpy(copy, other.data, (size_t)other.length);
+    memcpy(copy, other, (size_t)length);
 
-    if (block_reserve(&DEFAULT_ALLOCATOR, &string.block, other.length, sizeof(char))) {
-        memcpy((char *)string.block.data + string.block.length, copy, (size_t)other.length);
-        string.block.length += other.length;
+    if (gab_block_reserve(ctx, &string.block, length, sizeof(char))) {
+        memcpy((char *)string.block.data + string.block.length, copy, (size_t)length);
+        string.block.length += length;
 
-        memcpy(args_pointer(args, 0), &string, sizeof(string));
+        string_store(ctx, &string);
     } else {
-        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory appending to a string");
+        gab_ctx_fail(ctx, GAB_FAIL_OUT_OF_MEMORY, "out of memory appending to a string");
     }
 
-    DEFAULT_ALLOCATOR.free(DEFAULT_ALLOCATOR.ctx, copy, (size_t)other.length);
+    free(copy);
 }
 
-static void string_clone(Args *args) {
-    StringValue string = args_string_at(args, 0);
+static void string_clone(GabCtx *ctx) {
+    String string = string_load(ctx);
 
-    args_return_string_copy(args, string.block.data, string.block.length);
+    gab_ctx_return_string(ctx, string.block.data, string.block.length);
 }
 
-static void string_from(Args *args) {
-    StrRef string = args_string(args, 0);
+static void string_from(GabCtx *ctx) {
+    int32_t length = 0;
+    const char *text = gab_ctx_string(ctx, 0, &length);
 
-    args_return_string_copy(args, string.data, string.length);
+    gab_ctx_return_string(ctx, text, length);
 }
 
-static const char STD_SRC[] = "module " GAB_STD_MODULE ";\n"
-                              "impl String {\n"
-                              "    extern func from(text: &str): String;\n"
-                              "    extern func push(self: &String, character: int);\n"
-                              "    extern func append(self: &String, other: &str);\n"
-                              "    extern func clone(self: &String): String;\n"
-                              "}\n";
+static const char STRING_SRC[] = "impl String {\n"
+                                 "    extern func from(text: &str): String;\n"
+                                 "    extern func push(self: &String, character: int);\n"
+                                 "    extern func append(self: &String, other: &str);\n"
+                                 "    extern func clone(self: &String): String;\n"
+                                 "}\n";
 
-void std_register_string(VM *vm) {
-    Library std = library_open(vm, GAB_STD_MODULE, false);
+void std_register_string(GabVM *vm) {
+    GabError err;
 
-    TypeRegistry *registry = vm->env.global_scope.type_registry;
+    GabLib *std = gab_lib_open(vm, "std", &err);
+    assert(std && "the standard library opens");
 
-    const TypeFieldSpec fields[] = {
-        {
-            .name = string_from_cstr(&vm->env.strings, "data"),
-            .type = type_registry_block_of(registry, type_registry_get_primitive(registry, TYPE_BYTE)),
-        },
+    const GabFieldSpec fields[] = {
+        {"data", gab_lib_block_of(std, gab_lib_primitive(std, GAB_TYPE_BYTE))},
     };
 
-    const LentPart characters_named_by[] = {
-        {.offset = offsetof(StringValue, block) + offsetof(BlockValue, data), .size = sizeof(void *)},
-        {.offset = offsetof(StringValue, block) + offsetof(BlockValue, length), .size = sizeof(int32_t)},
+    const GabLentPart characters_named_by[] = {
+        {offsetof(String, block) + offsetof(GabBlock, data), sizeof(void *)},
+        {offsetof(String, block) + offsetof(GabBlock, length), sizeof(int32_t)},
     };
 
-    const LibraryTypeSpec spec = {
+    const GabTypeSpec spec = {
         .name = "String",
         .fields = fields,
         .field_count = sizeof(fields) / sizeof(*fields),
-        .derefs_to = type_registry_get_primitive(registry, TYPE_STR),
-        .lent_parts = characters_named_by,
-        .lent_part_count = sizeof(characters_named_by) / sizeof(*characters_named_by),
+        .derefs_to = gab_lib_primitive(std, GAB_TYPE_STR),
+        .lends = characters_named_by,
+        .lend_count = sizeof(characters_named_by) / sizeof(*characters_named_by),
     };
 
-    (void)type_registry_apply(registry, library_type(&std, &spec), NULL, 0);
+    const GabType *declared = gab_lib_type(std, &spec, &err);
+
+    assert(declared && "String declares");
+    (void)declared;
 
     static const struct {
         const char *name;
@@ -120,8 +130,16 @@ void std_register_string(VM *vm) {
     };
 
     for (size_t i = 0; i < sizeof(METHODS) / sizeof(*METHODS); i++) {
-        library_extern(&std, "String", METHODS[i].name, METHODS[i].body);
+        bool bound = gab_lib_bind(std, "String", METHODS[i].name, METHODS[i].body, &err);
+
+        assert(bound && "a library binds each of its externs once");
+        (void)bound;
     }
 
-    library_declare_source(&std, STD_SRC);
+    bool loaded = gab_lib_source(std, STRING_SRC, &err);
+
+    assert(loaded && "a library's declarations compile");
+    (void)loaded;
+
+    gab_lib_close(std);
 }

@@ -80,6 +80,24 @@ endif()
 
 target_include_directories(gab PUBLIC src/)
 
+# The standard library is written the way an embedder's library is, so it is
+# also the check that gab.h is sufficient on its own: this target sees the
+# public header and nothing else, and fails to compile the moment a std source
+# reaches into the tree for something the API should have exposed.
+add_library(gab_std_public_only OBJECT
+    src/std/std.c
+    src/std/string.c
+    src/std/vec.c
+)
+
+# Deliberately not src/: only the public header, copied in beside the sources.
+configure_file(src/gab.h ${CMAKE_CURRENT_BINARY_DIR}/public/gab.h COPYONLY)
+
+target_include_directories(gab_std_public_only PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/std
+    ${CMAKE_CURRENT_BINARY_DIR}/public
+)
+
 enable_testing()
 add_subdirectory(test)
 

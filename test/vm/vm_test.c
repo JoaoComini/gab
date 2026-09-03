@@ -410,8 +410,8 @@ static void test_a_load_name_replaces_nothing() {
 
     size_t loaded = ((VM *)handle)->program.top_levels.size;
 
-    assert(gab_load(handle, "same.gab", "module test;\nfunc first(): int { return 1; }\n", &err));
-    assert(gab_load(handle, "same.gab", "module test;\nfunc second(): int { return 2; }\n", &err));
+    assert(gab_vm_load(handle, "same.gab", "module test;\nfunc first(): int { return 1; }\n", &err));
+    assert(gab_vm_load(handle, "same.gab", "module test;\nfunc second(): int { return 2; }\n", &err));
 
     assert(((VM *)handle)->program.top_levels.size == loaded + 2);
 

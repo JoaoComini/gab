@@ -18,51 +18,51 @@ typedef struct {
 
 static World world;
 
-static void host_tick(GabCtx *ctx) { gab_return_int(ctx, world.tick); }
+static void host_tick(GabCtx *ctx) { gab_ctx_return_int(ctx, world.tick); }
 
 static void host_spawn(GabCtx *ctx) {
-    int32_t count = gab_arg_get_int(ctx, 0);
+    int32_t count = gab_ctx_int(ctx, 0);
 
     world.spawned += count;
 
-    gab_return_int(ctx, world.spawned);
+    gab_ctx_return_int(ctx, world.spawned);
 }
 
 static void host_buff(GabCtx *ctx) {
     Player p;
-    gab_arg_get_struct(ctx, 0, &p, sizeof p);
+    gab_ctx_struct(ctx, 0, &p, sizeof p);
 
-    p.health += gab_arg_get_int(ctx, 1);
+    p.health += gab_ctx_int(ctx, 1);
 
-    gab_return_struct(ctx, &p, sizeof p);
+    gab_ctx_return_struct(ctx, &p, sizeof p);
 }
 
 static void host_log(GabCtx *ctx) {
     int32_t length = 0;
-    const char *text = gab_arg_get_string(ctx, 0, &length);
+    const char *text = gab_ctx_string(ctx, 0, &length);
 
     assert(text != NULL);
     world.logged += length;
 }
 
-static void host_refuse(GabCtx *ctx) { gab_ctx_fail(ctx, "refused by the host"); }
+static void host_refuse(GabCtx *ctx) { gab_ctx_fail(ctx, GAB_FAIL_RUNTIME, "refused by the host"); }
 
 static GabVM *reentrant_vm;
 
 static void host_reenter(GabCtx *ctx) {
     GabError err;
-    GabFunc *doubled = gab_lookup(reentrant_vm, "game", "doubled", &err);
+    GabFunc *doubled = gab_vm_lookup(reentrant_vm, "game", "doubled", &err);
     assert(doubled != NULL);
 
     GabCall *call = gab_call_init(doubled, &err);
-    assert(gab_arg_int(call, 0, 21));
+    assert(gab_call_int(call, 0, 21));
 
     int32_t out = 0;
     assert(gab_call(reentrant_vm, call, &out, &err) == GAB_OK);
 
     gab_call_free(call);
 
-    gab_return_int(ctx, out);
+    gab_ctx_return_int(ctx, out);
 }
 
 static const char *const SOURCE = "module game;\n"
@@ -94,7 +94,7 @@ static GabVM *harness_vm(void) {
     assert(gab_extern(vm, "game", NULL, "refuse", host_refuse, &err));
     assert(gab_extern(vm, "game", NULL, "reenter", host_reenter, &err));
 
-    if (!gab_load(vm, "game.gab", SOURCE, &err)) {
+    if (!gab_vm_load(vm, "game.gab", SOURCE, &err)) {
         fprintf(stderr, "load failed: line %d: %s\n", err.line, err.message);
         assert(0);
     }
@@ -105,14 +105,14 @@ static GabVM *harness_vm(void) {
 static void test_script_layout_matches_the_host_struct(void) {
     GabVM *vm = harness_vm();
 
-    const GabType *type = gab_find_type(vm, "game", "Player");
+    const GabType *type = gab_vm_find_type(vm, "game", "Player");
     assert(type != NULL);
     assert(gab_type_size(vm, type) == sizeof(Player));
     assert(gab_type_align(vm, type) == _Alignof(Player));
 
     size_t offset = 0;
-    assert(gab_field_offset(vm, type, "health", &offset) && offset == offsetof(Player, health));
-    assert(gab_field_offset(vm, type, "mana", &offset) && offset == offsetof(Player, mana));
+    assert(gab_type_field_offset(vm, type, "health", &offset) && offset == offsetof(Player, health));
+    assert(gab_type_field_offset(vm, type, "mana", &offset) && offset == offsetof(Player, mana));
 
     gab_vm_free(vm);
 }
@@ -123,7 +123,7 @@ static void test_a_frame_loop_calls_script_which_calls_back(void) {
 
     world = (World){0};
 
-    GabFunc *update = gab_lookup(vm, "game", "update", &err);
+    GabFunc *update = gab_vm_lookup(vm, "game", "update", &err);
     assert(update != NULL);
     assert(gab_func_arity(update) == 1);
 
@@ -135,7 +135,7 @@ static void test_a_frame_loop_calls_script_which_calls_back(void) {
     for (int32_t frame = 0; frame < 4; frame++) {
         world.tick = frame;
 
-        assert(gab_arg_struct(call, 0, &p, sizeof p));
+        assert(gab_call_struct(call, 0, &p, sizeof p));
 
         int32_t result = 0;
         assert(gab_call(vm, call, &result, &err) == GAB_OK);
@@ -154,7 +154,7 @@ static void test_an_extern_can_fail_the_run(void) {
     GabVM *vm = harness_vm();
     GabError err;
 
-    GabFunc *fails = gab_lookup(vm, "game", "fails", &err);
+    GabFunc *fails = gab_vm_lookup(vm, "game", "fails", &err);
     assert(fails != NULL);
 
     GabCall *call = gab_call_init(fails, &err);
@@ -169,7 +169,7 @@ static void test_an_extern_can_fail_the_run(void) {
 
 static void host_reenter_failing(GabCtx *ctx) {
     GabError err;
-    GabFunc *fails = gab_lookup(reentrant_vm, "game", "fails", &err);
+    GabFunc *fails = gab_vm_lookup(reentrant_vm, "game", "fails", &err);
     assert(fails != NULL);
 
     GabCall *call = gab_call_init(fails, &err);
@@ -179,7 +179,7 @@ static void host_reenter_failing(GabCtx *ctx) {
 
     gab_call_free(call);
 
-    gab_return_int(ctx, 5);
+    gab_ctx_return_int(ctx, 5);
 }
 
 static void test_a_nested_failure_leaves_its_caller_running(void) {
@@ -194,9 +194,9 @@ static void test_a_nested_failure_leaves_its_caller_running(void) {
     assert(gab_extern(vm, "game", NULL, "log", host_log, &err));
     assert(gab_extern(vm, "game", NULL, "refuse", host_refuse, &err));
     assert(gab_extern(vm, "game", NULL, "reenter", host_reenter_failing, &err));
-    assert(gab_load(vm, "game.gab", SOURCE, &err));
+    assert(gab_vm_load(vm, "game.gab", SOURCE, &err));
 
-    GabFunc *through = gab_lookup(vm, "game", "through_host", &err);
+    GabFunc *through = gab_vm_lookup(vm, "game", "through_host", &err);
     assert(through != NULL);
 
     GabCall *call = gab_call_init(through, &err);
@@ -215,7 +215,7 @@ static void test_a_host_body_calls_back_into_the_vm(void) {
 
     reentrant_vm = vm;
 
-    GabFunc *through = gab_lookup(vm, "game", "through_host", &err);
+    GabFunc *through = gab_vm_lookup(vm, "game", "through_host", &err);
     assert(through != NULL);
 
     GabCall *call = gab_call_init(through, &err);

@@ -105,7 +105,7 @@ VM *vm_create() {
     vm->error = (VmError){.status = VM_RUN_OK};
 
     core_register_all(vm);
-    std_register_all(vm);
+    std_register_all((GabVM *)vm);
 
     return vm;
 }

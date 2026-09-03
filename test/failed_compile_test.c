@@ -13,7 +13,7 @@ static void test_a_rejected_compile_costs_no_lasting_memory() {
     const char *rejected = "module bad;\nfunc f(): int { return \"not an int\"; }\n";
 
     for (int i = 0; i < 50; i++) {
-        assert(!gab_load(vm, "bad", rejected, &err));
+        assert(!gab_vm_load(vm, "bad", rejected, &err));
     }
 
     assert(inner->env.staging_arenas.size == committed);
@@ -28,7 +28,7 @@ static void test_a_committed_compile_keeps_its_arena() {
 
     size_t committed = inner->env.staging_arenas.size;
 
-    assert(gab_load(vm, "good", "module good;\nfunc f(): int { return 1; }\n", &err));
+    assert(gab_vm_load(vm, "good", "module good;\nfunc f(): int { return 1; }\n", &err));
 
     assert(inner->env.staging_arenas.size == committed + 1);
 

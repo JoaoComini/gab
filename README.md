@@ -33,24 +33,24 @@ int main(void) {
         "    return left;\n"
         "}\n";
 
-    if (!gab_load(vm, "game.gab", src, &err)) {
+    if (!gab_vm_load(vm, "game.gab", src, &err)) {
         fprintf(stderr, "game.gab:%d: %s\n", err.line, err.message);
         return 1;
     }
 
     // The script's layout is the C layout. Check it rather than trust it.
-    const GabType *type = gab_find_type(vm, "game", "Player");
+    const GabType *type = gab_vm_find_type(vm, "game", "Player");
     if (gab_type_size(type) != sizeof(Player)) {
         return 1;
     }
 
     // Resolve once; call every frame with no lookup.
-    GabFunc *fn = gab_lookup(vm, "game", "damage", &err);
+    GabFunc *fn = gab_vm_lookup(vm, "game", "damage", &err);
     GabCall *call = gab_call_init(fn, &err);
 
     Player p = { .health = 100, .mana = 50 };
-    gab_arg_struct(call, 0, &p, sizeof p);
-    gab_arg_int(call, 1, 30);
+    gab_call_struct(call, 0, &p, sizeof p);
+    gab_call_int(call, 1, 30);
 
     int32_t left = 0;
     if (gab_call(vm, call, &left, &err) == GAB_OK) {
@@ -79,7 +79,7 @@ Four properties are worth knowing before you build against it:
   hands out. `GabCall` is the one exception, because it holds one caller's
   staged arguments.
 - **Layout is checked, not trusted.** `gab_type_size`, `gab_type_align`, and
-  `gab_field_offset` exist so a host can assert the script's layout against its
+  `gab_type_field_offset` exist so a host can assert the script's layout against its
   own `sizeof` and `offsetof`.
 - **Externs are bound at load.** A script declares `extern func f(x: int):
   int;` and the host supplies the body with `gab_extern`. The binding is
@@ -88,7 +88,42 @@ Four properties are worth knowing before you build against it:
   runs. Registrations outlive every load.
 - **Objects have one owner.** A host allocates a struct itself, at the size and
   alignment `gab_type_size` and `gab_type_align` report. A pointer staged with
-  `gab_arg_pointer` is borrowed for the call, so the host goes on owning it.
+  `gab_call_pointer` is borrowed for the call, so the host goes on owning it.
+
+### Libraries
+
+A host can also declare a type of its own that scripts use as a built-in, which
+is how `String` and `Vec` are written — `src/std` builds against `gab.h` and
+nothing else. A library names its module, declares its types, binds a body to
+each `extern`, then hands over the declarations as source:
+
+```c
+GabLib *lib = gab_lib_open(vm, "std", &err);
+
+const GabFieldSpec fields[] = {
+    { "data", gab_lib_block_of(lib, gab_lib_param(lib, 0)) },
+};
+
+gab_lib_type(lib, &(GabTypeSpec){
+    .name = "Vec", .params = 1,
+    .fields = fields, .field_count = 1,
+}, &err);
+
+gab_lib_bind(lib, "Vec", "push", vec_push, &err);
+
+gab_lib_source(lib,
+    "impl<T> Vec<T> {\n"
+    "    extern func push(self: &Vec<T>, value: T);\n"
+    "}\n", &err);
+
+gab_lib_close(lib);
+```
+
+`GabBlock` is the growable buffer those types are built on: a host struct
+embedding one has the bytes the VM reads, and `gab_block_reserve` grows it
+through the VM's allocator. One body serves every specialization, so it asks
+`gab_ctx_type_size` what `T` was instantiated with rather than being compiled
+per element type.
 
 ## The language
 
