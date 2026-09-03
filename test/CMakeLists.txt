@@ -25,6 +25,7 @@ set(
     vm/method_test.c
     vm/impl_test.c
     vm/interface_test.c
+    vm/generic_method_test.c
     vm/generic_struct_test.c
     vm/owned_func_test.c
     vm/heap_test.c

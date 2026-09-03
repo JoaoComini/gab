@@ -364,6 +364,11 @@ static Function *owned_for(TypeRegistry *registry, FunctionRegistry *functions, 
         return declaration;
     }
 
+    /* A method with parameters of its own is specialized at the call, which knows all of them. */
+    if (declaration->decl->type_param_count > type_arg_count(type)) {
+        return declaration;
+    }
+
     const Type *args[GAB_MAX_TYPE_PARAMS];
 
     for (size_t i = 0; i < type_arg_count(type); i++) {
@@ -575,53 +580,85 @@ static bool infer_type_args(const Type *declared, const Type *actual, const Type
     return true;
 }
 
-static Function *specialize_call(ResolverState *state, ASTExpr *expr, Function *generic) {
-    const TypeExpr *supplied = expr->call.target->var.owner_type_expr;
+/* 'fixed' slots are already known from a receiver; 'self_params' is 1 when parameter zero is one. */
+static bool infer_call_args(ResolverState *state, ASTExpr *expr, Function *function, const Type **args,
+                            size_t fixed, size_t self_params) {
+    size_t owed = function->decl->type_param_count;
 
+    if (expr->call.args.size + self_params != function->param_count) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %zu argument(s), found %zu",
+                   function->param_count - self_params, expr->call.args.size);
+        return false;
+    }
+
+    for (size_t i = 0; i < expr->call.args.size; i++) {
+        resolve_expr(state, expr->call.args.data[i], NULL);
+
+        if (is_error_type(expr->call.args.data[i]->type)) {
+            return false;
+        }
+
+        infer_type_args(function->params[i + self_params], expr->call.args.data[i]->type, args, owed);
+    }
+
+    for (size_t i = fixed; i < owed; i++) {
+        if (!args[i]) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                       "no argument names every type parameter of '%s', so each is written",
+                       function->decl->name->data);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/* Type arguments a call names itself; only a plain call can, a method call's target having nowhere for them.
+ */
+static bool take_written_type_args(ResolverState *state, ASTExpr *expr, Function *generic,
+                                   const TypeExpr *supplied, const Type **args) {
     size_t owed = generic->decl->type_param_count;
 
-    const char *name = generic->decl->name ? generic->decl->name->data : "this function";
+    if (supplied->kind != TYPE_EXPR_APPLY || supplied->apply.args.size != owed) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "'%s' takes %zu type argument(s)",
+                   generic->decl->name->data, owed);
+        return false;
+    }
 
-    const Type *args[GAB_MAX_TYPE_PARAMS] = {0};
+    for (size_t i = 0; i < owed; i++) {
+        args[i] = resolve_type_expr(state, supplied->apply.args.data[i], expr->span);
 
-    if (supplied) {
-        if (supplied->kind != TYPE_EXPR_APPLY || supplied->apply.args.size != owed) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "'%s' takes %zu type argument(s)", name,
-                       owed);
-            return NULL;
+        if (is_error_type(args[i])) {
+            return false;
         }
+    }
 
-        for (size_t i = 0; i < owed; i++) {
-            args[i] = resolve_type_expr(state, supplied->apply.args.data[i], expr->span);
+    return true;
+}
 
-            if (is_error_type(args[i])) {
-                return NULL;
-            }
-        }
-    } else {
-        if (expr->call.args.size != generic->param_count) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %zu argument(s), found %zu",
-                       generic->param_count, expr->call.args.size);
-            return NULL;
-        }
+/* The arguments a receiver's type already fixes, which are the ones its owner declared. */
+static size_t take_receiver_type_args(const Type *receiver, const Type **args) {
+    size_t fixed = type_arg_count(receiver);
 
-        for (size_t i = 0; i < expr->call.args.size; i++) {
-            resolve_expr(state, expr->call.args.data[i], NULL);
+    for (size_t i = 0; i < fixed; i++) {
+        args[i] = type_args(receiver)[i].type;
+    }
 
-            if (is_error_type(expr->call.args.data[i]->type)) {
-                return NULL;
-            }
+    return fixed;
+}
 
-            infer_type_args(generic->params[i], expr->call.args.data[i]->type, args, owed);
-        }
+static Function *specialize(ResolverState *state, ASTExpr *expr, Function *generic, const Type **args,
+                            size_t fixed, size_t self_params) {
+    size_t owed = generic->decl->type_param_count;
 
-        for (size_t i = 0; i < owed; i++) {
-            if (!args[i]) {
-                diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
-                           "no argument names every type parameter of '%s', so each is written", name);
-                return NULL;
-            }
-        }
+    if (owed <= fixed) {
+        instantiate_body(state, generic, expr->span);
+
+        return generic;
+    }
+
+    if (!infer_call_args(state, expr, generic, args, fixed, self_params)) {
+        return NULL;
     }
 
     Function *specialized =
@@ -630,6 +667,25 @@ static Function *specialize_call(ResolverState *state, ASTExpr *expr, Function *
     instantiate_body(state, specialized, expr->span);
 
     return specialized;
+}
+
+static Function *specialize_method_call(ResolverState *state, ASTExpr *expr, Function *method,
+                                        const Type *receiver) {
+    const Type *args[GAB_MAX_TYPE_PARAMS] = {0};
+
+    return specialize(state, expr, method, args, take_receiver_type_args(receiver, args), 1);
+}
+
+static Function *specialize_call(ResolverState *state, ASTExpr *expr, Function *generic) {
+    const TypeExpr *supplied = expr->call.target->var.owner_type_expr;
+
+    const Type *args[GAB_MAX_TYPE_PARAMS] = {0};
+
+    if (supplied && !take_written_type_args(state, expr, generic, supplied, args)) {
+        return NULL;
+    }
+
+    return specialize(state, expr, generic, args, 0, 0);
 }
 
 static void instantiate_body(ResolverState *state, Function *method, Span span) {
@@ -723,7 +779,12 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         return;
     }
 
-    instantiate_body(state, method, expr->span);
+    method = specialize_method_call(state, expr, method, base);
+
+    if (!method) {
+        expr->type = resolver_error_type(state);
+        return;
+    }
 
     const Type *declared_receiver = method->param_count > 0 ? method->params[0] : base;
 
@@ -1985,7 +2046,30 @@ static void enter_owner_scope(ResolverState *state, TypeExpr *owner) {
     }
 }
 
+/* Continues the owner's numbering, which enter_owner_scope bound at 0..n-1. */
+static void bind_own_type_params(ResolverState *state, ASTStmt *stmt, size_t owner_count) {
+    for (size_t i = owner_count; i < stmt->func_decl.type_param_count; i++) {
+        String *name = resolver_intern(state, stmt->func_decl.type_params[i]);
+
+        if (reject_self_as_name(state, name, stmt->span)) {
+            continue;
+        }
+
+        if (!scope_bind_type(state->current_scope, name,
+                             type_registry_param(state->current_scope->type_registry, i))) {
+            diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "duplicate type parameter '%s' on '%s'",
+                       name->data, name->data);
+        }
+    }
+}
+
+static size_t owner_type_param_count(const TypeExpr *owner) {
+    return owner && owner->kind == TYPE_EXPR_APPLY ? owner->apply.args.size : 0;
+}
+
 static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTStmt *stmt) {
+    bind_own_type_params(state, stmt, owner_type_param_count(stmt->func_decl.owner));
+
     const Type *owner = resolve_type_expr(state, stmt->func_decl.owner, stmt->span);
 
     if (is_error_type(owner)) {

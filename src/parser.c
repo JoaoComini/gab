@@ -768,13 +768,27 @@ static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
     return ast_struct_decl_stmt_create(parser->arena, span, name, params, param_count, fields);
 }
 
+/* Prepended, so a member's own parameters continue the numbering of the ones its owner declares. */
 static void func_decl_take_type_params(ASTStmt *decl, TypeExprList *params) {
-    for (size_t i = 0; i < params->size && i < GAB_MAX_TYPE_PARAMS; i++) {
+    StringRef own[GAB_MAX_TYPE_PARAMS];
+    size_t own_count = decl->func_decl.type_param_count;
+
+    for (size_t i = 0; i < own_count; i++) {
+        own[i] = decl->func_decl.type_params[i];
+    }
+
+    decl->func_decl.type_param_count = 0;
+
+    for (size_t i = 0; i < params->size && decl->func_decl.type_param_count < GAB_MAX_TYPE_PARAMS; i++) {
         if (params->data[i]->kind != TYPE_EXPR_NAME) {
             continue;
         }
 
         decl->func_decl.type_params[decl->func_decl.type_param_count++] = params->data[i]->name;
+    }
+
+    for (size_t i = 0; i < own_count && decl->func_decl.type_param_count < GAB_MAX_TYPE_PARAMS; i++) {
+        decl->func_decl.type_params[decl->func_decl.type_param_count++] = own[i];
     }
 }
 
