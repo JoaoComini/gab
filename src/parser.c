@@ -769,12 +769,15 @@ static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
 }
 
 /* Prepended, so a member's own parameters continue the numbering of the ones its owner declares. */
-static void func_decl_take_type_params(ASTStmt *decl, TypeExprList *params) {
+/* A bound travels with the name it qualifies, which the owner's parameters displace. */
+static void func_decl_take_type_params(ASTStmt *decl, TypeExprList *params, TypeExpr *const *bounds) {
     StringRef own[GAB_MAX_TYPE_PARAMS];
+    TypeExpr *own_bounds[GAB_MAX_TYPE_PARAMS];
     size_t own_count = decl->func_decl.type_param_count;
 
     for (size_t i = 0; i < own_count; i++) {
         own[i] = decl->func_decl.type_params[i];
+        own_bounds[i] = decl->func_decl.type_param_bounds[i];
     }
 
     decl->func_decl.type_param_count = 0;
@@ -784,11 +787,17 @@ static void func_decl_take_type_params(ASTStmt *decl, TypeExprList *params) {
             continue;
         }
 
-        decl->func_decl.type_params[decl->func_decl.type_param_count++] = params->data[i]->name;
+        size_t at = decl->func_decl.type_param_count++;
+
+        decl->func_decl.type_params[at] = params->data[i]->name;
+        decl->func_decl.type_param_bounds[at] = bounds ? bounds[i] : NULL;
     }
 
     for (size_t i = 0; i < own_count && decl->func_decl.type_param_count < GAB_MAX_TYPE_PARAMS; i++) {
-        decl->func_decl.type_params[decl->func_decl.type_param_count++] = own[i];
+        size_t at = decl->func_decl.type_param_count++;
+
+        decl->func_decl.type_params[at] = own[i];
+        decl->func_decl.type_param_bounds[at] = own_bounds[i];
     }
 }
 
@@ -816,6 +825,9 @@ static ASTStmt *parse_func_decl_stmt_inner(Parser *parser, bool signature_only) 
 
     TypeExprList type_params = type_expr_list_create(arena_allocator(parser->arena));
 
+    TypeExpr *bounds[GAB_MAX_TYPE_PARAMS] = {0};
+    size_t bound_count = 0;
+
     if (parser->current.type == TOKEN_LESS) {
         parser_next_token(parser);
 
@@ -826,6 +838,22 @@ static ASTStmt *parse_func_decl_stmt_inner(Parser *parser, bool signature_only) 
 
             type_expr_list_add(&type_params, type_expr_name(parser->arena, parser->current.lexeme));
             parser_next_token(parser);
+
+            if (parser->current.type == TOKEN_COLON) {
+                parser_next_token(parser);
+
+                TypeExpr *bound = parse_type_expr(parser);
+
+                if (!bound) {
+                    return NULL;
+                }
+
+                if (bound_count < GAB_MAX_TYPE_PARAMS) {
+                    bounds[bound_count] = bound;
+                }
+            }
+
+            bound_count++;
 
             if (parser->current.type != TOKEN_COMMA) {
                 break;
@@ -897,7 +925,7 @@ static ASTStmt *parse_func_decl_stmt_inner(Parser *parser, bool signature_only) 
         ASTStmt *decl =
             ast_func_decl_stmt_create(parser->arena, span, func_name, func_type, func_params, NULL);
 
-        func_decl_take_type_params(decl, &type_params);
+        func_decl_take_type_params(decl, &type_params, bounds);
 
         return decl;
     }
@@ -911,7 +939,7 @@ static ASTStmt *parse_func_decl_stmt_inner(Parser *parser, bool signature_only) 
     ASTStmt *decl =
         ast_func_decl_stmt_create(parser->arena, span, func_name, func_type, func_params, func_body);
 
-    func_decl_take_type_params(decl, &type_params);
+    func_decl_take_type_params(decl, &type_params, bounds);
 
     return decl;
 }
@@ -1004,7 +1032,7 @@ static ASTStmt *parse_impl_stmt(Parser *parser) {
 
         member->func_decl.owner = type;
 
-        func_decl_take_type_params(member, &params);
+        func_decl_take_type_params(member, &params, NULL);
 
         if (stmt_needs_terminator(member)) {
             if (!parser_expect(parser, TOKEN_SEMICOLON, "expected ';'")) {
