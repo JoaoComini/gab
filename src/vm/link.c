@@ -1,5 +1,7 @@
 #include "vm/link.h"
 
+#include "vm/args.h"
+
 #include "arena.h"
 #include "binding.h"
 #include "scope.h"
@@ -81,7 +83,7 @@ static GabExternFn find_extern(const Program *program, const Function *function)
     return NULL;
 }
 
-bool link_check(Program *program, Unit *unit, Diagnostics *diagnostics) {
+bool link_check(Program *program, Unit *unit, TypeRegistry *registry, Diagnostics *diagnostics) {
     if (program->prototypes.size + unit->prototypes.size > VM_MAX_PROTOTYPES) {
         diag_error(diagnostics, GAB_ERR_CODEGEN, (Span){0}, "too many functions in one program");
         return false;
@@ -128,7 +130,25 @@ bool link_check(Program *program, Unit *unit, Diagnostics *diagnostics) {
             return false;
         }
 
-        unit->extern_protos.data[request->local_index].body = body;
+        const Function *function = request->function;
+
+        size_t *offsets = arena_alloc(unit->arena, function->param_count * sizeof(size_t));
+
+        if (function->param_count && !offsets) {
+            return false;
+        }
+
+        unsigned int slot = 1;
+
+        for (size_t p = 0; p < function->param_count; p++) {
+            offsets[p] = (size_t)slot * VM_SLOT_SIZE;
+            slot += args_type_slots(registry, function->params[p]);
+        }
+
+        ExternProto *proto = &unit->extern_protos.data[request->local_index];
+
+        proto->body = body;
+        proto->param_offsets = offsets;
     }
 
     return true;

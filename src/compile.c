@@ -105,7 +105,7 @@ static bool compile_unit_with(VM *vm, const char *source, FuncPrototype *out, bo
         return false;
     }
 
-    if (!link_check(&vm->program, unit, diagnostics)) {
+    if (!link_check(&vm->program, unit, vm->env.global_scope.type_registry, diagnostics)) {
         string_list_free(&imported);
         unit_free(unit);
         arena_destroy(staging_arena);

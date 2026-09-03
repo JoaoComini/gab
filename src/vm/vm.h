@@ -98,6 +98,8 @@ struct GabArgs {
     const struct Function *function;
 
     size_t base;
+
+    const size_t *param_offsets;
 };
 
 static inline uint8_t *vm_slot_at(const VM *vm, size_t i) { return vm->stack + i * VM_SLOT_SIZE; }
