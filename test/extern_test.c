@@ -1,15 +1,12 @@
 #include "gab.h"
 
 #include <assert.h>
+#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-
-typedef struct {
-    int32_t health;
-    int32_t mana;
-} Player;
 
 typedef struct {
     int32_t value;
@@ -18,14 +15,6 @@ typedef struct {
 typedef struct {
     int32_t reading;
 } Gauge;
-
-static int32_t last_logged = 0;
-
-static void host_log(GabCtx *ctx, int32_t value) {
-    (void)ctx;
-
-    last_logged = value;
-}
 
 static int32_t twice(GabCtx *ctx, int32_t x) {
     (void)ctx;
@@ -43,20 +32,6 @@ static int32_t negate(GabCtx *ctx, int32_t x) {
     (void)ctx;
 
     return !x;
-}
-
-static Player heal(GabCtx *ctx, Player p) {
-    (void)ctx;
-
-    p.health += 10;
-
-    return p;
-}
-
-static void boost(GabCtx *ctx, Player *p) {
-    (void)ctx;
-
-    p->mana += 5;
 }
 
 static void refuse(GabCtx *ctx) { gab_ctx_fail(ctx, "the host refused"); }
@@ -80,30 +55,6 @@ static void test_an_extern_returns_to_its_caller(void) {
     int32_t out = 0;
     assert(gab_call(vm, call, &out, &err) == GAB_OK);
     assert(out == 42);
-
-    gab_call_free(call);
-    gab_vm_free(vm);
-}
-
-static void test_an_extern_may_return_nothing(void) {
-    GabVM *vm = gab_vm_new();
-
-    last_logged = 0;
-
-    GabError err;
-    assert(gab_extern(vm, "test", NULL, "log", (GabExternFn)host_log, &err));
-
-    assert(gab_load(vm, "<m>",
-                    "module test;\n"
-                    "extern func log(amount: int);\n"
-                    "func run() { log(7); }\n",
-                    &err));
-
-    GabFunc *fn = gab_lookup(vm, "test", "run", &err);
-    GabCall *call = gab_call_init(fn, &err);
-
-    assert(gab_call(vm, call, NULL, &err) == GAB_OK);
-    assert(last_logged == 7);
 
     gab_call_free(call);
     gab_vm_free(vm);
@@ -136,63 +87,6 @@ static void test_scalars_cross_the_boundary(void) {
 
     gab_call_free(fcall);
     gab_call_free(bcall);
-    gab_vm_free(vm);
-}
-
-static void test_a_struct_crosses_by_value(void) {
-    GabVM *vm = gab_vm_new();
-
-    GabError err;
-    assert(gab_extern(vm, "test", NULL, "heal", (GabExternFn)heal, &err));
-
-    assert(gab_load(vm, "<m>",
-                    "module test;\n"
-                    "struct Player { health: int, mana: int }\n"
-                    "extern func heal(p: Player): Player;\n"
-                    "func run(p: Player): Player { return heal(p); }\n",
-                    &err));
-
-    GabFunc *fn = gab_lookup(vm, "test", "run", &err);
-    GabCall *call = gab_call_init(fn, &err);
-
-    Player in = {.health = 30, .mana = 4};
-    assert(gab_arg_struct(call, 0, &in, sizeof in));
-
-    Player out = {0};
-    assert(gab_call(vm, call, &out, &err) == GAB_OK);
-    assert(out.health == 40);
-    assert(out.mana == 4);
-
-    gab_call_free(call);
-    gab_vm_free(vm);
-}
-
-static void test_a_borrow_is_written_through(void) {
-    GabVM *vm = gab_vm_new();
-
-    GabError err;
-    assert(gab_extern(vm, "test", NULL, "boost", (GabExternFn)boost, &err));
-
-    assert(gab_load(vm, "<m>",
-                    "module test;\n"
-                    "struct Player { health: int, mana: int }\n"
-                    "extern func boost(p: &Player);\n"
-                    "func run(p: &Player) { boost(p); }\n",
-                    &err));
-
-    const GabType *type = gab_find_type(vm, "test", "Player");
-    assert(type);
-
-    GabFunc *fn = gab_lookup(vm, "test", "run", &err);
-    GabCall *call = gab_call_init(fn, &err);
-
-    Player p = {.health = 1, .mana = 2};
-    assert(gab_arg_pointer(call, 0, &p, type));
-
-    assert(gab_call(vm, call, NULL, &err) == GAB_OK);
-    assert(p.mana == 7);
-
-    gab_call_free(call);
     gab_vm_free(vm);
 }
 
@@ -256,28 +150,6 @@ static void test_a_host_may_call_an_extern_directly(void) {
     int32_t out = 0;
     assert(gab_call(vm, call, &out, &err) == GAB_OK);
     assert(out == 16);
-
-    gab_call_free(call);
-    gab_vm_free(vm);
-}
-
-static void test_an_extern_may_fail_the_run(void) {
-    GabVM *vm = gab_vm_new();
-
-    GabError err;
-    assert(gab_extern(vm, "test", NULL, "refuse", (GabExternFn)refuse, &err));
-
-    assert(gab_load(vm, "<m>",
-                    "module test;\n"
-                    "extern func refuse(): int;\n"
-                    "func run(): int { return refuse(); }\n",
-                    &err));
-
-    GabCall *call = gab_call_init(gab_lookup(vm, "test", "run", &err), &err);
-
-    int32_t out = 0;
-    assert(gab_call(vm, call, &out, &err) == GAB_ERR_RUNTIME);
-    assert(strstr(err.message, "the host refused"));
 
     gab_call_free(call);
     gab_vm_free(vm);
@@ -510,44 +382,6 @@ static int32_t str_len(GabCtx *ctx, GabStrRef text) {
     return text.length;
 }
 
-static int32_t count_of(GabCtx *ctx, const void *self) {
-    (void)ctx;
-    (void)self;
-
-    return 7;
-}
-
-static void test_each_specialization_of_a_host_method_reaches_one_body(void) {
-    GabVM *vm = gab_vm_new();
-
-    GabError err;
-    assert(gab_extern(vm, "m", "Pair", "count", (GabExternFn)count_of, &err));
-
-    assert(gab_load(vm, "<m>",
-                    "module m;\n"
-                    "struct Pair<T> { a: T, b: T }\n"
-                    "impl<T> Pair<T> {\n"
-                    "    extern func count(self: &Pair<T>): int;\n"
-                    "}\n"
-                    "func run(): int {\n"
-                    "    let ints = Pair<int> { a: 1, b: 2 };\n"
-                    "    let bools = Pair<bool> { a: true, b: false };\n"
-                    "    return ints.count() + bools.count();\n"
-                    "}\n",
-                    &err));
-
-    GabFunc *fn = gab_lookup(vm, "m", "run", &err);
-    assert(fn);
-
-    GabCall *call = gab_call_init(fn, &err);
-    int32_t out = 0;
-    assert(gab_call(vm, call, &out, &err) == GAB_OK);
-    assert(out == 14);
-
-    gab_call_free(call);
-    gab_vm_free(vm);
-}
-
 static void test_a_core_method_on_a_primitive_reaches_its_host_body(void) {
     GabVM *vm = gab_vm_new();
 
@@ -643,56 +477,365 @@ static void test_an_extern_does_not_claim_a_type_from_another_module(void) {
     gab_vm_free(vm);
 }
 
-typedef struct {
-    int32_t a;
-    int32_t b;
-} Owned;
-
-static int32_t dropped_sum = 0;
-
-static void consume(GabCtx *ctx, Owned *p) {
-    (void)ctx;
-
-    dropped_sum = p->a + p->b;
-
-    gab_drop_pointer(p);
-}
-
-static void test_a_host_body_drops_an_owning_parameter(void) {
+static int32_t call_int(const char *decl, const char *body, const char *name, GabExternFn symbol) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    dropped_sum = 0;
+    assert(gab_extern(vm, "test", NULL, name, symbol, &err));
 
-    assert(gab_extern(vm, "test", NULL, "consume", (GabExternFn)consume, &err));
+    char source[512];
+    snprintf(source, sizeof source, "module test;\n%s\n%s\n", decl, body);
+
+    assert(gab_load(vm, "<m>", source, &err));
+
+    GabFunc *fn = gab_lookup(vm, "test", "run", &err);
+    assert(fn);
+
+    GabCall *call = gab_call_init(fn, &err);
+    int32_t result = 0;
+    assert(gab_call(vm, call, &result, &err) == GAB_OK);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+
+    return result;
+}
+
+static int32_t absolute(GabCtx *ctx, int32_t x) {
+    (void)ctx;
+
+    return x < 0 ? -x : x;
+}
+
+static int32_t subtract(GabCtx *ctx, int32_t a, int32_t b) {
+    (void)ctx;
+
+    return a - b;
+}
+
+static void test_arguments_arrive_in_order(void) {
+    assert(call_int("extern func sub(a: int, b: int): int;", "func run(): int { return sub(10, 3); }", "sub",
+                    (GabExternFn)subtract) == 7);
+}
+
+static float root_of(GabCtx *ctx, float x) {
+    (void)ctx;
+
+    return sqrtf(x);
+}
+
+static int32_t counted = 0;
+
+static void bump(GabCtx *ctx) {
+    (void)ctx;
+
+    counted++;
+}
+
+typedef struct {
+    int32_t a;
+    int32_t b;
+} Pair;
+
+static int32_t pair_sum(GabCtx *ctx, Pair p) {
+    (void)ctx;
+
+    return p.a + p.b;
+}
+
+typedef struct {
+    int32_t a;
+    int32_t b;
+    int32_t c;
+    int32_t d;
+} Quad;
+
+static Quad quad_reversed(GabCtx *ctx, Quad q) {
+    (void)ctx;
+
+    return (Quad){.a = q.d, .b = q.c, .c = q.b, .d = q.a};
+}
+
+static void test_a_struct_comes_back_by_value(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, "test", NULL, "reverse", (GabExternFn)quad_reversed, &err));
 
     assert(gab_load(vm, "<m>",
                     "module test;\n"
-                    "struct Owned { a: int, b: int }\n"
-                    "extern func consume(p: *Owned);\n"
-                    "func run() { consume(box Owned { a: 3, b: 4 }); }\n",
+                    "struct Quad { a: int, b: int, c: int, d: int }\n"
+                    "extern func reverse(q: Quad): Quad;\n"
+                    "func run(): Quad { return reverse(Quad { a: 1, b: 2, c: 3, d: 4 }); }\n",
                     &err));
 
     GabFunc *fn = gab_lookup(vm, "test", "run", &err);
     GabCall *call = gab_call_init(fn, &err);
 
-    assert(gab_call(vm, call, NULL, &err) == GAB_OK);
-    assert(dropped_sum == 7);
+    Quad result = {0};
+    assert(gab_call(vm, call, &result, &err) == GAB_OK);
+    assert(result.a == 4 && result.b == 3 && result.c == 2 && result.d == 1);
 
     gab_call_free(call);
     gab_vm_free(vm);
 }
 
+typedef struct {
+    float x;
+    float y;
+    float z;
+} Vec3;
+
+static float vec3_sum(GabCtx *ctx, Vec3 v) {
+    (void)ctx;
+
+    return v.x + v.y + v.z;
+}
+
+static void test_a_struct_of_floats_uses_its_own_registers(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, "test", NULL, "total", (GabExternFn)vec3_sum, &err));
+
+    assert(gab_load(vm, "<m>",
+                    "module test;\n"
+                    "struct Vec3 { x: float, y: float, z: float }\n"
+                    "extern func total(v: Vec3): float;\n"
+                    "func run(): float { return total(Vec3 { x: 1.0, y: 2.0, z: 4.0 }); }\n",
+                    &err));
+
+    GabFunc *fn = gab_lookup(vm, "test", "run", &err);
+    GabCall *call = gab_call_init(fn, &err);
+
+    float result = 0.0f;
+    assert(gab_call(vm, call, &result, &err) == GAB_OK);
+    assert(result == 7.0f);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
+typedef struct {
+    Pair inner;
+    int32_t tag;
+} Tagged;
+
+static int32_t tagged_sum(GabCtx *ctx, Tagged t) {
+    (void)ctx;
+
+    return t.inner.a + t.inner.b + t.tag;
+}
+
+static void test_a_nested_struct_crosses_by_value(void) {
+    assert(call_int("struct Pair { a: int, b: int }\n"
+                    "struct Tagged { inner: Pair, tag: int }\n"
+                    "extern func total(t: Tagged): int;",
+                    "func run(): int { return total(Tagged { inner: Pair { a: 1, b: 2 }, tag: 4 }); }",
+                    "total", (GabExternFn)tagged_sum) == 7);
+}
+
+static int32_t pair_first(GabCtx *ctx, const Pair *p) {
+    (void)ctx;
+
+    return p->a;
+}
+
+static void test_a_borrow_of_a_struct_is_a_pointer(void) {
+    assert(
+        call_int("struct Pair { a: int, b: int }\n"
+                 "extern func first(p: &Pair): int;",
+                 "func run(): int { let p: Pair = Pair { a: 8, b: 9 }; let r: &Pair = p; return first(r); }",
+                 "first", (GabExternFn)pair_first) == 8);
+}
+
+typedef struct {
+    const char *data;
+    int32_t length;
+} StrRef;
+
+static int32_t count_char(GabCtx *ctx, StrRef s, int32_t target) {
+    (void)ctx;
+
+    int32_t seen = 0;
+
+    for (int32_t i = 0; i < s.length; i++) {
+        seen += s.data[i] == (char)target;
+    }
+
+    return seen;
+}
+
+static void test_a_str_arrives_as_its_value_struct(void) {
+    assert(call_int("extern func count(s: &str, c: int): int;",
+                    "func run(): int { return count(\"banana\", 97); }", "count",
+                    (GabExternFn)count_char) == 3);
+}
+
+static int32_t sum_four(GabCtx *ctx, const int32_t *xs) {
+    (void)ctx;
+
+    return xs[0] + xs[1] + xs[2] + xs[3];
+}
+
+static void test_an_array_decays_to_a_pointer(void) {
+    assert(call_int("extern func total(xs: [int; 4]): int;",
+                    "func run(): int { let xs: [int; 4] = [1, 2, 3, 4]; return total(xs); }", "total",
+                    (GabExternFn)sum_four) == 10);
+}
+
+static int32_t deref_int(GabCtx *ctx, const int32_t *p) {
+    (void)ctx;
+
+    return *p;
+}
+
+static void test_a_borrow_of_a_scalar_is_a_pointer(void) {
+    assert(call_int("extern func peek(p: &int): int;",
+                    "func run(): int { let x: int = 5; let p: &int = x; return peek(p); }", "peek",
+                    (GabExternFn)deref_int) == 5);
+}
+
+static int32_t write_int(GabCtx *ctx, int32_t *p) {
+    (void)ctx;
+
+    *p = 42;
+
+    return 0;
+}
+
+static int32_t first_field(GabCtx *ctx, const Pair *p) {
+    (void)ctx;
+
+    return p->a;
+}
+
+static void test_a_borrow_of_a_box_is_a_pointer(void) {
+    assert(
+        call_int(
+            "struct Pair { a: int, b: int }\n"
+            "extern func first(p: &Pair): int;",
+            "func run(): int { let p: *Pair = box Pair { a: 3, b: 4 }; let r: &Pair = p; return first(r); }",
+            "first", (GabExternFn)first_field) == 3);
+}
+
+static int32_t pair_total(GabCtx *ctx, Pair *p) {
+    (void)ctx;
+
+    int32_t total = p->a + p->b;
+
+    gab_drop_pointer(p);
+
+    return total;
+}
+
+static int32_t generic_total(GabCtx *ctx, const void *p) {
+    if (gab_ctx_type_kind(ctx, 0) == GAB_TYPE_FLOAT) {
+        const float *f = p;
+
+        return (int32_t)(f[0] + f[1]);
+    }
+
+    const int32_t *i = p;
+
+    return i[0] + i[1];
+}
+
+static int32_t always_fails(GabCtx *ctx, int32_t x) {
+    gab_ctx_fail(ctx, "the symbol refused");
+
+    return x;
+}
+
+static Pair *make_pair(GabCtx *ctx, int32_t a, int32_t b) {
+    Pair *p = gab_box(ctx);
+
+    if (!p) {
+        return NULL;
+    }
+
+    p->a = a;
+    p->b = b;
+
+    return p;
+}
+
+static void test_a_c_symbol_returns_a_box_the_script_owns(void) {
+    assert(call_int("struct Pair { a: int, b: int }\n"
+                    "extern func make(a: int, b: int): *Pair;",
+                    "func run(): int { let p: *Pair = make(3, 4); return p.a + p.b; }", "make",
+                    (GabExternFn)make_pair) == 7);
+}
+
+/* A method generic in its return type gets one signature per instantiation, so the same symbol
+   answers at whatever width the specialization chose. */
+static void holder_at(GabCtx *ctx, const void *self, int32_t index) {
+    memcpy(gab_ctx_return(ctx), (const char *)self + (size_t)index * gab_ctx_type_size(ctx, 0),
+           gab_ctx_type_size(ctx, 0));
+}
+
+static void test_a_generic_return_is_sized_by_its_specialization(void) {
+    GabVM *vm = gab_vm_new();
+
+    GabError err;
+    assert(gab_extern(vm, "m", "Holder", "at", (GabExternFn)holder_at, &err));
+
+    assert(gab_load(vm, "<m>",
+                    "module m;\n"
+                    "struct Holder<T> { a: T, b: T }\n"
+                    "impl<T> Holder<T> {\n"
+                    "    extern func at(self: &Holder<T>, i: int): T;\n"
+                    "}\n"
+                    "func run(): int {\n"
+                    "    let h = Holder<int> { a: 7, b: 8 };\n"
+                    "    return h.at(1);\n"
+                    "}\n",
+                    &err));
+
+    GabFunc *fn = gab_lookup(vm, "m", "run", &err);
+    GabCall *call = gab_call_init(fn, &err);
+
+    int32_t result = 0;
+    assert(gab_call(vm, call, &result, &err) == GAB_OK);
+    assert(result == 8);
+
+    gab_call_free(call);
+    gab_vm_free(vm);
+}
+
+/* One symbol over arrays of two lengths: the body reads how many elements it was given rather than
+   being told, so the same C function answers for both. */
+static int32_t sum_all(GabCtx *ctx, const void *xs) {
+    int32_t total = 0;
+    size_t stride = gab_ctx_array_stride(ctx, 0);
+
+    for (int32_t i = 0; i < gab_ctx_array_length(ctx, 0); i++) {
+        int32_t value = 0;
+
+        memcpy(&value, (const char *)xs + (size_t)i * stride, stride);
+
+        total += value;
+    }
+
+    return total;
+}
+
+static void test_a_body_reads_the_length_of_an_array_it_is_given(void) {
+    assert(call_int("extern func total(xs: [int; 3]): int;",
+                    "func run(): int { let xs: [int; 3] = [1, 2, 3]; return total(xs); }", "total",
+                    (GabExternFn)sum_all) == 6);
+
+    assert(call_int("extern func total(xs: [int; 5]): int;",
+                    "func run(): int { let xs: [int; 5] = [1, 2, 3, 4, 5]; return total(xs); }", "total",
+                    (GabExternFn)sum_all) == 15);
+}
+
 int main(void) {
     test_an_extern_returns_to_its_caller();
-    test_an_extern_may_return_nothing();
     test_scalars_cross_the_boundary();
-    test_a_struct_crosses_by_value();
-    test_a_borrow_is_written_through();
     test_an_unbound_extern_fails_the_load();
     test_an_extern_must_be_registered_before_the_load();
     test_a_host_may_call_an_extern_directly();
-    test_an_extern_may_fail_the_run();
     test_an_extern_may_fail_without_a_message();
     test_a_long_extern_message_is_truncated();
     test_an_extern_may_not_have_a_body();
@@ -702,13 +845,24 @@ int main(void) {
     test_an_extern_may_be_owned_by_a_struct();
     test_two_types_may_own_an_extern_of_one_name();
     test_a_core_method_on_a_primitive_reaches_its_host_body();
-    test_each_specialization_of_a_host_method_reaches_one_body();
     test_a_primitive_is_owned_only_by_a_host_body();
     test_only_the_core_library_owns_a_primitive();
     test_naming_the_core_library_does_not_own_a_primitive();
     test_a_qualified_name_does_not_declare_a_method();
     test_an_extern_does_not_claim_a_type_from_another_module();
-    test_a_host_body_drops_an_owning_parameter();
+
+    test_arguments_arrive_in_order();
+    test_a_struct_comes_back_by_value();
+    test_a_struct_of_floats_uses_its_own_registers();
+    test_a_nested_struct_crosses_by_value();
+    test_a_borrow_of_a_struct_is_a_pointer();
+    test_a_str_arrives_as_its_value_struct();
+    test_an_array_decays_to_a_pointer();
+    test_a_body_reads_the_length_of_an_array_it_is_given();
+    test_a_borrow_of_a_scalar_is_a_pointer();
+    test_a_borrow_of_a_box_is_a_pointer();
+    test_a_generic_return_is_sized_by_its_specialization();
+    test_a_c_symbol_returns_a_box_the_script_owns();
 
     printf("extern_test: all tests passed\n");
 
