@@ -233,6 +233,15 @@ So a body naming a method its bound does not declare is an error even if
 nothing ever calls it, and a call is checked against the bound rather than
 against whatever type happens to reach it.
 
+An `impl` block bounds its own parameters the same way, and its methods are
+checked against those bounds where they are written:
+
+```
+impl<T: Countable> Pair<T> {
+    func total(self: &Self): int { return self.a.count(); }
+}
+```
+
 A type implements a given interface once, and the methods are called the way
 any other method is — an interface adds no representation, so `b.count()`
 costs what it did before.
@@ -262,6 +271,34 @@ named with as many arguments as it declares, so `Holder` alone and
 ```
 func read<H: Holder<int>>(h: &H): int { return h.get(); }
 ```
+
+The prelude declares one interface every unit may name without importing
+anything. `Index<T>` names what it lends, and a subscript is an `int` — unlike
+Rust's `Index<Idx>`, nothing is generic over what does the indexing:
+
+```
+interface Index<T> {
+    func index(self: &Self, at: int): &T;
+}
+```
+
+`Vec<T>` supplies it, and so does an array: an array indexes from its type
+rather than from a declaration, since `[T; N]` names no one type to write an
+`impl` for. So both reach a bounded function, and both are subscripted:
+
+```
+func first<C: Index<int>>(c: &C): int { return c[0]; }
+
+let xs: [int; 3] = [1, 20, 300];
+let ys: Vec<int> = Vec<int>::new(0);
+
+let a: int = first(xs);
+let b: int = xs[2];
+```
+
+A bound is nominal: a type satisfies one by saying `impl T as I`, not by
+happening to supply the right methods. A struct with a matching `count` that
+never declares `as Countable` is refused at the call.
 
 Only something with a home in memory can be borrowed. A call result is a
 temporary with no address to name, so it must be bound to a variable first. A
@@ -375,12 +412,15 @@ as that outgrows it.
 let xs: Vec<int>;
 xs.push(1);
 let n: int = xs.len();
-let first: &int = xs.at(0);
+let first: &int = xs.index(0);
+let value: int = xs[0];
 ```
 
-`at` lends the element where it sits rather than copying it out, so reading the
-value spells the deref as `*xs.at(0)`, and an element that owns is reached
-without moving it out of the vector. The borrow names the block, which a later
+`index` lends the element where it sits rather than copying it out, so an
+element that owns is reached without moving it out of the vector. It is what
+`[]` is written in terms of: `xs[0]` is `*xs.index(0)`, so a type supplying
+`Index` is subscripted like an array, and assigning through it stores into the
+element. The borrow names the block, which a later
 `push` may reallocate — as a C pointer into a vector's storage is invalidated
 by a growth.
 
@@ -539,7 +579,7 @@ more or less, and a second spelling would say nothing the first does not.
 | --- | --- |
 | Types | `int` (32-bit), `float` (32-bit), `bool`, `String` and characters named by `&str`, `[T; N]`, `Vec<T>`, structs, owning `*T`, borrows `&T` |
 | Declarations | `let` with inferred or annotated type, `func`, `struct`, `impl`, `interface`, `module`. A struct local is written as a literal |
-| Interfaces | `interface` names signatures and may take type parameters, `impl T as I<A>` supplies them and is checked at the declaration. `<T: I<A>>` bounds a type parameter, and a generic body is checked once against its bounds. `Self` is reserved, and names the type an `impl` block is for |
+| Interfaces | `interface` names signatures and may take type parameters, `impl T as I<A>` supplies them and is checked at the declaration. `<T: I<A>>` bounds a type parameter on a function or an `impl` block, and a generic body is checked once against its bounds. `Self` is reserved, and names the type an `impl` block is for |
 | Generics | Structs, the methods they own, and free functions. A method declares parameters of its own beside its owner's. A call infers its type arguments from what it is given, or names them as `id<int>(x)` |
 | Functions | Parameters and returns of any type, structs by value, functions a type owns, recursion, forward references |
 | Control flow | `if` / `else`, `for` in three forms, `break`, `continue`, `return`, nested blocks with shadowing |
@@ -555,12 +595,12 @@ Not yet implemented:
 
 | | |
 | --- | --- |
-| Strings | No interpolation, no `substring` or case conversion |
+| Strings | No interpolation, no `substring` or case conversion, and no indexing |
 | Arrays | Fixed length once allocated: no growth and no slice type. `Vec<T>` is what grows |
-| Vectors | `new`, `push`, `at` and `len` only: no removal, no iteration, and no literal |
+| Vectors | `new`, `push`, `index` and `len` only: no removal, no iteration, and no literal. `Vec<T>` supplies `Index<T>`, so it is subscripted with `[]` |
 | Borrows | A returned borrow names a parameter or something it reaches; returning one that names a local is refused |
 | Generics | A method's own type arguments are inferred from what it is given; there is no `v.method<int>(x)` to write them |
-| Interfaces | An interface takes no type parameters of its own; no associated types, no compound bounds, and no dynamic dispatch |
+| Interfaces | No associated types, no compound bounds, and no dynamic dispatch |
 | Operators | Bitwise |
 
 ## Building

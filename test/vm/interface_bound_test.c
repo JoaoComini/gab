@@ -56,6 +56,16 @@ static void test_a_type_that_does_not_implement_is_refused_at_the_call() {
                           "}\n"));
 }
 
+static void test_a_type_supplying_the_methods_without_declaring_it_is_refused() {
+    assert(!compiles_with("struct Sneak { n: int }\n"
+                          "impl Sneak { func count(self: &Sneak): int { return self.n; } }\n"
+                          "func total<T: Countable>(x: &T): int { return x.count(); }\n"
+                          "func main(): int {\n"
+                          "    let s = Sneak { n: 1 };\n"
+                          "    return total(s);\n"
+                          "}\n"));
+}
+
 static void test_a_bound_names_an_interface() {
     assert(!compiles_with("func total<T: Bag>(x: &T): int { return 0; }\n"));
     assert(!compiles_with("func total<T: Missing>(x: &T): int { return 0; }\n"));
@@ -139,6 +149,7 @@ int main(void) {
     test_an_unbounded_parameter_has_no_methods();
     test_a_bounded_call_runs_on_an_implementor();
     test_a_type_that_does_not_implement_is_refused_at_the_call();
+    test_a_type_supplying_the_methods_without_declaring_it_is_refused();
     test_a_bound_names_an_interface();
     test_a_bound_is_checked_once_not_per_instantiation();
     test_a_generic_body_is_checked_though_nothing_calls_it();

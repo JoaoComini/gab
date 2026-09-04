@@ -6,6 +6,7 @@
 #include "type/type_registry.h"
 
 typedef struct FunctionRegistry FunctionRegistry;
+typedef struct Function Function;
 
 #include <stdbool.h>
 
@@ -18,12 +19,11 @@ typedef struct ASTStmt ASTStmt;
 typedef struct Interface {
     String *name;
 
-    /* The signatures as written: each is resolved per implementor, with 'Self' bound to it. */
-    ASTStmt *const *methods;
+    /* Resolved once, with 'Self' as type parameter 0 and the interface's own as 1..param_count;
+     * an implementor substitutes itself and its arguments for them. */
+    Function *const *methods;
     size_t method_count;
 
-    /* The names its signatures give its type parameters, bound to what an implementor applies. */
-    String **params;
     size_t param_count;
 } Interface;
 

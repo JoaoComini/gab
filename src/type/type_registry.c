@@ -321,6 +321,10 @@ bool type_registry_declare_conformance(TypeRegistry *registry, const Type *type,
     return true;
 }
 
+bool type_registry_conforms(TypeRegistry *registry, const Type *type, const String *interface) {
+    return conformance_key_lookup(registry->conformances, owned_key_of(type, interface)) != NULL;
+}
+
 /* A signature mentioning no type parameter is one function for every instantiation of its owner. */
 static bool owned_is_shared(const Function *declaration, const Type *type) {
     if (type_arg_count(type) == 0) {

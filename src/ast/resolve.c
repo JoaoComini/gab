@@ -189,6 +189,34 @@ static Resolution resolver_resolve_name(ResolverState *state, Scope *scope, Stri
     return resolution;
 }
 
+/* The prelude's interfaces are named without an import, as the methods it declares on a primitive are. */
+static Interface *resolver_lookup_interface(ResolverState *state, String *name) {
+    Interface *found = scope_interface_lookup(state->current_scope, name);
+
+    if (found || !state->module_scopes) {
+        return found;
+    }
+
+    Scope **prelude = module_scope_map_lookup(
+        state->module_scopes, string_from_cstr(state->current_scope->strings, GAB_CORE_MODULE));
+
+    if (prelude && (found = scope_interface_lookup(*prelude, name))) {
+        return found;
+    }
+
+    for (size_t i = 0; i < state->imports->size; i++) {
+        String *module = string_from_ref(state->current_scope->strings, state->imports->data[i].name);
+
+        Scope **imported = module_scope_map_lookup(state->module_scopes, module);
+
+        if (imported && (found = scope_interface_lookup(*imported, name))) {
+            return found;
+        }
+    }
+
+    return NULL;
+}
+
 static String *resolver_expr_member(ResolverState *state, StringRef name) {
     StringRef module, member;
 
@@ -657,6 +685,32 @@ static size_t take_receiver_type_args(const Type *receiver, const Type **args) {
     return fixed;
 }
 
+/* A bound is nominal: the argument must say it implements the interface, not merely supply its methods. */
+static bool check_bounds_satisfied(ResolverState *state, ASTExpr *expr, const Function *generic,
+                                   const Type *const *args, size_t owed) {
+    const Interface *const *bounds = generic->decl->type_param_bounds;
+
+    if (!bounds) {
+        return true;
+    }
+
+    TypeRegistry *registry = state->current_scope->type_registry;
+
+    for (size_t i = 0; i < owed && i < GAB_MAX_TYPE_PARAMS; i++) {
+        if (!bounds[i] || !args[i] || type_kind(args[i]) == TYPE_PARAM) {
+            continue;
+        }
+
+        if (!type_registry_conforms(registry, args[i], bounds[i]->name)) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "%s does not implement '%s'",
+                       type_name(state, args[i]), bounds[i]->name->data);
+            return false;
+        }
+    }
+
+    return true;
+}
+
 static Function *specialize(ResolverState *state, ASTExpr *expr, Function *generic, const Type **args,
                             size_t fixed, size_t self_params) {
     size_t owed = generic->decl->type_param_count;
@@ -668,6 +722,10 @@ static Function *specialize(ResolverState *state, ASTExpr *expr, Function *gener
     }
 
     if (!infer_call_args(state, expr, generic, args, fixed, self_params)) {
+        return NULL;
+    }
+
+    if (!check_bounds_satisfied(state, expr, generic, args, owed)) {
         return NULL;
     }
 
@@ -698,6 +756,17 @@ static Function *specialize_call(ResolverState *state, ASTExpr *expr, Function *
     return specialize(state, expr, generic, args, 0, 0);
 }
 
+/* True when an argument the specialization was given is itself still a parameter, so it has no width. */
+static bool instantiated_abstractly(const Function *method) {
+    for (size_t i = 0; i < method->type_arg_count; i++) {
+        if (type_has_param(method->type_args[i])) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static void instantiate_body(ResolverState *state, Function *method, Span span) {
     if (method->decl->body_kind != BODY_GAB || method->instance || !method->decl->body) {
         return;
@@ -717,8 +786,12 @@ static void instantiate_body(ResolverState *state, Function *method, Span span) 
 
     ASTStmt *clone = ast_clone_stmt(state->compile_arena, declaration);
 
-    ast_stmt_list_add(&state->unit->instances, clone);
-    method->instance = clone;
+    /* An argument still a parameter has no width, so this body is checked but never emitted. */
+    if (!instantiated_abstractly(method)) {
+        ast_stmt_list_add(&state->unit->instances, clone);
+        method->instance = clone;
+    }
+
     clone->func_decl.function = method;
 
     Scope *enclosing = state->current_scope;
@@ -741,62 +814,178 @@ static void instantiate_body(ResolverState *state, Function *method, Span span) 
     state->current_scope = enclosing;
 }
 
-static Scope *signature_scope(ResolverState *state, const Type *implementor, const Interface *interface,
-                              const Type *const *args, size_t arg_count);
 static const Type *resolve_param_type_in(ResolverState *state, ASTField *param, bool generic);
 
-/* A parameter's methods are the ones its bound declares, resolved with 'Self' as the parameter itself. */
+/* The signature as the implementor sees it: 'Self' and the interface's parameters substituted away. */
+static Function *interface_method_for(ResolverState *state, const Interface *interface, size_t index,
+                                      const Type *implementor, const Type *const *args, size_t arg_count) {
+    const Function *signature = interface->methods[index];
+
+    const Type *substitutions[GAB_MAX_TYPE_PARAMS];
+    substitutions[0] = implementor;
+
+    for (size_t i = 0; i < arg_count && i + 1 < GAB_MAX_TYPE_PARAMS; i++) {
+        substitutions[i + 1] = args[i];
+    }
+
+    Arena *arena = resolver_owner_arena(state);
+
+    /* Substituted away, so the result is concrete however generic the signature it came from was. */
+    FuncDecl *decl = arena_alloc(arena, sizeof(FuncDecl));
+    *decl = *signature->decl;
+    decl->type_param_count = 0;
+
+    Function *method = arena_alloc(arena, sizeof(Function));
+    *method = (Function){
+        .decl = decl,
+        .signature = func_signature_instantiate(state->current_scope->type_registry, arena,
+                                                &signature->signature, substitutions, arg_count + 1),
+        .func_index = FUNCTION_NO_BODY,
+    };
+
+    return method;
+}
+
+/* A parameter's methods are the ones its bound declares, with 'Self' as the parameter itself. */
 static Function *bound_method(ResolverState *state, const Type *base, String *name, Span span) {
+    (void)span;
+
     if (!base || type_kind(base) != TYPE_PARAM) {
         return NULL;
     }
 
-    Interface *interface = state->param_bounds[type_param_index(base)];
+    size_t index = type_param_index(base);
+
+    Interface *interface = state->param_bounds[index];
 
     if (!interface) {
         return NULL;
     }
 
     for (size_t i = 0; i < interface->method_count; i++) {
-        ASTStmt *signature = interface->methods[i];
-
-        if (resolver_intern(state, signature->func_decl.name) != name) {
+        if (interface->methods[i]->decl->name != name) {
             continue;
         }
 
-        size_t index = type_param_index(base);
-
-        Scope *enclosing = state->current_scope;
-        state->current_scope = signature_scope(state, base, interface, state->param_bound_args[index],
-                                               state->param_bound_arg_count[index]);
-
-        FuncDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(FuncDecl));
-        *decl = (FuncDecl){.name = name, .body_kind = BODY_GAB};
-
-        Function *func = arena_alloc(resolver_owner_arena(state), sizeof(Function));
-        *func = (Function){
-            .decl = decl,
-            .return_type = resolve_type_expr(state, signature->func_decl.return_type, span),
-            .func_index = FUNCTION_NO_BODY,
-        };
-
-        size_t count = signature->func_decl.params.size;
-
-        if (count > 0) {
-            func->params = arena_alloc(resolver_owner_arena(state), count * sizeof(const Type *));
-            func->param_count = count;
-
-            for (size_t p = 0; p < count; p++) {
-                func->params[p] = resolve_param_type_in(state, signature->func_decl.params.data[p], true);
-            }
-        }
-
-        state->current_scope = enclosing;
-
-        return func;
+        return interface_method_for(state, interface, i, base, state->param_bound_args[index],
+                                    state->param_bound_arg_count[index]);
     }
 
     return NULL;
+}
+
+/* An array's methods come from its type rather than a declaration, as its length does. */
+static bool resolve_array_method(ResolverState *state, ASTExpr *expr, ASTExpr *receiver, String *name) {
+    const Type *array = receiver_base_type(receiver->type);
+
+    StringPool *strings = state->current_scope->strings;
+    TypeRegistry *registry = state->current_scope->type_registry;
+
+    size_t expected = name == string_from_cstr(strings, "index") ? 1 : 0;
+
+    if (name != string_from_cstr(strings, "len") && name != string_from_cstr(strings, "index")) {
+        return false;
+    }
+
+    if (expr->call.args.size != expected) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %zu argument(s), found %zu",
+                   expected, expr->call.args.size);
+        expr->type = resolver_error_type(state);
+        return true;
+    }
+
+    if (expected == 0) {
+        expr->kind = EXPR_LITERAL;
+        expr->lit = (Literal){.kind = TYPE_INT, .as_int = type_array_length(array)};
+        expr->type = type_registry_get_primitive(registry, TYPE_INT);
+        return true;
+    }
+
+    ASTExpr *index = expr->call.args.data[0];
+
+    if (index->type != type_registry_get_primitive(registry, TYPE_INT)) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "an index must be an int, not %s",
+                   type_name(state, index->type));
+        expr->type = resolver_error_type(state);
+        return true;
+    }
+
+    ASTExpr *element = ast_index_expr_create(state->compile_arena, expr->span, receiver, index);
+
+    element->index.array_type = array;
+    element->type = type_array_element(array);
+
+    expr->kind = EXPR_ADDR_OF;
+    expr->unary.target = element;
+    expr->type = type_registry_ref_to(registry, element->type);
+
+    return true;
+}
+
+/* A method is the one the type owns, or the one its bound declares when the type is a parameter. */
+static Function *find_method(ResolverState *state, const Type *receiver, String *name, Span span,
+                             const Type **out_base) {
+    const Type *base = NULL;
+
+    Function *method = find_method_on_chain(state->current_scope->type_registry,
+                                            state->current_scope->functions, receiver, name, &base);
+
+    if (!method) {
+        method = bound_method(state, base, name, span);
+    }
+
+    if (out_base) {
+        *out_base = base;
+    }
+
+    return method;
+}
+
+/* 'xs[i]' on an implementor of 'Index' is '*xs.index(i)', which the method call path then resolves. */
+static void rewrite_index_as_call(ResolverState *state, ASTExpr *expr) {
+    Arena *arena = state->compile_arena;
+    Span span = expr->span;
+
+    ASTExpr *target = expr->index.target;
+    ASTExpr *index = expr->index.index;
+
+    ASTExpr *method = ast_field_expr_create(arena, span, target, string_ref_create("index"));
+
+    ASTExprList args = ast_expr_list_create(arena_allocator(arena));
+    ast_expr_list_add(&args, index);
+
+    ASTExpr *call = ast_call_expr_create(arena, span, method, args);
+
+    expr->kind = EXPR_DEREF;
+    expr->unary.target = call;
+
+    /* The rewrite is an implementation detail, so a missing method is reported as the missing interface. */
+    size_t errors_before = diagnostics_count(state->diagnostics);
+
+    if (!find_method(state, target->type, string_from_cstr(state->current_scope->strings, "index"), span,
+                     NULL)) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "%s is indexed with '[]' by implementing 'Index'",
+                   type_name(state, target->type));
+        expr->type = resolver_error_type(state);
+        return;
+    }
+
+    resolve_expr(state, call, NULL);
+
+    if (is_error_type(call->type) || diagnostics_count(state->diagnostics) > errors_before) {
+        expr->type = resolver_error_type(state);
+        return;
+    }
+
+    if (type_kind(call->type) != TYPE_REF) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span,
+                   "'index' of %s returns %s rather than lending an element", type_name(state, target->type),
+                   type_name(state, call->type));
+        expr->type = resolver_error_type(state);
+        return;
+    }
+
+    expr->type = type_pointee(call->type);
 }
 
 static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
@@ -819,30 +1008,12 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     String *method_name = resolver_intern(state, name);
 
     if (type_kind(receiver_base_type(receiver_type)) == TYPE_ARRAY &&
-        method_name == string_from_cstr(state->current_scope->strings, "len")) {
-        const Type *array = receiver_base_type(receiver_type);
-
-        if (expr->call.args.size != 0) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected 0 argument(s), found %zu",
-                       expr->call.args.size);
-            expr->type = resolver_error_type(state);
-            return;
-        }
-
-        expr->kind = EXPR_LITERAL;
-        expr->lit = (Literal){.kind = TYPE_INT, .as_int = type_array_length(array)};
-        expr->type = type_registry_get_primitive(state->current_scope->type_registry, TYPE_INT);
+        resolve_array_method(state, expr, receiver, method_name)) {
         return;
     }
 
     const Type *base = NULL;
-    Function *method =
-        find_method_on_chain(state->current_scope->type_registry, state->current_scope->functions,
-                             receiver_type, method_name, &base);
-
-    if (!method) {
-        method = bound_method(state, base, method_name, expr->span);
-    }
+    Function *method = find_method(state, receiver_type, method_name, expr->span, &base);
 
     if (!method) {
         diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "%s has no method '%s'",
@@ -1290,10 +1461,9 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             target_type = type_pointee(target_type);
         }
 
+        /* Only an array indexes on its own; anything else spells '[]' by supplying 'Index'. */
         if (type_kind(target_type) != TYPE_ARRAY) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot index %s",
-                       type_name(state, expr->index.target->type));
-            expr->type = resolver_error_type(state);
+            rewrite_index_as_call(state, expr);
             break;
         }
 
@@ -2139,6 +2309,10 @@ static size_t owner_type_param_count(const TypeExpr *owner) {
     return owner && owner->kind == TYPE_EXPR_APPLY ? owner->apply.args.size : 0;
 }
 
+static void enter_param_bounds(ResolverState *state, ASTStmt *stmt);
+static void record_param_bounds(ResolverState *state, FuncDecl *decl);
+static void check_abstract_body(ResolverState *state, ASTStmt *stmt);
+
 static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTStmt *stmt) {
     bind_own_type_params(state, stmt, owner_type_param_count(stmt->func_decl.owner));
 
@@ -2232,10 +2406,33 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
     }
 
     stmt->func_decl.function = func;
+
+    if (stmt->func_decl.type_param_count > 0) {
+        enter_param_bounds(state, stmt);
+        record_param_bounds(state, decl);
+
+        if (stmt->func_decl.body) {
+            check_abstract_body(state, stmt);
+        }
+    }
 }
 
 static void enter_impl_scope(ResolverState *state, ASTStmt *stmt) {
     enter_owner_scope(state, stmt->impl.type);
+}
+
+/* An array indexes from its type rather than a declaration, and '[T; N]' names no one type to write an
+ * 'impl' for, so the conformance every array has is recorded where 'Index' itself is declared. */
+static void declare_array_conformance(ResolverState *state, const Interface *interface) {
+    if (interface->name != string_from_cstr(state->current_scope->strings, "Index")) {
+        return;
+    }
+
+    TypeRegistry *registry = state->current_scope->type_registry;
+
+    type_registry_declare_conformance(
+        registry, type_registry_array_of(registry, type_registry_get_primitive(registry, TYPE_INT), 1),
+        interface->name);
 }
 
 static void declare_interface(ResolverState *state, ASTStmt *stmt) {
@@ -2252,60 +2449,80 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
     }
 
     size_t count = stmt->interface_decl.members.size;
-
-    ASTStmt **methods =
-        count > 0 ? arena_alloc(resolver_owner_arena(state), count * sizeof(ASTStmt *)) : NULL;
-
-    for (size_t i = 0; i < count; i++) {
-        methods[i] = stmt->interface_decl.members.data[i];
-    }
-
     size_t param_count = stmt->interface_decl.param_count;
 
-    String **params =
-        param_count > 0 ? arena_alloc(resolver_owner_arena(state), param_count * sizeof(String *)) : NULL;
+    Arena *arena = resolver_owner_arena(state);
+
+    /* 'Self' is parameter 0 and the interface's own follow it, so one substitution serves both. */
+    Scope *enclosing = state->current_scope;
+    Scope *params = scope_create(arena, enclosing->strings, enclosing);
+
+    TypeRegistry *registry = enclosing->type_registry;
+
+    scope_bind_type(params, resolver_intern_cstr(state, "Self"), type_registry_param(registry, 0));
 
     for (size_t i = 0; i < param_count; i++) {
-        params[i] = resolver_intern(state, stmt->interface_decl.params[i]);
+        scope_bind_type(params, resolver_intern(state, stmt->interface_decl.params[i]),
+                        type_registry_param(registry, i + 1));
     }
 
-    Interface *interface = arena_alloc(resolver_owner_arena(state), sizeof(Interface));
+    state->current_scope = params;
+
+    Function **methods = count > 0 ? arena_alloc(arena, count * sizeof(Function *)) : NULL;
+
+    for (size_t i = 0; i < count; i++) {
+        ASTStmt *signature = stmt->interface_decl.members.data[i];
+
+        FuncDecl *decl = arena_alloc(arena, sizeof(FuncDecl));
+        *decl = (FuncDecl){
+            .name = resolver_intern(state, signature->func_decl.name),
+            .body_kind = BODY_GAB,
+            .type_param_count = param_count + 1,
+        };
+
+        Function *method = arena_alloc(arena, sizeof(Function));
+        *method = (Function){
+            .decl = decl,
+            .return_type = resolve_type_expr(state, signature->func_decl.return_type, signature->span),
+            .func_index = FUNCTION_NO_BODY,
+        };
+
+        size_t signature_params = signature->func_decl.params.size;
+
+        if (signature_params > 0) {
+            const Type **types = arena_alloc(arena, signature_params * sizeof(const Type *));
+
+            for (size_t p = 0; p < signature_params; p++) {
+                types[p] = resolve_param_type_in(state, signature->func_decl.params.data[p], true);
+            }
+
+            method->params = types;
+            method->param_count = signature_params;
+        }
+
+        methods[i] = method;
+    }
+
+    state->current_scope = enclosing;
+
+    Interface *interface = arena_alloc(arena, sizeof(Interface));
 
     *interface = (Interface){
         .name = name,
         .methods = methods,
         .method_count = count,
-        .params = params,
         .param_count = param_count,
     };
 
     scope_bind_interface(state->current_scope, name, interface);
-}
 
-/* The signature is resolved against the implementor, so 'Self' in it names that type, and the
- * interface's parameters name what was applied to them. */
-static Scope *signature_scope(ResolverState *state, const Type *implementor, const Interface *interface,
-                              const Type *const *args, size_t arg_count) {
-    Scope *scope =
-        scope_create(resolver_owner_arena(state), state->current_scope->strings, state->current_scope);
-
-    scope_bind_argument(scope, resolver_intern_cstr(state, "Self"), implementor);
-
-    for (size_t i = 0; interface && i < interface->param_count && i < arg_count; i++) {
-        scope_bind_argument(scope, interface->params[i], args[i]);
-    }
-
-    return scope;
-}
-
-static Scope *self_scope(ResolverState *state, const Type *implementor) {
-    return signature_scope(state, implementor, NULL, NULL, 0);
+    declare_array_conformance(state, interface);
 }
 
 static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *implementor) {
     String *interface_name = resolver_intern(state, stmt->impl.interface_name);
 
-    Interface *interface = scope_interface_lookup(state->current_scope, interface_name);
+    Interface *interface = resolver_lookup_interface(state, interface_name);
 
     if (!interface) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->impl.interface_span, "unknown interface '%s'",
@@ -2339,15 +2556,12 @@ static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *i
         return;
     }
 
-    Scope *enclosing = state->current_scope;
-    state->current_scope = signature_scope(state, implementor, interface, args, arg_count);
+    TypeRegistry *registry = state->current_scope->type_registry;
 
     for (size_t i = 0; i < interface->method_count; i++) {
-        ASTStmt *signature = interface->methods[i];
+        String *name = interface->methods[i]->decl->name;
 
-        String *name = resolver_intern(state, signature->func_decl.name);
-
-        Function *supplied = type_registry_find_owned(enclosing->type_registry, implementor, name);
+        Function *supplied = type_registry_find_owned(registry, implementor, name);
 
         if (!supplied) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->impl.interface_span,
@@ -2356,7 +2570,9 @@ static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *i
             continue;
         }
 
-        const Type *expected_return = resolve_type_expr(state, signature->func_decl.return_type, stmt->span);
+        const Function *required = interface_method_for(state, interface, i, implementor, args, arg_count);
+
+        const Type *expected_return = required->return_type;
 
         if (expected_return != supplied->return_type) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->impl.interface_span,
@@ -2366,7 +2582,7 @@ static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *i
             continue;
         }
 
-        size_t expected_count = signature->func_decl.params.size;
+        size_t expected_count = required->param_count;
 
         if (expected_count != supplied->param_count) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->impl.interface_span,
@@ -2377,7 +2593,7 @@ static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *i
         }
 
         for (size_t p = 0; p < expected_count; p++) {
-            const Type *expected = resolve_param_type_in(state, signature->func_decl.params.data[p], false);
+            const Type *expected = required->params[p];
 
             if (expected != supplied->params[p]) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->impl.interface_span,
@@ -2388,8 +2604,6 @@ static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *i
             }
         }
     }
-
-    state->current_scope = enclosing;
 }
 
 static void declare_impl(ResolverState *state, ASTStmt *stmt) {
@@ -2527,7 +2741,7 @@ static void enter_param_bounds(ResolverState *state, ASTStmt *stmt) {
         const TypeExpr *named = bound->kind == TYPE_EXPR_APPLY ? bound->apply.base : bound;
 
         String *name = resolver_intern(state, named->name);
-        Interface *interface = scope_interface_lookup(state->current_scope, name);
+        Interface *interface = resolver_lookup_interface(state, name);
 
         if (!interface) {
             diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span,
@@ -2551,6 +2765,22 @@ static void enter_param_bounds(ResolverState *state, ASTStmt *stmt) {
         state->param_bound_arg_count[i] = arg_count;
         state->param_bounds[i] = interface;
     }
+}
+
+/* Kept on the declaration so a call site can judge its arguments without the statement. */
+static void record_param_bounds(ResolverState *state, FuncDecl *decl) {
+    if (!decl) {
+        return;
+    }
+
+    const Interface **bounds =
+        arena_alloc(resolver_owner_arena(state), GAB_MAX_TYPE_PARAMS * sizeof(const Interface *));
+
+    for (size_t i = 0; i < GAB_MAX_TYPE_PARAMS; i++) {
+        bounds[i] = state->param_bounds[i];
+    }
+
+    decl->type_param_bounds = bounds;
 }
 
 static void declare_func(ResolverState *state, ASTStmt *stmt) {
@@ -2613,6 +2843,10 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
     FuncDecl *decl = func ? (FuncDecl *)func->decl : NULL;
 
     if (decl) {
+        if (stmt->func_decl.type_param_count > 0) {
+            record_param_bounds(state, decl);
+        }
+
         decl->body_kind = stmt->func_decl.body == NULL ? BODY_HOST : BODY_GAB;
 
         if (decl->body_kind == BODY_HOST) {

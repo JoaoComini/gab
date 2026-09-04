@@ -21,6 +21,19 @@ typedef enum {
 
 typedef struct ASTStmt ASTStmt;
 
+/* Parameters and result. On a declaration these name its type parameters; on a Function they are what
+ * substituting that declaration's arguments into them produced. */
+typedef struct FuncSignature {
+    const Type *return_type;
+
+    const Type **params;
+    size_t param_count;
+} FuncSignature;
+
+/* Substitutes 'args' for the type parameters a signature names, yielding the specialized one. */
+FuncSignature func_signature_instantiate(TypeRegistry *registry, Arena *arena, const FuncSignature *generic,
+                                         const Type *const *args, size_t arg_count);
+
 typedef struct FuncDecl {
     String *name;
     String *module;
@@ -32,15 +45,25 @@ typedef struct FuncDecl {
 
     /* How many arguments this declaration is generic over, whether they came from an owner or itself. */
     size_t type_param_count;
+
+    /* The interface bounding each of them, by index; null where it is unbounded. */
+    const struct Interface *const *type_param_bounds;
 } FuncDecl;
 
 typedef struct Function {
     const FuncDecl *decl;
 
-    const Type *return_type;
+    /* Unnamed so 'f->params' and 'f->return_type' still reach the signature they belong to. */
+    union {
+        FuncSignature signature;
 
-    const Type **params;
-    size_t param_count;
+        struct {
+            const Type *return_type;
+
+            const Type **params;
+            size_t param_count;
+        };
+    };
 
     size_t func_index;
 
