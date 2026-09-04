@@ -64,6 +64,9 @@ typedef struct {
     struct ASTStmt *body;
 
     StringRef type_params[GAB_MAX_TYPE_PARAMS];
+
+    /* The interface each type parameter is bounded by, null where it is unbounded. */
+    TypeExpr *type_param_bounds[GAB_MAX_TYPE_PARAMS];
     size_t type_param_count;
 
     Function *function;

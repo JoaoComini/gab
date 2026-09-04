@@ -221,6 +221,18 @@ impl Bag as Countable {
 }
 ```
 
+A type parameter is bounded by an interface as `<T: Countable>`, and inside the
+body `T` has exactly the methods that interface declares:
+
+```
+func total<T: Countable>(x: &T): int { return x.count(); }
+```
+
+A generic body is checked once, where it is written, rather than at each call.
+So a body naming a method its bound does not declare is an error even if
+nothing ever calls it, and a call is checked against the bound rather than
+against whatever type happens to reach it.
+
 A type implements a given interface once, and the methods are called the way
 any other method is — an interface adds no representation, so `b.count()`
 costs what it did before. Naming an interface in a type parameter's bound is
@@ -496,7 +508,7 @@ more or less, and a second spelling would say nothing the first does not.
 | --- | --- |
 | Types | `int` (32-bit), `float` (32-bit), `bool`, `String` and characters named by `&str`, `[T; N]`, `Vec<T>`, structs, owning `*T`, borrows `&T` |
 | Declarations | `let` with inferred or annotated type, `func`, `struct`, `impl`, `interface`, `module`. A struct local is written as a literal |
-| Interfaces | `interface` names signatures, `impl T as I` supplies them and is checked at the declaration. `Self` is reserved, and names the type an `impl` block is for |
+| Interfaces | `interface` names signatures, `impl T as I` supplies them and is checked at the declaration. `<T: I>` bounds a type parameter, and a generic body is checked once against its bounds. `Self` is reserved, and names the type an `impl` block is for |
 | Generics | Structs, the methods they own, and free functions. A method declares parameters of its own beside its owner's. A call infers its type arguments from what it is given, or names them as `id<int>(x)` |
 | Functions | Parameters and returns of any type, structs by value, functions a type owns, recursion, forward references |
 | Control flow | `if` / `else`, `for` in three forms, `break`, `continue`, `return`, nested blocks with shadowing |
@@ -516,7 +528,7 @@ Not yet implemented:
 | Arrays | Fixed length once allocated: no growth and no slice type. `Vec<T>` is what grows |
 | Vectors | `new`, `push`, `at` and `len` only: no removal, no iteration, and no literal |
 | Generics | A method's own type arguments are inferred from what it is given; there is no `v.method<int>(x)` to write them |
-| Interfaces | No bounds on type parameters, so generic code cannot yet require one; no associated types and no dynamic dispatch |
+| Interfaces | An interface takes no type parameters of its own; no associated types, no compound bounds, and no dynamic dispatch |
 | Operators | Bitwise |
 
 ## Building

@@ -69,6 +69,12 @@ typedef struct {
 
     StructDeclList resolving;
 
+    /* The interface bounding each type parameter of the declaration being resolved, by index. */
+    Interface *param_bounds[GAB_MAX_TYPE_PARAMS];
+
+    /* Set while a generic body is checked against its bounds, where no instantiation exists to flow. */
+    bool checking_abstract;
+
     ASTUnit *unit;
 
     unsigned int instantiating;
@@ -731,6 +737,60 @@ static void instantiate_body(ResolverState *state, Function *method, Span span) 
     state->current_scope = enclosing;
 }
 
+static Scope *self_scope(ResolverState *state, const Type *implementor);
+static const Type *resolve_param_type_in(ResolverState *state, ASTField *param, bool generic);
+
+/* A parameter's methods are the ones its bound declares, resolved with 'Self' as the parameter itself. */
+static Function *bound_method(ResolverState *state, const Type *base, String *name, Span span) {
+    if (!base || type_kind(base) != TYPE_PARAM) {
+        return NULL;
+    }
+
+    Interface *interface = state->param_bounds[type_param_index(base)];
+
+    if (!interface) {
+        return NULL;
+    }
+
+    for (size_t i = 0; i < interface->method_count; i++) {
+        ASTStmt *signature = interface->methods[i];
+
+        if (resolver_intern(state, signature->func_decl.name) != name) {
+            continue;
+        }
+
+        Scope *enclosing = state->current_scope;
+        state->current_scope = self_scope(state, base);
+
+        FuncDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(FuncDecl));
+        *decl = (FuncDecl){.name = name, .body_kind = BODY_GAB};
+
+        Function *func = arena_alloc(resolver_owner_arena(state), sizeof(Function));
+        *func = (Function){
+            .decl = decl,
+            .return_type = resolve_type_expr(state, signature->func_decl.return_type, span),
+            .func_index = FUNCTION_NO_BODY,
+        };
+
+        size_t count = signature->func_decl.params.size;
+
+        if (count > 0) {
+            func->params = arena_alloc(resolver_owner_arena(state), count * sizeof(const Type *));
+            func->param_count = count;
+
+            for (size_t p = 0; p < count; p++) {
+                func->params[p] = resolve_param_type_in(state, signature->func_decl.params.data[p], true);
+            }
+        }
+
+        state->current_scope = enclosing;
+
+        return func;
+    }
+
+    return NULL;
+}
+
 static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     ASTExpr *receiver = expr->call.target->field.target;
     StringRef name = expr->call.target->field.name;
@@ -771,6 +831,10 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     Function *method =
         find_method_on_chain(state->current_scope->type_registry, state->current_scope->functions,
                              receiver_type, method_name, &base);
+
+    if (!method) {
+        method = bound_method(state, base, method_name, expr->span);
+    }
 
     if (!method) {
         diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "%s has no method '%s'",
@@ -2384,6 +2448,54 @@ static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
     return found;
 }
 
+/* Checked once with its parameters abstract, so an error is reported whether or not it is instantiated. */
+static void check_abstract_body(ResolverState *state, ASTStmt *stmt) {
+    ASTStmt *clone = ast_clone_stmt(state->compile_arena, stmt);
+
+    clone->func_decl.resolved_return_type = stmt->func_decl.resolved_return_type;
+
+    bool was_checking = state->checking_abstract;
+    state->checking_abstract = true;
+
+    resolve_func_body(state, clone);
+
+    state->checking_abstract = was_checking;
+}
+
+/* Each bound names an interface, which the body is checked against before any instantiation. */
+static void enter_param_bounds(ResolverState *state, ASTStmt *stmt) {
+    for (size_t i = 0; i < GAB_MAX_TYPE_PARAMS; i++) {
+        state->param_bounds[i] = NULL;
+    }
+
+    for (size_t i = 0; i < stmt->func_decl.type_param_count; i++) {
+        const TypeExpr *bound = stmt->func_decl.type_param_bounds[i];
+
+        if (!bound) {
+            continue;
+        }
+
+        const TypeExpr *named = bound->kind == TYPE_EXPR_APPLY ? bound->apply.base : bound;
+
+        String *name = resolver_intern(state, named->name);
+        Interface *interface = scope_interface_lookup(state->current_scope, name);
+
+        if (!interface) {
+            diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span,
+                       "'%s' bounds a type parameter, so it names an interface", name->data);
+            continue;
+        }
+
+        if (bound->kind != TYPE_EXPR_NAME) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span, "'%s' takes no type arguments",
+                       name->data);
+            continue;
+        }
+
+        state->param_bounds[i] = interface;
+    }
+}
+
 static void declare_func(ResolverState *state, ASTStmt *stmt) {
     stmt->func_decl.declared = true;
 
@@ -2413,6 +2525,8 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
         }
 
         state->current_scope = params;
+
+        enter_param_bounds(state, stmt);
     }
 
     const Type *func_return_type = resolve_type_expr(state, stmt->func_decl.return_type, stmt->span);
@@ -2469,6 +2583,10 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
 
         /* A generic declaration keeps its own statement, which each instantiation clones and resolves. */
         decl->body = stmt;
+
+        if (stmt->func_decl.body) {
+            check_abstract_body(state, stmt);
+        }
     }
 
     state->current_scope = enclosing;
@@ -2509,7 +2627,7 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
 
     state->func_context = previous_context;
 
-    if (diagnostics_count(state->diagnostics) == errors_before) {
+    if (!state->checking_abstract && diagnostics_count(state->diagnostics) == errors_before) {
         size_t param_count = stmt->func_decl.params.size;
         Binding **params = arena_alloc(state->compile_arena, (param_count + 1) * sizeof(Binding *));
         size_t count = 0;
