@@ -756,6 +756,17 @@ static Function *specialize_call(ResolverState *state, ASTExpr *expr, Function *
     return specialize(state, expr, generic, args, 0, 0);
 }
 
+/* True when an argument the specialization was given is itself still a parameter, so it has no width. */
+static bool instantiated_abstractly(const Function *method) {
+    for (size_t i = 0; i < method->type_arg_count; i++) {
+        if (type_has_param(method->type_args[i])) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static void instantiate_body(ResolverState *state, Function *method, Span span) {
     if (method->decl->body_kind != BODY_GAB || method->instance || !method->decl->body) {
         return;
@@ -775,8 +786,12 @@ static void instantiate_body(ResolverState *state, Function *method, Span span) 
 
     ASTStmt *clone = ast_clone_stmt(state->compile_arena, declaration);
 
-    ast_stmt_list_add(&state->unit->instances, clone);
-    method->instance = clone;
+    /* An argument still a parameter has no width, so this body is checked but never emitted. */
+    if (!instantiated_abstractly(method)) {
+        ast_stmt_list_add(&state->unit->instances, clone);
+        method->instance = clone;
+    }
+
     clone->func_decl.function = method;
 
     Scope *enclosing = state->current_scope;
@@ -2235,6 +2250,10 @@ static size_t owner_type_param_count(const TypeExpr *owner) {
     return owner && owner->kind == TYPE_EXPR_APPLY ? owner->apply.args.size : 0;
 }
 
+static void enter_param_bounds(ResolverState *state, ASTStmt *stmt);
+static void record_param_bounds(ResolverState *state, FuncDecl *decl);
+static void check_abstract_body(ResolverState *state, ASTStmt *stmt);
+
 static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTStmt *stmt) {
     bind_own_type_params(state, stmt, owner_type_param_count(stmt->func_decl.owner));
 
@@ -2328,6 +2347,15 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
     }
 
     stmt->func_decl.function = func;
+
+    if (stmt->func_decl.type_param_count > 0) {
+        enter_param_bounds(state, stmt);
+        record_param_bounds(state, decl);
+
+        if (stmt->func_decl.body) {
+            check_abstract_body(state, stmt);
+        }
+    }
 }
 
 static void enter_impl_scope(ResolverState *state, ASTStmt *stmt) {

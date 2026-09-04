@@ -1034,7 +1034,7 @@ static ASTStmt *parse_impl_stmt(Parser *parser) {
 
         member->func_decl.owner = type;
 
-        func_decl_take_type_params(member, &params, NULL);
+        func_decl_take_type_params(member, &params, declared.bounds);
 
         if (stmt_needs_terminator(member)) {
             if (!parser_expect(parser, TOKEN_SEMICOLON, "expected ';'")) {

@@ -233,6 +233,15 @@ So a body naming a method its bound does not declare is an error even if
 nothing ever calls it, and a call is checked against the bound rather than
 against whatever type happens to reach it.
 
+An `impl` block bounds its own parameters the same way, and its methods are
+checked against those bounds where they are written:
+
+```
+impl<T: Countable> Pair<T> {
+    func total(self: &Self): int { return self.a.count(); }
+}
+```
+
 A type implements a given interface once, and the methods are called the way
 any other method is — an interface adds no representation, so `b.count()`
 costs what it did before.
@@ -565,7 +574,7 @@ more or less, and a second spelling would say nothing the first does not.
 | --- | --- |
 | Types | `int` (32-bit), `float` (32-bit), `bool`, `String` and characters named by `&str`, `[T; N]`, `Vec<T>`, structs, owning `*T`, borrows `&T` |
 | Declarations | `let` with inferred or annotated type, `func`, `struct`, `impl`, `interface`, `module`. A struct local is written as a literal |
-| Interfaces | `interface` names signatures and may take type parameters, `impl T as I<A>` supplies them and is checked at the declaration. `<T: I<A>>` bounds a type parameter, and a generic body is checked once against its bounds. `Self` is reserved, and names the type an `impl` block is for |
+| Interfaces | `interface` names signatures and may take type parameters, `impl T as I<A>` supplies them and is checked at the declaration. `<T: I<A>>` bounds a type parameter on a function or an `impl` block, and a generic body is checked once against its bounds. `Self` is reserved, and names the type an `impl` block is for |
 | Generics | Structs, the methods they own, and free functions. A method declares parameters of its own beside its owner's. A call infers its type arguments from what it is given, or names them as `id<int>(x)` |
 | Functions | Parameters and returns of any type, structs by value, functions a type owns, recursion, forward references |
 | Control flow | `if` / `else`, `for` in three forms, `break`, `continue`, `return`, nested blocks with shadowing |
