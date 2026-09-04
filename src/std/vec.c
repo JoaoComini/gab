@@ -46,7 +46,7 @@ static void vec_at(GabCtx *ctx) {
 
     size_t stride = gab_ctx_type_size(ctx, 0);
 
-    gab_ctx_return_struct(ctx, (const char *)vec.block.data + (size_t)index * stride, stride);
+    gab_ctx_return_pointer(ctx, (char *)vec.block.data + (size_t)index * stride);
 }
 
 static void vec_len(GabCtx *ctx) { gab_ctx_return_int(ctx, vec_load(ctx).block.length); }
@@ -74,7 +74,7 @@ static void vec_new(GabCtx *ctx) {
 static const char VEC_SRC[] = "impl<T> Vec<T> {\n"
                               "    extern func new(count: int): Self;\n"
                               "    extern func push(self: &Self, value: T);\n"
-                              "    extern func at(self: &Self, index: int): T;\n"
+                              "    extern func at(self: &Self, index: int): &T;\n"
                               "    extern func len(self: &Self): int;\n"
                               "}\n";
 

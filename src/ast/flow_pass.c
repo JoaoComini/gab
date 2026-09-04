@@ -82,6 +82,8 @@ static bool slot_of_place(FlowPass *pass, const ASTExpr *place, FlowSlot *out) {
     return true;
 }
 
+static bool borrows_memory(FlowPass *pass, const Type *type);
+
 static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
     if (!expr) {
         return 0;
@@ -89,9 +91,20 @@ static int inner_depth(FlowPass *pass, const ASTExpr *expr) {
 
     switch (expr->kind) {
     case EXPR_ADDR_OF: {
-        const Binding *binding = ast_root_local(expr->unary.target);
+        Binding *binding = ast_root_local(expr->unary.target);
 
-        return binding ? binding->scope_depth : 0;
+        if (!binding) {
+            return 0;
+        }
+
+        /* Addressing through a borrow reaches what that borrow names, which outlives this scope. */
+        if (borrows_memory(pass, binding->var.type)) {
+            FlowSlot named = flow_get(pass->flow, binding);
+
+            return flow_slot_flattened(pass->arena, &named).inner_depth;
+        }
+
+        return binding->scope_depth;
     }
     case EXPR_VARIABLE:
         if (!ast_binding_of(expr)) {
