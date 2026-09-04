@@ -351,7 +351,14 @@ as that outgrows it.
 let xs: Vec<int>;
 xs.push(1);
 let n: int = xs.len();
+let first: &int = xs.at(0);
 ```
+
+`at` lends the element where it sits rather than copying it out, so reading the
+value spells the deref as `*xs.at(0)`, and an element that owns is reached
+without moving it out of the vector. The borrow names the block, which a later
+`push` may reallocate — as a C pointer into a vector's storage is invalidated
+by a growth.
 
 It owns its block and the live elements in it: both go when the vector does.
 `Vec<T>` is an instantiation of a generic declaration rather than a kind of its
@@ -527,6 +534,7 @@ Not yet implemented:
 | Strings | No interpolation, no `substring` or case conversion |
 | Arrays | Fixed length once allocated: no growth and no slice type. `Vec<T>` is what grows |
 | Vectors | `new`, `push`, `at` and `len` only: no removal, no iteration, and no literal |
+| Borrows | A returned borrow names a parameter or something it reaches; returning one that names a local is refused |
 | Generics | A method's own type arguments are inferred from what it is given; there is no `v.method<int>(x)` to write them |
 | Interfaces | An interface takes no type parameters of its own; no associated types, no compound bounds, and no dynamic dispatch |
 | Operators | Bitwise |
