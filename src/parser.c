@@ -987,6 +987,7 @@ static ASTStmt *parse_impl_stmt(Parser *parser) {
 
     StringRef interface_name = {0};
     Span interface_span = span;
+    TypeExprList interface_args = type_expr_list_create(arena_allocator(parser->arena));
 
     if (parser->current.type == TOKEN_AS) {
         parser_next_token(parser);
@@ -999,6 +1000,31 @@ static ASTStmt *parse_impl_stmt(Parser *parser) {
         interface_span = parser_span(parser);
 
         parser_next_token(parser);
+
+        if (parser->current.type == TOKEN_LESS) {
+            parser_next_token(parser);
+
+            for (;;) {
+                TypeExpr *arg = parse_type_expr(parser);
+                if (!arg) {
+                    return NULL;
+                }
+
+                type_expr_list_add(&interface_args, arg);
+
+                if (parser->current.type != TOKEN_COMMA) {
+                    break;
+                }
+
+                parser_next_token(parser);
+            }
+
+            if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after an interface's type arguments")) {
+                return NULL;
+            }
+
+            parser_next_token(parser);
+        }
     }
 
     if (!parser_expect(parser, TOKEN_LBRACE, "expected '{' after the type an 'impl' block is for")) {
@@ -1051,6 +1077,7 @@ static ASTStmt *parse_impl_stmt(Parser *parser) {
 
     stmt->impl.interface_name = interface_name;
     stmt->impl.interface_span = interface_span;
+    stmt->impl.interface_args = interface_args;
 
     return stmt;
 }
@@ -1067,6 +1094,40 @@ static ASTStmt *parse_interface_decl_stmt(Parser *parser) {
     StringRef name = parser->current.lexeme;
 
     parser_next_token(parser);
+
+    StringRef params[GAB_MAX_TYPE_PARAMS];
+    size_t param_count = 0;
+
+    if (parser->current.type == TOKEN_LESS) {
+        parser_next_token(parser);
+
+        for (;;) {
+            if (!parser_expect(parser, TOKEN_IDENT, "expected a type parameter name")) {
+                return NULL;
+            }
+
+            if (param_count == GAB_MAX_TYPE_PARAMS) {
+                diag_error(parser->diagnostics, GAB_ERR_SYNTAX, parser_span(parser),
+                           "an interface takes at most %d type parameters", GAB_MAX_TYPE_PARAMS);
+                return NULL;
+            }
+
+            params[param_count++] = parser->current.lexeme;
+            parser_next_token(parser);
+
+            if (parser->current.type != TOKEN_COMMA) {
+                break;
+            }
+
+            parser_next_token(parser);
+        }
+
+        if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after an interface's type parameters")) {
+            return NULL;
+        }
+
+        parser_next_token(parser);
+    }
 
     if (!parser_expect(parser, TOKEN_LBRACE, "expected '{' after an interface's name")) {
         return NULL;
@@ -1103,7 +1164,15 @@ static ASTStmt *parse_interface_decl_stmt(Parser *parser) {
 
     parser_next_token(parser);
 
-    return ast_interface_decl_stmt_create(parser->arena, span, name, members);
+    ASTStmt *stmt = ast_interface_decl_stmt_create(parser->arena, span, name, members);
+
+    for (size_t i = 0; i < param_count; i++) {
+        stmt->interface_decl.params[i] = params[i];
+    }
+
+    stmt->interface_decl.param_count = param_count;
+
+    return stmt;
 }
 
 static ASTStmt *parse_return_stmt(Parser *parser) {

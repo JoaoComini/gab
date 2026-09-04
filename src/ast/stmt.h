@@ -89,6 +89,9 @@ typedef struct {
 typedef struct {
     StringRef name;
     ASTStmtList members;
+
+    StringRef params[GAB_MAX_TYPE_PARAMS];
+    size_t param_count;
 } ASTInterfaceDecl;
 
 typedef struct {
@@ -97,6 +100,9 @@ typedef struct {
 
     StringRef interface_name;
     Span interface_span;
+
+    /* The arguments the 'as' clause applies to the interface, empty where it names none. */
+    TypeExprList interface_args;
 } ASTImplStmt;
 
 typedef struct {

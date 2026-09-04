@@ -72,6 +72,10 @@ typedef struct {
     /* The interface bounding each type parameter of the declaration being resolved, by index. */
     Interface *param_bounds[GAB_MAX_TYPE_PARAMS];
 
+    /* What each bound applies to its interface's parameters. */
+    const Type *param_bound_args[GAB_MAX_TYPE_PARAMS][GAB_MAX_TYPE_PARAMS];
+    size_t param_bound_arg_count[GAB_MAX_TYPE_PARAMS];
+
     /* Set while a generic body is checked against its bounds, where no instantiation exists to flow. */
     bool checking_abstract;
 
@@ -737,7 +741,8 @@ static void instantiate_body(ResolverState *state, Function *method, Span span) 
     state->current_scope = enclosing;
 }
 
-static Scope *self_scope(ResolverState *state, const Type *implementor);
+static Scope *signature_scope(ResolverState *state, const Type *implementor, const Interface *interface,
+                              const Type *const *args, size_t arg_count);
 static const Type *resolve_param_type_in(ResolverState *state, ASTField *param, bool generic);
 
 /* A parameter's methods are the ones its bound declares, resolved with 'Self' as the parameter itself. */
@@ -759,8 +764,11 @@ static Function *bound_method(ResolverState *state, const Type *base, String *na
             continue;
         }
 
+        size_t index = type_param_index(base);
+
         Scope *enclosing = state->current_scope;
-        state->current_scope = self_scope(state, base);
+        state->current_scope = signature_scope(state, base, interface, state->param_bound_args[index],
+                                               state->param_bound_arg_count[index]);
 
         FuncDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(FuncDecl));
         *decl = (FuncDecl){.name = name, .body_kind = BODY_GAB};
@@ -2252,25 +2260,46 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
         methods[i] = stmt->interface_decl.members.data[i];
     }
 
+    size_t param_count = stmt->interface_decl.param_count;
+
+    String **params =
+        param_count > 0 ? arena_alloc(resolver_owner_arena(state), param_count * sizeof(String *)) : NULL;
+
+    for (size_t i = 0; i < param_count; i++) {
+        params[i] = resolver_intern(state, stmt->interface_decl.params[i]);
+    }
+
     Interface *interface = arena_alloc(resolver_owner_arena(state), sizeof(Interface));
 
     *interface = (Interface){
         .name = name,
         .methods = methods,
         .method_count = count,
+        .params = params,
+        .param_count = param_count,
     };
 
     scope_bind_interface(state->current_scope, name, interface);
 }
 
-/* The signature is resolved against the implementor, so 'Self' in it names that type. */
-static Scope *self_scope(ResolverState *state, const Type *implementor) {
+/* The signature is resolved against the implementor, so 'Self' in it names that type, and the
+ * interface's parameters name what was applied to them. */
+static Scope *signature_scope(ResolverState *state, const Type *implementor, const Interface *interface,
+                              const Type *const *args, size_t arg_count) {
     Scope *scope =
         scope_create(resolver_owner_arena(state), state->current_scope->strings, state->current_scope);
 
     scope_bind_argument(scope, resolver_intern_cstr(state, "Self"), implementor);
 
+    for (size_t i = 0; interface && i < interface->param_count && i < arg_count; i++) {
+        scope_bind_argument(scope, interface->params[i], args[i]);
+    }
+
     return scope;
+}
+
+static Scope *self_scope(ResolverState *state, const Type *implementor) {
+    return signature_scope(state, implementor, NULL, NULL, 0);
 }
 
 static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *implementor) {
@@ -2284,6 +2313,25 @@ static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *i
         return;
     }
 
+    size_t arg_count = stmt->impl.interface_args.size;
+
+    if (arg_count != interface->param_count) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->impl.interface_span,
+                   "'%s' takes %zu type argument(s), but %zu were given", interface_name->data,
+                   interface->param_count, arg_count);
+        return;
+    }
+
+    const Type *args[GAB_MAX_TYPE_PARAMS];
+
+    for (size_t i = 0; i < arg_count; i++) {
+        args[i] = resolve_type_expr(state, stmt->impl.interface_args.data[i], stmt->impl.interface_span);
+
+        if (is_error_type(args[i])) {
+            return;
+        }
+    }
+
     if (!type_registry_declare_conformance(state->current_scope->type_registry, implementor,
                                            interface_name)) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->impl.interface_span,
@@ -2292,7 +2340,7 @@ static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *i
     }
 
     Scope *enclosing = state->current_scope;
-    state->current_scope = self_scope(state, implementor);
+    state->current_scope = signature_scope(state, implementor, interface, args, arg_count);
 
     for (size_t i = 0; i < interface->method_count; i++) {
         ASTStmt *signature = interface->methods[i];
@@ -2466,6 +2514,7 @@ static void check_abstract_body(ResolverState *state, ASTStmt *stmt) {
 static void enter_param_bounds(ResolverState *state, ASTStmt *stmt) {
     for (size_t i = 0; i < GAB_MAX_TYPE_PARAMS; i++) {
         state->param_bounds[i] = NULL;
+        state->param_bound_arg_count[i] = 0;
     }
 
     for (size_t i = 0; i < stmt->func_decl.type_param_count; i++) {
@@ -2486,12 +2535,20 @@ static void enter_param_bounds(ResolverState *state, ASTStmt *stmt) {
             continue;
         }
 
-        if (bound->kind != TYPE_EXPR_NAME) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span, "'%s' takes no type arguments",
-                       name->data);
+        size_t arg_count = bound->kind == TYPE_EXPR_APPLY ? bound->apply.args.size : 0;
+
+        if (arg_count != interface->param_count) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
+                       "'%s' takes %zu type argument(s), but %zu were given", name->data,
+                       interface->param_count, arg_count);
             continue;
         }
 
+        for (size_t a = 0; a < arg_count; a++) {
+            state->param_bound_args[i][a] = resolve_type_expr(state, bound->apply.args.data[a], stmt->span);
+        }
+
+        state->param_bound_arg_count[i] = arg_count;
         state->param_bounds[i] = interface;
     }
 }
