@@ -17,7 +17,7 @@ typedef enum {
     TYPE_EXPR_BOX,
     TYPE_EXPR_REF,
 
-    TYPE_EXPR_ARRAY,
+    TYPE_EXPR_CONST,
 
     TYPE_EXPR_APPLY,
 } TypeExprKind;
@@ -37,16 +37,13 @@ struct TypeExpr {
             TypeExprList args;
         } apply;
 
-        struct {
-            TypeExpr *element;
-            int32_t length;
-        } array;
+        int32_t constant;
     };
 };
 
 TypeExpr *type_expr_name(Arena *arena, StringRef name);
 TypeExpr *type_expr_indirect(Arena *arena, TypeExprKind kind, TypeExpr *inner);
 TypeExpr *type_expr_apply(Arena *arena, TypeExpr *base);
-TypeExpr *type_expr_array(Arena *arena, TypeExpr *element, int32_t length);
+TypeExpr *type_expr_const(Arena *arena, int32_t value);
 
 #endif

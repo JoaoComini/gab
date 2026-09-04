@@ -532,7 +532,7 @@ static void test_a_unit_may_declare_a_struct_called_array() {
     test_context_init(&ctx);
 
     compile(&ctx, "struct Array { n: int }\n"
-                  "struct Holder { a: Array, xs: [int; 2] }\n");
+                  "struct Holder { a: Array, xs: array<int, 2> }\n");
 
     assert(diagnostics_count(&ctx.diagnostics) == 0);
 
@@ -555,11 +555,11 @@ static void test_an_array_is_named_by_its_shape() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    compile(&ctx, "func f(): int { let xs: [int; 3]; let y: int = xs; return y; }\n");
+    compile(&ctx, "func f(): int { let xs: array<int, 3>; let y: int = xs; return y; }\n");
 
     assert(diagnostics_count(&ctx.diagnostics) == 1);
     assert(strcmp(diagnostics_get(&ctx.diagnostics, 0)->message,
-                  "cannot initialize a variable of type int with a value of type [int; 3]") == 0);
+                  "cannot initialize a variable of type int with a value of type array<int, 3>") == 0);
 
     test_context_free(&ctx);
 }

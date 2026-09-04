@@ -194,6 +194,25 @@ static void test_self_outside_an_impl_block_says_so() {
     assert(test_diagnostic_mentions("func count(x: &Self): int { return 0; }\n", "impl"));
 }
 
+static void test_an_interfaces_method_is_supplied_in_the_block_that_implements_it() {
+    assert(!test_compiles("interface Countable {\n"
+                          "    func count(self: &Self): int;\n"
+                          "}\n"
+                          "struct Bag { n: int }\n"
+                          "impl Bag {\n"
+                          "    func count(self: &Self): int { return self.n; }\n"
+                          "}\n"
+                          "impl Bag as Countable {}\n"));
+
+    assert(test_compiles("interface Countable {\n"
+                         "    func count(self: &Self): int;\n"
+                         "}\n"
+                         "struct Bag { n: int }\n"
+                         "impl Bag as Countable {\n"
+                         "    func count(self: &Self): int { return self.n; }\n"
+                         "}\n"));
+}
+
 int main(void) {
     test_an_interface_declares_a_signature_its_implementors_supply();
     test_an_implementation_missing_a_method_is_refused();
@@ -213,6 +232,7 @@ int main(void) {
     test_self_is_not_a_type_outside_an_impl_block();
     test_self_is_not_a_name_a_declaration_may_take();
     test_self_outside_an_impl_block_says_so();
+    test_an_interfaces_method_is_supplied_in_the_block_that_implements_it();
 
     return 0;
 }

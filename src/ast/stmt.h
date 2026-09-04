@@ -103,6 +103,9 @@ typedef struct {
 
     /* The arguments the 'as' clause applies to the interface, empty where it names none. */
     TypeExprList interface_args;
+
+    /* The bound written on each parameter the block declares, which says whether it takes a value. */
+    TypeExpr *param_bounds[GAB_MAX_TYPE_PARAMS];
 } ASTImplStmt;
 
 typedef struct {

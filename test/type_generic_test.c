@@ -16,13 +16,7 @@ static Function *owned_for(TypeRegistry *registry, FunctionRegistry *functions, 
         return declaration;
     }
 
-    const Type *args[GAB_MAX_TYPE_PARAMS];
-
-    for (size_t i = 0; i < type_arg_count(type); i++) {
-        args[i] = type_args(type)[i].type;
-    }
-
-    return function_registry_specialize(functions, declaration, args, type_arg_count(type));
+    return function_registry_specialize(functions, declaration, type_args(type), type_arg_count(type));
 }
 
 static void test_a_declared_field_nests_constructors() {
@@ -510,7 +504,9 @@ static void test_a_specialization_does_not_inherit_a_summary() {
     generic->borrowed_params = 1;
     generic->borrowed_params_known = true;
 
-    Function *specialized = function_registry_specialize(functions, generic, &int_type, 1);
+    TypeArg argument = {.kind = TYPE_ARG_TYPE, .type = int_type};
+
+    Function *specialized = function_registry_specialize(functions, generic, &argument, 1);
 
     assert(!specialized->borrowed_params_known);
 

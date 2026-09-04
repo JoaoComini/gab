@@ -35,6 +35,16 @@ static void register_primitives(TypeRegistry *registry, const TypePrimitiveNames
     registry->primitives.str_type = register_builtin(registry, TYPE_STR, names->str_name);
 
     registry->primitives.error_type = register_builtin(registry, TYPE_ERROR, names->error_name);
+
+    TypeDecl *slice = arena_alloc(registry->arena, sizeof(TypeDecl));
+    *slice = (TypeDecl){.name = names->slice_name, .param_count = 1};
+
+    registry->primitives.slice_decl = slice;
+
+    TypeDecl *array = arena_alloc(registry->arena, sizeof(TypeDecl));
+    *array = (TypeDecl){.name = names->array_name, .param_count = 2};
+
+    registry->primitives.array_decl = array;
 }
 
 static bool layout_of_scalar(TypeKind kind, size_t *size, size_t *alignment) {
@@ -60,6 +70,7 @@ static bool layout_of_scalar(TypeKind kind, size_t *size, size_t *alignment) {
         return true;
 
     case TYPE_STR:
+    case TYPE_SLICE:
     case TYPE_ERROR:
         *size = 0;
         *alignment = 1;
@@ -168,12 +179,7 @@ size_t type_registry_align_of(TypeRegistry *registry, const Type *type) {
     return type_registry_layout_of(registry, type)->alignment;
 }
 
-void type_registry_set_deref(TypeRegistry *registry, const Type *from, const Type *to, const LentPart *parts,
-                             size_t part_count) {
-    assert(from && to && "a deref relates two types");
-    assert(part_count <= GAB_MAX_LENT_PARTS && "a reference is built from at most GAB_MAX_LENT_PARTS parts");
-    assert(!deref_key_lookup(registry->derefs, from) && "a type derefs to one thing");
-
+static Deref *deref_create(TypeRegistry *registry, const Type *to, const LentPart *parts, size_t part_count) {
     Deref *deref = arena_alloc(registry->arena, sizeof(Deref));
 
     *deref = (Deref){.to = to, .part_count = part_count};
@@ -182,20 +188,45 @@ void type_registry_set_deref(TypeRegistry *registry, const Type *from, const Typ
         deref->parts[i] = parts[i];
     }
 
-    deref_key_insert(registry->derefs, from, deref);
+    return deref;
+}
+
+/* Stated in the declaration's own parameters, so one entry serves every instantiation of it. */
+void type_registry_set_deref(TypeRegistry *registry, const TypeDecl *decl, const Type *to,
+                             const LentPart *parts, size_t part_count) {
+    assert(decl && to && "a deref relates a declaration to a type");
+    assert(part_count <= GAB_MAX_LENT_PARTS && "a reference is built from at most GAB_MAX_LENT_PARTS parts");
+    assert(!deref_key_lookup(registry->derefs, decl) && "a declaration derefs to one thing");
+
+    deref_key_insert(registry->derefs, decl, deref_create(registry, to, parts, part_count));
 }
 
 const Deref *type_registry_deref(TypeRegistry *registry, const Type *type) {
-    if (!type) {
+    if (!type || !type_decl(type)) {
         return NULL;
     }
 
-    const Deref **found = deref_key_lookup(registry->derefs, type);
+    const Deref **declared = deref_key_lookup(registry->derefs, type_decl(type));
 
-    return found ? *found : NULL;
+    if (!declared) {
+        return NULL;
+    }
+
+    if (type_arg_count(type) == 0) {
+        return *declared;
+    }
+
+    return deref_create(
+        registry, type_registry_substitute(registry, (*declared)->to, type_args(type), type_arg_count(type)),
+        (*declared)->parts, (*declared)->part_count);
 }
 
 const Type *type_registry_deref_of(TypeRegistry *registry, const Type *type) {
+    /* An array reads as a slice of its element, which is where the two share their methods. */
+    if (type && type_kind(type) == TYPE_ARRAY) {
+        return type_registry_slice_of(registry, type_array_element(type));
+    }
+
     const Deref *deref = type_registry_deref(registry, type);
 
     return deref ? deref->to : NULL;
@@ -262,7 +293,8 @@ const Type *type_registry_declare(TypeRegistry *registry, const TypeDeclSpec *sp
     }
 
     if (spec->derefs_to) {
-        type_registry_set_deref(registry, type, spec->derefs_to, spec->lent_parts, spec->lent_part_count);
+        type_registry_set_deref(registry, spec->decl, spec->derefs_to, spec->lent_parts,
+                                spec->lent_part_count);
     }
 
     return type;
@@ -381,18 +413,58 @@ const Type *type_registry_apply(TypeRegistry *registry, const TypeDecl *decl, co
     return type_registry_instantiate(registry, decl, type_args, arg_count);
 }
 
-const Type *type_registry_array_of(TypeRegistry *registry, const Type *element, int32_t length) {
-    Type key = type_init(TYPE_ARRAY, NULL);
+/* An instantiation owns the arguments it was interned under, since the caller's are on its stack. */
+static Type *intern_applied(TypeRegistry *registry, Type *key, const TypeArg *args, size_t count) {
+    key->args = args;
+    key->arg_count = count;
 
-    key.array.element = element;
-    key.array.length = length;
+    Type **existing = type_intern_lookup(registry->applications, key);
+
+    if (existing) {
+        return *existing;
+    }
+
+    TypeArg *owned = arena_alloc(registry->arena, count * sizeof(TypeArg));
+    memcpy(owned, args, count * sizeof(TypeArg));
+
+    key->args = owned;
+
+    return intern(registry, key);
+}
+
+const Type *type_registry_slice_of(TypeRegistry *registry, const Type *element) {
+    Type key = type_init(TYPE_SLICE, registry->primitives.slice_decl->name);
+
+    TypeArg argument = {.kind = TYPE_ARG_TYPE, .type = element};
+
+    key.decl = registry->primitives.slice_decl;
     key.has_param = type_has_param(element);
 
-    Type *type = intern(registry, &key);
+    return intern_applied(registry, &key, &argument, 1);
+}
 
-    type_registry_drop_of(registry, type);
+/* The length is an argument like the element, so a generic one is a parameter rather than a count. */
+const Type *type_registry_array_with(TypeRegistry *registry, const Type *element, TypeArg length) {
+    Type key = type_init(TYPE_ARRAY, registry->primitives.array_decl->name);
+
+    TypeArg args[2] = {{.kind = TYPE_ARG_TYPE, .type = element}, length};
+
+    key.decl = registry->primitives.array_decl;
+    key.has_param =
+        type_has_param(element) || (length.kind == TYPE_ARG_CONST && length.constant.kind == CONST_PARAM);
+
+    Type *type = intern_applied(registry, &key, args, 2);
+
+    if (!type->has_param) {
+        type_registry_drop_of(registry, type);
+    }
 
     return type;
+}
+
+const Type *type_registry_array_of(TypeRegistry *registry, const Type *element, int32_t length) {
+    return type_registry_array_with(registry, element,
+                                    (TypeArg){.kind = TYPE_ARG_CONST, .constant = {.value = length}});
 }
 
 static const Type *indirect_to(TypeRegistry *registry, TypeKind kind, const Type *inner) {
@@ -428,7 +500,19 @@ const Type *type_registry_param(TypeRegistry *registry, size_t index) {
     return registry->params[index];
 }
 
-const Type *type_registry_substitute(TypeRegistry *registry, const Type *type, const Type *const *args,
+/* A value argument takes the parameter it names; a type argument is rebuilt by the walk below. */
+static TypeArg substitute_arg(TypeArg arg, const TypeArg *args, size_t arg_count) {
+    if (arg.kind != TYPE_ARG_CONST || arg.constant.kind != CONST_PARAM) {
+        return arg;
+    }
+
+    assert(arg.constant.param < arg_count && "a parameter was substituted with no argument at its index");
+    assert(args[arg.constant.param].kind == TYPE_ARG_CONST && "a value parameter is given a value");
+
+    return args[arg.constant.param];
+}
+
+const Type *type_registry_substitute(TypeRegistry *registry, const Type *type, const TypeArg *args,
                                      size_t arg_count) {
     if (!type_has_param(type)) {
         return type;
@@ -439,8 +523,9 @@ const Type *type_registry_substitute(TypeRegistry *registry, const Type *type, c
         size_t index = type_param_index(type);
 
         assert(index < arg_count && "a parameter was substituted with no argument at its index");
+        assert(args[index].kind == TYPE_ARG_TYPE && "a type parameter is given a type");
 
-        return args[index];
+        return args[index].type;
     }
 
     case TYPE_BOX:
@@ -460,9 +545,13 @@ const Type *type_registry_substitute(TypeRegistry *registry, const Type *type, c
             registry, type_registry_substitute(registry, type_pointee(type), args, arg_count));
 
     case TYPE_ARRAY:
-        return type_registry_array_of(
+        return type_registry_array_with(
             registry, type_registry_substitute(registry, type_array_element(type), args, arg_count),
-            type_array_length(type));
+            substitute_arg(type_args(type)[1], args, arg_count));
+
+    case TYPE_SLICE:
+        return type_registry_slice_of(
+            registry, type_registry_substitute(registry, type_slice_element(type), args, arg_count));
 
     case TYPE_STRUCT: {
         assert(type_decl(type) && "a struct mentioning a parameter is an instantiation");
@@ -470,7 +559,7 @@ const Type *type_registry_substitute(TypeRegistry *registry, const Type *type, c
         /* A caller may hold more arguments than this struct takes, when a method adds its own. */
         assert(type_decl(type)->param_count <= arg_count && "an instantiation is given every argument");
 
-        return type_registry_apply(registry, type_decl(type), args, type_decl(type)->param_count);
+        return type_registry_instantiate(registry, type_decl(type), args, type_decl(type)->param_count);
     }
 
     default:
@@ -504,20 +593,13 @@ const TypeFields *type_registry_fields_of(TypeRegistry *registry, const Type *ty
 
     TypeFields *result = arena_alloc(registry->arena, sizeof(TypeFields));
 
-    const Type *args[GAB_MAX_TYPE_PARAMS];
-
-    for (size_t i = 0; i < type_arg_count(type); i++) {
-        assert(type_args(type)[i].kind == TYPE_ARG_TYPE && "a record's parameters are types");
-
-        args[i] = type_args(type)[i].type;
-    }
-
     TypeField *fields = arena_alloc(registry->arena, decl->field_count * sizeof(TypeField));
 
     for (size_t i = 0; i < decl->field_count; i++) {
         fields[i] = (TypeField){
             .name = decl->fields[i].name,
-            .type = type_registry_substitute(registry, decl->fields[i].type, args, type_arg_count(type)),
+            .type = type_registry_substitute(registry, decl->fields[i].type, type_args(type),
+                                             type_arg_count(type)),
         };
     }
 
@@ -561,6 +643,7 @@ bool type_registry_owns(TypeRegistry *registry, const Type *type) {
         return type_registry_owns(registry, type_array_element(type));
 
     case TYPE_STR:
+    case TYPE_SLICE:
         return false;
 
     default:
@@ -596,6 +679,7 @@ bool type_registry_borrows(TypeRegistry *registry, const Type *type) {
         return type_registry_borrows(registry, type_array_element(type));
 
     case TYPE_STR:
+    case TYPE_SLICE:
         return false;
 
     default:
@@ -632,6 +716,7 @@ bool type_registry_copies(TypeRegistry *registry, const Type *type) {
         return type_registry_copies(registry, type_array_element(type));
 
     case TYPE_STR:
+    case TYPE_SLICE:
         return true;
 
     default:
@@ -673,7 +758,8 @@ const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDecl *de
     key.arg_count = arg_count;
 
     for (size_t i = 0; i < arg_count; i++) {
-        key.has_param |= args[i].kind == TYPE_ARG_TYPE && type_has_param(args[i].type);
+        key.has_param |= args[i].kind == TYPE_ARG_TYPE ? type_has_param(args[i].type)
+                                                       : args[i].constant.kind == CONST_PARAM;
     }
 
     Type **existing = type_intern_lookup(registry->applications, &key);
@@ -700,6 +786,8 @@ const Type *type_registry_ref_to(TypeRegistry *registry, const Type *inner) {
 const Type *type_registry_ptr_to(TypeRegistry *registry, const Type *pointee) {
     return indirect_to(registry, TYPE_PTR, pointee);
 }
+
+const TypeDecl *type_registry_array_decl(TypeRegistry *registry) { return registry->primitives.array_decl; }
 
 const Type *type_registry_error_type(TypeRegistry *registry) { return registry->primitives.error_type; }
 
@@ -734,6 +822,8 @@ TypePrimitiveNames type_primitive_names(StringPool *strings) {
 
         .byte_name = string_from_cstr(strings, "byte"),
         .str_name = string_from_cstr(strings, "str"),
+        .slice_name = string_from_cstr(strings, "slice"),
+        .array_name = string_from_cstr(strings, "array"),
 
         .error_name = string_from_cstr(strings, "<error>"),
     };

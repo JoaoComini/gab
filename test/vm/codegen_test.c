@@ -665,6 +665,21 @@ static void test_every_jump_lands_inside_its_chunk() {
     test_program_free(&program);
 }
 
+static void test_an_array_indexes_without_a_call() {
+    TestProgram program = test_compile("func f(): int {\n"
+                                       "    let xs: array<int, 3> = [1, 2, 3];\n"
+                                       "    return *xs.index(1);\n"
+                                       "}\n"
+                                       "let r: int = f();");
+
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    assert(test_count_opcode(chunk, OP_CALL_EXTERN) == 0);
+    assert(test_count_opcode(chunk, OP_BOUNDS_CHECK) == 1);
+
+    test_program_free(&program);
+}
+
 int main() {
     test_a_constant_expression_folds_to_one_load();
     test_a_constant_float_expression_folds();
@@ -708,6 +723,7 @@ int main() {
     test_box_encodes_the_type_index_the_vm_holds();
 
     test_a_signature_too_wide_for_a_frame_is_refused();
+    test_an_array_indexes_without_a_call();
 
     printf("codegen_test: all tests passed\n");
     return 0;

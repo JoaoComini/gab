@@ -122,6 +122,7 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node);
 static FieldTarget codegen_index_target(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_addr_of_expr(CodegenState *state, ASTExpr *node);
+static unsigned int codegen_unsize_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_deref_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_neg_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_not_expr(CodegenState *state, ASTExpr *node);
@@ -1170,6 +1171,10 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
         return codegen_field_expr(state, ast);
     case EXPR_ADDR_OF:
         return codegen_addr_of_expr(state, ast);
+
+    case EXPR_UNSIZE:
+        return codegen_unsize_expr(state, ast);
+
     case EXPR_DEREF:
         return codegen_deref_expr(state, ast);
     case EXPR_LEND:
@@ -1233,6 +1238,25 @@ static unsigned int codegen_lend_expr(CodegenState *state, ASTExpr *node) {
 
         at += width;
     }
+
+    return rd;
+}
+
+/* A slice is where the elements start and how many there are, in the two slots a '&slice<T>' occupies. */
+static unsigned int codegen_unsize_expr(CodegenState *state, ASTExpr *node) {
+    unsigned int rd = codegen_alloc_slots(state, type_slot_count(state->registry, node->type),
+                                          type_align_slots(state->registry, node->type), node->span);
+
+    /* A borrowed array already holds where its elements are; an owned one is addressed. */
+    if (type_is_indirect(node->unsize.target->type)) {
+        codegen_copy_slots(state, rd, codegen_expr(state, node->unsize.target), VM_INDIRECT_SLOTS);
+    } else {
+        codegen_addr_of_into(state, node->unsize.target, rd, node->span);
+    }
+
+    unsigned int length = constpool_add(state->chunk->const_pool, (Constant){.as_int = node->unsize.length});
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_LOAD_CONST, rd + VM_INDIRECT_SLOTS, length));
 
     return rd;
 }

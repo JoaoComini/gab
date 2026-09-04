@@ -637,7 +637,14 @@ static bool parse_type_args(Parser *parser, TypeExprList *out) {
     parser_next_token(parser);
 
     for (;;) {
-        TypeExpr *argument = parse_type_expr(parser);
+        TypeExpr *argument;
+
+        if (parser->current.type == TOKEN_INT) {
+            argument = type_expr_const(parser->arena, parser->current.value.as_int);
+            parser_next_token(parser);
+        } else {
+            argument = parse_type_expr(parser);
+        }
 
         if (!argument) {
             return false;
@@ -662,39 +669,6 @@ static bool parse_type_args(Parser *parser, TypeExprList *out) {
 }
 
 static TypeExpr *parse_type_expr(Parser *parser) {
-    if (parser->current.type == TOKEN_LBRACKET) {
-        parser_next_token(parser);
-
-        TypeExpr *element = parse_type_expr(parser);
-
-        if (!element) {
-            return NULL;
-        }
-
-        if (!parser_expect(parser, TOKEN_SEMICOLON, "expected ';' and a length, as '[int; 3]'")) {
-            return NULL;
-        }
-
-        parser_next_token(parser);
-
-        if (parser->current.type != TOKEN_INT) {
-            parser_error(parser, "an array's length must be an integer literal");
-            return NULL;
-        }
-
-        int32_t length = parser->current.value.as_int;
-
-        parser_next_token(parser);
-
-        if (!parser_expect(parser, TOKEN_RBRACKET, "expected ']' after an array's length")) {
-            return NULL;
-        }
-
-        parser_next_token(parser);
-
-        return type_expr_array(parser->arena, element, length);
-    }
-
     /* In a type '&' borrows and '*' owns; neither is the expression operator that shares its spelling. */
     if (parser->current.type == TOKEN_AMP || parser->current.type == TOKEN_MUL ||
         parser->current.type == TOKEN_AND) {
@@ -1050,6 +1024,10 @@ static ASTStmt *parse_impl_stmt(Parser *parser) {
     parser_next_token(parser);
 
     ASTStmt *stmt = ast_impl_stmt_create(parser->arena, span, type, members);
+
+    for (size_t i = 0; i < declared.count; i++) {
+        stmt->impl.param_bounds[i] = declared.bounds[i];
+    }
 
     stmt->impl.interface_name = interface_name;
     stmt->impl.interface_span = interface_span;

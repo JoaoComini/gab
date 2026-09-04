@@ -708,7 +708,7 @@ static void test_a_body_reads_the_shape_of_an_array_it_is_given(void) {
 
     assert(gab_vm_load(vm, "<m>",
                        "module test;\n"
-                       "extern func shape(xs: [int; 3]): int;\n"
+                       "extern func shape(xs: array<int, 3>): int;\n"
                        "func run(): int { return shape([1, 2, 3]); }\n",
                        &err));
 

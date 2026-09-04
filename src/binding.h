@@ -32,7 +32,7 @@ typedef struct FuncSignature {
 
 /* Substitutes 'args' for the type parameters a signature names, yielding the specialized one. */
 FuncSignature func_signature_instantiate(TypeRegistry *registry, Arena *arena, const FuncSignature *generic,
-                                         const Type *const *args, size_t arg_count);
+                                         const TypeArg *args, size_t arg_count);
 
 typedef struct FuncDecl {
     String *name;
@@ -68,7 +68,7 @@ typedef struct Function {
     size_t func_index;
 
     /* What a specialization was given, one per type parameter; NULL while this is still a declaration. */
-    const Type *const *type_args;
+    const TypeArg *type_args;
     size_t type_arg_count;
 
     struct ASTStmt *instance;

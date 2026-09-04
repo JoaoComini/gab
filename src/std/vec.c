@@ -44,12 +44,8 @@ static void vec_index(GabCtx *ctx) {
         return;
     }
 
-    size_t stride = gab_ctx_type_size(ctx, 0);
-
-    gab_ctx_return_pointer(ctx, (char *)vec.block.data + (size_t)index * stride);
+    gab_ctx_return_pointer(ctx, (char *)vec.block.data + (size_t)index * gab_ctx_type_size(ctx, 0));
 }
-
-static void vec_len(GabCtx *ctx) { gab_ctx_return_int(ctx, vec_load(ctx).block.length); }
 
 static void vec_new(GabCtx *ctx) {
     int32_t count = gab_ctx_int(ctx, 0);
@@ -74,10 +70,10 @@ static void vec_new(GabCtx *ctx) {
 static const char VEC_SRC[] = "impl<T> Vec<T> {\n"
                               "    extern func new(count: int): Self;\n"
                               "    extern func push(self: &Self, value: T);\n"
-                              "    extern func index(self: &Self, at: int): &T;\n"
-                              "    extern func len(self: &Self): int;\n"
                               "}\n"
-                              "impl<T> Vec<T> as Index<T> {}\n";
+                              "impl<T> Vec<T> as Index<T> {\n"
+                              "    extern func index(self: &Self, at: int): &T;\n"
+                              "}\n";
 
 void std_register_vec(GabVM *vm) {
     GabError err;
@@ -89,11 +85,19 @@ void std_register_vec(GabVM *vm) {
         {"data", gab_lib_block_of(std, gab_lib_param(std, 0))},
     };
 
+    const GabLentPart elements_named_by[] = {
+        {offsetof(Vec, block) + offsetof(GabBlock, data), sizeof(void *)},
+        {offsetof(Vec, block) + offsetof(GabBlock, length), sizeof(int32_t)},
+    };
+
     const GabTypeSpec spec = {
         .name = "Vec",
         .params = 1,
         .fields = fields,
         .field_count = sizeof(fields) / sizeof(*fields),
+        .derefs_to = gab_lib_slice_of(std, gab_lib_param(std, 0)),
+        .lends = elements_named_by,
+        .lend_count = sizeof(elements_named_by) / sizeof(*elements_named_by),
     };
 
     bool ok = gab_lib_type(std, &spec, &err) == NULL;
@@ -107,7 +111,6 @@ void std_register_vec(GabVM *vm) {
         {"new", vec_new},
         {"push", vec_push},
         {"index", vec_index},
-        {"len", vec_len},
     };
 
     for (size_t i = 0; i < sizeof(METHODS) / sizeof(*METHODS); i++) {

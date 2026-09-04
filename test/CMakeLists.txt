@@ -44,6 +44,8 @@ set(
     vm/string_test.c
     vm/str_test.c
     vm/array_test.c
+    vm/slice_test.c
+    vm/const_generic_test.c
     std/string_method_test.c
     std/vec_test.c
     vm/neg_test.c

@@ -163,8 +163,11 @@ bool link_check(Program *program, Unit *unit, TypeRegistry *registry, Diagnostic
             return false;
         }
 
+        /* A value argument has no width of its own; only a type argument sizes what a body allocates. */
         for (size_t t = 0; t < function->type_arg_count; t++) {
-            type_arg_sizes[t] = type_registry_size_of(registry, function->type_args[t]);
+            type_arg_sizes[t] = function->type_args[t].kind == TYPE_ARG_TYPE
+                                    ? type_registry_size_of(registry, function->type_args[t].type)
+                                    : 0;
         }
 
         ExternProto *proto = &unit->extern_protos.data[request->local_index];
