@@ -192,6 +192,7 @@
         [OP_ALLOC] = &&OP_ALLOC_label,                                                                       \
         [OP_FREE] = &&OP_FREE_label,                                                                         \
         [OP_BOUNDS_CHECK] = &&OP_BOUNDS_CHECK_label,                                                         \
+        [OP_BOUNDS_CHECK_REG] = &&OP_BOUNDS_CHECK_REG_label,                                                 \
         [OP_LOAD_PTR_N] = &&OP_LOAD_PTR_N_label,                                                             \
         [OP_STORE_PTR_N] = &&OP_STORE_PTR_N_label,                                                           \
         [OP_LOOP_INIT] = &&OP_LOOP_INIT_label,                                                               \

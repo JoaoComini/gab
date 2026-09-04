@@ -680,6 +680,17 @@ static void test_an_array_indexes_without_a_call() {
     test_program_free(&program);
 }
 
+static void test_a_slice_indexes_without_a_call() {
+    TestProgram program = test_compile("func g(xs: &slice<int>): int { return *xs.index(0); }\n");
+
+    Chunk *chunk = test_func_chunk(&program, 0);
+
+    assert(test_count_opcode(chunk, OP_CALL_EXTERN) == 0);
+    assert(test_count_opcode(chunk, OP_BOUNDS_CHECK_REG) == 1);
+
+    test_program_free(&program);
+}
+
 int main() {
     test_a_constant_expression_folds_to_one_load();
     test_a_constant_float_expression_folds();
@@ -724,6 +735,7 @@ int main() {
 
     test_a_signature_too_wide_for_a_frame_is_refused();
     test_an_array_indexes_without_a_call();
+    test_a_slice_indexes_without_a_call();
 
     printf("codegen_test: all tests passed\n");
     return 0;

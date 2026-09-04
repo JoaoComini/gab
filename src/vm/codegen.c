@@ -1468,14 +1468,19 @@ static unsigned int codegen_index_base(CodegenState *state, ASTExpr *target) {
 }
 
 static unsigned int codegen_index_address(CodegenState *state, ASTExpr *node) {
-    const Type *array_type = node->index.array_type;
-    const Type *element = type_array_element(array_type);
+    const Type *element = node->type;
 
     unsigned int base = codegen_index_base(state, node->index.target);
     unsigned int index = codegen_expr(state, node->index.index);
 
-    chunk_add_instruction(state->chunk, VM_ENCODE_RK(OP_BOUNDS_CHECK, base, index,
-                                                     (unsigned int)type_array_length(array_type), 1));
+    /* A carried length sits in the slot past the address, where unsizing wrote it. */
+    if (node->index.length_is_carried) {
+        chunk_add_instruction(state->chunk,
+                              VM_ENCODE_R(OP_BOUNDS_CHECK_REG, 0, index, base + VM_INDIRECT_SLOTS));
+    } else {
+        chunk_add_instruction(
+            state->chunk, VM_ENCODE_RK(OP_BOUNDS_CHECK, base, index, (unsigned int)node->index.length, 1));
+    }
 
     unsigned int offset = codegen_alloc_register(state, node->span);
 
@@ -1858,6 +1863,10 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
         FieldTarget target = codegen_resolve_field_target(state, inner, true);
         target.offset += codegen_field_offset(state, node);
         return target;
+    }
+
+    if (node->kind == EXPR_INDEX) {
+        return codegen_index_target(state, node);
     }
 
     if (node->kind == EXPR_DEREF) {

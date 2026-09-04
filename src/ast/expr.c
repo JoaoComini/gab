@@ -135,7 +135,6 @@ ASTExpr *ast_index_expr_create(Arena *arena, Span span, ASTExpr *target, ASTExpr
     node->kind = EXPR_INDEX;
     node->index.target = target;
     node->index.index = index;
-    node->index.array_type = NULL;
     return node;
 }
 

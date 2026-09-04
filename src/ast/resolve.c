@@ -1003,13 +1003,22 @@ static void rewrite_index_as_call(ResolverState *state, ASTExpr *expr) {
     expr->type = type_pointee(call->type);
 }
 
-/* An array supplies 'Index' itself: 'xs.index(i)' is '&xs[i]', checked against the length in its type. */
-static bool lower_array_index(ResolverState *state, ASTExpr *expr, ASTExpr *receiver, const Type *base) {
+/* An array's length is fixed in its type; a slice carries its own, so the check reads it at runtime. */
+static void set_index_container(ASTExpr *element, const Type *container) {
+    bool is_slice = type_kind(container) == TYPE_SLICE;
+
+    element->index.length_is_carried = is_slice;
+    element->index.length =
+        is_slice || !type_array_length_is_known(container) ? 0 : type_array_length(container);
+    element->type = is_slice ? type_slice_element(container) : type_array_element(container);
+}
+
+/* An array and a slice both supply 'Index' themselves: 'xs.index(i)' is '&xs[i]'. */
+static bool lower_index(ResolverState *state, ASTExpr *expr, ASTExpr *receiver, const Type *base) {
     ASTExpr *element =
         ast_index_expr_create(state->compile_arena, expr->span, receiver, expr->call.args.data[0]);
 
-    element->index.array_type = base;
-    element->type = type_array_element(base);
+    set_index_container(element, base);
 
     expr->kind = EXPR_ADDR_OF;
     expr->unary.target = element;
@@ -1020,7 +1029,8 @@ static bool lower_array_index(ResolverState *state, ASTExpr *expr, ASTExpr *rece
 
 /* A declaration is an intrinsic only where this names a lowering for it, so the two cannot drift. */
 static const IntrinsicLowering INTRINSICS[] = {
-    {"array", "index", lower_array_index},
+    {"array", "index", lower_index},
+    {"slice", "index", lower_index},
 };
 
 static const IntrinsicLowering *intrinsic_for(const String *owner, const String *name) {
@@ -1572,8 +1582,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             break;
         }
 
-        expr->index.array_type = target_type;
-        expr->type = type_array_element(target_type);
+        set_index_container(expr, target_type);
         break;
     }
     case EXPR_FIELD: {
