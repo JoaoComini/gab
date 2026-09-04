@@ -235,9 +235,33 @@ against whatever type happens to reach it.
 
 A type implements a given interface once, and the methods are called the way
 any other method is — an interface adds no representation, so `b.count()`
-costs what it did before. Naming an interface in a type parameter's bound is
-not yet spelled, so an interface today states what a type supplies rather than
-what a generic requires.
+costs what it did before.
+
+An interface takes type parameters of its own, which its signatures name and an
+implementation supplies:
+
+```
+interface Holder<T> {
+    func get(self: &Self): T;
+}
+
+impl IntBox as Holder<int> {
+    func get(self: &Self): int { return self.n; }
+}
+
+impl<T> Box<T> as Holder<T> {
+    func get(self: &Self): T { return self.value; }
+}
+```
+
+A bound names those arguments too, and the body sees the methods at exactly
+what it named: under `<H: Holder<int>>`, `h.get()` is an `int`. An interface is
+named with as many arguments as it declares, so `Holder` alone and
+`Countable<int>` are both errors.
+
+```
+func read<H: Holder<int>>(h: &H): int { return h.get(); }
+```
 
 Only something with a home in memory can be borrowed. A call result is a
 temporary with no address to name, so it must be bound to a variable first. A
@@ -515,7 +539,7 @@ more or less, and a second spelling would say nothing the first does not.
 | --- | --- |
 | Types | `int` (32-bit), `float` (32-bit), `bool`, `String` and characters named by `&str`, `[T; N]`, `Vec<T>`, structs, owning `*T`, borrows `&T` |
 | Declarations | `let` with inferred or annotated type, `func`, `struct`, `impl`, `interface`, `module`. A struct local is written as a literal |
-| Interfaces | `interface` names signatures, `impl T as I` supplies them and is checked at the declaration. `<T: I>` bounds a type parameter, and a generic body is checked once against its bounds. `Self` is reserved, and names the type an `impl` block is for |
+| Interfaces | `interface` names signatures and may take type parameters, `impl T as I<A>` supplies them and is checked at the declaration. `<T: I<A>>` bounds a type parameter, and a generic body is checked once against its bounds. `Self` is reserved, and names the type an `impl` block is for |
 | Generics | Structs, the methods they own, and free functions. A method declares parameters of its own beside its owner's. A call infers its type arguments from what it is given, or names them as `id<int>(x)` |
 | Functions | Parameters and returns of any type, structs by value, functions a type owns, recursion, forward references |
 | Control flow | `if` / `else`, `for` in three forms, `break`, `continue`, `return`, nested blocks with shadowing |

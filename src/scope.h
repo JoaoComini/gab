@@ -21,6 +21,10 @@ typedef struct Interface {
     /* The signatures as written: each is resolved per implementor, with 'Self' bound to it. */
     ASTStmt *const *methods;
     size_t method_count;
+
+    /* The names its signatures give its type parameters, bound to what an implementor applies. */
+    String **params;
+    size_t param_count;
 } Interface;
 
 #define interface_map_hash(key) (size_t)key
