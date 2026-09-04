@@ -282,14 +282,15 @@ interface Index<T> {
 }
 ```
 
-`Vec<T>` supplies it, and so does an array: an array indexes from its type
-rather than from a declaration, since `[T; N]` names no one type to write an
-`impl` for. So both reach a bounded function, and both are subscripted:
+`slice<T>` supplies it, and so do `Vec<T>` and an array. A type reads as
+another — a `Vec<T>` as a `slice<T>` — to reach its *methods*, but never its
+conformances: each says `Index` for itself, the way Rust's `String` carries its
+own `impl Index` beside the one on the `str` it derefs to.
 
 ```
 func first<C: Index<int>>(c: &C): int { return c[0]; }
 
-let xs: [int; 3] = [1, 20, 300];
+let xs: array<int, 3> = [1, 20, 300];
 let ys: Vec<int> = Vec<int>::new(0);
 
 let a: int = first(xs);
@@ -388,13 +389,13 @@ the struct, so the levels never have to be spelled: `s.n` and `s.bump()` work
 whether `s` is a `Box`, a `*Box`, or a `&*Box`. Only `*` is explicit,
 for when the pointer itself is what you mean.
 
-An `[T; N]` is a run of N elements laid out inline, exactly as a C `T[N]` is.
+An `array<T, N>` is a run of N elements laid out inline, exactly as a C `T[N]` is.
 Its length is part of its type, so `xs.len()` is known where it is written, and
 every index is checked against it: an index outside the array fails the run
 rather than reading past the last element.
 
 ```
-let xs: [int; 3];
+let xs: array<int, 3>;
 xs[0] = 1;
 let n: int = xs.len();
 ```
@@ -403,6 +404,29 @@ No `new`: the elements are the array, so a slot holding one holds them. An
 array owns exactly what its elements do -- a run of ints owns nothing and
 copies freely, while a run of `*T` owns each of them and moves rather than
 copies.
+
+A `slice<T>` is a run of elements whose count is not in its type, the way `str`
+is characters whose count is not in theirs. Nothing holds one: what names them
+is a `&slice<T>`, which carries the address and the count side by side, so a
+function taking one reads an array of any length and a vector alike.
+
+```
+func total(xs: &slice<int>): int {
+    let sum: int = 0;
+    for let i: int = 0; i < xs.len(); i = i + 1 { sum = sum + xs[i]; }
+    return sum;
+}
+
+let a: array<int, 2> = [1, 2];
+let b: Vec<int> = Vec<int>::new(0);
+
+let n: int = total(a);
+```
+
+`len` is declared on `slice<T>` alone, and an array and a `Vec<T>` both reach it
+by reading as one: an array by having its address and its type's length handed
+over together, a vector by lending the two words it already holds. Neither
+declares a `len` of its own, and the count checked is the one the slice carries.
 
 A `Vec<T>` is what grows. Its length is in the value rather than in its type, so
 it holds whatever has been pushed into it, and the block behind it is replaced
@@ -419,7 +443,7 @@ let value: int = xs[0];
 `index` lends the element where it sits rather than copying it out, so an
 element that owns is reached without moving it out of the vector. It is what
 `[]` is written in terms of: `xs[0]` is `*xs.index(0)`, so a type supplying
-`Index` is subscripted like an array, and assigning through it stores into the
+`Index` is subscripted like a slice, and assigning through it stores into the
 element. The borrow names the block, which a later
 `push` may reallocate — as a C pointer into a vector's storage is invalidated
 by a growth.
@@ -577,7 +601,7 @@ more or less, and a second spelling would say nothing the first does not.
 
 | | |
 | --- | --- |
-| Types | `int` (32-bit), `float` (32-bit), `bool`, `String` and characters named by `&str`, `[T; N]`, `Vec<T>`, structs, owning `*T`, borrows `&T` |
+| Types | `int` (32-bit), `float` (32-bit), `bool`, `String` and characters named by `&str`, `array<T, N>`, elements named by `&slice<T>`, `Vec<T>`, structs, owning `*T`, borrows `&T` |
 | Declarations | `let` with inferred or annotated type, `func`, `struct`, `impl`, `interface`, `module`. A struct local is written as a literal |
 | Interfaces | `interface` names signatures and may take type parameters, `impl T as I<A>` supplies them and is checked at the declaration. `<T: I<A>>` bounds a type parameter on a function or an `impl` block, and a generic body is checked once against its bounds. `Self` is reserved, and names the type an `impl` block is for |
 | Generics | Structs, the methods they own, and free functions. A method declares parameters of its own beside its owner's. A call infers its type arguments from what it is given, or names them as `id<int>(x)` |
@@ -596,8 +620,8 @@ Not yet implemented:
 | | |
 | --- | --- |
 | Strings | No interpolation, no `substring` or case conversion, and no indexing |
-| Arrays | Fixed length once allocated: no growth and no slice type. `Vec<T>` is what grows |
-| Vectors | `new`, `push`, `index` and `len` only: no removal, no iteration, and no literal. `Vec<T>` supplies `Index<T>`, so it is subscripted with `[]` |
+| Arrays | Fixed length once allocated: no growth. `Vec<T>` is what grows, and `&slice<T>` is what reads either |
+| Vectors | `new`, `push` and `index` only: no removal, no iteration, and no literal. A `Vec<T>` supplies `Index<T>`, and reads as a `slice<T>` for `len` |
 | Borrows | A returned borrow names a parameter or something it reaches; returning one that names a local is refused |
 | Generics | A method's own type arguments are inferred from what it is given; there is no `v.method<int>(x)` to write them |
 | Interfaces | No associated types, no compound bounds, and no dynamic dispatch |

@@ -84,7 +84,8 @@ typedef struct {
     ResolutionKind kind;
 
     union {
-        const Type *type;
+        /* A name bound as a generic argument, which is a type unless the declaration takes a value. */
+        TypeArg arg;
         const TypeDecl *decl;
         Binding *binding;
     };
@@ -107,7 +108,7 @@ void scope_withdraw_type(Scope *scope, String *name);
 
 bool scope_bind_type(Scope *scope, String *name, const Type *type);
 
-bool scope_bind_argument(Scope *scope, String *name, const Type *type);
+bool scope_bind_argument(Scope *scope, String *name, TypeArg arg);
 
 bool scope_bind_decl(Scope *scope, String *name, const TypeDecl *decl);
 

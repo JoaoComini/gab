@@ -39,6 +39,7 @@ TypeMetadata type_metadata_of(const Type *type) {
 
     switch (type->kind) {
     case TYPE_STR:
+    case TYPE_SLICE:
         return TYPE_META_LENGTH;
 
     default:
@@ -58,6 +59,7 @@ bool type_is_sized(const Type *type) {
 
     switch (type->kind) {
     case TYPE_STR:
+    case TYPE_SLICE:
         return false;
 
     case TYPE_PARAM:
@@ -93,14 +95,28 @@ bool type_owns_through_an_address(const Type *type) {
 
 const Type *type_array_element(const Type *type) {
     assert(type && type->kind == TYPE_ARRAY && "only an array has an element");
+    assert(type->arg_count == 2 && type->args[0].kind == TYPE_ARG_TYPE && "an array is element and length");
 
-    return type->array.element;
+    return type->args[0].type;
+}
+
+const Type *type_slice_element(const Type *type) {
+    assert(type && type->kind == TYPE_SLICE && "only a slice has an element");
+    assert(type->arg_count == 1 && type->args[0].kind == TYPE_ARG_TYPE && "a slice is one element");
+
+    return type->args[0].type;
 }
 
 int32_t type_array_length(const Type *type) {
     assert(type && type->kind == TYPE_ARRAY && "only an array has a length");
+    assert(type_array_length_is_known(type) && "a generic length is no count until it is substituted");
 
-    return type->array.length;
+    return type->args[1].constant.value;
+}
+
+bool type_array_length_is_known(const Type *type) {
+    return type && type->kind == TYPE_ARRAY && type->arg_count == 2 && type->args[1].kind == TYPE_ARG_CONST &&
+           type->args[1].constant.kind == CONST_VALUE;
 }
 
 TypeKind type_kind(const Type *type) { return type->kind; }
@@ -108,6 +124,26 @@ TypeKind type_kind(const Type *type) { return type->kind; }
 String *type_name_of(const Type *type) { return type->name; }
 
 const TypeDecl *type_decl(const Type *type) { return type->decl; }
+
+size_t type_arg_hash(TypeArg arg) {
+    if (arg.kind == TYPE_ARG_TYPE) {
+        return (size_t)(uintptr_t)arg.type;
+    }
+
+    return arg.constant.kind == CONST_PARAM ? arg.constant.param : (size_t)(uint32_t)arg.constant.value;
+}
+
+bool type_arg_equals(TypeArg arg, TypeArg other) {
+    if (arg.kind != other.kind) {
+        return false;
+    }
+
+    if (arg.kind == TYPE_ARG_TYPE) {
+        return arg.type == other.type;
+    }
+
+    return arg.constant.kind == other.constant.kind && arg.constant.value == other.constant.value;
+}
 
 size_t type_structural_hash(const Type *type) {
     size_t hash = 5381;
@@ -123,10 +159,7 @@ size_t type_structural_hash(const Type *type) {
         break;
 
     case TYPE_ARRAY:
-        hash = ((hash << 5) + hash) + (size_t)(uintptr_t)type->array.element;
-        hash = ((hash << 5) + hash) + (size_t)(uint32_t)type->array.length;
-        break;
-
+    case TYPE_SLICE:
     case TYPE_STRUCT:
         hash = ((hash << 5) + hash) + (size_t)(uintptr_t)type->decl;
 
@@ -135,8 +168,7 @@ size_t type_structural_hash(const Type *type) {
 
             hash = ((hash << 5) + hash) + (size_t)arg->kind;
 
-            hash = ((hash << 5) + hash) +
-                   (arg->kind == TYPE_ARG_TYPE ? (size_t)(uintptr_t)arg->type : (size_t)(uint32_t)arg->value);
+            hash = ((hash << 5) + hash) + type_arg_hash(*arg);
         }
         break;
 
@@ -161,23 +193,14 @@ bool type_structurally_equals(const Type *type, const Type *other) {
         return type->indirect.pointee == other->indirect.pointee;
 
     case TYPE_ARRAY:
-        return type->array.element == other->array.element && type->array.length == other->array.length;
-
+    case TYPE_SLICE:
     case TYPE_STRUCT:
         if (type->decl != other->decl || type->arg_count != other->arg_count) {
             return false;
         }
 
         for (size_t i = 0; i < type->arg_count; i++) {
-            if (type->args[i].kind != other->args[i].kind) {
-                return false;
-            }
-
-            if (type->args[i].kind == TYPE_ARG_TYPE) {
-                if (type->args[i].type != other->args[i].type) {
-                    return false;
-                }
-            } else if (type->args[i].value != other->args[i].value) {
+            if (!type_arg_equals(type->args[i], other->args[i])) {
                 return false;
             }
         }
@@ -200,6 +223,8 @@ bool type_is_primitive(const Type *type) {
     case TYPE_BOOL:
     case TYPE_BYTE:
     case TYPE_STR:
+    case TYPE_SLICE:
+    case TYPE_ARRAY:
         return true;
     default:
         return false;

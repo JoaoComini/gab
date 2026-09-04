@@ -99,7 +99,7 @@ static void test_a_declaration_owed_arguments_converts_nothing() {
 }
 
 static void test_a_parameter_is_the_element_of_an_array() {
-    assert(test_run_int("struct Buf<T> { xs: [T; 3] }\n"
+    assert(test_run_int("struct Buf<T> { xs: array<T, 3> }\n"
                         "func f(): int { let b = Buf<int> { xs: [0, 9, 0] }; return b.xs[1]; }\n"
                         "let r: int = f();") == 9);
 }

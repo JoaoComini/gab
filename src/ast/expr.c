@@ -70,6 +70,15 @@ ASTExpr *ast_lend_expr_create(Arena *arena, Span span, ASTExpr *target) {
     return node;
 }
 
+ASTExpr *ast_unsize_expr_create(Arena *arena, Span span, ASTExpr *target, int32_t length) {
+    ASTExpr *node = ast_expr_create(arena, span);
+    node->kind = EXPR_UNSIZE;
+    node->unsize.target = target;
+    node->unsize.length = length;
+
+    return node;
+}
+
 ASTExpr *ast_deref_expr_create(Arena *arena, Span span, ASTExpr *target) {
     ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_DEREF;
@@ -126,7 +135,6 @@ ASTExpr *ast_index_expr_create(Arena *arena, Span span, ASTExpr *target, ASTExpr
     node->kind = EXPR_INDEX;
     node->index.target = target;
     node->index.index = index;
-    node->index.array_type = NULL;
     return node;
 }
 

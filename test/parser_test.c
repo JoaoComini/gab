@@ -555,7 +555,7 @@ static void test_an_argument_may_be_an_application() {
 }
 
 static void test_a_type_is_a_tree() {
-    ASTUnit *unit = assert_parse("struct Holder { a: &*[int; 3] }");
+    ASTUnit *unit = assert_parse("struct Holder { a: &*array<int, 3> }");
 
     ASTStmt *stmt = unit->statements.data[0];
     ASTFieldList fields = stmt->struct_decl.fields;
@@ -567,10 +567,10 @@ static void test_a_type_is_a_tree() {
     assert(box->kind == TYPE_EXPR_BOX);
 
     TypeExpr *array = box->indirect.inner;
-    assert(array->kind == TYPE_EXPR_ARRAY);
-    assert(array->array.element->kind == TYPE_EXPR_NAME);
-    assert(string_ref_equals_cstr(array->array.element->name, "int"));
-    assert(array->array.length == 3);
+    assert(array->kind == TYPE_EXPR_APPLY);
+    assert(string_ref_equals_cstr(array->apply.base->name, "array"));
+    assert(string_ref_equals_cstr(array->apply.args.data[0]->name, "int"));
+    assert(array->apply.args.data[1]->constant == 3);
 }
 
 int main() {

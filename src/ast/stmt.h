@@ -73,6 +73,9 @@ typedef struct {
 
     const Type *resolved_return_type;
 
+    /* Set when the declaration is 'intrinsic', so no body is written and none is bound. */
+    bool is_intrinsic;
+
     bool declared;
 } ASTFuncDecl;
 
@@ -103,6 +106,9 @@ typedef struct {
 
     /* The arguments the 'as' clause applies to the interface, empty where it names none. */
     TypeExprList interface_args;
+
+    /* The bound written on each parameter the block declares, which says whether it takes a value. */
+    TypeExpr *param_bounds[GAB_MAX_TYPE_PARAMS];
 } ASTImplStmt;
 
 typedef struct {

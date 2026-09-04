@@ -189,7 +189,9 @@ GabTypeKind gab_ctx_type_kind(GabCtx *ctx, size_t index) {
     assert(index < function->type_arg_count &&
            "a host body read a type argument its declaration does not have");
 
-    return (GabTypeKind)type_kind(function->type_args[index]);
+    assert(function->type_args[index].kind == TYPE_ARG_TYPE && "a host body read a value argument as a type");
+
+    return (GabTypeKind)type_kind(function->type_args[index].type);
 }
 
 size_t gab_ctx_type_size(GabCtx *ctx, size_t index) {

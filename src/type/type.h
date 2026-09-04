@@ -24,6 +24,7 @@ typedef enum {
     TYPE_STR,
 
     TYPE_ARRAY,
+    TYPE_SLICE,
     TYPE_STRUCT,
 
     TYPE_BOX,
@@ -49,6 +50,20 @@ typedef struct Type Type;
 
 typedef struct TypeRegistry TypeRegistry;
 
+/* A value, as 'Type' is a type; every one is an 'int', so a second const type must be recorded here. */
+typedef struct TypeConst {
+    enum {
+        CONST_VALUE,
+        CONST_PARAM,
+    } kind;
+
+    union {
+        int32_t value;
+        size_t param;
+    };
+} TypeConst;
+
+/* The kind says which axis a parameter sits on and never changes; the payload says whether it is fixed. */
 typedef struct TypeArg {
     enum {
         TYPE_ARG_TYPE,
@@ -57,7 +72,7 @@ typedef struct TypeArg {
 
     union {
         const Type *type;
-        int32_t value;
+        TypeConst constant;
     };
 } TypeArg;
 
@@ -86,6 +101,9 @@ typedef enum {
 
     BODY_HOST,
 
+    /* The compiler lowers the call itself, so nothing is bound and no body is written. */
+    BODY_INTRINSIC,
+
 } BodyKind;
 
 typedef struct TypeDecl {
@@ -104,6 +122,15 @@ const TypeDecl *type_decl(const Type *type);
 
 const TypeArg *type_args(const Type *type);
 size_t type_arg_count(const Type *type);
+
+/* An argument slot inference has not fixed yet: a type argument with no type. */
+#define TYPE_ARG_NONE ((TypeArg){.kind = TYPE_ARG_TYPE, .type = NULL})
+
+static inline bool type_arg_is_set(TypeArg arg) { return arg.kind != TYPE_ARG_TYPE || arg.type != NULL; }
+
+/* An argument is hashed and compared by its kind and payload, never as bytes: the union has padding. */
+size_t type_arg_hash(TypeArg arg);
+bool type_arg_equals(TypeArg arg, TypeArg other);
 
 size_t type_structural_hash(const Type *type);
 bool type_structurally_equals(const Type *type, const Type *other);
@@ -136,6 +163,11 @@ bool type_owns_through_an_address(const Type *type);
 
 const Type *type_array_element(const Type *type);
 int32_t type_array_length(const Type *type);
+
+/* False while the length is still a parameter, so the array has no width yet. */
+bool type_array_length_is_known(const Type *type);
+
+const Type *type_slice_element(const Type *type);
 
 typedef struct LentPart {
     size_t offset;

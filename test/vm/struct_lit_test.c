@@ -140,7 +140,7 @@ static void test_a_comparison_is_not_read_as_type_arguments() {
 }
 
 static void test_a_field_holds_an_array() {
-    assert(test_run_int("struct Buf { xs: [int; 3] }\n"
+    assert(test_run_int("struct Buf { xs: array<int, 3> }\n"
                         "func f(): int { let b = Buf { xs: [4, 9, 2] }; return b.xs[1]; }\n"
                         "let r: int = f();") == 9);
 }

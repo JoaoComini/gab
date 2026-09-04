@@ -25,11 +25,6 @@ struct Type {
         } record;
 
         struct {
-            const Type *element;
-            int32_t length;
-        } array;
-
-        struct {
             size_t index;
         } param;
     };

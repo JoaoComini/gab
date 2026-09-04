@@ -32,10 +32,9 @@ TypeExpr *type_expr_apply(Arena *arena, TypeExpr *base) {
     return expr;
 }
 
-TypeExpr *type_expr_array(Arena *arena, TypeExpr *element, int32_t length) {
-    TypeExpr *expr = type_expr_create(arena, TYPE_EXPR_ARRAY);
-    expr->array.element = element;
-    expr->array.length = length;
+TypeExpr *type_expr_const(Arena *arena, int32_t value) {
+    TypeExpr *expr = type_expr_create(arena, TYPE_EXPR_CONST);
+    expr->constant = value;
 
     return expr;
 }

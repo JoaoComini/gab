@@ -9,7 +9,7 @@ static void test_a_primitive_needs_no_library() {
     assert(test_compiles("func f(): float { let x: float = 1.5; return x; }\n"));
     assert(test_compiles("func f(): bool { let b: bool = true; return b; }\n"));
     assert(test_compiles("func f(): int { let s: &str = \"hi\"; return 0; }\n"));
-    assert(test_compiles("func f(): int { let a: [int; 2]; return 0; }\n"));
+    assert(test_compiles("func f(): int { let a: array<int, 2>; return 0; }\n"));
 }
 
 static void test_a_registered_type_needs_the_library() {

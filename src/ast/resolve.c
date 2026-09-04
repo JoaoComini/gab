@@ -48,7 +48,7 @@ typedef struct {
     unsigned int loop_depth;
 } FuncContext;
 
-typedef struct {
+typedef struct ResolverState {
     Arena *compile_arena;
 
     Scope *global_scope;
@@ -73,7 +73,7 @@ typedef struct {
     Interface *param_bounds[GAB_MAX_TYPE_PARAMS];
 
     /* What each bound applies to its interface's parameters. */
-    const Type *param_bound_args[GAB_MAX_TYPE_PARAMS][GAB_MAX_TYPE_PARAMS];
+    TypeArg param_bound_args[GAB_MAX_TYPE_PARAMS][GAB_MAX_TYPE_PARAMS];
     size_t param_bound_arg_count[GAB_MAX_TYPE_PARAMS];
 
     /* Set while a generic body is checked against its bounds, where no instantiation exists to flow. */
@@ -234,18 +234,32 @@ static const char *type_name(ResolverState *state, const Type *type) {
         return "none";
     }
 
-    if (type_name_of(type)) {
-        return type_name_of(type)->data;
-    }
-
     if (type_kind(type) == TYPE_ARRAY) {
         const char *element = type_name(state, type_array_element(type));
         size_t length = strlen(element) + 32;
         char *out = arena_alloc(state->compile_arena, length);
 
-        snprintf(out, length, "[%s; %d]", element, type_array_length(type));
+        if (type_array_length_is_known(type)) {
+            snprintf(out, length, "array<%s, %d>", element, type_array_length(type));
+        } else {
+            snprintf(out, length, "array<%s, _>", element);
+        }
 
         return out;
+    }
+
+    if (type_kind(type) == TYPE_SLICE) {
+        const char *element = type_name(state, type_slice_element(type));
+        size_t length = strlen(element) + 16;
+        char *out = arena_alloc(state->compile_arena, length);
+
+        snprintf(out, length, "slice<%s>", element);
+
+        return out;
+    }
+
+    if (type_name_of(type)) {
+        return type_name_of(type)->data;
     }
 
     const char *inner = type_name(state, type_pointee(type));
@@ -407,13 +421,7 @@ static Function *owned_for(TypeRegistry *registry, FunctionRegistry *functions, 
         return declaration;
     }
 
-    const Type *args[GAB_MAX_TYPE_PARAMS];
-
-    for (size_t i = 0; i < type_arg_count(type); i++) {
-        args[i] = type_args(type)[i].type;
-    }
-
-    return function_registry_specialize(functions, declaration, args, type_arg_count(type));
+    return function_registry_specialize(functions, declaration, type_args(type), type_arg_count(type));
 }
 
 static Function *find_method_on_chain(TypeRegistry *registry, FunctionRegistry *functions, const Type *type,
@@ -461,10 +469,15 @@ static void check_call_args(ResolverState *state, ASTExprList *args, const Type 
     }
 }
 
+static bool unsizes_to_a_slice(const Type *to, const Type *from);
+
 typedef struct {
     size_t derefs;
 
     bool address_of;
+
+    /* The array the receiver names is handed over as a slice of it, address and length together. */
+    int32_t unsize_length;
 } ReceiverAdjustment;
 
 static void lower_method_call(Arena *arena, ASTExpr *expr, Function *method, ReceiverAdjustment adjustment) {
@@ -482,7 +495,10 @@ static void lower_method_call(Arena *arena, ASTExpr *expr, Function *method, Rec
         receiver->type = inner;
     }
 
-    if (adjustment.address_of) {
+    if (adjustment.unsize_length > 0) {
+        receiver = ast_unsize_expr_create(arena, span, receiver, adjustment.unsize_length);
+        receiver->type = method->params[0];
+    } else if (adjustment.address_of) {
         receiver = ast_addr_of_expr_create(arena, span, receiver);
         receiver->type = method->params[0];
     }
@@ -525,6 +541,28 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
             return true;
         }
 
+        if (unsizes_to_a_slice(declared, at)) {
+            if (!is_addressable(receiver)) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                           "cannot call '%s' on a temporary, since it takes a pointer receiver", name->data);
+                return false;
+            }
+
+            Binding *addressed = ast_root_local(receiver);
+
+            if (addressed) {
+                addressed->pinned = true;
+            }
+
+            /* A body checked before its length is fixed emits nothing, so the count it sees is unused. */
+            const Type *array = receiver_base_type(at);
+
+            *out = (ReceiverAdjustment){.derefs = derefs,
+                                        .unsize_length =
+                                            type_array_length_is_known(array) ? type_array_length(array) : 1};
+            return true;
+        }
+
         if (lends_by_value(state->current_scope->type_registry, declared, at) ||
             lends_by_pointer(declared, at)) {
             *out = (ReceiverAdjustment){.derefs = derefs, .address_of = false};
@@ -554,7 +592,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
 static void instantiate_body(ResolverState *state, Function *method, Span span);
 
 /* Matches a declared parameter type against an argument's, binding each type parameter it reaches. */
-static bool infer_type_args(const Type *declared, const Type *actual, const Type **args, size_t owed) {
+static bool infer_type_args(const Type *declared, const Type *actual, TypeArg *args, size_t owed) {
     if (!declared || !actual || !type_has_param(declared)) {
         return true;
     }
@@ -564,8 +602,8 @@ static bool infer_type_args(const Type *declared, const Type *actual, const Type
 
         /* The first argument to reach a parameter fixes it; a later disagreement is an argument type error.
          */
-        if (index < owed && !args[index]) {
-            args[index] = actual;
+        if (index < owed && !type_arg_is_set(args[index])) {
+            args[index] = (TypeArg){.kind = TYPE_ARG_TYPE, .type = actual};
         }
 
         return true;
@@ -574,12 +612,16 @@ static bool infer_type_args(const Type *declared, const Type *actual, const Type
     /* An argument is lent or dereferenced to reach a borrowing parameter, so match what each finally names.
      */
     if (type_kind(declared) == TYPE_REF) {
-        for (const Type *at = actual;; at = type_pointee(at)) {
-            const Type *attempt[GAB_MAX_TYPE_PARAMS];
-            memcpy(attempt, args, owed * sizeof(const Type *));
+        /* A borrow reaches what it names, so '&C' takes the pointee rather than binding C to the reference.
+         */
+        const Type *from = type_is_indirect(actual) ? type_pointee(actual) : actual;
+
+        for (const Type *at = from;; at = type_pointee(at)) {
+            TypeArg attempt[GAB_MAX_TYPE_PARAMS];
+            memcpy(attempt, args, owed * sizeof(TypeArg));
 
             if (infer_type_args(type_pointee(declared), at, attempt, owed)) {
-                memcpy(args, attempt, owed * sizeof(const Type *));
+                memcpy(args, attempt, owed * sizeof(TypeArg));
                 return true;
             }
 
@@ -597,21 +639,30 @@ static bool infer_type_args(const Type *declared, const Type *actual, const Type
         return infer_type_args(type_pointee(declared), type_pointee(actual), args, owed);
     }
 
-    if (type_kind(declared) == TYPE_ARRAY) {
-        return infer_type_args(type_array_element(declared), type_array_element(actual), args, owed);
-    }
-
     if (type_decl(declared) != type_decl(actual) || type_arg_count(declared) != type_arg_count(actual)) {
         return false;
     }
 
     for (size_t i = 0; i < type_arg_count(declared); i++) {
-        if (type_args(declared)[i].kind != TYPE_ARG_TYPE || type_args(actual)[i].kind != TYPE_ARG_TYPE) {
+        const TypeArg want = type_args(declared)[i];
+        const TypeArg got = type_args(actual)[i];
+
+        if (want.kind != got.kind) {
+            return false;
+        }
+
+        if (want.kind == TYPE_ARG_TYPE) {
+            if (!infer_type_args(want.type, got.type, args, owed)) {
+                return false;
+            }
+
             continue;
         }
 
-        if (!infer_type_args(type_args(declared)[i].type, type_args(actual)[i].type, args, owed)) {
-            return false;
+        /* A value argument fixes its parameter the way a type one does, from what the call was given. */
+        if (want.constant.kind == CONST_PARAM && want.constant.param < owed &&
+            !type_arg_is_set(args[want.constant.param])) {
+            args[want.constant.param] = got;
         }
     }
 
@@ -619,7 +670,7 @@ static bool infer_type_args(const Type *declared, const Type *actual, const Type
 }
 
 /* 'fixed' slots are already known from a receiver; 'self_params' is 1 when parameter zero is one. */
-static bool infer_call_args(ResolverState *state, ASTExpr *expr, Function *function, const Type **args,
+static bool infer_call_args(ResolverState *state, ASTExpr *expr, Function *function, TypeArg *args,
                             size_t fixed, size_t self_params) {
     size_t owed = function->decl->type_param_count;
 
@@ -640,7 +691,7 @@ static bool infer_call_args(ResolverState *state, ASTExpr *expr, Function *funct
     }
 
     for (size_t i = fixed; i < owed; i++) {
-        if (!args[i]) {
+        if (!type_arg_is_set(args[i])) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "no argument names every type parameter of '%s', so each is written",
                        function->decl->name->data);
@@ -654,7 +705,7 @@ static bool infer_call_args(ResolverState *state, ASTExpr *expr, Function *funct
 /* Type arguments a call names itself; only a plain call can, a method call's target having nowhere for them.
  */
 static bool take_written_type_args(ResolverState *state, ASTExpr *expr, Function *generic,
-                                   const TypeExpr *supplied, const Type **args) {
+                                   const TypeExpr *supplied, TypeArg *args) {
     size_t owed = generic->decl->type_param_count;
 
     if (supplied->kind != TYPE_EXPR_APPLY || supplied->apply.args.size != owed) {
@@ -664,22 +715,30 @@ static bool take_written_type_args(ResolverState *state, ASTExpr *expr, Function
     }
 
     for (size_t i = 0; i < owed; i++) {
-        args[i] = resolve_type_expr(state, supplied->apply.args.data[i], expr->span);
+        if (supplied->apply.args.data[i]->kind == TYPE_EXPR_CONST) {
+            args[i] = (TypeArg){.kind = TYPE_ARG_CONST,
+                                .constant = {.value = supplied->apply.args.data[i]->constant}};
+            continue;
+        }
 
-        if (is_error_type(args[i])) {
+        const Type *argument = resolve_type_expr(state, supplied->apply.args.data[i], expr->span);
+
+        if (is_error_type(argument)) {
             return false;
         }
+
+        args[i] = (TypeArg){.kind = TYPE_ARG_TYPE, .type = argument};
     }
 
     return true;
 }
 
 /* The arguments a receiver's type already fixes, which are the ones its owner declared. */
-static size_t take_receiver_type_args(const Type *receiver, const Type **args) {
+static size_t take_receiver_type_args(const Type *receiver, TypeArg *args) {
     size_t fixed = type_arg_count(receiver);
 
     for (size_t i = 0; i < fixed; i++) {
-        args[i] = type_args(receiver)[i].type;
+        args[i] = type_args(receiver)[i];
     }
 
     return fixed;
@@ -687,7 +746,7 @@ static size_t take_receiver_type_args(const Type *receiver, const Type **args) {
 
 /* A bound is nominal: the argument must say it implements the interface, not merely supply its methods. */
 static bool check_bounds_satisfied(ResolverState *state, ASTExpr *expr, const Function *generic,
-                                   const Type *const *args, size_t owed) {
+                                   const TypeArg *args, size_t owed) {
     const Interface *const *bounds = generic->decl->type_param_bounds;
 
     if (!bounds) {
@@ -697,13 +756,15 @@ static bool check_bounds_satisfied(ResolverState *state, ASTExpr *expr, const Fu
     TypeRegistry *registry = state->current_scope->type_registry;
 
     for (size_t i = 0; i < owed && i < GAB_MAX_TYPE_PARAMS; i++) {
-        if (!bounds[i] || !args[i] || type_kind(args[i]) == TYPE_PARAM) {
+        /* Only a type argument carries a conformance; a value one has no interface to satisfy. */
+        if (!bounds[i] || !type_arg_is_set(args[i]) || args[i].kind != TYPE_ARG_TYPE ||
+            type_kind(args[i].type) == TYPE_PARAM) {
             continue;
         }
 
-        if (!type_registry_conforms(registry, args[i], bounds[i]->name)) {
+        if (!type_registry_conforms(registry, args[i].type, bounds[i]->name)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "%s does not implement '%s'",
-                       type_name(state, args[i]), bounds[i]->name->data);
+                       type_name(state, args[i].type), bounds[i]->name->data);
             return false;
         }
     }
@@ -711,7 +772,7 @@ static bool check_bounds_satisfied(ResolverState *state, ASTExpr *expr, const Fu
     return true;
 }
 
-static Function *specialize(ResolverState *state, ASTExpr *expr, Function *generic, const Type **args,
+static Function *specialize(ResolverState *state, ASTExpr *expr, Function *generic, TypeArg *args,
                             size_t fixed, size_t self_params) {
     size_t owed = generic->decl->type_param_count;
 
@@ -739,7 +800,7 @@ static Function *specialize(ResolverState *state, ASTExpr *expr, Function *gener
 
 static Function *specialize_method_call(ResolverState *state, ASTExpr *expr, Function *method,
                                         const Type *receiver) {
-    const Type *args[GAB_MAX_TYPE_PARAMS] = {0};
+    TypeArg args[GAB_MAX_TYPE_PARAMS] = {0};
 
     return specialize(state, expr, method, args, take_receiver_type_args(receiver, args), 1);
 }
@@ -747,7 +808,7 @@ static Function *specialize_method_call(ResolverState *state, ASTExpr *expr, Fun
 static Function *specialize_call(ResolverState *state, ASTExpr *expr, Function *generic) {
     const TypeExpr *supplied = expr->call.target->var.owner_type_expr;
 
-    const Type *args[GAB_MAX_TYPE_PARAMS] = {0};
+    TypeArg args[GAB_MAX_TYPE_PARAMS] = {0};
 
     if (supplied && !take_written_type_args(state, expr, generic, supplied, args)) {
         return NULL;
@@ -759,7 +820,9 @@ static Function *specialize_call(ResolverState *state, ASTExpr *expr, Function *
 /* True when an argument the specialization was given is itself still a parameter, so it has no width. */
 static bool instantiated_abstractly(const Function *method) {
     for (size_t i = 0; i < method->type_arg_count; i++) {
-        if (type_has_param(method->type_args[i])) {
+        const TypeArg arg = method->type_args[i];
+
+        if (arg.kind == TYPE_ARG_TYPE ? type_has_param(arg.type) : arg.constant.kind == CONST_PARAM) {
             return true;
         }
     }
@@ -818,11 +881,11 @@ static const Type *resolve_param_type_in(ResolverState *state, ASTField *param, 
 
 /* The signature as the implementor sees it: 'Self' and the interface's parameters substituted away. */
 static Function *interface_method_for(ResolverState *state, const Interface *interface, size_t index,
-                                      const Type *implementor, const Type *const *args, size_t arg_count) {
+                                      const Type *implementor, const TypeArg *args, size_t arg_count) {
     const Function *signature = interface->methods[index];
 
-    const Type *substitutions[GAB_MAX_TYPE_PARAMS];
-    substitutions[0] = implementor;
+    TypeArg substitutions[GAB_MAX_TYPE_PARAMS];
+    substitutions[0] = (TypeArg){.kind = TYPE_ARG_TYPE, .type = implementor};
 
     for (size_t i = 0; i < arg_count && i + 1 < GAB_MAX_TYPE_PARAMS; i++) {
         substitutions[i + 1] = args[i];
@@ -872,54 +935,6 @@ static Function *bound_method(ResolverState *state, const Type *base, String *na
     }
 
     return NULL;
-}
-
-/* An array's methods come from its type rather than a declaration, as its length does. */
-static bool resolve_array_method(ResolverState *state, ASTExpr *expr, ASTExpr *receiver, String *name) {
-    const Type *array = receiver_base_type(receiver->type);
-
-    StringPool *strings = state->current_scope->strings;
-    TypeRegistry *registry = state->current_scope->type_registry;
-
-    size_t expected = name == string_from_cstr(strings, "index") ? 1 : 0;
-
-    if (name != string_from_cstr(strings, "len") && name != string_from_cstr(strings, "index")) {
-        return false;
-    }
-
-    if (expr->call.args.size != expected) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %zu argument(s), found %zu",
-                   expected, expr->call.args.size);
-        expr->type = resolver_error_type(state);
-        return true;
-    }
-
-    if (expected == 0) {
-        expr->kind = EXPR_LITERAL;
-        expr->lit = (Literal){.kind = TYPE_INT, .as_int = type_array_length(array)};
-        expr->type = type_registry_get_primitive(registry, TYPE_INT);
-        return true;
-    }
-
-    ASTExpr *index = expr->call.args.data[0];
-
-    if (index->type != type_registry_get_primitive(registry, TYPE_INT)) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "an index must be an int, not %s",
-                   type_name(state, index->type));
-        expr->type = resolver_error_type(state);
-        return true;
-    }
-
-    ASTExpr *element = ast_index_expr_create(state->compile_arena, expr->span, receiver, index);
-
-    element->index.array_type = array;
-    element->type = type_array_element(array);
-
-    expr->kind = EXPR_ADDR_OF;
-    expr->unary.target = element;
-    expr->type = type_registry_ref_to(registry, element->type);
-
-    return true;
 }
 
 /* A method is the one the type owns, or the one its bound declares when the type is a parameter. */
@@ -988,6 +1003,50 @@ static void rewrite_index_as_call(ResolverState *state, ASTExpr *expr) {
     expr->type = type_pointee(call->type);
 }
 
+/* An array and a slice both supply 'Index' themselves: 'xs.index(i)' is '&xs[i]'. */
+static bool lower_index(ResolverState *state, ASTExpr *expr, ASTExpr *receiver, const Type *base) {
+    ASTExpr *element =
+        ast_index_expr_create(state->compile_arena, expr->span, receiver, expr->call.args.data[0]);
+
+    element->type = type_kind(base) == TYPE_SLICE ? type_slice_element(base) : type_array_element(base);
+
+    expr->kind = EXPR_ADDR_OF;
+    expr->unary.target = element;
+    expr->type = type_registry_ref_to(state->current_scope->type_registry, element->type);
+
+    return true;
+}
+
+/* An array's length is the count in its type, so it is known without reading the array at all. */
+static bool lower_array_len(ResolverState *state, ASTExpr *expr, ASTExpr *receiver, const Type *base) {
+    (void)receiver;
+
+    /* A body checked before its length is fixed emits nothing, so the count it folds to is unused. */
+    expr->kind = EXPR_LITERAL;
+    expr->lit =
+        (Literal){.kind = TYPE_INT, .as_int = type_array_length_is_known(base) ? type_array_length(base) : 0};
+    expr->type = type_registry_get_primitive(state->current_scope->type_registry, TYPE_INT);
+
+    return true;
+}
+
+/* A declaration is an intrinsic only where this names a lowering for it, so the two cannot drift. */
+static const IntrinsicLowering INTRINSICS[] = {
+    {"array", "index", lower_index},
+    {"array", "len", lower_array_len},
+    {"slice", "index", lower_index},
+};
+
+static const IntrinsicLowering *intrinsic_for(const String *owner, const String *name) {
+    for (size_t i = 0; i < sizeof(INTRINSICS) / sizeof(*INTRINSICS); i++) {
+        if (strcmp(owner->data, INTRINSICS[i].owner) == 0 && strcmp(name->data, INTRINSICS[i].name) == 0) {
+            return &INTRINSICS[i];
+        }
+    }
+
+    return NULL;
+}
+
 static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     ASTExpr *receiver = expr->call.target->field.target;
     StringRef name = expr->call.target->field.name;
@@ -1006,11 +1065,6 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     }
 
     String *method_name = resolver_intern(state, name);
-
-    if (type_kind(receiver_base_type(receiver_type)) == TYPE_ARRAY &&
-        resolve_array_method(state, expr, receiver, method_name)) {
-        return;
-    }
 
     const Type *base = NULL;
     Function *method = find_method(state, receiver_type, method_name, expr->span, &base);
@@ -1057,6 +1111,12 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         return;
     }
 
+    if (method->decl->body_kind == BODY_INTRINSIC) {
+        check_call_args(state, &expr->call.args, method->params + 1);
+        method->decl->intrinsic->lower(state, expr, receiver, base);
+        return;
+    }
+
     lower_method_call(state->compile_arena, expr, method, adjustment);
 
     check_call_args(state, &expr->call.args, method->params);
@@ -1082,8 +1142,25 @@ static bool accepts_by_borrowing(const Type *to, const Type *from) {
     return to != from && type_kind(to) == TYPE_REF && type_pointee(to) == from;
 }
 
+/* An array reaches a '&slice<T>' by handing over where it starts and how many it holds. */
+static bool unsizes_to_a_slice(const Type *to, const Type *from) {
+    if (type_kind(to) != TYPE_REF || type_kind(type_pointee(to)) != TYPE_SLICE) {
+        return false;
+    }
+
+    while (type_is_indirect(from)) {
+        from = type_pointee(from);
+    }
+
+    return type_kind(from) == TYPE_ARRAY && type_array_element(from) == type_slice_element(type_pointee(to));
+}
+
 static bool type_accepts(TypeRegistry *registry, const Type *to, const Type *from) {
     if (to == from) {
+        return true;
+    }
+
+    if (unsizes_to_a_slice(to, from)) {
         return true;
     }
 
@@ -1102,7 +1179,41 @@ static bool type_accepts(TypeRegistry *registry, const Type *to, const Type *fro
     }
 }
 
+static bool unsize_into(ResolverState *state, ASTExpr **slot, const Type *destination, Span span) {
+    const Type *array = (*slot)->type;
+
+    while (type_is_indirect(array)) {
+        ASTExpr *hop = ast_deref_expr_create(state->compile_arena, span, *slot);
+        array = type_pointee(array);
+        hop->type = array;
+        *slot = hop;
+    }
+
+    if (!is_addressable(*slot)) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span,
+                   "cannot borrow a temporary; bind it to a variable first");
+        return false;
+    }
+
+    Binding *addressed = ast_root_local(*slot);
+
+    if (addressed) {
+        addressed->pinned = true;
+    }
+
+    ASTExpr *unsize = ast_unsize_expr_create(
+        state->compile_arena, span, *slot, type_array_length_is_known(array) ? type_array_length(array) : 1);
+    unsize->type = destination;
+    *slot = unsize;
+
+    return true;
+}
+
 static bool borrow_into(ResolverState *state, ASTExpr **slot, const Type *destination, Span span) {
+    if (unsizes_to_a_slice(destination, (*slot)->type)) {
+        return unsize_into(state, slot, destination, span);
+    }
+
     if (type_is_str_ref(destination) &&
         type_registry_deref_of(state->current_scope->type_registry, (*slot)->type) &&
         !is_addressable(*slot)) {
@@ -1461,7 +1572,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             target_type = type_pointee(target_type);
         }
 
-        /* Only an array indexes on its own; anything else spells '[]' by supplying 'Index'. */
+        /* An array indexes inline, against the length its type carries; anything else supplies 'Index'. */
         if (type_kind(target_type) != TYPE_ARRAY) {
             rewrite_index_as_call(state, expr);
             break;
@@ -1475,7 +1586,6 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             break;
         }
 
-        expr->index.array_type = target_type;
         expr->type = type_array_element(target_type);
         break;
     }
@@ -1836,6 +1946,133 @@ static void mark_implicit_move(ResolverState *state, ASTExpr *value, const Type 
     value->moves = true;
 }
 
+/* An element must be sized and non-recursive wherever a run of it is laid out. */
+static const Type *resolve_element_type(ResolverState *state, TypeExpr *expr, Span span,
+                                        const char *held_as) {
+    const Type *element = resolve_type_expr(state, expr, span);
+
+    if (is_error_type(element)) {
+        return NULL;
+    }
+
+    if (type_has_param(element)) {
+        return element;
+    }
+
+    if (reject_unsized(state, element, span, held_as)) {
+        return NULL;
+    }
+
+    StructDecl *cycle = element_completes_a_cycle(state, element);
+
+    if (cycle) {
+        report_containment_cycle(state, cycle, span);
+        return NULL;
+    }
+
+    if (type_registry_size_of(state->current_scope->type_registry, element) == 0) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "%s must have a size", held_as);
+        return NULL;
+    }
+
+    return element;
+}
+
+/* 'N: int' declares a value parameter, as Rust spells 'const N: usize'; any other bound names an interface.
+ */
+static bool param_is_a_value(const TypeExpr *bound) {
+    return bound && bound->kind == TYPE_EXPR_NAME && string_ref_equals_cstr(bound->name, "int");
+}
+
+static bool bind_type_param(Scope *params, String *name, size_t index, const TypeExpr *bound) {
+    TypeArg arg =
+        param_is_a_value(bound)
+            ? (TypeArg){.kind = TYPE_ARG_CONST, .constant = {.kind = CONST_PARAM, .param = index}}
+            : (TypeArg){.kind = TYPE_ARG_TYPE, .type = type_registry_param(params->type_registry, index)};
+
+    return scope_bind_argument(params, name, arg);
+}
+
+/* A length is written as a literal, or named as the value parameter a generic declaration takes. */
+static bool resolve_array_length(ResolverState *state, TypeExpr *expr, Span span, TypeArg *out) {
+    if (expr->kind == TYPE_EXPR_CONST) {
+        *out = (TypeArg){.kind = TYPE_ARG_CONST, .constant = {.kind = CONST_VALUE, .value = expr->constant}};
+        return true;
+    }
+
+    if (expr->kind == TYPE_EXPR_NAME) {
+        Scope *scope = resolver_expr_scope(state, expr->name);
+        Resolution resolution = resolver_resolve_name(state, scope, resolver_expr_member(state, expr->name));
+
+        if (resolution.kind == RESOLUTION_TYPE && resolution.arg.kind == TYPE_ARG_CONST) {
+            *out = resolution.arg;
+            return true;
+        }
+    }
+
+    diag_error(state->diagnostics, GAB_ERR_TYPE, span,
+               "an array's length is a literal or a value parameter, as 'array<int, 3>'");
+    return false;
+}
+
+static const Type *resolve_array_type(ResolverState *state, TypeExpr *expr, Span span) {
+    TypeRegistry *registry = state->current_scope->type_registry;
+
+    if (expr->apply.args.size != 2) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span,
+                   "'array' takes an element and a length, as 'array<int, 3>'");
+        return resolver_error_type(state);
+    }
+
+    const Type *element = resolve_element_type(state, expr->apply.args.data[0], span, "an array's element");
+
+    TypeArg length;
+
+    if (!element || !resolve_array_length(state, expr->apply.args.data[1], span, &length)) {
+        return resolver_error_type(state);
+    }
+
+    if (length.constant.kind == CONST_PARAM) {
+        return type_registry_array_with(registry, element, length);
+    }
+
+    if (length.constant.value <= 0) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "an array's length must be positive, not %d",
+                   length.constant.value);
+        return resolver_error_type(state);
+    }
+
+    if (type_has_param(element)) {
+        return type_registry_array_with(registry, element, length);
+    }
+
+    size_t bytes = type_registry_size_of(registry, element) * (size_t)length.constant.value;
+
+    if (bytes > GAB_MAX_TYPE_BYTES) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span,
+                   "an array of %d needs %zu bytes, over the %d a frame addresses", length.constant.value,
+                   bytes, GAB_MAX_TYPE_BYTES);
+        return resolver_error_type(state);
+    }
+
+    return type_registry_array_with(registry, element, length);
+}
+
+static const Type *resolve_slice_type(ResolverState *state, TypeExpr *expr, Span span) {
+    if (expr->apply.args.size != 1 || expr->apply.args.data[0]->kind == TYPE_EXPR_CONST) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'slice' takes one element type, as 'slice<int>'");
+        return resolver_error_type(state);
+    }
+
+    const Type *element = resolve_element_type(state, expr->apply.args.data[0], span, "a slice's element");
+
+    if (!element) {
+        return resolver_error_type(state);
+    }
+
+    return type_registry_slice_of(state->current_scope->type_registry, element);
+}
+
 static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) {
     if (!expr) {
         return NULL;
@@ -1857,6 +2094,14 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
     }
 
     case TYPE_EXPR_APPLY: {
+        if (string_ref_equals_cstr(expr->apply.base->name, "array")) {
+            return resolve_array_type(state, expr, span);
+        }
+
+        if (string_ref_equals_cstr(expr->apply.base->name, "slice")) {
+            return resolve_slice_type(state, expr, span);
+        }
+
         Scope *base_scope = resolver_expr_scope(state, expr->apply.base->name);
 
         String *base_name = base_scope ? resolver_expr_member(state, expr->apply.base->name) : NULL;
@@ -1922,54 +2167,9 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
         return resolver_error_type(state);
     }
 
-    case TYPE_EXPR_ARRAY: {
-        const Type *element = resolve_type_expr(state, expr->array.element, span);
-
-        if (is_error_type(element)) {
-            return resolver_error_type(state);
-        }
-
-        if (type_has_param(element)) {
-            return type_registry_array_of(registry, element, expr->array.length);
-        }
-
-        if (reject_unsized(state, element, span, "an array's element")) {
-            return resolver_error_type(state);
-        }
-
-        StructDecl *cycle = element_completes_a_cycle(state, element);
-
-        if (cycle) {
-            report_containment_cycle(state, cycle, span);
-            return resolver_error_type(state);
-        }
-
-        size_t element_size = type_registry_size_of(registry, element);
-
-        if (element_size == 0) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "an array's element must have a size");
-            return resolver_error_type(state);
-        }
-
-        int32_t length = expr->array.length;
-
-        if (length <= 0) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, span, "an array's length must be positive, not %d",
-                       length);
-            return resolver_error_type(state);
-        }
-
-        size_t bytes = element_size * (size_t)length;
-
-        if (bytes > GAB_MAX_TYPE_BYTES) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, span,
-                       "an array of %d needs %zu bytes, over the %d a frame addresses", length, bytes,
-                       GAB_MAX_TYPE_BYTES);
-            return resolver_error_type(state);
-        }
-
-        return type_registry_array_of(registry, element, length);
-    }
+    case TYPE_EXPR_CONST:
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "a length is an argument to 'array', not a type");
+        return resolver_error_type(state);
 
     case TYPE_EXPR_NAME:
         break;
@@ -2257,7 +2457,7 @@ static bool func_decl_is_generic(const ASTStmt *stmt) {
 }
 
 /* Enters a scope naming the owner's type arguments and 'Self'; the caller restores the one it saved. */
-static void enter_owner_scope(ResolverState *state, TypeExpr *owner) {
+static void enter_owner_scope(ResolverState *state, TypeExpr *owner, TypeExpr *const *bounds) {
     if (!owner) {
         return;
     }
@@ -2273,8 +2473,7 @@ static void enter_owner_scope(ResolverState *state, TypeExpr *owner) {
                 continue;
             }
 
-            scope_bind_type(params, resolver_intern(state, arg->name),
-                            type_registry_param(enclosing->type_registry, i));
+            bind_type_param(params, resolver_intern(state, arg->name), i, bounds ? bounds[i] : NULL);
         }
     }
 
@@ -2284,7 +2483,8 @@ static void enter_owner_scope(ResolverState *state, TypeExpr *owner) {
     const Type *self = resolve_type_expr(state, owner, (Span){0});
 
     if (!is_error_type(self)) {
-        scope_bind_argument(params, resolver_intern_cstr(state, "Self"), self);
+        scope_bind_argument(params, resolver_intern_cstr(state, "Self"),
+                            (TypeArg){.kind = TYPE_ARG_TYPE, .type = self});
     }
 }
 
@@ -2297,8 +2497,7 @@ static void bind_own_type_params(ResolverState *state, ASTStmt *stmt, size_t own
             continue;
         }
 
-        if (!scope_bind_type(state->current_scope, name,
-                             type_registry_param(state->current_scope->type_registry, i))) {
+        if (!bind_type_param(state->current_scope, name, i, stmt->func_decl.type_param_bounds[i])) {
             diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "duplicate type parameter '%s' on '%s'",
                        name->data, name->data);
         }
@@ -2328,9 +2527,30 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
 
     if (owner_is_primitive && !is_host) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
-                   "a function on %s is defined by the host, so it must be 'extern'",
+                   "a function on %s is defined by the host or the compiler, so it must be 'extern' or "
+                   "'intrinsic'",
                    type_name(state, owner));
         return;
+    }
+
+    /* Only the core library declares one, and only where the compiler has a lowering to match it. */
+    if (stmt->func_decl.is_intrinsic && !state->allow_primitive_impls) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
+                   "an intrinsic is lowered by the compiler, so only its core library declares one");
+        return;
+    }
+
+    const IntrinsicLowering *intrinsic = NULL;
+
+    if (stmt->func_decl.is_intrinsic) {
+        intrinsic = intrinsic_for(type_name_of(owner), resolver_intern(state, stmt->func_decl.name));
+
+        if (!intrinsic) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
+                       "the compiler lowers no intrinsic '%s' on %s",
+                       resolver_intern(state, stmt->func_decl.name)->data, type_name(state, owner));
+            return;
+        }
     }
 
     if (owner_is_primitive && !state->allow_primitive_impls) {
@@ -2371,9 +2591,12 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
     FuncDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(FuncDecl));
     *decl = (FuncDecl){
         .name = name,
-        .module = is_host ? state->module_name : NULL,
-        .owner = is_host ? type_name_of(owner) : NULL,
-        .body_kind = is_host ? BODY_HOST : BODY_GAB,
+        .module = is_host && !stmt->func_decl.is_intrinsic ? state->module_name : NULL,
+        .owner = is_host && !stmt->func_decl.is_intrinsic ? type_name_of(owner) : NULL,
+        .body_kind = stmt->func_decl.is_intrinsic ? BODY_INTRINSIC
+                     : is_host                    ? BODY_HOST
+                                                  : BODY_GAB,
+        .intrinsic = intrinsic,
         .body = stmt,
         .type_param_count = stmt->func_decl.type_param_count,
     };
@@ -2418,21 +2641,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
 }
 
 static void enter_impl_scope(ResolverState *state, ASTStmt *stmt) {
-    enter_owner_scope(state, stmt->impl.type);
-}
-
-/* An array indexes from its type rather than a declaration, and '[T; N]' names no one type to write an
- * 'impl' for, so the conformance every array has is recorded where 'Index' itself is declared. */
-static void declare_array_conformance(ResolverState *state, const Interface *interface) {
-    if (interface->name != string_from_cstr(state->current_scope->strings, "Index")) {
-        return;
-    }
-
-    TypeRegistry *registry = state->current_scope->type_registry;
-
-    type_registry_declare_conformance(
-        registry, type_registry_array_of(registry, type_registry_get_primitive(registry, TYPE_INT), 1),
-        interface->name);
+    enter_owner_scope(state, stmt->impl.type, stmt->impl.param_bounds);
 }
 
 static void declare_interface(ResolverState *state, ASTStmt *stmt) {
@@ -2515,8 +2724,21 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
     };
 
     scope_bind_interface(state->current_scope, name, interface);
+}
 
-    declare_array_conformance(state, interface);
+/* An interface's method is supplied by the block implementing it, so an inherent one does not answer for it.
+ */
+static bool block_declares(ResolverState *state, const ASTStmt *stmt, const String *name) {
+    for (size_t i = 0; i < stmt->impl.members.size; i++) {
+        const ASTStmt *member = stmt->impl.members.data[i];
+
+        if (member && member->kind == STMT_FUNC_DECL &&
+            resolver_intern(state, member->func_decl.name) == name) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *implementor) {
@@ -2539,14 +2761,17 @@ static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *i
         return;
     }
 
-    const Type *args[GAB_MAX_TYPE_PARAMS];
+    TypeArg args[GAB_MAX_TYPE_PARAMS];
 
     for (size_t i = 0; i < arg_count; i++) {
-        args[i] = resolve_type_expr(state, stmt->impl.interface_args.data[i], stmt->impl.interface_span);
+        const Type *argument =
+            resolve_type_expr(state, stmt->impl.interface_args.data[i], stmt->impl.interface_span);
 
-        if (is_error_type(args[i])) {
+        if (is_error_type(argument)) {
             return;
         }
+
+        args[i] = (TypeArg){.kind = TYPE_ARG_TYPE, .type = argument};
     }
 
     if (!type_registry_declare_conformance(state->current_scope->type_registry, implementor,
@@ -2561,7 +2786,8 @@ static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *i
     for (size_t i = 0; i < interface->method_count; i++) {
         String *name = interface->methods[i]->decl->name;
 
-        Function *supplied = type_registry_find_owned(registry, implementor, name);
+        Function *supplied =
+            block_declares(state, stmt, name) ? type_registry_find_owned(registry, implementor, name) : NULL;
 
         if (!supplied) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->impl.interface_span,
@@ -2647,7 +2873,7 @@ static void resolve_impl(ResolverState *state, ASTStmt *stmt) {
 static void declare_owned(ResolverState *state, ASTStmt *stmt) {
     Scope *enclosing = state->current_scope;
 
-    enter_owner_scope(state, stmt->func_decl.owner);
+    enter_owner_scope(state, stmt->func_decl.owner, stmt->func_decl.type_param_bounds);
 
     declare_owned_in_scope(state, enclosing, stmt);
 
@@ -2734,7 +2960,8 @@ static void enter_param_bounds(ResolverState *state, ASTStmt *stmt) {
     for (size_t i = 0; i < stmt->func_decl.type_param_count; i++) {
         const TypeExpr *bound = stmt->func_decl.type_param_bounds[i];
 
-        if (!bound) {
+        /* A value parameter's bound names its type rather than an interface, so it declares no methods. */
+        if (!bound || param_is_a_value(bound)) {
             continue;
         }
 
@@ -2759,7 +2986,9 @@ static void enter_param_bounds(ResolverState *state, ASTStmt *stmt) {
         }
 
         for (size_t a = 0; a < arg_count; a++) {
-            state->param_bound_args[i][a] = resolve_type_expr(state, bound->apply.args.data[a], stmt->span);
+            state->param_bound_args[i][a] =
+                (TypeArg){.kind = TYPE_ARG_TYPE,
+                          .type = resolve_type_expr(state, bound->apply.args.data[a], stmt->span)};
         }
 
         state->param_bound_arg_count[i] = arg_count;
@@ -2805,7 +3034,7 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
                 continue;
             }
 
-            if (!scope_bind_type(params, param_name, type_registry_param(enclosing->type_registry, i))) {
+            if (!bind_type_param(params, param_name, i, stmt->func_decl.type_param_bounds[i])) {
                 diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span,
                            "duplicate type parameter '%s' on '%s'", param_name->data, param_name->data);
             }
@@ -2847,7 +3076,9 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
             record_param_bounds(state, decl);
         }
 
-        decl->body_kind = stmt->func_decl.body == NULL ? BODY_HOST : BODY_GAB;
+        decl->body_kind = stmt->func_decl.is_intrinsic   ? BODY_INTRINSIC
+                          : stmt->func_decl.body == NULL ? BODY_HOST
+                                                         : BODY_GAB;
 
         if (decl->body_kind == BODY_HOST) {
             decl->name = resolver_intern(state, func_name);

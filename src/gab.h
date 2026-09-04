@@ -34,6 +34,7 @@ typedef enum {
     GAB_TYPE_PTR,
     GAB_TYPE_STR,
     GAB_TYPE_ARRAY,
+    GAB_TYPE_SLICE,
     GAB_TYPE_STRUCT,
     GAB_TYPE_BOX,
     GAB_TYPE_REF,
@@ -136,6 +137,7 @@ const GabType *gab_lib_primitive(GabLib *lib, GabTypeKind kind);
 const GabType *gab_lib_param(GabLib *lib, size_t index);
 const GabType *gab_lib_block_of(GabLib *lib, const GabType *element);
 const GabType *gab_lib_array_of(GabLib *lib, const GabType *element, int32_t length);
+const GabType *gab_lib_slice_of(GabLib *lib, const GabType *element);
 const GabType *gab_lib_ptr_to(GabLib *lib, const GabType *pointee);
 
 typedef struct {

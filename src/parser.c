@@ -637,7 +637,14 @@ static bool parse_type_args(Parser *parser, TypeExprList *out) {
     parser_next_token(parser);
 
     for (;;) {
-        TypeExpr *argument = parse_type_expr(parser);
+        TypeExpr *argument;
+
+        if (parser->current.type == TOKEN_INT) {
+            argument = type_expr_const(parser->arena, parser->current.value.as_int);
+            parser_next_token(parser);
+        } else {
+            argument = parse_type_expr(parser);
+        }
 
         if (!argument) {
             return false;
@@ -662,39 +669,6 @@ static bool parse_type_args(Parser *parser, TypeExprList *out) {
 }
 
 static TypeExpr *parse_type_expr(Parser *parser) {
-    if (parser->current.type == TOKEN_LBRACKET) {
-        parser_next_token(parser);
-
-        TypeExpr *element = parse_type_expr(parser);
-
-        if (!element) {
-            return NULL;
-        }
-
-        if (!parser_expect(parser, TOKEN_SEMICOLON, "expected ';' and a length, as '[int; 3]'")) {
-            return NULL;
-        }
-
-        parser_next_token(parser);
-
-        if (parser->current.type != TOKEN_INT) {
-            parser_error(parser, "an array's length must be an integer literal");
-            return NULL;
-        }
-
-        int32_t length = parser->current.value.as_int;
-
-        parser_next_token(parser);
-
-        if (!parser_expect(parser, TOKEN_RBRACKET, "expected ']' after an array's length")) {
-            return NULL;
-        }
-
-        parser_next_token(parser);
-
-        return type_expr_array(parser->arena, element, length);
-    }
-
     /* In a type '&' borrows and '*' owns; neither is the expression operator that shares its spelling. */
     if (parser->current.type == TOKEN_AMP || parser->current.type == TOKEN_MUL ||
         parser->current.type == TOKEN_AND) {
@@ -848,12 +822,16 @@ static void func_decl_take_type_params(ASTStmt *decl, TypeExprList *params, Type
 static ASTStmt *parse_func_decl_stmt_inner(Parser *parser, bool signature_only) {
     Span span = parser_span(parser);
 
-    bool is_extern = signature_only || parser->current.type == TOKEN_EXTERN;
+    bool is_intrinsic = parser->current.type == TOKEN_INTRINSIC;
+    bool is_extern = signature_only || is_intrinsic || parser->current.type == TOKEN_EXTERN;
 
     if (is_extern && !signature_only) {
+        const char *after =
+            is_intrinsic ? "expected 'func' after 'intrinsic'" : "expected 'func' after 'extern'";
+
         parser_next_token(parser);
 
-        if (!parser_expect(parser, TOKEN_FUNC, "expected 'func' after 'extern'")) {
+        if (!parser_expect(parser, TOKEN_FUNC, after)) {
             return NULL;
         }
     }
@@ -937,6 +915,8 @@ static ASTStmt *parse_func_decl_stmt_inner(Parser *parser, bool signature_only) 
         ASTStmt *decl =
             ast_func_decl_stmt_create(parser->arena, span, func_name, func_type, func_params, NULL);
 
+        decl->func_decl.is_intrinsic = is_intrinsic;
+
         func_decl_take_type_params(decl, &type_params, bounds);
 
         return decl;
@@ -1017,7 +997,8 @@ static ASTStmt *parse_impl_stmt(Parser *parser) {
             return NULL;
         }
 
-        if (parser->current.type != TOKEN_FUNC && parser->current.type != TOKEN_EXTERN) {
+        if (parser->current.type != TOKEN_FUNC && parser->current.type != TOKEN_EXTERN &&
+            parser->current.type != TOKEN_INTRINSIC) {
             parser_error_found(parser, "expected a function in an 'impl' block");
             return NULL;
         }
@@ -1050,6 +1031,10 @@ static ASTStmt *parse_impl_stmt(Parser *parser) {
     parser_next_token(parser);
 
     ASTStmt *stmt = ast_impl_stmt_create(parser->arena, span, type, members);
+
+    for (size_t i = 0; i < declared.count; i++) {
+        stmt->impl.param_bounds[i] = declared.bounds[i];
+    }
 
     stmt->impl.interface_name = interface_name;
     stmt->impl.interface_span = interface_span;

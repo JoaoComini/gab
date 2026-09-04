@@ -19,13 +19,16 @@ typedef struct TypePrimitiveNames {
     String *bool_name;
     String *byte_name;
     String *str_name;
+    String *slice_name;
+    String *array_name;
     String *error_name;
 } TypePrimitiveNames;
 
 typedef struct Binding Binding;
 
 typedef struct {
-    const Type *type;
+    /* What the name binds: a type, or the value 'array<T, N>' names for its length. */
+    TypeArg arg;
 
     const TypeDecl *decl;
 } TypeBinding;
@@ -102,8 +105,9 @@ const Type *type_registry_get_primitive(TypeRegistry *registry, TypeKind kind);
 
 const Type *type_registry_declare(TypeRegistry *registry, const TypeDeclSpec *spec);
 
-void type_registry_set_deref(TypeRegistry *registry, const Type *from, const Type *to, const LentPart *parts,
-                             size_t part_count);
+/* The deref a declaration states, named in its own parameters and substituted per instantiation. */
+void type_registry_set_deref(TypeRegistry *registry, const TypeDecl *decl, const Type *to,
+                             const LentPart *parts, size_t part_count);
 
 const Type *type_registry_deref_of(TypeRegistry *registry, const Type *type);
 
@@ -111,7 +115,15 @@ const Deref *type_registry_deref(TypeRegistry *registry, const Type *type);
 
 const Type *type_registry_error_type(TypeRegistry *registry);
 
+/* Shared by every array, which is where the conformance all of them have is recorded. */
+const TypeDecl *type_registry_array_decl(TypeRegistry *registry);
+
 const Type *type_registry_array_of(TypeRegistry *registry, const Type *element, int32_t length);
+
+/* An array whose length may still be a parameter, as 'array<T, N>' inside a generic declaration. */
+const Type *type_registry_array_with(TypeRegistry *registry, const Type *element, TypeArg length);
+
+const Type *type_registry_slice_of(TypeRegistry *registry, const Type *element);
 
 const Type *type_registry_box_to(TypeRegistry *registry, const Type *inner);
 const Type *type_registry_ref_to(TypeRegistry *registry, const Type *inner);
@@ -128,7 +140,7 @@ const Type *type_registry_apply(TypeRegistry *registry, const TypeDecl *decl, co
 
 const Type *type_registry_block_of(TypeRegistry *registry, const Type *element);
 
-const Type *type_registry_substitute(TypeRegistry *registry, const Type *type, const Type *const *args,
+const Type *type_registry_substitute(TypeRegistry *registry, const Type *type, const TypeArg *args,
                                      size_t arg_count);
 
 #endif

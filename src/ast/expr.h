@@ -31,6 +31,7 @@ typedef enum {
     EXPR_DEREF,
 
     EXPR_LEND,
+    EXPR_UNSIZE,
     EXPR_NEG,
     EXPR_NOT,
     EXPR_CAST,
@@ -108,8 +109,6 @@ typedef struct ASTExpr {
         struct {
             ASTExpr *target;
             ASTExpr *index;
-
-            const Type *array_type;
         } index;
 
         struct {
@@ -130,6 +129,11 @@ typedef struct ASTExpr {
             const LentPart *parts;
             size_t part_count;
         } lend;
+
+        struct {
+            ASTExpr *target;
+            int32_t length;
+        } unsize;
 
         struct {
             ASTExpr *operand;
@@ -160,6 +164,7 @@ ASTExpr *ast_field_expr_create(Arena *arena, Span span, ASTExpr *target, StringR
 ASTExpr *ast_addr_of_expr_create(Arena *arena, Span span, ASTExpr *target);
 ASTExpr *ast_deref_expr_create(Arena *arena, Span span, ASTExpr *target);
 ASTExpr *ast_lend_expr_create(Arena *arena, Span span, ASTExpr *target);
+ASTExpr *ast_unsize_expr_create(Arena *arena, Span span, ASTExpr *target, int32_t length);
 ASTExpr *ast_neg_expr_create(Arena *arena, Span span, ASTExpr *target);
 ASTExpr *ast_not_expr_create(Arena *arena, Span span, ASTExpr *target);
 ASTExpr *ast_cast_expr_create(Arena *arena, Span span, ASTExpr *operand);

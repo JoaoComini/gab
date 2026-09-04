@@ -32,7 +32,19 @@ typedef struct FuncSignature {
 
 /* Substitutes 'args' for the type parameters a signature names, yielding the specialized one. */
 FuncSignature func_signature_instantiate(TypeRegistry *registry, Arena *arena, const FuncSignature *generic,
-                                         const Type *const *args, size_t arg_count);
+                                         const TypeArg *args, size_t arg_count);
+
+struct ResolverState;
+struct ASTExpr;
+
+/* Rewrites a resolved call into the nodes the compiler already lowers, in place of a body. */
+typedef struct IntrinsicLowering {
+    const char *owner;
+    const char *name;
+
+    bool (*lower)(struct ResolverState *state, struct ASTExpr *expr, struct ASTExpr *receiver,
+                  const Type *base);
+} IntrinsicLowering;
 
 typedef struct FuncDecl {
     String *name;
@@ -42,6 +54,9 @@ typedef struct FuncDecl {
     BodyKind body_kind;
 
     void *body;
+
+    /* The lowering an 'intrinsic' names, resolved where it is declared; NULL for every other body. */
+    const IntrinsicLowering *intrinsic;
 
     /* How many arguments this declaration is generic over, whether they came from an owner or itself. */
     size_t type_param_count;
@@ -68,7 +83,7 @@ typedef struct Function {
     size_t func_index;
 
     /* What a specialization was given, one per type parameter; NULL while this is still a declaration. */
-    const Type *const *type_args;
+    const TypeArg *type_args;
     size_t type_arg_count;
 
     struct ASTStmt *instance;

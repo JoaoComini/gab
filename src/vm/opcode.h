@@ -101,6 +101,8 @@ typedef enum {
 
     OP_BOUNDS_CHECK,
 
+    OP_BOUNDS_CHECK_REG,
+
     OP_LOAD_PTR_N,
     OP_STORE_PTR_N,
 

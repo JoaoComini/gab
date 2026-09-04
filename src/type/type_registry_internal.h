@@ -35,7 +35,7 @@ GAB_HASH_MAP(DropTable, drop_key, const Type *, const DropPlan *)
 #define deref_key_hash(key) (size_t)key
 #define deref_key_key_equals(key, other) key == other
 
-GAB_HASH_MAP(DerefTable, deref_key, const Type *, const Deref *)
+GAB_HASH_MAP(DerefTable, deref_key, const TypeDecl *, const Deref *)
 
 #define layout_key_hash(key) (size_t)key
 #define layout_key_key_equals(key, other) key == other
@@ -50,6 +50,12 @@ typedef struct {
     const Type *bool_type;
 
     const Type *str_type;
+
+    /* Every slice shares one declaration, so a method reaches 'slice<T>' at any element. */
+    const TypeDecl *slice_decl;
+
+    /* Every array shares one declaration, which is what carries the conformance all of them have. */
+    const TypeDecl *array_decl;
 
     const Type *error_type;
 } TypePrimitives;

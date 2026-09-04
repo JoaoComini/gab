@@ -122,6 +122,7 @@ static unsigned int codegen_call_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_field_expr(CodegenState *state, ASTExpr *node);
 static FieldTarget codegen_index_target(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_addr_of_expr(CodegenState *state, ASTExpr *node);
+static unsigned int codegen_unsize_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_deref_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_neg_expr(CodegenState *state, ASTExpr *node);
 static unsigned int codegen_not_expr(CodegenState *state, ASTExpr *node);
@@ -985,6 +986,8 @@ static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast) {
 static size_t codegen_reserve_function(CodegenState *state, Function *function) {
     size_t local;
 
+    assert(function->decl->body_kind != BODY_INTRINSIC && "an intrinsic is lowered, never called");
+
     if (function_runs_native(function)) {
         extern_proto_list_add(&state->unit->extern_protos, (ExternProto){0});
 
@@ -1006,7 +1009,9 @@ static size_t codegen_reserve_function(CodegenState *state, Function *function) 
 }
 
 static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast) {
-    if (!ast->function || proto_map_lookup(state->local_protos, ast->function)) {
+    /* An intrinsic is lowered where it is called, so it reserves no prototype and binds no body. */
+    if (!ast->function || ast->function->decl->body_kind == BODY_INTRINSIC ||
+        proto_map_lookup(state->local_protos, ast->function)) {
         return;
     }
 
@@ -1031,6 +1036,10 @@ static const size_t *codegen_reserve_instantiated(CodegenState *state, Function 
 
 static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
     ASTFuncDecl *ast = &stmt->func_decl;
+
+    if (ast->function && ast->function->decl->body_kind == BODY_INTRINSIC) {
+        return;
+    }
 
     codegen_reserve_proto(state, ast);
 
@@ -1170,6 +1179,10 @@ static unsigned int codegen_expr(CodegenState *state, ASTExpr *ast) {
         return codegen_field_expr(state, ast);
     case EXPR_ADDR_OF:
         return codegen_addr_of_expr(state, ast);
+
+    case EXPR_UNSIZE:
+        return codegen_unsize_expr(state, ast);
+
     case EXPR_DEREF:
         return codegen_deref_expr(state, ast);
     case EXPR_LEND:
@@ -1233,6 +1246,25 @@ static unsigned int codegen_lend_expr(CodegenState *state, ASTExpr *node) {
 
         at += width;
     }
+
+    return rd;
+}
+
+/* A slice is where the elements start and how many there are, in the two slots a '&slice<T>' occupies. */
+static unsigned int codegen_unsize_expr(CodegenState *state, ASTExpr *node) {
+    unsigned int rd = codegen_alloc_slots(state, type_slot_count(state->registry, node->type),
+                                          type_align_slots(state->registry, node->type), node->span);
+
+    /* A borrowed array already holds where its elements are; an owned one is addressed. */
+    if (type_is_indirect(node->unsize.target->type)) {
+        codegen_copy_slots(state, rd, codegen_expr(state, node->unsize.target), VM_INDIRECT_SLOTS);
+    } else {
+        codegen_addr_of_into(state, node->unsize.target, rd, node->span);
+    }
+
+    unsigned int length = constpool_add(state->chunk->const_pool, (Constant){.as_int = node->unsize.length});
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_I(OP_LOAD_CONST, rd + VM_INDIRECT_SLOTS, length));
 
     return rd;
 }
@@ -1435,15 +1467,32 @@ static unsigned int codegen_index_base(CodegenState *state, ASTExpr *target) {
     return pointer;
 }
 
+/* An array states its length in its type; a slice carries it in the slot past the address it holds. */
+static void codegen_bounds_check(CodegenState *state, const Type *container, unsigned int base,
+                                 unsigned int index) {
+    if (type_kind(container) == TYPE_SLICE) {
+        chunk_add_instruction(state->chunk,
+                              VM_ENCODE_R(OP_BOUNDS_CHECK_REG, 0, index, base + VM_INDIRECT_SLOTS));
+        return;
+    }
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_RK(OP_BOUNDS_CHECK, base, index,
+                                                     (unsigned int)type_array_length(container), 1));
+}
+
 static unsigned int codegen_index_address(CodegenState *state, ASTExpr *node) {
-    const Type *array_type = node->index.array_type;
-    const Type *element = type_array_element(array_type);
+    const Type *element = node->type;
+
+    const Type *container = node->index.target->type;
+
+    while (type_is_indirect(container)) {
+        container = type_pointee(container);
+    }
 
     unsigned int base = codegen_index_base(state, node->index.target);
     unsigned int index = codegen_expr(state, node->index.index);
 
-    chunk_add_instruction(state->chunk, VM_ENCODE_RK(OP_BOUNDS_CHECK, base, index,
-                                                     (unsigned int)type_array_length(array_type), 1));
+    codegen_bounds_check(state, container, base, index);
 
     unsigned int offset = codegen_alloc_register(state, node->span);
 
@@ -1826,6 +1875,10 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
         FieldTarget target = codegen_resolve_field_target(state, inner, true);
         target.offset += codegen_field_offset(state, node);
         return target;
+    }
+
+    if (node->kind == EXPR_INDEX) {
+        return codegen_index_target(state, node);
     }
 
     if (node->kind == EXPR_DEREF) {

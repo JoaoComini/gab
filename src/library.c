@@ -65,6 +65,9 @@ GabLib *gab_lib_open(GabVM *handle, const char *module, GabError *err) {
 
 void gab_lib_close(GabLib *lib) { free(lib); }
 
+/* A host kind is cast straight to a 'TypeKind', so the two enumerations must stay in step. */
+_Static_assert((int)GAB_TYPE_BLOCK == (int)TYPE_BLOCK, "a host type kind is the VM's own");
+
 static TypeRegistry *lib_registry(GabLib *lib) { return lib->vm->env.global_scope.type_registry; }
 
 const GabType *gab_lib_primitive(GabLib *lib, GabTypeKind kind) {
@@ -82,6 +85,10 @@ const GabType *gab_lib_block_of(GabLib *lib, const GabType *element) {
 const GabType *gab_lib_array_of(GabLib *lib, const GabType *element, int32_t length) {
     return lib ? (const GabType *)type_registry_array_of(lib_registry(lib), (const Type *)element, length)
                : NULL;
+}
+
+const GabType *gab_lib_slice_of(GabLib *lib, const GabType *element) {
+    return lib ? (const GabType *)type_registry_slice_of(lib_registry(lib), (const Type *)element) : NULL;
 }
 
 const GabType *gab_lib_ptr_to(GabLib *lib, const GabType *pointee) {

@@ -31,7 +31,7 @@ static void test_the_interface_is_named_without_an_import() {
 static void test_an_array_supplies_index() {
     assert(test_run_int("func first<C: Index<int>>(c: &C): int { return *c.index(0); }\n"
                         "func f(): int {\n"
-                        "    let xs: [int; 3] = [1, 20, 300];\n"
+                        "    let xs: array<int, 3> = [1, 20, 300];\n"
                         "    return first(xs);\n"
                         "}\n"
                         "let r: int = f();") == 1);
@@ -39,7 +39,7 @@ static void test_an_array_supplies_index() {
 
 static void test_an_array_is_read_with_brackets() {
     assert(test_run_int("func f(): int {\n"
-                        "    let xs: [int; 3] = [1, 20, 300];\n"
+                        "    let xs: array<int, 3> = [1, 20, 300];\n"
                         "    return xs[2];\n"
                         "}\n"
                         "let r: int = f();") == 300);

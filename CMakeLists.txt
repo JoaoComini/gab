@@ -59,6 +59,7 @@ add_library(gab
     src/library.c
     src/core/core.c
     src/core/str.c
+    src/core/slice.c
     src/std/std.c
     src/std/string.c
     src/std/vec.c

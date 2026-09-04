@@ -55,6 +55,10 @@ static ASTExpr *clone_expr(Arena *arena, const ASTExpr *expr) {
     case EXPR_LEND:
         return ast_lend_expr_create(arena, expr->span, clone_expr(arena, expr->lend.target));
 
+    case EXPR_UNSIZE:
+        return ast_unsize_expr_create(arena, expr->span, clone_expr(arena, expr->unsize.target),
+                                      expr->unsize.length);
+
     case EXPR_NEG:
         return ast_neg_expr_create(arena, expr->span, clone_expr(arena, expr->unary.target));
 

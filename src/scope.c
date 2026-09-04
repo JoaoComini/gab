@@ -119,7 +119,7 @@ Resolution scope_resolve(Scope *scope, String *name) {
 
         if (bound) {
             if (!bound->decl) {
-                return (Resolution){.kind = RESOLUTION_TYPE, .type = bound->type};
+                return (Resolution){.kind = RESOLUTION_TYPE, .arg = bound->arg};
             }
 
             return (Resolution){.kind = RESOLUTION_TYPE_DECL, .decl = bound->decl};
@@ -138,7 +138,7 @@ Resolution scope_resolve(Scope *scope, String *name) {
 const Type *resolution_type(TypeRegistry *registry, Resolution resolution) {
     switch (resolution.kind) {
     case RESOLUTION_TYPE:
-        return resolution.type;
+        return resolution.arg.kind == TYPE_ARG_TYPE ? resolution.arg.type : NULL;
 
     case RESOLUTION_TYPE_DECL:
         return resolution.decl->param_count == 0 ? type_registry_apply(registry, resolution.decl, NULL, 0)
@@ -193,17 +193,17 @@ bool scope_bind_type(Scope *scope, String *name, const Type *type) {
 
     assert(type_names_itself(type) && "a nominal name binds to what it declares");
 
-    type_map_insert(scope->types, name, (TypeBinding){.type = type});
+    type_map_insert(scope->types, name, (TypeBinding){.arg = {.kind = TYPE_ARG_TYPE, .type = type}});
 
     return true;
 }
 
-bool scope_bind_argument(Scope *scope, String *name, const Type *type) {
+bool scope_bind_argument(Scope *scope, String *name, TypeArg arg) {
     if (type_map_lookup(scope->types, name)) {
         return false;
     }
 
-    type_map_insert(scope->types, name, (TypeBinding){.type = type});
+    type_map_insert(scope->types, name, (TypeBinding){.arg = arg});
 
     return true;
 }
@@ -292,7 +292,7 @@ Binding *scope_decl_func(Scope *scope, String *name, const Type *return_type) {
 }
 
 FuncSignature func_signature_instantiate(TypeRegistry *registry, Arena *arena, const FuncSignature *generic,
-                                         const Type *const *args, size_t arg_count) {
+                                         const TypeArg *args, size_t arg_count) {
     FuncSignature out = {
         .return_type = type_registry_substitute(registry, generic->return_type, args, arg_count),
     };
