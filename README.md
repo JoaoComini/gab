@@ -263,6 +263,22 @@ named with as many arguments as it declares, so `Holder` alone and
 func read<H: Holder<int>>(h: &H): int { return h.get(); }
 ```
 
+The prelude declares two interfaces every unit may name without importing
+anything: `Iter<T>`, which is `len` and `at` together, and `Index<T>`, which is
+`at` alone. `Vec<T>` supplies both at its element type, so a function bounded by
+either takes a vector:
+
+```
+func total<C: Iter<int>>(c: &C): int {
+    let sum: int = 0;
+    for let i: int = 0; i < c.len(); i = i + 1 { sum = sum + *c.at(i); }
+    return sum;
+}
+```
+
+A method belongs to a struct or to a primitive, so `[T; N]` supplies neither —
+an array's `len` is its type's, read where it is written.
+
 Only something with a home in memory can be borrowed. A call result is a
 temporary with no address to name, so it must be bound to a variable first. A
 string literal is the exception: its characters live in the unit's arena, which
@@ -557,10 +573,10 @@ Not yet implemented:
 | --- | --- |
 | Strings | No interpolation, no `substring` or case conversion |
 | Arrays | Fixed length once allocated: no growth and no slice type. `Vec<T>` is what grows |
-| Vectors | `new`, `push`, `at` and `len` only: no removal, no iteration, and no literal |
+| Vectors | `new`, `push`, `at` and `len` only: no removal, no iteration, and no literal. `Vec<T>` supplies `Iter<T>` and `Index<T>` |
 | Borrows | A returned borrow names a parameter or something it reaches; returning one that names a local is refused |
 | Generics | A method's own type arguments are inferred from what it is given; there is no `v.method<int>(x)` to write them |
-| Interfaces | An interface takes no type parameters of its own; no associated types, no compound bounds, and no dynamic dispatch |
+| Interfaces | No associated types, no compound bounds, and no dynamic dispatch. Only a struct or a primitive implements one, so `[T; N]` supplies none |
 | Operators | Bitwise |
 
 ## Building

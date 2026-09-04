@@ -76,7 +76,9 @@ static const char VEC_SRC[] = "impl<T> Vec<T> {\n"
                               "    extern func push(self: &Self, value: T);\n"
                               "    extern func at(self: &Self, index: int): &T;\n"
                               "    extern func len(self: &Self): int;\n"
-                              "}\n";
+                              "}\n"
+                              "impl<T> Vec<T> as Iter<T> {}\n"
+                              "impl<T> Vec<T> as Index<T> {}\n";
 
 void std_register_vec(GabVM *vm) {
     GabError err;

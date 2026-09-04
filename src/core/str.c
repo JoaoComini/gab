@@ -94,7 +94,15 @@ static void string_count(GabCtx *ctx) {
     gab_ctx_return_int(ctx, total);
 }
 
-static const char CORE_SRC[] = "impl str {\n"
+/* Declared in the prelude so any type may supply them, rather than only what 'std' declares. */
+static const char CORE_SRC[] = "interface Iter<T> {\n"
+                               "    func len(self: &Self): int;\n"
+                               "    func at(self: &Self, index: int): &T;\n"
+                               "}\n"
+                               "interface Index<T> {\n"
+                               "    func at(self: &Self, index: int): &T;\n"
+                               "}\n"
+                               "impl str {\n"
                                "    extern func len(self: &str): int;\n"
                                "    extern func is_empty(self: &str): bool;\n"
                                "    extern func at(self: &str, index: int): int;\n"

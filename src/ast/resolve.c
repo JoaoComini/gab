@@ -189,6 +189,34 @@ static Resolution resolver_resolve_name(ResolverState *state, Scope *scope, Stri
     return resolution;
 }
 
+/* The prelude's interfaces are named without an import, as the methods it declares on a primitive are. */
+static Interface *resolver_lookup_interface(ResolverState *state, String *name) {
+    Interface *found = scope_interface_lookup(state->current_scope, name);
+
+    if (found || !state->module_scopes) {
+        return found;
+    }
+
+    Scope **prelude = module_scope_map_lookup(
+        state->module_scopes, string_from_cstr(state->current_scope->strings, GAB_CORE_MODULE));
+
+    if (prelude && (found = scope_interface_lookup(*prelude, name))) {
+        return found;
+    }
+
+    for (size_t i = 0; i < state->imports->size; i++) {
+        String *module = string_from_ref(state->current_scope->strings, state->imports->data[i].name);
+
+        Scope **imported = module_scope_map_lookup(state->module_scopes, module);
+
+        if (imported && (found = scope_interface_lookup(*imported, name))) {
+            return found;
+        }
+    }
+
+    return NULL;
+}
+
 static String *resolver_expr_member(ResolverState *state, StringRef name) {
     StringRef module, member;
 
@@ -2256,8 +2284,26 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
     ASTStmt **methods =
         count > 0 ? arena_alloc(resolver_owner_arena(state), count * sizeof(ASTStmt *)) : NULL;
 
+    /* Cloned into the arena the interface lives in: the AST as parsed dies with the unit's load. */
     for (size_t i = 0; i < count; i++) {
-        methods[i] = stmt->interface_decl.members.data[i];
+        Arena *arena = resolver_owner_arena(state);
+        const ASTStmt *signature = stmt->interface_decl.members.data[i];
+
+        ASTStmt *copy = ast_clone_stmt(arena, signature);
+
+        copy->func_decl.return_type = ast_clone_type_expr(arena, signature->func_decl.return_type);
+
+        copy->func_decl.params = ast_field_list_create(arena_allocator(arena));
+
+        for (size_t p = 0; p < signature->func_decl.params.size; p++) {
+            const ASTField *param = signature->func_decl.params.data[p];
+
+            ast_field_list_add(&copy->func_decl.params,
+                               ast_field_create(arena, param->span, param->name,
+                                                ast_clone_type_expr(arena, param->type_expr)));
+        }
+
+        methods[i] = copy;
     }
 
     size_t param_count = stmt->interface_decl.param_count;
@@ -2305,7 +2351,7 @@ static Scope *self_scope(ResolverState *state, const Type *implementor) {
 static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *implementor) {
     String *interface_name = resolver_intern(state, stmt->impl.interface_name);
 
-    Interface *interface = scope_interface_lookup(state->current_scope, interface_name);
+    Interface *interface = resolver_lookup_interface(state, interface_name);
 
     if (!interface) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->impl.interface_span, "unknown interface '%s'",
@@ -2527,7 +2573,7 @@ static void enter_param_bounds(ResolverState *state, ASTStmt *stmt) {
         const TypeExpr *named = bound->kind == TYPE_EXPR_APPLY ? bound->apply.base : bound;
 
         String *name = resolver_intern(state, named->name);
-        Interface *interface = scope_interface_lookup(state->current_scope, name);
+        Interface *interface = resolver_lookup_interface(state, name);
 
         if (!interface) {
             diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span,
