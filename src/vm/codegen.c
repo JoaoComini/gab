@@ -1467,15 +1467,32 @@ static unsigned int codegen_index_base(CodegenState *state, ASTExpr *target) {
     return pointer;
 }
 
+/* An array states its length in its type; a slice carries it in the slot past the address it holds. */
+static void codegen_bounds_check(CodegenState *state, const Type *container, unsigned int base,
+                                 unsigned int index) {
+    if (type_kind(container) == TYPE_SLICE) {
+        chunk_add_instruction(state->chunk,
+                              VM_ENCODE_R(OP_BOUNDS_CHECK_REG, 0, index, base + VM_INDIRECT_SLOTS));
+        return;
+    }
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_RK(OP_BOUNDS_CHECK, base, index,
+                                                     (unsigned int)type_array_length(container), 1));
+}
+
 static unsigned int codegen_index_address(CodegenState *state, ASTExpr *node) {
-    const Type *array_type = node->index.array_type;
-    const Type *element = type_array_element(array_type);
+    const Type *element = node->type;
+
+    const Type *container = node->index.target->type;
+
+    while (type_is_indirect(container)) {
+        container = type_pointee(container);
+    }
 
     unsigned int base = codegen_index_base(state, node->index.target);
     unsigned int index = codegen_expr(state, node->index.index);
 
-    chunk_add_instruction(state->chunk, VM_ENCODE_RK(OP_BOUNDS_CHECK, base, index,
-                                                     (unsigned int)type_array_length(array_type), 1));
+    codegen_bounds_check(state, container, base, index);
 
     unsigned int offset = codegen_alloc_register(state, node->span);
 
@@ -1858,6 +1875,10 @@ static FieldTarget codegen_resolve_field_target(CodegenState *state, ASTExpr *no
         FieldTarget target = codegen_resolve_field_target(state, inner, true);
         target.offset += codegen_field_offset(state, node);
         return target;
+    }
+
+    if (node->kind == EXPR_INDEX) {
+        return codegen_index_target(state, node);
     }
 
     if (node->kind == EXPR_DEREF) {

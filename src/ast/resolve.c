@@ -48,7 +48,7 @@ typedef struct {
     unsigned int loop_depth;
 } FuncContext;
 
-typedef struct {
+typedef struct ResolverState {
     Arena *compile_arena;
 
     Scope *global_scope;
@@ -1003,42 +1003,48 @@ static void rewrite_index_as_call(ResolverState *state, ASTExpr *expr) {
     expr->type = type_pointee(call->type);
 }
 
-/* An array supplies 'Index' itself: 'xs.index(i)' is '&xs[i]', checked against the length in its type. */
-static bool resolve_array_index(ResolverState *state, ASTExpr *expr, ASTExpr *receiver, String *name) {
-    TypeRegistry *registry = state->current_scope->type_registry;
+/* An array and a slice both supply 'Index' themselves: 'xs.index(i)' is '&xs[i]'. */
+static bool lower_index(ResolverState *state, ASTExpr *expr, ASTExpr *receiver, const Type *base) {
+    ASTExpr *element =
+        ast_index_expr_create(state->compile_arena, expr->span, receiver, expr->call.args.data[0]);
 
-    if (name != string_from_cstr(state->current_scope->strings, "index")) {
-        return false;
-    }
-
-    if (expr->call.args.size != 1) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected 1 argument(s), found %zu",
-                   expr->call.args.size);
-        expr->type = resolver_error_type(state);
-        return true;
-    }
-
-    ASTExpr *index = expr->call.args.data[0];
-
-    if (index->type != type_registry_get_primitive(registry, TYPE_INT)) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "an index must be an int, not %s",
-                   type_name(state, index->type));
-        expr->type = resolver_error_type(state);
-        return true;
-    }
-
-    const Type *array = receiver_base_type(receiver->type);
-
-    ASTExpr *element = ast_index_expr_create(state->compile_arena, expr->span, receiver, index);
-
-    element->index.array_type = array;
-    element->type = type_array_element(array);
+    element->type = type_kind(base) == TYPE_SLICE ? type_slice_element(base) : type_array_element(base);
 
     expr->kind = EXPR_ADDR_OF;
     expr->unary.target = element;
-    expr->type = type_registry_ref_to(registry, element->type);
+    expr->type = type_registry_ref_to(state->current_scope->type_registry, element->type);
 
     return true;
+}
+
+/* An array's length is the count in its type, so it is known without reading the array at all. */
+static bool lower_array_len(ResolverState *state, ASTExpr *expr, ASTExpr *receiver, const Type *base) {
+    (void)receiver;
+
+    /* A body checked before its length is fixed emits nothing, so the count it folds to is unused. */
+    expr->kind = EXPR_LITERAL;
+    expr->lit =
+        (Literal){.kind = TYPE_INT, .as_int = type_array_length_is_known(base) ? type_array_length(base) : 0};
+    expr->type = type_registry_get_primitive(state->current_scope->type_registry, TYPE_INT);
+
+    return true;
+}
+
+/* A declaration is an intrinsic only where this names a lowering for it, so the two cannot drift. */
+static const IntrinsicLowering INTRINSICS[] = {
+    {"array", "index", lower_index},
+    {"array", "len", lower_array_len},
+    {"slice", "index", lower_index},
+};
+
+static const IntrinsicLowering *intrinsic_for(const String *owner, const String *name) {
+    for (size_t i = 0; i < sizeof(INTRINSICS) / sizeof(*INTRINSICS); i++) {
+        if (strcmp(owner->data, INTRINSICS[i].owner) == 0 && strcmp(name->data, INTRINSICS[i].name) == 0) {
+            return &INTRINSICS[i];
+        }
+    }
+
+    return NULL;
 }
 
 static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
@@ -1059,11 +1065,6 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     }
 
     String *method_name = resolver_intern(state, name);
-
-    if (type_kind(receiver_base_type(receiver_type)) == TYPE_ARRAY &&
-        resolve_array_index(state, expr, receiver, method_name)) {
-        return;
-    }
 
     const Type *base = NULL;
     Function *method = find_method(state, receiver_type, method_name, expr->span, &base);
@@ -1107,6 +1108,12 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %zu argument(s), found %zu",
                    declared_params, expr->call.args.size);
         expr->type = resolver_error_type(state);
+        return;
+    }
+
+    if (method->decl->body_kind == BODY_INTRINSIC) {
+        check_call_args(state, &expr->call.args, method->params + 1);
+        method->decl->intrinsic->lower(state, expr, receiver, base);
         return;
     }
 
@@ -1579,7 +1586,6 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             break;
         }
 
-        expr->index.array_type = target_type;
         expr->type = type_array_element(target_type);
         break;
     }
@@ -2534,6 +2540,19 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         return;
     }
 
+    const IntrinsicLowering *intrinsic = NULL;
+
+    if (stmt->func_decl.is_intrinsic) {
+        intrinsic = intrinsic_for(type_name_of(owner), resolver_intern(state, stmt->func_decl.name));
+
+        if (!intrinsic) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
+                       "the compiler lowers no intrinsic '%s' on %s",
+                       resolver_intern(state, stmt->func_decl.name)->data, type_name(state, owner));
+            return;
+        }
+    }
+
     if (owner_is_primitive && !state->allow_primitive_impls) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                    "a function on %s is declared by the runtime's core library", type_name(state, owner));
@@ -2577,6 +2596,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         .body_kind = stmt->func_decl.is_intrinsic ? BODY_INTRINSIC
                      : is_host                    ? BODY_HOST
                                                   : BODY_GAB,
+        .intrinsic = intrinsic,
         .body = stmt,
         .type_param_count = stmt->func_decl.type_param_count,
     };

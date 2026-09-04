@@ -34,6 +34,18 @@ typedef struct FuncSignature {
 FuncSignature func_signature_instantiate(TypeRegistry *registry, Arena *arena, const FuncSignature *generic,
                                          const TypeArg *args, size_t arg_count);
 
+struct ResolverState;
+struct ASTExpr;
+
+/* Rewrites a resolved call into the nodes the compiler already lowers, in place of a body. */
+typedef struct IntrinsicLowering {
+    const char *owner;
+    const char *name;
+
+    bool (*lower)(struct ResolverState *state, struct ASTExpr *expr, struct ASTExpr *receiver,
+                  const Type *base);
+} IntrinsicLowering;
+
 typedef struct FuncDecl {
     String *name;
     String *module;
@@ -42,6 +54,9 @@ typedef struct FuncDecl {
     BodyKind body_kind;
 
     void *body;
+
+    /* The lowering an 'intrinsic' names, resolved where it is declared; NULL for every other body. */
+    const IntrinsicLowering *intrinsic;
 
     /* How many arguments this declaration is generic over, whether they came from an owner or itself. */
     size_t type_param_count;

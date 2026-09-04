@@ -185,6 +185,20 @@ static inline bool test_compiles_on_vm(const char *source) {
     return compiled;
 }
 
+static inline bool test_compiles_as_prelude(const char *source) {
+    VM *vm = vm_create();
+
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
+
+    bool loaded = compile_load_library(vm, test_in_a_module(source), true, &diagnostics);
+
+    diagnostics_free(&diagnostics);
+    vm_free(vm);
+
+    return loaded;
+}
+
 typedef struct {
     VM *vm;
     FuncPrototype script;

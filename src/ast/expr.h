@@ -109,8 +109,6 @@ typedef struct ASTExpr {
         struct {
             ASTExpr *target;
             ASTExpr *index;
-
-            const Type *array_type;
         } index;
 
         struct {

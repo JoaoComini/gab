@@ -796,6 +796,25 @@ static void vm_run_loop(VM *vm) {
 
                 VM_NEXT();
             }
+            VM_CASE(OP_BOUNDS_CHECK_REG) {
+                size_t r1 = VM_DECODE_R_R1(instruction);
+                size_t r2 = VM_DECODE_R_R2(instruction);
+
+                int32_t index;
+                memcpy(&index, VM_REG(r1), sizeof(index));
+
+                int32_t length;
+                memcpy(&length, VM_REG(r2), sizeof(length));
+
+                if (VM_UNLIKELY(index < 0 || index >= length)) {
+                    vm_fail(vm, VM_RUN_ERR_BOUNDS, "slice index is out of range");
+
+                    vm_unwind(vm);
+                    VM_RETRY();
+                }
+
+                VM_NEXT();
+            }
             VM_CASE(OP_ADD_PTR) {
                 size_t rd = VM_DECODE_R_RD(instruction);
                 size_t base = VM_DECODE_R_R1(instruction);
