@@ -570,6 +570,97 @@ static ASTField *parse_field(Parser *parser, const char *name_message) {
     return ast_field_create(parser->arena, span, name, type);
 }
 
+/* '<T, U>' as a declaration writes: names, each optionally bounded by ': Interface'. */
+typedef struct {
+    StringRef names[GAB_MAX_TYPE_PARAMS];
+    TypeExpr *bounds[GAB_MAX_TYPE_PARAMS];
+
+    /* What was written, which may exceed GAB_MAX_TYPE_PARAMS; only that many are stored. */
+    size_t count;
+} TypeParams;
+
+/* Absent parameters leave 'out' empty rather than failing: every site's '<' is optional. */
+static bool parse_type_params(Parser *parser, TypeParams *out, const char *owner) {
+    *out = (TypeParams){0};
+
+    if (parser->current.type != TOKEN_LESS) {
+        return true;
+    }
+
+    parser_next_token(parser);
+
+    for (;;) {
+        if (!parser_expect(parser, TOKEN_IDENT, "expected a type parameter name")) {
+            return false;
+        }
+
+        if (out->count == GAB_MAX_TYPE_PARAMS) {
+            diag_error(parser->diagnostics, GAB_ERR_SYNTAX, parser_span(parser),
+                       "%s takes at most %d type parameters", owner, GAB_MAX_TYPE_PARAMS);
+            return false;
+        }
+
+        out->names[out->count] = parser->current.lexeme;
+        parser_next_token(parser);
+
+        if (parser->current.type == TOKEN_COLON) {
+            parser_next_token(parser);
+
+            if (!(out->bounds[out->count] = parse_type_expr(parser))) {
+                return false;
+            }
+        }
+
+        out->count++;
+
+        if (parser->current.type != TOKEN_COMMA) {
+            break;
+        }
+
+        parser_next_token(parser);
+    }
+
+    char message[96];
+    snprintf(message, sizeof(message), "expected '>' after the type parameters %s takes", owner);
+
+    if (!parser_expect(parser, TOKEN_GREATER, message)) {
+        return false;
+    }
+
+    parser_next_token(parser);
+
+    return true;
+}
+
+/* '<int, bool>' as a use writes: the types applied to whatever named them. */
+static bool parse_type_args(Parser *parser, TypeExprList *out) {
+    parser_next_token(parser);
+
+    for (;;) {
+        TypeExpr *argument = parse_type_expr(parser);
+
+        if (!argument) {
+            return false;
+        }
+
+        type_expr_list_add(out, argument);
+
+        if (parser->current.type != TOKEN_COMMA) {
+            break;
+        }
+
+        parser_next_token(parser);
+    }
+
+    if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after a type's arguments")) {
+        return false;
+    }
+
+    parser_next_token(parser);
+
+    return true;
+}
+
 static TypeExpr *parse_type_expr(Parser *parser) {
     if (parser->current.type == TOKEN_LBRACKET) {
         parser_next_token(parser);
@@ -655,31 +746,11 @@ static TypeExpr *parse_type_expr(Parser *parser) {
     TypeExpr *type = base;
 
     if (parser->current.type == TOKEN_LESS) {
-        parser_next_token(parser);
-
         TypeExpr *apply = type_expr_apply(parser->arena, base);
 
-        for (;;) {
-            TypeExpr *argument = parse_type_expr(parser);
-
-            if (!argument) {
-                return NULL;
-            }
-
-            type_expr_list_add(&apply->apply.args, argument);
-
-            if (parser->current.type != TOKEN_COMMA) {
-                break;
-            }
-
-            parser_next_token(parser);
-        }
-
-        if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after a type's arguments")) {
+        if (!parse_type_args(parser, &apply->apply.args)) {
             return NULL;
         }
-
-        parser_next_token(parser);
 
         type = apply;
     }
@@ -699,38 +770,10 @@ static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
     StringRef name = parser->current.lexeme;
     parser_next_token(parser);
 
-    StringRef params[GAB_MAX_TYPE_PARAMS];
-    size_t param_count = 0;
+    TypeParams type_params;
 
-    if (parser->current.type == TOKEN_LESS) {
-        parser_next_token(parser);
-
-        for (;;) {
-            if (!parser_expect(parser, TOKEN_IDENT, "expected a type parameter name")) {
-                return NULL;
-            }
-
-            if (param_count == GAB_MAX_TYPE_PARAMS) {
-                diag_error(parser->diagnostics, GAB_ERR_SYNTAX, parser_span(parser),
-                           "a struct takes at most %d type parameters", GAB_MAX_TYPE_PARAMS);
-                return NULL;
-            }
-
-            params[param_count++] = parser->current.lexeme;
-            parser_next_token(parser);
-
-            if (parser->current.type != TOKEN_COMMA) {
-                break;
-            }
-
-            parser_next_token(parser);
-        }
-
-        if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after a struct's type parameters")) {
-            return NULL;
-        }
-
-        parser_next_token(parser);
+    if (!parse_type_params(parser, &type_params, "a struct")) {
+        return NULL;
     }
 
     if (!parser_expect(parser, TOKEN_LBRACE, "expected '{' after struct name")) {
@@ -765,7 +808,8 @@ static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
 
     parser_next_token(parser);
 
-    return ast_struct_decl_stmt_create(parser->arena, span, name, params, param_count, fields);
+    return ast_struct_decl_stmt_create(parser->arena, span, name, type_params.names, type_params.count,
+                                       fields);
 }
 
 /* Prepended, so a member's own parameters continue the numbering of the ones its owner declares. */
@@ -823,51 +867,19 @@ static ASTStmt *parse_func_decl_stmt_inner(Parser *parser, bool signature_only) 
     StringRef func_name = parser->current.lexeme;
     parser_next_token(parser);
 
+    TypeParams declared;
+
+    if (!parse_type_params(parser, &declared, "a function")) {
+        return NULL;
+    }
+
     TypeExprList type_params = type_expr_list_create(arena_allocator(parser->arena));
 
-    TypeExpr *bounds[GAB_MAX_TYPE_PARAMS] = {0};
-    size_t bound_count = 0;
-
-    if (parser->current.type == TOKEN_LESS) {
-        parser_next_token(parser);
-
-        for (;;) {
-            if (!parser_expect(parser, TOKEN_IDENT, "expected a type parameter name")) {
-                return NULL;
-            }
-
-            type_expr_list_add(&type_params, type_expr_name(parser->arena, parser->current.lexeme));
-            parser_next_token(parser);
-
-            if (parser->current.type == TOKEN_COLON) {
-                parser_next_token(parser);
-
-                TypeExpr *bound = parse_type_expr(parser);
-
-                if (!bound) {
-                    return NULL;
-                }
-
-                if (bound_count < GAB_MAX_TYPE_PARAMS) {
-                    bounds[bound_count] = bound;
-                }
-            }
-
-            bound_count++;
-
-            if (parser->current.type != TOKEN_COMMA) {
-                break;
-            }
-
-            parser_next_token(parser);
-        }
-
-        if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after a function's type parameters")) {
-            return NULL;
-        }
-
-        parser_next_token(parser);
+    for (size_t i = 0; i < declared.count; i++) {
+        type_expr_list_add(&type_params, type_expr_name(parser->arena, declared.names[i]));
     }
+
+    TypeExpr *const *bounds = declared.bounds;
 
     if (parser->current.type == TOKEN_COLON_COLON) {
         parser_error(parser, "a function on a type is declared in an 'impl' block for that type");
@@ -953,31 +965,16 @@ static ASTStmt *parse_impl_stmt(Parser *parser) {
 
     parser_next_token(parser);
 
+    TypeParams declared;
+
+    if (!parse_type_params(parser, &declared, "an impl block")) {
+        return NULL;
+    }
+
     TypeExprList params = type_expr_list_create(arena_allocator(parser->arena));
 
-    if (parser->current.type == TOKEN_LESS) {
-        parser_next_token(parser);
-
-        for (;;) {
-            if (!parser_expect(parser, TOKEN_IDENT, "expected a type parameter name")) {
-                return NULL;
-            }
-
-            type_expr_list_add(&params, type_expr_name(parser->arena, parser->current.lexeme));
-            parser_next_token(parser);
-
-            if (parser->current.type != TOKEN_COMMA) {
-                break;
-            }
-
-            parser_next_token(parser);
-        }
-
-        if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after an impl's type parameters")) {
-            return NULL;
-        }
-
-        parser_next_token(parser);
+    for (size_t i = 0; i < declared.count; i++) {
+        type_expr_list_add(&params, type_expr_name(parser->arena, declared.names[i]));
     }
 
     TypeExpr *type = parse_type_expr(parser);
@@ -1001,29 +998,8 @@ static ASTStmt *parse_impl_stmt(Parser *parser) {
 
         parser_next_token(parser);
 
-        if (parser->current.type == TOKEN_LESS) {
-            parser_next_token(parser);
-
-            for (;;) {
-                TypeExpr *arg = parse_type_expr(parser);
-                if (!arg) {
-                    return NULL;
-                }
-
-                type_expr_list_add(&interface_args, arg);
-
-                if (parser->current.type != TOKEN_COMMA) {
-                    break;
-                }
-
-                parser_next_token(parser);
-            }
-
-            if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after an interface's type arguments")) {
-                return NULL;
-            }
-
-            parser_next_token(parser);
+        if (parser->current.type == TOKEN_LESS && !parse_type_args(parser, &interface_args)) {
+            return NULL;
         }
     }
 
@@ -1095,38 +1071,10 @@ static ASTStmt *parse_interface_decl_stmt(Parser *parser) {
 
     parser_next_token(parser);
 
-    StringRef params[GAB_MAX_TYPE_PARAMS];
-    size_t param_count = 0;
+    TypeParams type_params;
 
-    if (parser->current.type == TOKEN_LESS) {
-        parser_next_token(parser);
-
-        for (;;) {
-            if (!parser_expect(parser, TOKEN_IDENT, "expected a type parameter name")) {
-                return NULL;
-            }
-
-            if (param_count == GAB_MAX_TYPE_PARAMS) {
-                diag_error(parser->diagnostics, GAB_ERR_SYNTAX, parser_span(parser),
-                           "an interface takes at most %d type parameters", GAB_MAX_TYPE_PARAMS);
-                return NULL;
-            }
-
-            params[param_count++] = parser->current.lexeme;
-            parser_next_token(parser);
-
-            if (parser->current.type != TOKEN_COMMA) {
-                break;
-            }
-
-            parser_next_token(parser);
-        }
-
-        if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after an interface's type parameters")) {
-            return NULL;
-        }
-
-        parser_next_token(parser);
+    if (!parse_type_params(parser, &type_params, "an interface")) {
+        return NULL;
     }
 
     if (!parser_expect(parser, TOKEN_LBRACE, "expected '{' after an interface's name")) {
@@ -1166,11 +1114,11 @@ static ASTStmt *parse_interface_decl_stmt(Parser *parser) {
 
     ASTStmt *stmt = ast_interface_decl_stmt_create(parser->arena, span, name, members);
 
-    for (size_t i = 0; i < param_count; i++) {
-        stmt->interface_decl.params[i] = params[i];
+    for (size_t i = 0; i < type_params.count; i++) {
+        stmt->interface_decl.params[i] = type_params.names[i];
     }
 
-    stmt->interface_decl.param_count = param_count;
+    stmt->interface_decl.param_count = type_params.count;
 
     return stmt;
 }
@@ -1395,33 +1343,9 @@ static bool parser_type_args_precede_a_call(Parser *parser) {
 }
 
 static TypeExpr *parse_type_args_for(Parser *parser, StringRef name) {
-    parser_next_token(parser);
-
     TypeExpr *apply = type_expr_apply(parser->arena, type_expr_name(parser->arena, name));
 
-    for (;;) {
-        TypeExpr *argument = parse_type_expr(parser);
-
-        if (!argument) {
-            return NULL;
-        }
-
-        type_expr_list_add(&apply->apply.args, argument);
-
-        if (parser->current.type != TOKEN_COMMA) {
-            break;
-        }
-
-        parser_next_token(parser);
-    }
-
-    if (!parser_expect(parser, TOKEN_GREATER, "expected '>' after a type's arguments")) {
-        return NULL;
-    }
-
-    parser_next_token(parser);
-
-    return apply;
+    return parse_type_args(parser, &apply->apply.args) ? apply : NULL;
 }
 
 static bool parse_field_inits(Parser *parser, ASTFieldInitList *out) {
