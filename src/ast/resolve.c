@@ -1027,9 +1027,23 @@ static bool lower_index(ResolverState *state, ASTExpr *expr, ASTExpr *receiver, 
     return true;
 }
 
+/* An array's length is the count in its type, so it is known without reading the array at all. */
+static bool lower_array_len(ResolverState *state, ASTExpr *expr, ASTExpr *receiver, const Type *base) {
+    (void)receiver;
+
+    /* A body checked before its length is fixed emits nothing, so the count it folds to is unused. */
+    expr->kind = EXPR_LITERAL;
+    expr->lit =
+        (Literal){.kind = TYPE_INT, .as_int = type_array_length_is_known(base) ? type_array_length(base) : 0};
+    expr->type = type_registry_get_primitive(state->current_scope->type_registry, TYPE_INT);
+
+    return true;
+}
+
 /* A declaration is an intrinsic only where this names a lowering for it, so the two cannot drift. */
 static const IntrinsicLowering INTRINSICS[] = {
     {"array", "index", lower_index},
+    {"array", "len", lower_array_len},
     {"slice", "index", lower_index},
 };
 

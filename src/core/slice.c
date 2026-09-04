@@ -32,6 +32,10 @@ static const char SLICE_SRC[] = "impl<T> slice<T> {\n"
                                 "impl<T> slice<T> as Index<T> {\n"
                                 "    intrinsic func index(self: &slice<T>, at: int): &T;\n"
                                 "}\n"
+
+                                "impl<T, N: int> array<T, N> {\n"
+                                "    intrinsic func len(self: &Self): int;\n"
+                                "}\n"
                                 "impl<T, N: int> array<T, N> as Index<T> {\n"
                                 "    intrinsic func index(self: &Self, at: int): &T;\n"
                                 "}\n";
