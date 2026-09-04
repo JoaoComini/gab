@@ -290,3 +290,21 @@ Binding *scope_decl_func(Scope *scope, String *name, const Type *return_type) {
 
     return *decl;
 }
+
+FuncSignature func_signature_instantiate(TypeRegistry *registry, Arena *arena, const FuncSignature *generic,
+                                         const Type *const *args, size_t arg_count) {
+    FuncSignature out = {
+        .return_type = type_registry_substitute(registry, generic->return_type, args, arg_count),
+    };
+
+    if (generic->param_count > 0) {
+        out.params = arena_alloc(arena, generic->param_count * sizeof(const Type *));
+        out.param_count = generic->param_count;
+
+        for (size_t i = 0; i < generic->param_count; i++) {
+            out.params[i] = type_registry_substitute(registry, generic->params[i], args, arg_count);
+        }
+    }
+
+    return out;
+}

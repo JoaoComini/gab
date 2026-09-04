@@ -45,10 +45,17 @@ static void test_the_interfaces_are_named_without_an_import() {
                                "}\n"));
 }
 
-static void test_an_array_supplies_no_implementation() {
-    assert(!test_compiles_on_vm("impl [int; 3] as Index<int> {\n"
-                                "    func at(self: &Self, index: int): &int { return self[index]; }\n"
-                                "}\n"));
+static void test_an_array_supplies_the_interfaces() {
+    assert(test_run_int("func total<C: Iter<int>>(c: &C): int {\n"
+                        "    let sum: int = 0;\n"
+                        "    for let i: int = 0; i < c.len(); i = i + 1 { sum = sum + *c.at(i); }\n"
+                        "    return sum;\n"
+                        "}\n"
+                        "func f(): int {\n"
+                        "    let xs: [int; 3] = [1, 20, 300];\n"
+                        "    return total(xs);\n"
+                        "}\n"
+                        "let r: int = f();") == 321);
 }
 
 int main(void) {
@@ -56,7 +63,7 @@ int main(void) {
     test_a_vec_iterates_at_its_element_type();
     test_a_bound_at_another_element_type_is_refused();
     test_the_interfaces_are_named_without_an_import();
-    test_an_array_supplies_no_implementation();
+    test_an_array_supplies_the_interfaces();
 
     return 0;
 }

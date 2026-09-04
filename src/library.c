@@ -161,8 +161,7 @@ bool gab_lib_source(GabLib *lib, const char *source, GabError *err) {
     size_t prefix = strlen("module ") + strlen(lib->module) + strlen(";\n");
     size_t bytes = prefix + strlen(source) + 1;
 
-    /* An interface's signatures are named by reference into this text, which so outlives the load. */
-    char *unit = arena_alloc(lib->vm->env.arena, bytes);
+    char *unit = malloc(bytes);
     if (!unit) {
         lib_error(err, "out of memory");
         return false;
@@ -188,6 +187,7 @@ bool gab_lib_source(GabLib *lib, const char *source, GabError *err) {
     }
 
     diagnostics_free(&diagnostics);
+    free(unit);
 
     return loaded;
 }

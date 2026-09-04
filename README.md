@@ -276,8 +276,18 @@ func total<C: Iter<int>>(c: &C): int {
 }
 ```
 
-A method belongs to a struct or to a primitive, so `[T; N]` supplies neither —
-an array's `len` is its type's, read where it is written.
+An array supplies both. Its `len` and `at` come from its type rather than from a
+declaration — `[T; N]` names no one type to write an `impl` for — so an array
+reaches a bounded function the way a vector does:
+
+```
+let xs: [int; 3] = [1, 20, 300];
+let sum: int = total(xs);
+```
+
+A bound is nominal: a type satisfies one by saying `impl T as I`, not by
+happening to supply the right methods. A struct with a matching `count` that
+never declares `as Countable` is refused at the call.
 
 Only something with a home in memory can be borrowed. A call result is a
 temporary with no address to name, so it must be bound to a variable first. A
@@ -576,7 +586,7 @@ Not yet implemented:
 | Vectors | `new`, `push`, `at` and `len` only: no removal, no iteration, and no literal. `Vec<T>` supplies `Iter<T>` and `Index<T>` |
 | Borrows | A returned borrow names a parameter or something it reaches; returning one that names a local is refused |
 | Generics | A method's own type arguments are inferred from what it is given; there is no `v.method<int>(x)` to write them |
-| Interfaces | No associated types, no compound bounds, and no dynamic dispatch. Only a struct or a primitive implements one, so `[T; N]` supplies none |
+| Interfaces | No associated types, no compound bounds, and no dynamic dispatch |
 | Operators | Bitwise |
 
 ## Building

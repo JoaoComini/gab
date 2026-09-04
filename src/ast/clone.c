@@ -8,36 +8,6 @@
 static ASTExpr *clone_expr(Arena *arena, const ASTExpr *expr);
 static ASTStmt *clone_stmt(Arena *arena, const ASTStmt *stmt);
 
-TypeExpr *ast_clone_type_expr(Arena *arena, const TypeExpr *expr) {
-    if (!expr) {
-        return NULL;
-    }
-
-    switch (expr->kind) {
-    case TYPE_EXPR_NAME:
-        return type_expr_name(arena, expr->name);
-
-    case TYPE_EXPR_BOX:
-    case TYPE_EXPR_REF:
-        return type_expr_indirect(arena, expr->kind, ast_clone_type_expr(arena, expr->indirect.inner));
-
-    case TYPE_EXPR_ARRAY:
-        return type_expr_array(arena, ast_clone_type_expr(arena, expr->array.element), expr->array.length);
-
-    case TYPE_EXPR_APPLY: {
-        TypeExpr *out = type_expr_apply(arena, ast_clone_type_expr(arena, expr->apply.base));
-
-        for (size_t i = 0; i < expr->apply.args.size; i++) {
-            type_expr_list_add(&out->apply.args, ast_clone_type_expr(arena, expr->apply.args.data[i]));
-        }
-
-        return out;
-    }
-    }
-
-    return NULL;
-}
-
 static ASTField *clone_field(Arena *arena, const ASTField *field) {
     return ast_field_create(arena, field->span, field->name, field->type_expr);
 }

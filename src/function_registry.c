@@ -83,14 +83,6 @@ Function *function_registry_specialize(FunctionRegistry *registry, Function *gen
 
     Function *function = arena_alloc(registry->arena, sizeof(Function));
 
-    const Type **params = generic->param_count
-                              ? arena_alloc(registry->arena, generic->param_count * sizeof(const Type *))
-                              : NULL;
-
-    for (size_t p = 0; p < generic->param_count; p++) {
-        params[p] = type_registry_substitute(registry->types, generic->params[p], args, arg_count);
-    }
-
     const Type **owned_args = arena_alloc(registry->arena, arg_count * sizeof(const Type *));
 
     for (size_t i = 0; i < arg_count; i++) {
@@ -99,9 +91,8 @@ Function *function_registry_specialize(FunctionRegistry *registry, Function *gen
 
     *function = (Function){
         .decl = generic->decl,
-        .params = params,
-        .param_count = generic->param_count,
-        .return_type = type_registry_substitute(registry->types, generic->return_type, args, arg_count),
+        .signature = func_signature_instantiate(registry->types, registry->arena, &generic->signature, args,
+                                                arg_count),
         .type_args = owned_args,
         .type_arg_count = arg_count,
         .func_index = FUNCTION_NO_BODY,
