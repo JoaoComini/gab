@@ -38,9 +38,6 @@ static void slice_index(GabCtx *ctx) {
     gab_ctx_return_pointer(ctx, (char *)slice.data + (size_t)index * gab_ctx_type_size(ctx, 0));
 }
 
-/* The resolver lowers an array's 'index' to the inline form, so this body stands only for the declaration. */
-static void array_index(GabCtx *ctx) { gab_ctx_fail(ctx, GAB_FAIL_RUNTIME, "an array indexes inline"); }
-
 static const char SLICE_SRC[] = "impl<T> slice<T> {\n"
                                 "    extern func len(self: &slice<T>): int;\n"
                                 "}\n"
@@ -48,7 +45,7 @@ static const char SLICE_SRC[] = "impl<T> slice<T> {\n"
                                 "    extern func index(self: &slice<T>, at: int): &T;\n"
                                 "}\n"
                                 "impl<T, N: int> array<T, N> as Index<T> {\n"
-                                "    extern func index(self: &Self, at: int): &T;\n"
+                                "    intrinsic func index(self: &Self, at: int): &T;\n"
                                 "}\n";
 
 void core_register_slice(VM *vm) {
@@ -60,25 +57,11 @@ void core_register_slice(VM *vm) {
         {"index", slice_index},
     };
 
-    static const struct {
-        const char *name;
-        GabExternFn body;
-    } ARRAY_METHODS[] = {
-        {"index", array_index},
-    };
-
     GabError err;
     GabLib *core = library_open_prelude(vm, GAB_CORE_MODULE);
 
     for (size_t i = 0; i < sizeof(METHODS) / sizeof(*METHODS); i++) {
         bool bound = gab_lib_bind(core, "slice", METHODS[i].name, METHODS[i].body, &err);
-
-        assert(bound && "a library binds each of its externs once");
-        (void)bound;
-    }
-
-    for (size_t i = 0; i < sizeof(ARRAY_METHODS) / sizeof(*ARRAY_METHODS); i++) {
-        bool bound = gab_lib_bind(core, "array", ARRAY_METHODS[i].name, ARRAY_METHODS[i].body, &err);
 
         assert(bound && "a library binds each of its externs once");
         (void)bound;

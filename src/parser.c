@@ -822,12 +822,16 @@ static void func_decl_take_type_params(ASTStmt *decl, TypeExprList *params, Type
 static ASTStmt *parse_func_decl_stmt_inner(Parser *parser, bool signature_only) {
     Span span = parser_span(parser);
 
-    bool is_extern = signature_only || parser->current.type == TOKEN_EXTERN;
+    bool is_intrinsic = parser->current.type == TOKEN_INTRINSIC;
+    bool is_extern = signature_only || is_intrinsic || parser->current.type == TOKEN_EXTERN;
 
     if (is_extern && !signature_only) {
+        const char *after =
+            is_intrinsic ? "expected 'func' after 'intrinsic'" : "expected 'func' after 'extern'";
+
         parser_next_token(parser);
 
-        if (!parser_expect(parser, TOKEN_FUNC, "expected 'func' after 'extern'")) {
+        if (!parser_expect(parser, TOKEN_FUNC, after)) {
             return NULL;
         }
     }
@@ -911,6 +915,8 @@ static ASTStmt *parse_func_decl_stmt_inner(Parser *parser, bool signature_only) 
         ASTStmt *decl =
             ast_func_decl_stmt_create(parser->arena, span, func_name, func_type, func_params, NULL);
 
+        decl->func_decl.is_intrinsic = is_intrinsic;
+
         func_decl_take_type_params(decl, &type_params, bounds);
 
         return decl;
@@ -991,7 +997,8 @@ static ASTStmt *parse_impl_stmt(Parser *parser) {
             return NULL;
         }
 
-        if (parser->current.type != TOKEN_FUNC && parser->current.type != TOKEN_EXTERN) {
+        if (parser->current.type != TOKEN_FUNC && parser->current.type != TOKEN_EXTERN &&
+            parser->current.type != TOKEN_INTRINSIC) {
             parser_error_found(parser, "expected a function in an 'impl' block");
             return NULL;
         }
