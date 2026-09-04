@@ -21,10 +21,17 @@ static void test_an_intrinsic_the_compiler_does_not_lower_is_refused() {
                                 "}\n"));
 }
 
+static void test_an_intrinsic_names_a_lowering_the_compiler_has() {
+    assert(!test_compiles_as_prelude("impl str {\n"
+                                     "    intrinsic func nowhere(self: &str): int;\n"
+                                     "}\n"));
+}
+
 int main(void) {
     test_an_intrinsic_needs_no_bound_body();
     test_an_intrinsic_is_declared_by_the_core_library();
     test_an_intrinsic_the_compiler_does_not_lower_is_refused();
+    test_an_intrinsic_names_a_lowering_the_compiler_has();
 
     return 0;
 }
