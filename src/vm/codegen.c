@@ -1467,20 +1467,32 @@ static unsigned int codegen_index_base(CodegenState *state, ASTExpr *target) {
     return pointer;
 }
 
+/* An array states its length in its type; a slice carries it in the slot past the address it holds. */
+static void codegen_bounds_check(CodegenState *state, const Type *container, unsigned int base,
+                                 unsigned int index) {
+    if (type_kind(container) == TYPE_SLICE) {
+        chunk_add_instruction(state->chunk,
+                              VM_ENCODE_R(OP_BOUNDS_CHECK_REG, 0, index, base + VM_INDIRECT_SLOTS));
+        return;
+    }
+
+    chunk_add_instruction(state->chunk, VM_ENCODE_RK(OP_BOUNDS_CHECK, base, index,
+                                                     (unsigned int)type_array_length(container), 1));
+}
+
 static unsigned int codegen_index_address(CodegenState *state, ASTExpr *node) {
     const Type *element = node->type;
+
+    const Type *container = node->index.target->type;
+
+    while (type_is_indirect(container)) {
+        container = type_pointee(container);
+    }
 
     unsigned int base = codegen_index_base(state, node->index.target);
     unsigned int index = codegen_expr(state, node->index.index);
 
-    /* A carried length sits in the slot past the address, where unsizing wrote it. */
-    if (node->index.length_is_carried) {
-        chunk_add_instruction(state->chunk,
-                              VM_ENCODE_R(OP_BOUNDS_CHECK_REG, 0, index, base + VM_INDIRECT_SLOTS));
-    } else {
-        chunk_add_instruction(
-            state->chunk, VM_ENCODE_RK(OP_BOUNDS_CHECK, base, index, (unsigned int)node->index.length, 1));
-    }
+    codegen_bounds_check(state, container, base, index);
 
     unsigned int offset = codegen_alloc_register(state, node->span);
 

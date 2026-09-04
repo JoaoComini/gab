@@ -109,10 +109,6 @@ typedef struct ASTExpr {
         struct {
             ASTExpr *target;
             ASTExpr *index;
-
-            /* What the index is checked against: this many elements, or the count the target carries. */
-            int32_t length;
-            bool length_is_carried;
         } index;
 
         struct {
