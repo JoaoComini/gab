@@ -13,33 +13,6 @@ static void test_len_answers_the_character_count() {
                         "let r: int = f();") == 3);
 }
 
-static void test_at_answers_the_character_at_an_index() {
-    assert(test_run_int("func f(): int { let s: &str = \"abc\"; return s.at(0); }\n"
-                        "let r: int = f();") == 'a');
-
-    assert(test_run_int("func f(): int { let s: &str = \"abc\"; return s.at(2); }\n"
-                        "let r: int = f();") == 'c');
-}
-
-static void test_at_takes_exactly_one_argument() {
-    assert(!test_compiles("func f(): int { let s: &str = \"abc\"; return s.at(); }\n"));
-
-    assert(!test_compiles("func f(): int { let s: &str = \"abc\"; return s.at(0, 1); }\n"));
-
-    assert(!test_compiles("func f(): int { let s: &str = \"abc\"; return s.at(\"x\"); }\n"));
-}
-
-static void test_at_outside_the_string_fails_the_run() {
-    assert(test_run_status("func f(): int { let s: &str = \"abc\"; return s.at(3); }\n"
-                           "let r: int = f();") == VM_RUN_ERR_EXTERN);
-
-    assert(test_run_status("func f(): int { let s: &str = \"abc\"; return s.at(-1); }\n"
-                           "let r: int = f();") == VM_RUN_ERR_EXTERN);
-
-    assert(test_run_status("func f(): int { let s: &str = \"\"; return s.at(0); }\n"
-                           "let r: int = f();") == VM_RUN_ERR_EXTERN);
-}
-
 static void test_is_empty_answers_whether_any_character_is_there() {
     assert(test_run_bool("func f(): bool { let s: &str = \"\"; return s.is_empty(); }\n"
                          "let r: bool = f();"));
@@ -207,9 +180,6 @@ int main(void) {
     test_cloning_an_empty_string_is_empty();
     test_an_owned_copy_is_released_where_its_slot_dies();
     test_len_answers_the_character_count();
-    test_at_answers_the_character_at_an_index();
-    test_at_takes_exactly_one_argument();
-    test_at_outside_the_string_fails_the_run();
     test_is_empty_answers_whether_any_character_is_there();
     test_starts_with_answers_the_leading_characters();
     test_ends_with_answers_the_trailing_characters();

@@ -272,26 +272,28 @@ named with as many arguments as it declares, so `Holder` alone and
 func read<H: Holder<int>>(h: &H): int { return h.get(); }
 ```
 
-The prelude declares two interfaces every unit may name without importing
-anything: `Iter<T>`, which is `len` and `at` together, and `Index<T>`, which is
-`at` alone. `Vec<T>` supplies both at its element type, so a function bounded by
-either takes a vector:
+The prelude declares one interface every unit may name without importing
+anything. `Index<T>` names what it lends, and a subscript is an `int` — unlike
+Rust's `Index<Idx>`, nothing is generic over what does the indexing:
 
 ```
-func total<C: Iter<int>>(c: &C): int {
-    let sum: int = 0;
-    for let i: int = 0; i < c.len(); i = i + 1 { sum = sum + *c.at(i); }
-    return sum;
+interface Index<T> {
+    func index(self: &Self, at: int): &T;
 }
 ```
 
-An array supplies both. Its `len` and `at` come from its type rather than from a
-declaration — `[T; N]` names no one type to write an `impl` for — so an array
-reaches a bounded function the way a vector does:
+`Vec<T>` supplies it, and so does an array: an array indexes from its type
+rather than from a declaration, since `[T; N]` names no one type to write an
+`impl` for. So both reach a bounded function, and both are subscripted:
 
 ```
+func first<C: Index<int>>(c: &C): int { return c[0]; }
+
 let xs: [int; 3] = [1, 20, 300];
-let sum: int = total(xs);
+let ys: Vec<int> = Vec<int>::new(0);
+
+let a: int = first(xs);
+let b: int = xs[2];
 ```
 
 A bound is nominal: a type satisfies one by saying `impl T as I`, not by
@@ -410,12 +412,15 @@ as that outgrows it.
 let xs: Vec<int>;
 xs.push(1);
 let n: int = xs.len();
-let first: &int = xs.at(0);
+let first: &int = xs.index(0);
+let value: int = xs[0];
 ```
 
-`at` lends the element where it sits rather than copying it out, so reading the
-value spells the deref as `*xs.at(0)`, and an element that owns is reached
-without moving it out of the vector. The borrow names the block, which a later
+`index` lends the element where it sits rather than copying it out, so an
+element that owns is reached without moving it out of the vector. It is what
+`[]` is written in terms of: `xs[0]` is `*xs.index(0)`, so a type supplying
+`Index` is subscripted like an array, and assigning through it stores into the
+element. The borrow names the block, which a later
 `push` may reallocate — as a C pointer into a vector's storage is invalidated
 by a growth.
 
@@ -590,9 +595,9 @@ Not yet implemented:
 
 | | |
 | --- | --- |
-| Strings | No interpolation, no `substring` or case conversion |
+| Strings | No interpolation, no `substring` or case conversion, and no indexing |
 | Arrays | Fixed length once allocated: no growth and no slice type. `Vec<T>` is what grows |
-| Vectors | `new`, `push`, `at` and `len` only: no removal, no iteration, and no literal. `Vec<T>` supplies `Iter<T>` and `Index<T>` |
+| Vectors | `new`, `push`, `index` and `len` only: no removal, no iteration, and no literal. `Vec<T>` supplies `Index<T>`, so it is subscripted with `[]` |
 | Borrows | A returned borrow names a parameter or something it reaches; returning one that names a local is refused |
 | Generics | A method's own type arguments are inferred from what it is given; there is no `v.method<int>(x)` to write them |
 | Interfaces | No associated types, no compound bounds, and no dynamic dispatch |

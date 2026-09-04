@@ -38,7 +38,7 @@ static void test_at_returns_a_borrow_of_its_element() {
                         "func main(): int {\n"
                         "    let xs: Vec<int> = Vec<int>::new(0);\n"
                         "    xs.push(4);\n"
-                        "    let e: &int = xs.at(0);\n"
+                        "    let e: &int = xs.index(0);\n"
                         "    return *e;\n"
                         "}\n"
                         "let r: int = main();") == 4);
@@ -49,7 +49,7 @@ static void test_at_borrows_rather_than_copying() {
                         "func main(): int {\n"
                         "    let xs: Vec<int> = Vec<int>::new(0);\n"
                         "    xs.push(1);\n"
-                        "    let e: &int = xs.at(0);\n"
+                        "    let e: &int = xs.index(0);\n"
                         "    xs.push(2);\n"
                         "    return xs.len();\n"
                         "}\n"
@@ -61,7 +61,7 @@ static void test_an_index_outside_the_vector_fails_the_run() {
                            "func main(): int {\n"
                            "    let xs: Vec<int> = Vec<int>::new(0);\n"
                            "    xs.push(1);\n"
-                           "    return *xs.at(3);\n"
+                           "    return *xs.index(3);\n"
                            "}\n"
                            "let r: int = main();") != VM_RUN_OK);
 }

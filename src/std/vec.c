@@ -35,7 +35,7 @@ static void vec_push(GabCtx *ctx) {
     vec_store(ctx, &vec);
 }
 
-static void vec_at(GabCtx *ctx) {
+static void vec_index(GabCtx *ctx) {
     Vec vec = vec_load(ctx);
     int32_t index = gab_ctx_int(ctx, 1);
 
@@ -74,10 +74,9 @@ static void vec_new(GabCtx *ctx) {
 static const char VEC_SRC[] = "impl<T> Vec<T> {\n"
                               "    extern func new(count: int): Self;\n"
                               "    extern func push(self: &Self, value: T);\n"
-                              "    extern func at(self: &Self, index: int): &T;\n"
+                              "    extern func index(self: &Self, at: int): &T;\n"
                               "    extern func len(self: &Self): int;\n"
                               "}\n"
-                              "impl<T> Vec<T> as Iter<T> {}\n"
                               "impl<T> Vec<T> as Index<T> {}\n";
 
 void std_register_vec(GabVM *vm) {
@@ -107,7 +106,7 @@ void std_register_vec(GabVM *vm) {
     } METHODS[] = {
         {"new", vec_new},
         {"push", vec_push},
-        {"at", vec_at},
+        {"index", vec_index},
         {"len", vec_len},
     };
 

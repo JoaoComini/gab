@@ -39,18 +39,6 @@ static void string_len(GabCtx *ctx) { gab_ctx_return_int(ctx, str_arg(ctx, 0).le
 
 static void string_is_empty(GabCtx *ctx) { gab_ctx_return_bool(ctx, str_arg(ctx, 0).length == 0); }
 
-static void string_at(GabCtx *ctx) {
-    Str string = str_arg(ctx, 0);
-    int32_t index = gab_ctx_int(ctx, 1);
-
-    if (index < 0 || (size_t)index >= (size_t)string.length) {
-        gab_ctx_fail(ctx, GAB_FAIL_RUNTIME, "string index is out of range");
-        return;
-    }
-
-    gab_ctx_return_int(ctx, (unsigned char)string.data[index]);
-}
-
 static void string_starts_with(GabCtx *ctx) {
     Str string = str_arg(ctx, 0);
     Str prefix = str_arg(ctx, 1);
@@ -95,17 +83,12 @@ static void string_count(GabCtx *ctx) {
 }
 
 /* Declared in the prelude so any type may supply them, rather than only what 'std' declares. */
-static const char CORE_SRC[] = "interface Iter<T> {\n"
-                               "    func len(self: &Self): int;\n"
-                               "    func at(self: &Self, index: int): &T;\n"
-                               "}\n"
-                               "interface Index<T> {\n"
-                               "    func at(self: &Self, index: int): &T;\n"
+static const char CORE_SRC[] = "interface Index<T> {\n"
+                               "    func index(self: &Self, at: int): &T;\n"
                                "}\n"
                                "impl str {\n"
                                "    extern func len(self: &str): int;\n"
                                "    extern func is_empty(self: &str): bool;\n"
-                               "    extern func at(self: &str, index: int): int;\n"
                                "    extern func starts_with(self: &str, prefix: &str): bool;\n"
                                "    extern func ends_with(self: &str, suffix: &str): bool;\n"
                                "    extern func contains(self: &str, needle: &str): bool;\n"
@@ -120,7 +103,6 @@ void core_register_str(VM *vm) {
     } METHODS[] = {
         {"len", string_len},
         {"is_empty", string_is_empty},
-        {"at", string_at},
         {"starts_with", string_starts_with},
         {"ends_with", string_ends_with},
         {"contains", string_contains},

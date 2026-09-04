@@ -881,9 +881,9 @@ static bool resolve_array_method(ResolverState *state, ASTExpr *expr, ASTExpr *r
     StringPool *strings = state->current_scope->strings;
     TypeRegistry *registry = state->current_scope->type_registry;
 
-    size_t expected = name == string_from_cstr(strings, "at") ? 1 : 0;
+    size_t expected = name == string_from_cstr(strings, "index") ? 1 : 0;
 
-    if (name != string_from_cstr(strings, "len") && name != string_from_cstr(strings, "at")) {
+    if (name != string_from_cstr(strings, "len") && name != string_from_cstr(strings, "index")) {
         return false;
     }
 
@@ -922,6 +922,72 @@ static bool resolve_array_method(ResolverState *state, ASTExpr *expr, ASTExpr *r
     return true;
 }
 
+/* A method is the one the type owns, or the one its bound declares when the type is a parameter. */
+static Function *find_method(ResolverState *state, const Type *receiver, String *name, Span span,
+                             const Type **out_base) {
+    const Type *base = NULL;
+
+    Function *method = find_method_on_chain(state->current_scope->type_registry,
+                                            state->current_scope->functions, receiver, name, &base);
+
+    if (!method) {
+        method = bound_method(state, base, name, span);
+    }
+
+    if (out_base) {
+        *out_base = base;
+    }
+
+    return method;
+}
+
+/* 'xs[i]' on an implementor of 'Index' is '*xs.index(i)', which the method call path then resolves. */
+static void rewrite_index_as_call(ResolverState *state, ASTExpr *expr) {
+    Arena *arena = state->compile_arena;
+    Span span = expr->span;
+
+    ASTExpr *target = expr->index.target;
+    ASTExpr *index = expr->index.index;
+
+    ASTExpr *method = ast_field_expr_create(arena, span, target, string_ref_create("index"));
+
+    ASTExprList args = ast_expr_list_create(arena_allocator(arena));
+    ast_expr_list_add(&args, index);
+
+    ASTExpr *call = ast_call_expr_create(arena, span, method, args);
+
+    expr->kind = EXPR_DEREF;
+    expr->unary.target = call;
+
+    /* The rewrite is an implementation detail, so a missing method is reported as the missing interface. */
+    size_t errors_before = diagnostics_count(state->diagnostics);
+
+    if (!find_method(state, target->type, string_from_cstr(state->current_scope->strings, "index"), span,
+                     NULL)) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "%s is indexed with '[]' by implementing 'Index'",
+                   type_name(state, target->type));
+        expr->type = resolver_error_type(state);
+        return;
+    }
+
+    resolve_expr(state, call, NULL);
+
+    if (is_error_type(call->type) || diagnostics_count(state->diagnostics) > errors_before) {
+        expr->type = resolver_error_type(state);
+        return;
+    }
+
+    if (type_kind(call->type) != TYPE_REF) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span,
+                   "'index' of %s returns %s rather than lending an element", type_name(state, target->type),
+                   type_name(state, call->type));
+        expr->type = resolver_error_type(state);
+        return;
+    }
+
+    expr->type = type_pointee(call->type);
+}
+
 static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     ASTExpr *receiver = expr->call.target->field.target;
     StringRef name = expr->call.target->field.name;
@@ -947,13 +1013,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     }
 
     const Type *base = NULL;
-    Function *method =
-        find_method_on_chain(state->current_scope->type_registry, state->current_scope->functions,
-                             receiver_type, method_name, &base);
-
-    if (!method) {
-        method = bound_method(state, base, method_name, expr->span);
-    }
+    Function *method = find_method(state, receiver_type, method_name, expr->span, &base);
 
     if (!method) {
         diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "%s has no method '%s'",
@@ -1401,10 +1461,9 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             target_type = type_pointee(target_type);
         }
 
+        /* Only an array indexes on its own; anything else spells '[]' by supplying 'Index'. */
         if (type_kind(target_type) != TYPE_ARRAY) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot index %s",
-                       type_name(state, expr->index.target->type));
-            expr->type = resolver_error_type(state);
+            rewrite_index_as_call(state, expr);
             break;
         }
 
@@ -2362,25 +2421,18 @@ static void enter_impl_scope(ResolverState *state, ASTStmt *stmt) {
     enter_owner_scope(state, stmt->impl.type);
 }
 
-/* An array's methods come from its type, so it implements an interface exactly when it supplies its
- * signatures; nothing declares that in source, since '[T; N]' names no one type to write an impl for. */
-static void declare_structural_conformance(ResolverState *state, const Interface *interface) {
+/* An array indexes from its type rather than a declaration, and '[T; N]' names no one type to write an
+ * 'impl' for, so the conformance every array has is recorded where 'Index' itself is declared. */
+static void declare_array_conformance(ResolverState *state, const Interface *interface) {
+    if (interface->name != string_from_cstr(state->current_scope->strings, "Index")) {
+        return;
+    }
+
     TypeRegistry *registry = state->current_scope->type_registry;
 
-    const Type *sample = type_registry_array_of(registry, type_registry_get_primitive(registry, TYPE_INT), 1);
-
-    for (size_t i = 0; i < interface->method_count; i++) {
-        String *name = interface->methods[i]->decl->name;
-
-        if (name != string_from_cstr(state->current_scope->strings, "len") &&
-            name != string_from_cstr(state->current_scope->strings, "at")) {
-            return;
-        }
-    }
-
-    if (interface->method_count > 0) {
-        type_registry_declare_conformance(registry, sample, interface->name);
-    }
+    type_registry_declare_conformance(
+        registry, type_registry_array_of(registry, type_registry_get_primitive(registry, TYPE_INT), 1),
+        interface->name);
 }
 
 static void declare_interface(ResolverState *state, ASTStmt *stmt) {
@@ -2464,7 +2516,7 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
 
     scope_bind_interface(state->current_scope, name, interface);
 
-    declare_structural_conformance(state, interface);
+    declare_array_conformance(state, interface);
 }
 
 static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *implementor) {
