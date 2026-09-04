@@ -52,6 +52,7 @@ typedef enum {
     TOKEN_LET,
     TOKEN_FUNC,
     TOKEN_EXTERN,
+    TOKEN_INTRINSIC,
     TOKEN_STRUCT,
     TOKEN_IMPL,
     TOKEN_INTERFACE,

@@ -2521,8 +2521,16 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
 
     if (owner_is_primitive && !is_host) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
-                   "a function on %s is defined by the host, so it must be 'extern'",
+                   "a function on %s is defined by the host or the compiler, so it must be 'extern' or "
+                   "'intrinsic'",
                    type_name(state, owner));
+        return;
+    }
+
+    /* Only the core library declares one, and only where the compiler has a lowering to match it. */
+    if (stmt->func_decl.is_intrinsic && !state->allow_primitive_impls) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
+                   "an intrinsic is lowered by the compiler, so only its core library declares one");
         return;
     }
 
@@ -2564,9 +2572,11 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
     FuncDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(FuncDecl));
     *decl = (FuncDecl){
         .name = name,
-        .module = is_host ? state->module_name : NULL,
-        .owner = is_host ? type_name_of(owner) : NULL,
-        .body_kind = is_host ? BODY_HOST : BODY_GAB,
+        .module = is_host && !stmt->func_decl.is_intrinsic ? state->module_name : NULL,
+        .owner = is_host && !stmt->func_decl.is_intrinsic ? type_name_of(owner) : NULL,
+        .body_kind = stmt->func_decl.is_intrinsic ? BODY_INTRINSIC
+                     : is_host                    ? BODY_HOST
+                                                  : BODY_GAB,
         .body = stmt,
         .type_param_count = stmt->func_decl.type_param_count,
     };
@@ -3046,7 +3056,9 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
             record_param_bounds(state, decl);
         }
 
-        decl->body_kind = stmt->func_decl.body == NULL ? BODY_HOST : BODY_GAB;
+        decl->body_kind = stmt->func_decl.is_intrinsic   ? BODY_INTRINSIC
+                          : stmt->func_decl.body == NULL ? BODY_HOST
+                                                         : BODY_GAB;
 
         if (decl->body_kind == BODY_HOST) {
             decl->name = resolver_intern(state, func_name);

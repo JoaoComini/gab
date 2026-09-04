@@ -986,6 +986,8 @@ static void codegen_if_stmt(CodegenState *state, ASTIfStmt *ast) {
 static size_t codegen_reserve_function(CodegenState *state, Function *function) {
     size_t local;
 
+    assert(function->decl->body_kind != BODY_INTRINSIC && "an intrinsic is lowered, never called");
+
     if (function_runs_native(function)) {
         extern_proto_list_add(&state->unit->extern_protos, (ExternProto){0});
 
@@ -1007,7 +1009,9 @@ static size_t codegen_reserve_function(CodegenState *state, Function *function) 
 }
 
 static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast) {
-    if (!ast->function || proto_map_lookup(state->local_protos, ast->function)) {
+    /* An intrinsic is lowered where it is called, so it reserves no prototype and binds no body. */
+    if (!ast->function || ast->function->decl->body_kind == BODY_INTRINSIC ||
+        proto_map_lookup(state->local_protos, ast->function)) {
         return;
     }
 
@@ -1032,6 +1036,10 @@ static const size_t *codegen_reserve_instantiated(CodegenState *state, Function 
 
 static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
     ASTFuncDecl *ast = &stmt->func_decl;
+
+    if (ast->function && ast->function->decl->body_kind == BODY_INTRINSIC) {
+        return;
+    }
 
     codegen_reserve_proto(state, ast);
 

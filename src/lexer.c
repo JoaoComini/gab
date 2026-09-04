@@ -123,6 +123,8 @@ const char *token_description(TokenType type) {
         return "'func'";
     case TOKEN_EXTERN:
         return "'extern'";
+    case TOKEN_INTRINSIC:
+        return "'intrinsic'";
     case TOKEN_STRUCT:
         return "'struct'";
     case TOKEN_IMPL:
@@ -348,6 +350,10 @@ static Token lexer_identifier(Lexer *lexer) {
 
     if (string_ref_equals_cstr(ref, "extern")) {
         return token_create_ref(lexer, TOKEN_EXTERN, ref);
+    }
+
+    if (string_ref_equals_cstr(ref, "intrinsic")) {
+        return token_create_ref(lexer, TOKEN_INTRINSIC, ref);
     }
 
     if (string_ref_equals_cstr(ref, "box")) {

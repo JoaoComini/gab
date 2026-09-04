@@ -73,6 +73,9 @@ typedef struct {
 
     const Type *resolved_return_type;
 
+    /* Set when the declaration is 'intrinsic', so no body is written and none is bound. */
+    bool is_intrinsic;
+
     bool declared;
 } ASTFuncDecl;
 

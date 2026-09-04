@@ -101,6 +101,9 @@ typedef enum {
 
     BODY_HOST,
 
+    /* The compiler lowers the call itself, so nothing is bound and no body is written. */
+    BODY_INTRINSIC,
+
 } BodyKind;
 
 typedef struct TypeDecl {
