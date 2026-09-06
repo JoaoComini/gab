@@ -1,4 +1,4 @@
-#include "arena.h"
+#include "memory/arena.h"
 
 #include <assert.h>
 #include <stddef.h>

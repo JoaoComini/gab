@@ -1,7 +1,7 @@
 #ifndef GAB_AST_STMT_H
 #define GAB_AST_STMT_H
 
-#include "arena.h"
+#include "memory/arena.h"
 #include "ast/expr.h"
 #include "ast/type_expr.h"
 #include "binding.h"
@@ -70,8 +70,6 @@ typedef struct {
     size_t type_param_count;
 
     Function *function;
-
-    const Type *resolved_return_type;
 
     /* Set when the declaration is 'intrinsic', so no body is written and none is bound. */
     bool is_intrinsic;

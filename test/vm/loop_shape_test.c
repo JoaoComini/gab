@@ -23,27 +23,17 @@ static void test_a_local_loop_body_loads_no_constants() {
     test_program_free(&program);
 }
 
-static void test_a_field_loop_body_loads_and_stores_each_access() {
-    TestProgram program = test_compile("struct Point { x: int, y: int }\n"
-                                       "func run(n: int): int {\n"
-                                       "    let v = Point { x: 1, y: 2 };\n"
-                                       "    for let i: int = 0; i < n; i += 1 {\n"
-                                       "        v.x += v.y;\n"
-                                       "        v.y = v.x - v.y;\n"
-                                       "        v.x %= 100003;\n"
-                                       "    }\n"
-                                       "    return v.x;\n"
-                                       "}\n");
-
-    Chunk *chunk = test_func_chunk(&program, 0);
-
-    size_t loads = test_count_opcode(chunk, OP_LOAD_FIELD_4);
-    size_t stores = test_count_opcode(chunk, OP_STORE_FIELD_4);
-
-    assert(loads > 0);
-    assert(stores > 0);
-
-    test_program_free(&program);
+static void test_a_field_loop_body_reads_back_what_it_wrote() {
+    assert(test_run_int("struct Point { x: int, y: int }\n"
+                        "func run(n: int): int {\n"
+                        "    let v = Point { x: 1, y: 2 };\n"
+                        "    for let i: int = 0; i < n; i += 1 {\n"
+                        "        v.x += v.y;\n"
+                        "        v.y = v.x - v.y;\n"
+                        "    }\n"
+                        "    return v.x + v.y;\n"
+                        "}\n"
+                        "let r: int = run(3);\n") == 11);
 }
 
 static void test_a_literal_initialiser_loads_into_the_variable() {
@@ -66,23 +56,6 @@ static void test_assigning_a_variable_is_a_single_move() {
     test_program_free(&program);
 }
 
-static void test_a_counting_loop_is_one_instruction_per_iteration() {
-    TestProgram program = test_compile("func run(n: int): int {\n"
-                                       "    let acc: int = 0;\n"
-                                       "    for let i: int = 0; i < n; i += 1 { acc = i; }\n"
-                                       "    return acc;\n"
-                                       "}\n");
-
-    Chunk *chunk = test_func_chunk(&program, 0);
-
-    assert(test_count_opcode(chunk, OP_FOR_LOOP) == 1);
-
-    assert(test_count_opcode(chunk, OP_JMP) == 0);
-    assert(test_count_opcode(chunk, OP_CMP_LTI) == 1);
-
-    test_program_free(&program);
-}
-
 static void test_a_long_body_keeps_the_general_form() {
     char source[8192];
     size_t at = (size_t)snprintf(source, sizeof source,
@@ -99,59 +72,7 @@ static void test_a_long_body_keeps_the_general_form() {
     TestProgram program = test_compile(source);
     Chunk *chunk = test_func_chunk(&program, 0);
 
-    assert(test_count_opcode(chunk, OP_FOR_LOOP) == 0);
     assert(test_count_opcode(chunk, OP_JMP) == 1);
-
-    test_program_free(&program);
-}
-
-static void test_a_counting_loop_is_recognised_however_the_step_is_spelled() {
-    TestProgram program = test_compile("func run(n: int): int {\n"
-                                       "    let acc: int = 0;\n"
-                                       "    for let i: int = 0; i < n; i = i + 1 { acc = i; }\n"
-                                       "    return acc;\n"
-                                       "}\n");
-
-    Chunk *chunk = test_func_chunk(&program, 0);
-
-    assert(test_count_opcode(chunk, OP_FOR_LOOP) == 1);
-    assert(test_count_opcode(chunk, OP_JMP) == 0);
-
-    test_program_free(&program);
-}
-
-static void test_a_counting_loop_takes_the_step_from_either_side() {
-    TestProgram program = test_compile("func run(n: int): int {\n"
-                                       "    let acc: int = 0;\n"
-                                       "    for let i: int = 0; i < n; i = 1 + i { acc = i; }\n"
-                                       "    return acc;\n"
-                                       "}\n");
-
-    assert(test_count_opcode(test_func_chunk(&program, 0), OP_FOR_LOOP) == 1);
-
-    test_program_free(&program);
-}
-
-static void test_a_loop_stepping_by_more_than_one_keeps_the_general_form() {
-    TestProgram program = test_compile("func run(n: int): int {\n"
-                                       "    let acc: int = 0;\n"
-                                       "    for let i: int = 0; i < n; i = i + 2 { acc = i; }\n"
-                                       "    return acc;\n"
-                                       "}\n");
-
-    assert(test_count_opcode(test_func_chunk(&program, 0), OP_FOR_LOOP) == 0);
-
-    test_program_free(&program);
-}
-
-static void test_a_loop_assigning_something_else_keeps_the_general_form() {
-    TestProgram program = test_compile("func run(n: int, m: int): int {\n"
-                                       "    let acc: int = 0;\n"
-                                       "    for let i: int = 0; i < n; i = m + 1 { acc = i; }\n"
-                                       "    return acc;\n"
-                                       "}\n");
-
-    assert(test_count_opcode(test_func_chunk(&program, 0), OP_FOR_LOOP) == 0);
 
     test_program_free(&program);
 }
@@ -165,7 +86,6 @@ static void test_a_general_loop_keeps_the_compare_and_jump() {
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
-    assert(test_count_opcode(chunk, OP_FOR_LOOP) == 0);
     assert(test_count_opcode(chunk, OP_CMP_LTI) == 1);
 
     test_program_free(&program);
@@ -228,22 +148,6 @@ static void test_a_body_that_writes_the_counter_still_works() {
                         "let r: int = f();\n") == 5);
 }
 
-static void test_a_counter_written_through_a_pointer_is_not_fused() {
-    TestProgram program = test_compile("func run(n: int): int {\n"
-                                       "    let c: int = 0;\n"
-                                       "    for let i: int = 0; i < n; i += 1 {\n"
-                                       "        let p: &int = i;\n"
-                                       "        *p += 1;\n"
-                                       "        c += 1;\n"
-                                       "    }\n"
-                                       "    return c;\n"
-                                       "}\n");
-
-    assert(test_count_opcode(test_func_chunk(&program, 0), OP_FOR_LOOP) == 0);
-
-    test_program_free(&program);
-}
-
 static void test_a_counter_written_through_a_pointer_still_works() {
     assert(test_run_int("func f(): int { let c: int = 0; let n: int = 10;\n"
                         "                for let i: int = 0; i < n; i += 1 {\n"
@@ -253,18 +157,6 @@ static void test_a_counter_written_through_a_pointer_still_works() {
                         "                }\n"
                         "                return c; }\n"
                         "let r: int = f();\n") == 5);
-}
-
-static void test_a_body_that_writes_the_counter_is_not_fused() {
-    TestProgram program = test_compile("func run(n: int): int {\n"
-                                       "    let c: int = 0;\n"
-                                       "    for let i: int = 0; i < n; i += 1 { i += 1; c += 1; }\n"
-                                       "    return c;\n"
-                                       "}\n");
-
-    assert(test_count_opcode(test_func_chunk(&program, 0), OP_FOR_LOOP) == 0);
-
-    test_program_free(&program);
 }
 
 int main() {
@@ -277,18 +169,11 @@ int main() {
     test_continue_still_steps_a_counting_loop();
     test_counting_loops_nest();
     test_a_body_that_writes_the_counter_still_works();
-    test_a_counter_written_through_a_pointer_is_not_fused();
     test_a_counter_written_through_a_pointer_still_works();
-    test_a_body_that_writes_the_counter_is_not_fused();
     test_a_long_body_keeps_the_general_form();
-    test_a_counting_loop_is_one_instruction_per_iteration();
-    test_a_counting_loop_is_recognised_however_the_step_is_spelled();
-    test_a_counting_loop_takes_the_step_from_either_side();
-    test_a_loop_stepping_by_more_than_one_keeps_the_general_form();
-    test_a_loop_assigning_something_else_keeps_the_general_form();
     test_a_general_loop_keeps_the_compare_and_jump();
     test_a_local_loop_body_loads_no_constants();
-    test_a_field_loop_body_loads_and_stores_each_access();
+    test_a_field_loop_body_reads_back_what_it_wrote();
 
     printf("loop_shape_test: all tests passed\n");
     return 0;

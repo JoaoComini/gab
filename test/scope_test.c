@@ -1,4 +1,4 @@
-#include "arena.h"
+#include "memory/arena.h"
 #include "binding.h"
 #include "scope.h"
 #include "string/string.h"

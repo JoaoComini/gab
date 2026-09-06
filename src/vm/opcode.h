@@ -2,7 +2,7 @@
 #define GAB_OPCODE_H
 
 #include "object.h"
-#include "slot.h"
+#include "vm/slot.h"
 
 #include <stdint.h>
 

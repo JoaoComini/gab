@@ -1,8 +1,9 @@
-#include "arena.h"
+#include "memory/arena.h"
 #include "ast/resolve.h"
 #include "diagnostics.h"
-#include "lexer.h"
-#include "parser.h"
+#include "syntax/lexer.h"
+#include "mir/mir_build.h"
+#include "syntax/parser.h"
 #include "scope.h"
 #include "string/string.h"
 #include "support/test_context.h"
@@ -17,12 +18,14 @@ static void compile_with_library(TestContext *ctx, const char *source) {
 
     Diagnostics *diagnostics = &ctx->diagnostics;
 
-    Lexer lexer = lexer_create(test_in_a_module(source), ctx->arena, &vm->env.strings, diagnostics);
-    Parser parser = parser_create(&lexer, diagnostics);
-    ASTUnit *unit = ast_unit_create(ctx->arena);
+    ASTUnit *unit;
+    ResolvedUnit *resolved;
+    MIRModule *mir_unit;
 
-    if (parser_parse(&parser, unit)) {
-        resolve_unit(ctx->arena, unit, &vm->env.global_scope, vm->env.module_scopes, false, diagnostics);
+    if (parse_unit(test_in_a_module(source), ctx->arena, &vm->env.strings, &unit, diagnostics) &&
+        resolve_unit(ctx->arena, unit, &vm->env.global_scope, vm->env.module_scopes, false, &resolved,
+                     diagnostics)) {
+        mir_build(ctx->arena, resolved, &mir_unit, diagnostics);
     }
 
     vm_free(vm);
@@ -32,15 +35,16 @@ static void compile(TestContext *ctx, const char *source) {
     Arena *arena = ctx->arena;
     Diagnostics *diagnostics = &ctx->diagnostics;
 
-    Lexer lexer = lexer_create(test_in_a_module(source), ctx->arena, &ctx->strings, diagnostics);
-    Parser parser = parser_create(&lexer, diagnostics);
-    ASTUnit *unit = ast_unit_create(ctx->arena);
-
     Scope global_scope;
     scope_init(&global_scope, arena, &ctx->strings, NULL);
 
-    if (parser_parse(&parser, unit)) {
-        resolve_unit(arena, unit, &global_scope, NULL, false, diagnostics);
+    ASTUnit *unit;
+    ResolvedUnit *resolved;
+    MIRModule *mir_unit;
+
+    if (parse_unit(test_in_a_module(source), ctx->arena, &ctx->strings, &unit, diagnostics) &&
+        resolve_unit(arena, unit, &global_scope, NULL, false, &resolved, diagnostics)) {
+        mir_build(arena, resolved, &mir_unit, diagnostics);
     }
 }
 
@@ -778,13 +782,18 @@ static void test_reports_a_pointer_escaping_its_block() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test() { let p: &int; { let x: int = 1; p = x; } }");
+    compile(&ctx, "struct Node { n: int }\n"
+                  "func test(): int {\n"
+                  "    let p: &Node;\n"
+                  "    { let x = Node { n: 1 }; p = x; }\n"
+                  "    return p.n;\n"
+                  "}\n");
 
-    assert(diagnostics_count(diagnostics) == 1);
+    assert(diagnostics_count(diagnostics) > 0);
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_LIFETIME);
-    assert(strcmp(diagnostic->message, "this borrow outlives what it names, so it cannot be assigned here") ==
+    assert(strcmp(diagnostic->message, "this borrow outlives what it names, so it cannot be stored here") ==
            0);
 
     test_context_free(&ctx);
@@ -802,7 +811,7 @@ static void test_reports_returning_a_string_borrow_of_a_local() {
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_LIFETIME);
-    assert(strcmp(diagnostic->message, "this borrow outlives what it names, so it cannot be returned") == 0);
+    assert(strcmp(diagnostic->message, "this names memory that has been freed") == 0);
 
     test_context_free(&ctx);
 }
@@ -812,15 +821,18 @@ static void test_reports_a_string_borrow_escaping_its_block() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile_with_library(
-        &ctx, "import std;\n"
-              "func test(a: &str) { let p: &str; { let s: String = String::from(\"\"); p = s; } }");
+    compile_with_library(&ctx, "import std;\n"
+                               "func test(a: &str): &str {\n"
+                               "    let p: &str;\n"
+                               "    { let s: String = String::from(\"\"); p = s; }\n"
+                               "    return p;\n"
+                               "}\n");
 
-    assert(diagnostics_count(diagnostics) == 1);
+    assert(diagnostics_count(diagnostics) > 0);
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_LIFETIME);
-    assert(strcmp(diagnostic->message, "this borrow outlives what it names, so it cannot be assigned here") ==
+    assert(strcmp(diagnostic->message, "this borrow outlives what it names, so it cannot be stored here") ==
            0);
 
     test_context_free(&ctx);

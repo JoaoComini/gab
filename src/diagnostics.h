@@ -1,7 +1,7 @@
 #ifndef GAB_DIAGNOSTICS_H
 #define GAB_DIAGNOSTICS_H
 
-#include "arena.h"
+#include "memory/arena.h"
 #include "util/list.h"
 
 #include <stdbool.h>

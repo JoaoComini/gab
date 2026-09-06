@@ -1,5 +1,5 @@
 #include "ast/ast.h"
-#include "parser.h"
+#include "syntax/parser.h"
 #include "scope.h"
 #include "string/string.h"
 #include "support/run.h"
@@ -23,9 +23,9 @@ static bool resolves(const char *source) {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
 
-    bool ok = test_resolve(&ctx, scope, unit, source);
+    bool ok = test_resolve(&ctx, scope, &unit, source);
 
     test_context_free(&ctx);
 
@@ -37,9 +37,9 @@ static void test_an_impl_block_owns_its_members() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
 
-    bool ok = test_resolve(&ctx, scope, unit,
+    bool ok = test_resolve(&ctx, scope, &unit,
                            "struct Player { health: int }\n"
                            "impl Player {\n"
                            "    func damage(p: &Player, n: int): int { return p.health - n; }\n"
@@ -60,9 +60,9 @@ static void test_an_impl_member_is_not_a_module_level_name() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
 
-    bool ok = test_resolve(&ctx, scope, unit,
+    bool ok = test_resolve(&ctx, scope, &unit,
                            "struct Player { health: int }\n"
                            "impl Player {\n"
                            "    func damage(p: &Player): int { return p.health; }\n"
@@ -79,9 +79,9 @@ static void test_an_impl_block_holds_more_than_one_member() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
 
-    bool ok = test_resolve(&ctx, scope, unit,
+    bool ok = test_resolve(&ctx, scope, &unit,
                            "struct Player { health: int }\n"
                            "impl Player {\n"
                            "    func hp(p: &Player): int { return p.health; }\n"

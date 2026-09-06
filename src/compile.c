@@ -1,12 +1,11 @@
 #include "compile.h"
 
-#include "arena.h"
+#include "memory/arena.h"
 #include "ast/resolve.h"
-#include "lexer.h"
-#include "parser.h"
+#include "mir/mir_build.h"
+#include "syntax/parser.h"
 #include "scope.h"
 #include "string/string.h"
-#include "vm/chunk.h"
 #include "vm/codegen.h"
 #include "vm/interp.h"
 #include "vm/link.h"
@@ -66,48 +65,48 @@ static bool compile_unit_with(VM *vm, const char *source, FuncPrototype *out, bo
                               Diagnostics *diagnostics) {
     arena_reset(vm->env.compile_arena);
 
-    Lexer lexer = lexer_create(source, vm->env.compile_arena, &vm->env.strings, diagnostics);
-    Parser parser = parser_create(&lexer, diagnostics);
-    ASTUnit *ast = ast_unit_create(vm->env.compile_arena);
+    ASTUnit *ast;
 
-    Unit *unit = NULL;
-    String *module_name = NULL;
-    Scope *target = NULL;
-    Scope *staging = NULL;
-    Arena *staging_arena = NULL;
-
-    StringList imported = string_list_create(DEFAULT_ALLOCATOR);
-
-    if (parser_parse(&parser, ast) && check_imports(vm, ast, diagnostics)) {
-        module_name = string_from_ref(&vm->env.strings, ast->module_name);
-        target = environment_module_scope(&vm->env, module_name);
-
-        staging_arena = arena_create(STAGING_ARENA_BLOCK_SIZE);
-        staging = arena_alloc(vm->env.compile_arena, sizeof(Scope));
-        scope_init_staging(staging, staging_arena, &vm->env.strings, target);
-
-        for (size_t i = 0; i < ast->imports.size; i++) {
-            string_list_add(&imported, string_from_ref(&vm->env.strings, ast->imports.data[i].name));
-        }
-
-        if (resolve_unit(vm->env.compile_arena, ast, staging, vm->env.module_scopes, allow_primitive_impls,
-                         diagnostics)) {
-            unit =
-                codegen_generate(ast, vm->env.arena, &vm->env.strings, staging->type_registry, diagnostics);
-        }
+    if (!parse_unit(source, vm->env.compile_arena, &vm->env.strings, &ast, diagnostics)) {
+        return false;
     }
 
-    if (!unit) {
-        string_list_free(&imported);
-        if (staging_arena) {
-            arena_destroy(staging_arena);
-        }
+    if (!check_imports(vm, ast, diagnostics)) {
+        return false;
+    }
+
+    String *module_name = string_from_ref(&vm->env.strings, ast->module_name);
+    Scope *target = environment_module_scope(&vm->env, module_name);
+
+    Arena *staging_arena = arena_create(STAGING_ARENA_BLOCK_SIZE);
+    Scope *staging = arena_alloc(vm->env.compile_arena, sizeof(Scope));
+    scope_init_staging(staging, staging_arena, &vm->env.strings, target);
+
+    ResolvedUnit *resolved;
+
+    if (!resolve_unit(vm->env.compile_arena, ast, staging, vm->env.module_scopes, allow_primitive_impls,
+                      &resolved, diagnostics)) {
+        arena_destroy(staging_arena);
+        return false;
+    }
+
+    MIRModule *mir_unit;
+
+    if (!mir_build(vm->env.compile_arena, resolved, &mir_unit, diagnostics)) {
+        arena_destroy(staging_arena);
+        return false;
+    }
+
+    ObjectFile *unit;
+
+    if (!codegen_generate(ast, vm->env.arena, &vm->env.strings, staging->type_registry, mir_unit, &unit,
+                          diagnostics)) {
+        arena_destroy(staging_arena);
         return false;
     }
 
     if (!link_check(&vm->program, unit, vm->env.global_scope.type_registry, diagnostics)) {
-        string_list_free(&imported);
-        unit_free(unit);
+        object_file_free(unit);
         arena_destroy(staging_arena);
         return false;
     }
@@ -116,20 +115,15 @@ static bool compile_unit_with(VM *vm, const char *source, FuncPrototype *out, bo
     scope_merge_staged(target, staging);
     staging_arena_list_add(&vm->env.staging_arenas, staging_arena);
 
-    for (size_t i = 0; i < imported.size; i++) {
-        module_import_list_add(&vm->env.module_imports,
-                               (ModuleImport){.from = module_name, .to = imported.data[i]});
+    for (size_t i = 0; i < ast->imports.size; i++) {
+        module_import_list_add(
+            &vm->env.module_imports,
+            (ModuleImport){.from = module_name,
+                           .to = string_from_ref(&vm->env.strings, ast->imports.data[i].name)});
     }
 
-    string_list_free(&imported);
-
-    *out = unit->top_level;
-
-    unit->top_level.chunk = NULL;
-    unit->top_level.refs = frame_ref_list_create(DEFAULT_ALLOCATOR);
-    unit->prototypes.size = 0;
-
-    unit_free(unit);
+    object_file_take_top_level(unit, out);
+    object_file_free(unit);
 
     return true;
 }
@@ -168,6 +162,8 @@ void compile_and_run(VM *vm, const char *source) {
     }
 
     diagnostics_free(&diagnostics);
+
+    vm->result_slot = (size_t)top_level.result_slot;
 
     if (interp_run_top_level(vm, &top_level) != VM_RUN_OK) {
         fprintf(stderr, "<script>: %s\n", vm->error.message);

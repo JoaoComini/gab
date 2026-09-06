@@ -1,6 +1,5 @@
 #include "ast/ast.h"
-#include "lexer.h"
-#include "parser.h"
+#include "syntax/parser.h"
 #include "scope.h"
 #include "string/string.h"
 #include "support/run.h"
@@ -26,9 +25,9 @@ static void test_method_lands_on_its_receiver_type() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
 
-    bool ok = test_resolve(&ctx, scope, unit,
+    bool ok = test_resolve(&ctx, scope, &unit,
                            "struct Player { health: int }\n"
                            "impl Player {\n"
                            "    func damage(p: &Player, n: int): bool { return true; }\n"
@@ -51,9 +50,9 @@ static void test_method_is_not_reachable_as_a_bare_name() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
 
-    bool ok = test_resolve(&ctx, scope, unit,
+    bool ok = test_resolve(&ctx, scope, &unit,
                            "struct Player { health: int }\n"
                            "impl Player {\n"
                            "    func damage(p: &Player, n: int): bool { return true; }\n"
@@ -70,9 +69,9 @@ static void test_same_name_on_two_types() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
 
-    bool ok = test_resolve(&ctx, scope, unit,
+    bool ok = test_resolve(&ctx, scope, &unit,
                            "struct Player { health: int }\n"
                            "struct Enemy { health: int }\n"
                            "impl Player {\n"
@@ -96,9 +95,9 @@ static void test_value_receiver() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
 
-    bool ok = test_resolve(&ctx, scope, unit,
+    bool ok = test_resolve(&ctx, scope, &unit,
                            "struct Player { health: int }\n"
                            "impl Player {\n"
                            "    func is_alive(p: Player): bool { return true; }\n"
@@ -119,9 +118,9 @@ static void test_method_declared_above_its_struct() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
 
-    bool ok = test_resolve(&ctx, scope, unit,
+    bool ok = test_resolve(&ctx, scope, &unit,
                            "impl Player {\n"
                            "    func health_of(p: &Player): int { return p.health; }\n"
                            "}\n"
@@ -138,9 +137,9 @@ static void test_receiver_fields_resolve_in_the_body() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
 
-    bool ok = test_resolve(&ctx, scope, unit,
+    bool ok = test_resolve(&ctx, scope, &unit,
                            "struct Player { health: int }\n"
                            "impl Player {\n"
                            "    func hp(p: &Player): int { return p.health; }\n"
@@ -158,9 +157,9 @@ static bool fails(const char *source) {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
 
-    bool ok = test_resolve(&ctx, scope, unit, source);
+    bool ok = test_resolve(&ctx, scope, &unit, source);
 
     test_context_free(&ctx);
 

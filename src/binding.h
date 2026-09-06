@@ -34,16 +34,10 @@ typedef struct FuncSignature {
 FuncSignature func_signature_instantiate(TypeRegistry *registry, Arena *arena, const FuncSignature *generic,
                                          const TypeArg *args, size_t arg_count);
 
-struct ResolverState;
-struct ASTExpr;
-
-/* Rewrites a resolved call into the nodes the compiler already lowers, in place of a body. */
+/* The owner and name of a call that stands for instructions rather than a body, which IR lowering expands. */
 typedef struct IntrinsicLowering {
     const char *owner;
     const char *name;
-
-    bool (*lower)(struct ResolverState *state, struct ASTExpr *expr, struct ASTExpr *receiver,
-                  const Type *base);
 } IntrinsicLowering;
 
 typedef struct FuncDecl {
@@ -53,7 +47,8 @@ typedef struct FuncDecl {
 
     BodyKind body_kind;
 
-    void *body;
+    /* The declaration an instance substitutes, whose lowered body the unit holds; null for a host body. */
+    struct Function *generic;
 
     /* The lowering an 'intrinsic' names, resolved where it is declared; NULL for every other body. */
     const IntrinsicLowering *intrinsic;
@@ -63,6 +58,10 @@ typedef struct FuncDecl {
 
     /* The interface bounding each of them, by index; null where it is unbounded. */
     const struct Interface *const *type_param_bounds;
+
+    /* What each bound's interface was given, so a call judges 'Index<int>' apart from 'Index<bool>'. */
+    const TypeArg *const *type_param_bound_args;
+    const size_t *type_param_bound_arg_counts;
 } FuncDecl;
 
 typedef struct Function {
@@ -86,7 +85,8 @@ typedef struct Function {
     const TypeArg *type_args;
     size_t type_arg_count;
 
-    struct ASTStmt *instance;
+    /* Set on a method standing on a bounded parameter, which substitution resolves to the real one. */
+    const Type *bound_self;
 
     /* The parameters a returned borrow may name; unset until the body's flow pass computes it. */
     uint32_t borrowed_params;

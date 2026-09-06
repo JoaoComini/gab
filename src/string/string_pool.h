@@ -1,7 +1,7 @@
 #ifndef GAB_STRING_POOL_H
 #define GAB_STRING_POOL_H
 
-#include "arena.h"
+#include "memory/arena.h"
 #include "string/string.h"
 #include "util/hash.h"
 #include "util/hash_map.h"

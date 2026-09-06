@@ -1,7 +1,7 @@
 #ifndef GAB_AST_H
 #define GAB_AST_H
 
-#include "arena.h"
+#include "memory/arena.h"
 #include "ast/stmt.h"
 #include "string/string_ref.h"
 #include "util/list.h"
@@ -17,8 +17,6 @@ typedef struct ASTUnit {
     Arena *arena;
 
     ASTStmtList statements;
-
-    ASTStmtList instances;
 
     StringRef module_name;
     Span module_span;

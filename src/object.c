@@ -1,6 +1,6 @@
 #include "object.h"
 
-#include "arena.h"
+#include "memory/arena.h"
 #include "type/type_registry.h"
 
 #include <assert.h>

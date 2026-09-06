@@ -2,7 +2,7 @@
 
 #include "vm/args.h"
 
-#include "arena.h"
+#include "memory/arena.h"
 #include "binding.h"
 #include "scope.h"
 #include "string/string.h"
@@ -23,7 +23,14 @@ void func_proto_free(FuncPrototype *proto) {
     proto->chunk = NULL;
 }
 
-void unit_free(Unit *unit) {
+void object_file_take_top_level(ObjectFile *unit, FuncPrototype *out) {
+    *out = unit->top_level;
+
+    unit->top_level.chunk = NULL;
+    unit->top_level.refs = frame_ref_list_create(DEFAULT_ALLOCATOR);
+}
+
+void object_file_free(ObjectFile *unit) {
     if (!unit) {
         return;
     }
@@ -83,7 +90,7 @@ static GabExternFn find_extern(const Program *program, const Function *function)
     return NULL;
 }
 
-bool link_check(Program *program, Unit *unit, TypeRegistry *registry, Diagnostics *diagnostics) {
+bool link_check(Program *program, ObjectFile *unit, TypeRegistry *registry, Diagnostics *diagnostics) {
     if (program->prototypes.size + unit->prototypes.size > VM_MAX_PROTOTYPES) {
         diag_error(diagnostics, GAB_ERR_CODEGEN, (Span){0}, "too many functions in one program");
         return false;
@@ -181,7 +188,7 @@ bool link_check(Program *program, Unit *unit, TypeRegistry *registry, Diagnostic
     return true;
 }
 
-void link_install(Program *program, Unit *unit) {
+void link_install(Program *program, ObjectFile *unit) {
     size_t proto_base = program->prototypes.size;
     size_t extern_base = program->extern_protos.size;
 
@@ -241,4 +248,7 @@ void link_install(Program *program, Unit *unit) {
 
         binding->function->func_index = base + binding->local_index;
     }
+
+    /* The program owns the prototypes now, so freeing the unit must not walk them. */
+    unit->prototypes.size = 0;
 }

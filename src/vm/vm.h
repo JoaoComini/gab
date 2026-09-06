@@ -1,10 +1,10 @@
 #ifndef GAB_VM_H
 #define GAB_VM_H
 
-#include "arena.h"
+#include "memory/arena.h"
 #include "diagnostics.h"
 #include "scope.h"
-#include "slot.h"
+#include "vm/slot.h"
 #include "string/string_pool.h"
 #include "util/list.h"
 #include "vm/chunk.h"
@@ -82,6 +82,9 @@ typedef struct VM {
 
     CallFrame frames[VM_MAX_CALL_DEPTH];
     size_t frame_count;
+
+    /* Where the last script run put its first declaration, which is what its result is read from. */
+    size_t result_slot;
 
     const Instruction *instruction_pointer;
 

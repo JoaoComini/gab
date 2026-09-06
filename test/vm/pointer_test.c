@@ -1,6 +1,5 @@
 #include "ast/ast.h"
-#include "lexer.h"
-#include "parser.h"
+#include "syntax/parser.h"
 #include "scope.h"
 #include "string/string.h"
 #include "support/run.h"
@@ -29,9 +28,9 @@ static void test_pointer_types_are_interned() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
 
-    bool ok = test_resolve(&ctx, scope, unit,
+    bool ok = test_resolve(&ctx, scope, &unit,
                            "struct Player { health: int }\n"
                            "struct Holder { p: *Player, q: *Player }\n");
     assert(ok);
@@ -54,9 +53,9 @@ static void test_pointer_depth_nests() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
 
-    bool ok = test_resolve(&ctx, scope, unit, "struct Holder { p: *int, q: **int }\n");
+    bool ok = test_resolve(&ctx, scope, &unit, "struct Holder { p: *int, q: **int }\n");
     assert(ok);
 
     const Type *p = field_type(&ctx, scope, "Holder", "p");
@@ -73,9 +72,9 @@ static void test_pointer_is_a_word() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
 
-    bool ok = test_resolve(&ctx, scope, unit,
+    bool ok = test_resolve(&ctx, scope, &unit,
                            "struct Big { a: int, b: int, c: int, d: int }\n"
                            "struct Holder { p: *Big, q: *bool }\n");
     assert(ok);
@@ -98,9 +97,9 @@ static void test_ref_is_a_distinct_type() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
 
-    bool ok = test_resolve(&ctx, scope, unit,
+    bool ok = test_resolve(&ctx, scope, &unit,
                            "struct Node { n: int }\n"
                            "struct Holder { o: *Node, b: &Node }\n");
     assert(ok);
@@ -124,9 +123,9 @@ static void test_ref_pointers_are_interned() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
 
-    bool ok = test_resolve(&ctx, scope, unit,
+    bool ok = test_resolve(&ctx, scope, &unit,
                            "struct Node { n: int }\n"
                            "let a: &Node;\n"
                            "let b: &Node;\n");

@@ -1,13 +1,13 @@
 #include "compile.h"
 #include "gab.h"
+#include "support/run.h"
 #include "vm/codegen.h"
 #include "vm/interp.h"
 #include "vm/vm.h"
 
 #include "ast/resolve.h"
 #include "binding.h"
-#include "lexer.h"
-#include "parser.h"
+#include "syntax/parser.h"
 #include "string/string.h"
 #include "type/type_registry.h"
 #include "vm/opcode.h"
@@ -202,7 +202,7 @@ static void test_a_call_reaches_a_function_from_an_earlier_unit() {
                         "let r: int = calls_across();\n");
 
     int32_t returned;
-    memcpy(&returned, vm_slot_at(vm, 0), sizeof(returned));
+    memcpy(&returned, vm_slot_at(vm, test_result_slot(vm)), sizeof(returned));
 
     assert(returned == 7);
 
@@ -250,23 +250,28 @@ static void test_checking_a_unit_installs_nothing() {
     Diagnostics diagnostics;
     diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
 
-    Lexer lexer = lexer_create("module dry;\n"
-                               "struct Only { a: int }\n"
-                               "func second(): int { let p: *Only = box Only { a: 0 }; return p.a; }\n",
-                               vm->env.compile_arena, &vm->env.strings, &diagnostics);
-    Parser parser = parser_create(&lexer, &diagnostics);
-    ASTUnit *ast = ast_unit_create(vm->env.compile_arena);
+    ASTUnit *ast;
 
-    assert(parser_parse(&parser, ast));
+    assert(parse_unit("module dry;\n"
+                      "struct Only { a: int }\n"
+                      "func second(): int { let p: *Only = box Only { a: 0 }; return p.a; }\n",
+                      vm->env.compile_arena, &vm->env.strings, &ast, &diagnostics));
 
     Scope staging;
     scope_init_staging(&staging, vm->env.arena, &vm->env.strings,
                        environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "dry")));
 
-    assert(resolve_unit(vm->env.compile_arena, ast, &staging, vm->env.module_scopes, false, &diagnostics));
+    ResolvedUnit *resolved;
 
-    Unit *unit = codegen_generate(ast, vm->env.arena, &vm->env.strings, staging.type_registry, &diagnostics);
-    assert(unit);
+    assert(resolve_unit(vm->env.compile_arena, ast, &staging, vm->env.module_scopes, false, &resolved,
+                        &diagnostics));
+
+    MIRModule *mir_unit;
+    assert(mir_build(vm->env.compile_arena, resolved, &mir_unit, &diagnostics));
+
+    ObjectFile *unit;
+    assert(codegen_generate(ast, vm->env.arena, &vm->env.strings, staging.type_registry, mir_unit, &unit,
+                            &diagnostics));
 
     assert(link_check(&vm->program, unit, staging.type_registry, &diagnostics));
 
@@ -276,7 +281,7 @@ static void test_checking_a_unit_installs_nothing() {
         !scope_binding_lookup(environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "dry")),
                               string_from_cstr(&vm->env.strings, "second")));
 
-    unit_free(unit);
+    object_file_free(unit);
     diagnostics_free(&diagnostics);
 
     vm_free(vm);
@@ -302,7 +307,7 @@ static void test_compile_once_run_many() {
 
         assert(vm->frame_count == 0);
         int32_t returned;
-        memcpy(&returned, vm_slot_at(vm, 0), sizeof(returned));
+        memcpy(&returned, vm_slot_at(vm, (size_t)top_level.result_slot), sizeof(returned));
 
         assert(returned == 7);
     }

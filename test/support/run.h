@@ -3,11 +3,11 @@
 
 #include "ast/resolve.h"
 #include "compile.h"
-#include "lexer.h"
+#include "mir/mir_build.h"
 #include "object.h"
-#include "parser.h"
+#include "syntax/parser.h"
 #include "scope.h"
-#include "slot.h"
+#include "vm/slot.h"
 #include "support/test_context.h"
 #include "vm/chunk.h"
 #include "vm/interp.h"
@@ -23,6 +23,9 @@ static inline Scope *test_std_scope(VM *vm) {
     return environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, GAB_STD_MODULE));
 }
 
+/* Where the script's first declaration was given a slot, which is what a test reads back. */
+static inline size_t test_result_slot(const VM *vm) { return vm->result_slot; }
+
 static inline void test_run(const char *source, void *out, size_t width) {
     VM *vm = vm_create();
 
@@ -30,7 +33,7 @@ static inline void test_run(const char *source, void *out, size_t width) {
 
     assert(vm->frame_count == 0);
 
-    memcpy(out, vm_slot_at(vm, 0), width);
+    memcpy(out, vm_slot_at(vm, test_result_slot(vm)), width);
 
     vm_free(vm);
 }
@@ -43,7 +46,7 @@ static inline void test_run_string(const char *source, char *out, size_t capacit
     assert(vm->frame_count == 0);
 
     StrRef value;
-    memcpy(&value, vm_slot_at(vm, 0), sizeof(value));
+    memcpy(&value, vm_slot_at(vm, test_result_slot(vm)), sizeof(value));
 
     assert((size_t)value.length < capacity);
 
@@ -74,15 +77,34 @@ static inline bool test_run_bool(const char *source) {
     return result != 0;
 }
 
-static inline bool test_resolve(TestContext *ctx, Scope *scope, ASTUnit *unit, const char *source) {
-    Lexer lexer = lexer_create(test_in_a_module(source), ctx->arena, &ctx->strings, &ctx->diagnostics);
-    Parser parser = parser_create(&lexer, &ctx->diagnostics);
-
-    if (!parser_parse(&parser, unit)) {
+static inline bool test_resolve_ir(TestContext *ctx, Scope *scope, ASTUnit **unit, MIRModule **mir_unit,
+                                   ResolvedUnit **out, const char *source) {
+    if (!parse_unit(test_in_a_module(source), ctx->arena, &ctx->strings, unit, &ctx->diagnostics)) {
         return false;
     }
 
-    return resolve_unit(ctx->arena, unit, scope, NULL, false, &ctx->diagnostics);
+    ResolvedUnit *resolved;
+
+    if (!resolve_unit(ctx->arena, *unit, scope, NULL, false, &resolved, &ctx->diagnostics)) {
+        return false;
+    }
+
+    MIRModule *bodies;
+    bool built = mir_build(ctx->arena, resolved, &bodies, &ctx->diagnostics);
+
+    if (mir_unit) {
+        *mir_unit = bodies;
+    }
+
+    if (out) {
+        *out = resolved;
+    }
+
+    return built;
+}
+
+static inline bool test_resolve(TestContext *ctx, Scope *scope, ASTUnit **unit, const char *source) {
+    return test_resolve_ir(ctx, scope, unit, NULL, NULL, source);
 }
 
 static inline bool test_compiles(const char *source) {
@@ -90,9 +112,9 @@ static inline bool test_compiles(const char *source) {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
 
-    bool ok = test_resolve(&ctx, scope, unit, source);
+    bool ok = test_resolve(&ctx, scope, &unit, source);
 
     test_context_free(&ctx);
 
@@ -104,9 +126,9 @@ static inline bool test_diagnostic_mentions(const char *source, const char *need
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
 
-    test_resolve(&ctx, scope, unit, source);
+    test_resolve(&ctx, scope, &unit, source);
 
     bool found = false;
 
@@ -120,6 +142,22 @@ static inline bool test_diagnostic_mentions(const char *source, const char *need
     test_context_free(&ctx);
 
     return found;
+}
+
+static inline size_t test_diagnostic_count(const char *source) {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
+    ASTUnit *unit;
+
+    test_resolve(&ctx, scope, &unit, source);
+
+    size_t count = diagnostics_count(&ctx.diagnostics);
+
+    test_context_free(&ctx);
+
+    return count;
 }
 
 static inline bool test_codegens(const char *source) {

@@ -1,4 +1,4 @@
-#include "slot.h"
+#include "vm/slot.h"
 #include "support/run.h"
 #include "vm/vm.h"
 

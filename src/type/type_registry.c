@@ -2,7 +2,7 @@
 
 #include "binding.h"
 
-#include "arena.h"
+#include "memory/arena.h"
 #include "object.h"
 #include "string/string.h"
 #include "type_internal.h"
@@ -463,8 +463,11 @@ const Type *type_registry_array_with(TypeRegistry *registry, const Type *element
 }
 
 const Type *type_registry_array_of(TypeRegistry *registry, const Type *element, int32_t length) {
-    return type_registry_array_with(registry, element,
-                                    (TypeArg){.kind = TYPE_ARG_CONST, .constant = {.value = length}});
+    Constant count = constant_int(type_registry_get_primitive(registry, TYPE_INT), length);
+
+    return type_registry_array_with(
+        registry, element,
+        (TypeArg){.kind = TYPE_ARG_CONST, .constant = {.kind = CONST_VALUE, .value = count}});
 }
 
 static const Type *indirect_to(TypeRegistry *registry, TypeKind kind, const Type *inner) {
@@ -786,8 +789,6 @@ const Type *type_registry_ref_to(TypeRegistry *registry, const Type *inner) {
 const Type *type_registry_ptr_to(TypeRegistry *registry, const Type *pointee) {
     return indirect_to(registry, TYPE_PTR, pointee);
 }
-
-const TypeDecl *type_registry_array_decl(TypeRegistry *registry) { return registry->primitives.array_decl; }
 
 const Type *type_registry_error_type(TypeRegistry *registry) { return registry->primitives.error_type; }
 

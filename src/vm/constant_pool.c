@@ -12,12 +12,12 @@ static void constpool_resize(ConstantPool *pool) {
         pool->capacity = pool->max_capacity;
     }
 
-    pool->constants = realloc(pool->constants, pool->capacity * sizeof(Constant));
+    pool->constants = realloc(pool->constants, pool->capacity * sizeof(SlotWord));
 }
 
 ConstantPool *constpool_create(size_t max_capacity) {
     ConstantPool *pool = malloc(sizeof(ConstantPool));
-    pool->constants = malloc(CONSTPOLL_INITIAL_CAPACITY * sizeof(Constant));
+    pool->constants = malloc(CONSTPOLL_INITIAL_CAPACITY * sizeof(SlotWord));
     pool->count = 0;
     pool->capacity = CONSTPOLL_INITIAL_CAPACITY;
     pool->max_capacity = max_capacity;
@@ -30,7 +30,15 @@ void constpool_free(ConstantPool *pool) {
     free(pool);
 }
 
-size_t constpool_add(ConstantPool *pool, Constant value) {
+/* An instruction names a constant by index, so equal bits need only one entry. A chunk holds a
+ * handful, which a scan reaches sooner than a map would hash. */
+size_t constpool_add(ConstantPool *pool, SlotWord value) {
+    for (size_t i = 0; i < pool->count; i++) {
+        if (memcmp(&pool->constants[i], &value, sizeof(SlotWord)) == 0) {
+            return i;
+        }
+    }
+
     assert(pool->count < pool->max_capacity);
 
     if (pool->count == pool->capacity) {
@@ -41,7 +49,7 @@ size_t constpool_add(ConstantPool *pool, Constant value) {
     return pool->count++;
 }
 
-Constant constpool_get(const ConstantPool *pool, size_t index) {
+SlotWord constpool_get(const ConstantPool *pool, size_t index) {
     assert(index < pool->count);
 
     return pool->constants[index];

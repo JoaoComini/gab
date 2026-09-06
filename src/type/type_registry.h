@@ -1,7 +1,7 @@
 #ifndef GAB_TYPE_REGISTRY_H
 #define GAB_TYPE_REGISTRY_H
 
-#include "arena.h"
+#include "memory/arena.h"
 #include "string/string.h"
 #include "type.h"
 #include "type_layout.h"
@@ -116,7 +116,6 @@ const Deref *type_registry_deref(TypeRegistry *registry, const Type *type);
 const Type *type_registry_error_type(TypeRegistry *registry);
 
 /* Shared by every array, which is where the conformance all of them have is recorded. */
-const TypeDecl *type_registry_array_decl(TypeRegistry *registry);
 
 const Type *type_registry_array_of(TypeRegistry *registry, const Type *element, int32_t length);
 

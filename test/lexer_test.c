@@ -1,7 +1,7 @@
-#include <arena.h>
+#include "memory/arena.h"
 #include <assert.h>
 #include <diagnostics.h>
-#include <lexer.h>
+#include "syntax/lexer.h"
 #include <string.h>
 #include <string/string_pool.h>
 

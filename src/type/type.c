@@ -89,10 +89,6 @@ const Type *type_pointee(const Type *type) {
 
 bool type_is_indirect(const Type *type) { return type && (type->kind == TYPE_BOX || type->kind == TYPE_REF); }
 
-bool type_owns_through_an_address(const Type *type) {
-    return type && (type->kind == TYPE_BOX || type->kind == TYPE_BLOCK);
-}
-
 const Type *type_array_element(const Type *type) {
     assert(type && type->kind == TYPE_ARRAY && "only an array has an element");
     assert(type->arg_count == 2 && type->args[0].kind == TYPE_ARG_TYPE && "an array is element and length");
@@ -111,7 +107,7 @@ int32_t type_array_length(const Type *type) {
     assert(type && type->kind == TYPE_ARRAY && "only an array has a length");
     assert(type_array_length_is_known(type) && "a generic length is no count until it is substituted");
 
-    return type->args[1].constant.value;
+    return type->args[1].constant.value.as_int;
 }
 
 bool type_array_length_is_known(const Type *type) {
@@ -130,7 +126,7 @@ size_t type_arg_hash(TypeArg arg) {
         return (size_t)(uintptr_t)arg.type;
     }
 
-    return arg.constant.kind == CONST_PARAM ? arg.constant.param : (size_t)(uint32_t)arg.constant.value;
+    return arg.constant.kind == CONST_PARAM ? arg.constant.param : constant_hash(arg.constant.value);
 }
 
 bool type_arg_equals(TypeArg arg, TypeArg other) {
@@ -142,7 +138,13 @@ bool type_arg_equals(TypeArg arg, TypeArg other) {
         return arg.type == other.type;
     }
 
-    return arg.constant.kind == other.constant.kind && arg.constant.value == other.constant.value;
+    if (arg.constant.kind != other.constant.kind) {
+        return false;
+    }
+
+    /* A parameter is compared by its index and a value by its value; the union holds one or the other. */
+    return arg.constant.kind == CONST_PARAM ? arg.constant.param == other.constant.param
+                                            : constant_equals(arg.constant.value, other.constant.value);
 }
 
 size_t type_structural_hash(const Type *type) {
