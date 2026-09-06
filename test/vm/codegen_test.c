@@ -627,6 +627,32 @@ static void test_every_jump_lands_inside_its_chunk() {
     test_program_free(&program);
 }
 
+/* A read and the store it feeds name one element, so both cost what reaching it once costs. */
+static void test_reaching_an_element_twice_costs_reaching_it_once() {
+    TestProgram read = test_compile("func f(n: int, m: int): int {\n"
+                                    "    let xs: array<int, 4> = [0, 0, 0, 0];\n"
+                                    "    return xs[n % 4];\n"
+                                    "}\n");
+
+    Chunk *read_chunk = test_func_chunk(&read, 0);
+
+    size_t addresses = test_count_opcode(read_chunk, OP_ADD_PTR_REG);
+
+    test_program_free(&read);
+
+    TestProgram both = test_compile("func f(n: int, m: int): int {\n"
+                                    "    let xs: array<int, 4> = [0, 0, 0, 0];\n"
+                                    "    xs[n % 4] += 1;\n"
+                                    "    return m;\n"
+                                    "}\n");
+
+    Chunk *both_chunk = test_func_chunk(&both, 0);
+
+    assert(test_count_opcode(both_chunk, OP_ADD_PTR_REG) == addresses);
+
+    test_program_free(&both);
+}
+
 static void test_an_array_indexes_without_a_call() {
     TestProgram program = test_compile("func f(): int {\n"
                                        "    let xs: array<int, 3> = [1, 2, 3];\n"
@@ -708,6 +734,7 @@ int main() {
     test_box_encodes_the_type_index_the_vm_holds();
 
     test_a_signature_too_wide_for_a_frame_is_refused();
+    test_reaching_an_element_twice_costs_reaching_it_once();
     test_an_array_indexes_without_a_call();
     test_a_slice_indexes_without_a_call();
     test_an_array_length_folds_to_a_constant();

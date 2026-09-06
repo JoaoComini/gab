@@ -2,7 +2,6 @@
 
 #include <assert.h>
 #include <stdio.h>
-#include <stdlib.h>
 
 #include "binding.h"
 #include "mir/mir_fold.h"
@@ -43,6 +42,12 @@ typedef struct {
     /* The slot each value is written to, where a store lets it be computed straight into a local
      * rather than into a temporary the store would then copy out of. */
     unsigned int *redirect;
+
+    /* The address the load just emitted formed, for a store to that same place to read back rather
+     * than walking the path again; NULL once any other instruction has emitted. */
+    const Place *held_place;
+    unsigned int held_address;
+    unsigned int held_scratch;
 
     Diagnostics *diagnostics;
     bool failed;
@@ -672,6 +677,32 @@ static OpCode indirect_opcode(size_t size, bool load, bool *ok) {
 }
 
 /* Forms the address a path names, leaving it in scratch slots the caller then loads or stores through. */
+/* Two places name one location when they walk the same path from the same base. */
+static bool place_same(const Place *a, const Place *b) {
+    if (!a || !b || a->base.id != b->base.id || a->projection_count != b->projection_count) {
+        return false;
+    }
+
+    for (size_t i = 0; i < a->projection_count; i++) {
+        const Projection *x = &a->projections[i];
+        const Projection *y = &b->projections[i];
+
+        if (x->kind != y->kind || x->type != y->type) {
+            return false;
+        }
+
+        if (x->kind == PROJ_FIELD && x->field.id != y->field.id) {
+            return false;
+        }
+
+        if (x->kind == PROJ_INDEX && x->index.id != y->index.id) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 static unsigned int emit_address(MIREmitter *emitter, const Place *place) {
     const MIRValueInfo *info = mir_value_info(emitter->ir, place->base);
     const Type *type = info ? info->type : NULL;
@@ -756,7 +787,11 @@ static unsigned int emit_address(MIREmitter *emitter, const Place *place) {
 static void emit_indirect(MIREmitter *emitter, const MIRInst *inst, bool load) {
     unsigned int saved = emitter->scratch;
 
-    unsigned int address = emit_address(emitter, &inst->place);
+    /* A store into the place the load before it addressed reads that address back, which for an
+     * indexed element is the whole of the arithmetic. */
+    bool reuse = !load && place_same(emitter->held_place, &inst->place);
+
+    unsigned int address = reuse ? emitter->held_address : emit_address(emitter, &inst->place);
 
     bool ok;
     OpCode op = indirect_opcode(type_registry_size_of(emitter->ir->registry, inst->type), load, &ok);
@@ -777,6 +812,24 @@ static void emit_indirect(MIREmitter *emitter, const MIRInst *inst, bool load) {
     } else {
         chunk_add_instruction(emitter->chunk,
                               VM_ENCODE_R(op, address, operand_slot(emitter, inst->args[0]), 0));
+    }
+
+    /* A load's address stays where it is so the store that may follow can read it; the scratch it
+     * occupies is released by the next instruction that is not that store. */
+    if (load) {
+        emitter->held_place = &inst->place;
+        emitter->held_address = address;
+        emitter->held_scratch = saved;
+
+        return;
+    }
+
+    /* A store consumes the hold, releasing the scratch the load kept for it. */
+    if (reuse) {
+        emitter->scratch = emitter->held_scratch;
+        emitter->held_place = NULL;
+
+        return;
     }
 
     emitter->scratch = saved;
@@ -1053,6 +1106,22 @@ static void plan_redirects(MIREmitter *emitter) {
 }
 
 static void emit_inst(MIREmitter *emitter, const MIRInst *inst, MIRBlockId next) {
+    if (emitter->held_place) {
+        bool consumed = inst->op == MIR_STORE && place_same(emitter->held_place, &inst->place);
+
+        /* Arithmetic between the load and its store writes allocated slots, never the scratch the
+         * address sits in, so the hold survives it; anything else gives the address up. */
+        bool transparent = inst->op == MIR_ADD || inst->op == MIR_SUB || inst->op == MIR_MUL ||
+                           inst->op == MIR_DIV || inst->op == MIR_MOD || inst->op == MIR_NEG ||
+                           inst->op == MIR_CONST_INT || inst->op == MIR_CONST_FLOAT ||
+                           inst->op == MIR_CONST_BOOL;
+
+        if (!consumed && !transparent) {
+            emitter->scratch = emitter->held_scratch;
+            emitter->held_place = NULL;
+        }
+    }
+
     switch (inst->op) {
     case MIR_CONST_INT:
     case MIR_CONST_FLOAT:
