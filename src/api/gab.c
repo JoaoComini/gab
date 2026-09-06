@@ -1,9 +1,9 @@
 #include "gab.h"
 
-#include "memory/allocator.h"
 #include "binding.h"
 #include "compile.h"
 #include "diagnostics.h"
+#include "memory/allocator.h"
 #include "object.h"
 #include "scope.h"
 #include "string/string.h"
@@ -199,6 +199,7 @@ size_t gab_ctx_type_size(GabCtx *ctx, size_t index) {
 
     assert(index < function->type_arg_count &&
            "a host body read a type argument its declaration does not have");
+    (void)function;
 
     return ctx->type_arg_sizes[index];
 }

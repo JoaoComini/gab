@@ -511,6 +511,7 @@ static TypeArg substitute_arg(TypeArg arg, const TypeArg *args, size_t arg_count
 
     assert(arg.constant.param < arg_count && "a parameter was substituted with no argument at its index");
     assert(args[arg.constant.param].kind == TYPE_ARG_CONST && "a value parameter is given a value");
+    (void)arg_count;
 
     return args[arg.constant.param];
 }

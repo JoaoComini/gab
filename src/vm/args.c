@@ -26,6 +26,7 @@ uint8_t *args_address(Args *args, int index) {
 
     assert(index >= 0 && (size_t)index < function->param_count &&
            "a C body read a parameter its declaration does not have");
+    (void)function;
 
     return args->vm->stack + args->base + args->param_offsets[index];
 }
@@ -48,6 +49,7 @@ static uint8_t *args_address_of_kind(Args *args, int index, TypeKind kind) {
 
     assert(type && type_kind(type) == kind && "a C body read a parameter as a type it was not declared");
     (void)kind;
+    (void)type;
 
     return at;
 }
@@ -79,6 +81,7 @@ StrRef args_string(Args *args, int index) {
 
     assert(type_is_str_ref(type) &&
            "a C body read a parameter as a borrowed string when it was not declared one");
+    (void)type;
 
     StrRef value;
     memcpy(&value, at, sizeof(value));
@@ -109,6 +112,7 @@ void *args_pointer(Args *args, int index) {
     uint8_t *at = args_address(args, index);
 
     assert(type && type_is_indirect(type) && "a C body read a parameter as a type it was not declared");
+    (void)type;
 
     void *pointer;
     memcpy(&pointer, at, sizeof(pointer));
@@ -124,6 +128,7 @@ void args_struct(Args *args, int index, void *out, size_t size) {
     assert(type && type_registry_size_of(args_registry(args), type) == size &&
            "a struct argument was read at a size its type does not have");
     (void)size;
+    (void)type;
 
     memcpy(out, at, size);
 }
