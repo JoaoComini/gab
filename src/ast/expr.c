@@ -3,10 +3,6 @@
 ASTExpr *ast_expr_create(Arena *arena, Span span) {
     ASTExpr *node = arena_alloc(arena, sizeof(ASTExpr));
     node->span = span;
-    node->type = NULL;
-    node->binding = NULL;
-    node->callee = NULL;
-    node->moves = false;
 
     return node;
 }
@@ -48,7 +44,6 @@ ASTExpr *ast_field_expr_create(Arena *arena, Span span, ASTExpr *target, StringR
     node->kind = EXPR_FIELD;
     node->field.target = target;
     node->field.name = name;
-    node->field.owner = NULL;
     node->field.index = 0;
     return node;
 }
@@ -57,25 +52,6 @@ ASTExpr *ast_addr_of_expr_create(Arena *arena, Span span, ASTExpr *target) {
     ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_ADDR_OF;
     node->unary.target = target;
-    return node;
-}
-
-ASTExpr *ast_lend_expr_create(Arena *arena, Span span, ASTExpr *target) {
-    ASTExpr *node = ast_expr_create(arena, span);
-    node->kind = EXPR_LEND;
-    node->lend.target = target;
-    node->lend.parts = NULL;
-    node->lend.part_count = 0;
-
-    return node;
-}
-
-ASTExpr *ast_unsize_expr_create(Arena *arena, Span span, ASTExpr *target, int32_t length) {
-    ASTExpr *node = ast_expr_create(arena, span);
-    node->kind = EXPR_UNSIZE;
-    node->unsize.target = target;
-    node->unsize.length = length;
-
     return node;
 }
 
@@ -100,18 +76,10 @@ ASTExpr *ast_not_expr_create(Arena *arena, Span span, ASTExpr *target) {
     return node;
 }
 
-ASTExpr *ast_cast_expr_create(Arena *arena, Span span, ASTExpr *operand) {
-    ASTExpr *node = ast_expr_create(arena, span);
-    node->kind = EXPR_CAST;
-    node->cast.operand = operand;
-    return node;
-}
-
 ASTExpr *ast_box_expr_create(Arena *arena, Span span, ASTExpr *value) {
     ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_BOX;
     node->box_expr.value = value;
-    node->box_expr.type = NULL;
     return node;
 }
 
@@ -138,37 +106,17 @@ ASTExpr *ast_index_expr_create(Arena *arena, Span span, ASTExpr *target, ASTExpr
     return node;
 }
 
-Binding *ast_binding_of(const ASTExpr *expr) { return expr->binding; }
-
-void ast_bind(ASTExpr *expr, Binding *binding) { expr->binding = binding; }
-
-Binding *ast_root_local(const ASTExpr *expr) {
-    while (expr) {
-        switch (expr->kind) {
-        case EXPR_VARIABLE:
-            return ast_binding_of(expr);
-        case EXPR_FIELD:
-            expr = expr->field.target;
-            break;
-        case EXPR_INDEX:
-            expr = expr->index.target;
-            break;
-        case EXPR_DEREF:
-        case EXPR_ADDR_OF:
-            expr = expr->unary.target;
-            break;
-        default:
-            return NULL;
-        }
+TypeKind literal_type_kind(LiteralKind kind) {
+    switch (kind) {
+    case LITERAL_FLOAT:
+        return TYPE_FLOAT;
+    case LITERAL_BOOL:
+        return TYPE_BOOL;
+    case LITERAL_STRING:
+        return TYPE_STR;
+    case LITERAL_INT:
+        break;
     }
 
-    return NULL;
-}
-
-const TypeField *ast_field_of(TypeRegistry *registry, const ASTExpr *expr) {
-    if (!expr->field.owner) {
-        return NULL;
-    }
-
-    return &type_registry_fields_of(registry, expr->field.owner)->fields[expr->field.index];
+    return TYPE_INT;
 }

@@ -1,6 +1,6 @@
 #include "string.h"
 
-#include "arena.h"
+#include "memory/arena.h"
 #include "string/string_pool.h"
 #include "string/string_ref.h"
 

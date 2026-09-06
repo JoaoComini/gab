@@ -121,7 +121,7 @@ static void vm_arithmeticfk(uint8_t *regs, Instruction instruction, const Chunk 
                             float (*func)(float, float)) {
     size_t rd = VM_DECODE_R_RD(instruction);
     size_t r1 = VM_DECODE_R_R1(instruction);
-    Constant constant = constpool_get(chunk->const_pool, VM_DECODE_R_R2(instruction));
+    SlotWord constant = constpool_get(chunk->const_pool, VM_DECODE_R_R2(instruction));
 
     vm_write_f32_at(regs, rd, func(vm_read_f32_at(regs, r1), constant.as_float));
 }
@@ -246,7 +246,7 @@ static void vm_conditionalfk(uint8_t *regs, Instruction instruction, const Chunk
                              bool (*func)(float, float)) {
     size_t rd = VM_DECODE_R_RD(instruction);
     size_t r1 = VM_DECODE_R_R1(instruction);
-    Constant constant = constpool_get(chunk->const_pool, VM_DECODE_R_R2(instruction));
+    SlotWord constant = constpool_get(chunk->const_pool, VM_DECODE_R_R2(instruction));
 
     vm_write_i32_at(regs, rd, func(vm_read_f32_at(regs, r1), constant.as_float));
 }
@@ -372,7 +372,7 @@ static void vm_run_loop(VM *vm) {
             VM_CASE(OP_LOAD_CONST) {
                 size_t reg = VM_DECODE_I_RD(instruction);
                 size_t const_index = VM_DECODE_I_KX(instruction);
-                Constant constant = constpool_get(chunk->const_pool, const_index);
+                SlotWord constant = constpool_get(chunk->const_pool, const_index);
 
                 memcpy(VM_REG(reg), &constant, VM_SLOT_SIZE);
                 VM_NEXT();

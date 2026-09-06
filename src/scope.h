@@ -1,7 +1,7 @@
 #ifndef GAB_SCOPE_H
 #define GAB_SCOPE_H
 
-#include "arena.h"
+#include "memory/arena.h"
 #include "string/string.h"
 #include "type/type_registry.h"
 
@@ -63,8 +63,6 @@ typedef struct Scope {
 
 Scope *scope_create(Arena *arena, StringPool *strings, Scope *parent);
 void scope_init(Scope *scope, Arena *arena, StringPool *strings, Scope *parent);
-
-void scope_init_over(Scope *scope, Arena *arena, StringPool *strings, TypeRegistry *registry);
 
 void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope *parent, int depth);
 

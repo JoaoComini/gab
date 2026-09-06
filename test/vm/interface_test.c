@@ -1,5 +1,5 @@
 #include "ast/ast.h"
-#include "parser.h"
+#include "syntax/parser.h"
 #include "scope.h"
 #include "string/string.h"
 #include "support/run.h"

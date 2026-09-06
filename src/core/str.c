@@ -1,7 +1,7 @@
 #include "core/str.h"
 
 #include "gab.h"
-#include "library.h"
+#include "api/library.h"
 #include "scope.h"
 
 #include <assert.h>

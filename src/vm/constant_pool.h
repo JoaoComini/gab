@@ -1,19 +1,19 @@
 #ifndef GAB_CONSTPOOL_H
 #define GAB_CONSTPOOL_H
 
-#include "slot.h"
+#include "vm/slot.h"
 #include <stddef.h>
 #include <stdint.h>
 
 typedef union {
     int32_t as_int;
     float as_float;
-} Constant;
+} SlotWord;
 
-_Static_assert(sizeof(Constant) == VM_SLOT_SIZE, "a constant must fill exactly one slot");
+_Static_assert(sizeof(SlotWord) == VM_SLOT_SIZE, "a constant must fill exactly one slot");
 
 typedef struct {
-    Constant *constants;
+    SlotWord *constants;
     size_t count;
     size_t capacity;
     size_t max_capacity;
@@ -21,7 +21,7 @@ typedef struct {
 
 ConstantPool *constpool_create(size_t max_capacity);
 void constpool_free(ConstantPool *pool);
-size_t constpool_add(ConstantPool *pool, Constant value);
-Constant constpool_get(const ConstantPool *pool, size_t index);
+size_t constpool_add(ConstantPool *pool, SlotWord value);
+SlotWord constpool_get(const ConstantPool *pool, size_t index);
 
 #endif

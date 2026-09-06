@@ -1,4 +1,5 @@
 #include "compile.h"
+#include "support/run.h"
 #include "vm/vm.h"
 
 #include <assert.h>
@@ -52,7 +53,7 @@ static void test_deep_recursion_preserves_live_frames() {
                         "let r: int = down(200);\n");
 
     int32_t result;
-    memcpy(&result, vm_slot_at(vm, 0), sizeof(result));
+    memcpy(&result, vm_slot_at(vm, test_result_slot(vm)), sizeof(result));
 
     assert(result == 20100);
 

@@ -1,8 +1,8 @@
 #ifndef GAB_OBJECT_H
 #define GAB_OBJECT_H
 
-#include "allocator.h"
-#include "arena.h"
+#include "memory/allocator.h"
+#include "memory/arena.h"
 #include "type/type.h"
 #include "type/type_layout.h"
 

@@ -1,6 +1,6 @@
 #include "object.h"
 
-#include "arena.h"
+#include "memory/arena.h"
 #include "type/type_registry.h"
 
 #include <assert.h>
@@ -127,9 +127,6 @@ bool block_reserve(const Allocator *allocator, BlockValue *block, int32_t extra,
     if (block->length) {
         memcpy(memory, block->data, (size_t)block->length * stride);
     }
-
-    memset((char *)memory + (size_t)block->length * stride, 0,
-           ((size_t)capacity - (size_t)block->length) * stride);
 
     if (block->data) {
         allocator->free(allocator->ctx, block->data, (size_t)block->capacity * stride);

@@ -1,8 +1,8 @@
 #ifndef GAB_TYPE_H
 #define GAB_TYPE_H
 
-#include "allocator.h"
-#include "arena.h"
+#include "memory/allocator.h"
+#include "memory/arena.h"
 #include "string/string.h"
 #include "string/string_ref.h"
 #include "util/hash_map.h"
@@ -38,6 +38,8 @@ typedef enum {
     TYPE_ERROR,
 } TypeKind;
 
+#include "constant.h"
+
 #define GAB_MAX_TYPE_BYTES 255
 
 #define GAB_MAX_TYPE_PARAMS 4
@@ -50,7 +52,9 @@ typedef struct Type Type;
 
 typedef struct TypeRegistry TypeRegistry;
 
-/* A value, as 'Type' is a type; every one is an 'int', so a second const type must be recorded here. */
+/* A value a generic takes, as 'Type' is a type it takes. A fixed one is the same 'Constant' an
+ * instruction names, so what a source writes as a length and what it writes as an operand are one
+ * thing; a parameter is the index its declaration gave it, standing in until it is substituted. */
 typedef struct TypeConst {
     enum {
         CONST_VALUE,
@@ -58,7 +62,7 @@ typedef struct TypeConst {
     } kind;
 
     union {
-        int32_t value;
+        Constant value;
         size_t param;
     };
 } TypeConst;
@@ -158,8 +162,6 @@ bool type_is_primitive(const Type *type);
 bool type_names_itself(const Type *type);
 
 bool type_is_indirect(const Type *type);
-
-bool type_owns_through_an_address(const Type *type);
 
 const Type *type_array_element(const Type *type);
 int32_t type_array_length(const Type *type);

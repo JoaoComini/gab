@@ -10,41 +10,52 @@ typedef struct {
     GabBlock block;
 } Vec;
 
-static Vec vec_load(GabCtx *ctx) {
-    Vec vec;
-    memcpy(&vec, gab_ctx_self(ctx), sizeof(vec));
-
-    return vec;
+/* A stride the compiler can turn into a load and a store, rather than a call into memcpy. */
+static void vec_copy_in(void *to, const void *from, size_t stride) {
+    switch (stride) {
+    case 1:
+        *(uint8_t *)to = *(const uint8_t *)from;
+        return;
+    case 2:
+        memcpy(to, from, 2);
+        return;
+    case 4:
+        memcpy(to, from, 4);
+        return;
+    case 8:
+        memcpy(to, from, 8);
+        return;
+    default:
+        memcpy(to, from, stride);
+        return;
+    }
 }
 
-static void vec_store(GabCtx *ctx, const Vec *vec) { memcpy(gab_ctx_self(ctx), vec, sizeof(*vec)); }
-
 static void vec_push(GabCtx *ctx) {
-    Vec vec = vec_load(ctx);
+    Vec *vec = gab_ctx_self(ctx);
     size_t stride = gab_ctx_type_size(ctx, 0);
 
-    if (!gab_block_reserve(ctx, &vec.block, 1, stride)) {
+    if (!gab_block_reserve(ctx, &vec->block, 1, stride)) {
         gab_ctx_fail(ctx, GAB_FAIL_OUT_OF_MEMORY, "out of memory growing a vector");
         return;
     }
 
-    memcpy((char *)vec.block.data + (size_t)vec.block.length * stride, gab_ctx_address(ctx, 1), stride);
+    vec_copy_in((char *)vec->block.data + (size_t)vec->block.length * stride, gab_ctx_address(ctx, 1),
+                stride);
 
-    vec.block.length++;
-
-    vec_store(ctx, &vec);
+    vec->block.length++;
 }
 
 static void vec_index(GabCtx *ctx) {
-    Vec vec = vec_load(ctx);
+    const Vec *vec = gab_ctx_self(ctx);
     int32_t index = gab_ctx_int(ctx, 1);
 
-    if (index < 0 || index >= vec.block.length) {
+    if (index < 0 || index >= vec->block.length) {
         gab_ctx_fail(ctx, GAB_FAIL_RUNTIME, "vector index is out of range");
         return;
     }
 
-    gab_ctx_return_pointer(ctx, (char *)vec.block.data + (size_t)index * gab_ctx_type_size(ctx, 0));
+    gab_ctx_return_pointer(ctx, (char *)vec->block.data + (size_t)index * gab_ctx_type_size(ctx, 0));
 }
 
 static void vec_new(GabCtx *ctx) {

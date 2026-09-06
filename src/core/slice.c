@@ -1,7 +1,7 @@
 #include "core/slice.h"
 
 #include "gab.h"
-#include "library.h"
+#include "api/library.h"
 
 #include <assert.h>
 #include <stddef.h>
@@ -27,7 +27,7 @@ static Slice slice_load(GabCtx *ctx) {
 static void slice_len(GabCtx *ctx) { gab_ctx_return_int(ctx, slice_load(ctx).length); }
 
 static const char SLICE_SRC[] = "impl<T> slice<T> {\n"
-                                "    extern func len(self: &slice<T>): int;\n"
+                                "    intrinsic func len(self: &slice<T>): int;\n"
                                 "}\n"
                                 "impl<T> slice<T> as Index<T> {\n"
                                 "    intrinsic func index(self: &slice<T>, at: int): &T;\n"

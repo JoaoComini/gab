@@ -1,9 +1,8 @@
-#include "arena.h"
+#include "memory/arena.h"
 #include "ast/ast.h"
 #include "ast/stmt.h"
 #include "diagnostics.h"
-#include "lexer.h"
-#include "parser.h"
+#include "syntax/parser.h"
 #include "support/test_context.h"
 #include "type/type.h"
 
@@ -18,10 +17,8 @@ static TestContext parsed;
 static ASTUnit *assert_parse(const char *code) {
     Diagnostics *diagnostics = &parsed.diagnostics;
 
-    ASTUnit *unit = ast_unit_create(parsed.arena);
-    Lexer lexer = lexer_create(test_in_a_module(code), parsed.arena, &parsed.strings, diagnostics);
-    Parser parser = parser_create(&lexer, diagnostics);
-    bool ok = parser_parse(&parser, unit);
+    ASTUnit *unit;
+    bool ok = parse_unit(test_in_a_module(code), parsed.arena, &parsed.strings, &unit, diagnostics);
     assert(ok);
     assert(!diagnostics_has_errors(diagnostics));
 
@@ -33,10 +30,8 @@ static void assert_parse_error(const char *code, const char *expected_error) {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    ASTUnit *unit = ast_unit_create(ctx.arena);
-    Lexer lexer = lexer_create(test_in_a_module(code), ctx.arena, &ctx.strings, diagnostics);
-    Parser parser = parser_create(&lexer, diagnostics);
-    bool ok = parser_parse(&parser, unit);
+    ASTUnit *unit;
+    bool ok = parse_unit(test_in_a_module(code), ctx.arena, &ctx.strings, &unit, diagnostics);
     assert(!ok);
 
     assert(diagnostics_has_errors(diagnostics));
@@ -73,7 +68,7 @@ static void test_single_number() {
     ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_EXPR);
     assert(stmt->expr.value->kind == EXPR_LITERAL);
-    assert(stmt->expr.value->lit.kind == TYPE_INT);
+    assert(stmt->expr.value->lit.kind == LITERAL_INT);
     assert(stmt->expr.value->lit.as_int == 42);
 }
 
@@ -83,14 +78,14 @@ static void test_booleans() {
     ASTStmt *true_stmt = func_unwrap(unit).data[0];
     assert(true_stmt->kind == STMT_EXPR);
     assert(true_stmt->expr.value->kind == EXPR_LITERAL);
-    assert(true_stmt->expr.value->lit.kind == TYPE_BOOL);
-    assert(true_stmt->expr.value->lit.as_int == 1);
+    assert(true_stmt->expr.value->lit.kind == LITERAL_BOOL);
+    assert(true_stmt->expr.value->lit.as_bool);
 
     ASTStmt *false_stmt = func_unwrap(unit).data[1];
     assert(false_stmt->kind == STMT_EXPR);
     assert(false_stmt->expr.value->kind == EXPR_LITERAL);
-    assert(false_stmt->expr.value->lit.kind == TYPE_BOOL);
-    assert(false_stmt->expr.value->lit.as_int == 0);
+    assert(false_stmt->expr.value->lit.kind == LITERAL_BOOL);
+    assert(!false_stmt->expr.value->lit.as_bool);
 }
 
 static void test_multiple_statements() {
@@ -369,7 +364,7 @@ static void test_return() {
 
     ASTExpr *result = stmt->ret.result;
     assert(result->kind == EXPR_LITERAL);
-    assert(result->lit.kind == TYPE_INT);
+    assert(result->lit.kind == LITERAL_INT);
     assert(result->lit.as_int == 2);
 }
 
@@ -408,11 +403,9 @@ static void test_a_unit_must_name_its_module() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    ASTUnit *unit = ast_unit_create(ctx.arena);
-    Lexer lexer = lexer_create("func f(): int { return 1; }\n", ctx.arena, &ctx.strings, &ctx.diagnostics);
-    Parser parser = parser_create(&lexer, &ctx.diagnostics);
+    ASTUnit *unit;
 
-    assert(!parser_parse(&parser, unit));
+    assert(!parse_unit("func f(): int { return 1; }\n", ctx.arena, &ctx.strings, &unit, &ctx.diagnostics));
     assert(diagnostics_has_errors(&ctx.diagnostics));
 
     test_context_free(&ctx);

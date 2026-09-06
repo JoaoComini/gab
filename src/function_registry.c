@@ -67,6 +67,22 @@ void function_registry_destroy(FunctionRegistry *registry) {
     }
 }
 
+Function *function_registry_owned_for(FunctionRegistry *registry, TypeRegistry *types, const Type *type,
+                                      const String *name) {
+    Function *declaration = type_registry_find_owned(types, type, name);
+
+    if (!declaration || type_registry_owned_is_shared(declaration, type)) {
+        return declaration;
+    }
+
+    /* A method with parameters of its own is specialized at the call, which knows all of them. */
+    if (declaration->decl->type_param_count > type_arg_count(type)) {
+        return declaration;
+    }
+
+    return function_registry_specialize(registry, declaration, type_args(type), type_arg_count(type));
+}
+
 static InstanceKey key_of(const Function *generic, const TypeArg *args, size_t arg_count) {
     InstanceKey key = {.generic = generic, .arg_count = arg_count};
 

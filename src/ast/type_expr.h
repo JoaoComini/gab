@@ -1,7 +1,7 @@
 #ifndef GAB_AST_TYPE_EXPR_H
 #define GAB_AST_TYPE_EXPR_H
 
-#include "arena.h"
+#include "memory/arena.h"
 #include "string/string_ref.h"
 #include "util/list.h"
 

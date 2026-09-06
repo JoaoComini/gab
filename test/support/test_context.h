@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "arena.h"
+#include "memory/arena.h"
 #include "diagnostics.h"
 #include "scope.h"
 #include "string/string_pool.h"

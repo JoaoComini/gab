@@ -85,10 +85,19 @@ static void test_checking_a_body_does_not_emit_a_specialization() {
                                        "func main(): int { return id(1); }\n"
                                        "let r: int = main();");
 
-    /* The script, and one instantiation from the call: checking the body emits nothing. */
-    assert(test_func_count(&program) == 3);
+    /* One instantiation from the call, and main: checking the body emits nothing. */
+    assert(test_func_count(&program) == 2);
 
     test_program_free(&program);
+}
+
+static void test_an_error_in_a_generic_body_is_reported_once() {
+    assert(test_diagnostic_count("func bad<T>(x: T): int { let n: int = \"text\"; return n; }\n"
+                                 "func main(): int {\n"
+                                 "    let a: int = bad<int>(1);\n"
+                                 "    let b: int = bad<float>(2.5);\n"
+                                 "    return a + b;\n"
+                                 "}\n") == 1);
 }
 
 static void test_an_uncalled_generic_emits_nothing() {
@@ -96,7 +105,7 @@ static void test_an_uncalled_generic_emits_nothing() {
                                        "func main(): int { return 1; }\n"
                                        "let r: int = main();");
 
-    assert(test_func_count(&program) == 2);
+    assert(test_func_count(&program) == 1);
 
     test_program_free(&program);
 }
@@ -110,8 +119,8 @@ static void test_each_instantiation_gets_its_own_body() {
                                        "}\n"
                                        "let r: int = main();");
 
-    /* The script, main, and one body per type the call site fixes. */
-    assert(test_func_count(&program) == 4);
+    /* Main, and one body per type the call site fixes. */
+    assert(test_func_count(&program) == 3);
 
     test_program_free(&program);
 }
@@ -133,14 +142,17 @@ static void test_a_bounded_generic_emits_per_instantiation_too() {
 
     TestProgram program = test_compile(source);
 
-    /* The script, main, both count methods, and one 'total' per bounded type. */
-    assert(test_func_count(&program) == 6);
+    /* Main, both count methods, and one 'total' per bounded type. */
+    assert(test_func_count(&program) == 5);
 
     test_program_free(&program);
 }
 
 static void test_a_generic_that_instantiates_itself_without_end_is_refused() {
-    assert(test_diagnostic_mentions("func f<T>(x: &T): int { return f(x); }\n", "without end"));
+    assert(test_diagnostic_mentions("struct Box<T> { value: T }\n"
+                                    "func f<T>(x: &T): int { let b = Box<T> { value: *x }; return f(b); }\n"
+                                    "func main(): int { let n: int = 0; return f(n); }\n",
+                                    "without end"));
 }
 
 int main(void) {
@@ -154,6 +166,7 @@ int main(void) {
     test_a_bound_is_checked_once_not_per_instantiation();
     test_a_generic_body_is_checked_though_nothing_calls_it();
     test_checking_a_body_does_not_emit_a_specialization();
+    test_an_error_in_a_generic_body_is_reported_once();
     test_an_uncalled_generic_emits_nothing();
     test_each_instantiation_gets_its_own_body();
     test_a_bounded_generic_emits_per_instantiation_too();

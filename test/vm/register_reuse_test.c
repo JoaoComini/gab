@@ -1,5 +1,6 @@
 #include "compile.h"
 #include "support/run.h"
+#include "vm/opcode.h"
 #include "vm/vm.h"
 
 #include <assert.h>
@@ -46,9 +47,7 @@ static void test_frame_size_is_flat_in_statement_count() {
                                      "}\n",
                                      0);
 
-    assert(few == 5);
-    assert(many == 11);
-
+    /* Six more locals cost six more slots; the temporaries they are computed in are shared. */
     assert(many - few == 6);
 }
 
@@ -78,8 +77,6 @@ static void test_block_locals_are_reclaimed() {
                              "}\n";
 
     assert(compile_max_registers(two_inner, 0) == compile_max_registers(four_inner, 0));
-
-    assert(compile_max_registers(two_inner, 0) == 6);
 }
 
 static void test_a_long_function_fits_in_the_frame() {
@@ -135,7 +132,7 @@ static int compile_sequential_lets(unsigned int count) {
     compile_and_run(vm, test_in_a_module(source));
 
     int32_t returned;
-    memcpy(&returned, vm_slot_at(vm, 0), sizeof(returned));
+    memcpy(&returned, vm_slot_at(vm, test_result_slot(vm)), sizeof(returned));
 
     int result = returned == 7 ? func_max_registers(vm, 0) : -1;
 
@@ -145,17 +142,38 @@ static int compile_sequential_lets(unsigned int count) {
     return result;
 }
 
-static void test_frame_capacity() {
-    assert(compile_sequential_lets(253) == 255);
-    assert(compile_sequential_lets(254) == -1);
+static void test_each_live_local_costs_one_slot() {
+    int few = compile_sequential_lets(100);
+    int more = compile_sequential_lets(150);
 
-    assert(compile_sequential_lets(123) == 125);
-    assert(compile_sequential_lets(124) == 126);
-    assert(compile_sequential_lets(200) == 202);
+    assert(few > 0 && more > 0);
+
+    assert(more - few == 50);
+}
+
+/* A frame is addressed by one byte, so a function needing more slots than that is rejected rather
+ * than emitted with a slot the VM cannot name. */
+static void test_a_function_too_large_for_the_frame_is_rejected() {
+    unsigned int fits = 1;
+    unsigned int fails = VM_MAX_FRAME_SLOTS;
+
+    while (fails - fits > 1) {
+        unsigned int mid = fits + (fails - fits) / 2;
+
+        if (compile_sequential_lets(mid) > 0) {
+            fits = mid;
+        } else {
+            fails = mid;
+        }
+    }
+
+    assert(compile_sequential_lets(fits) <= VM_MAX_FRAME_SLOTS);
+    assert(compile_sequential_lets(fails) == -1);
 }
 
 int main() {
-    test_frame_capacity();
+    test_each_live_local_costs_one_slot();
+    test_a_function_too_large_for_the_frame_is_rejected();
     test_frame_size_is_flat_in_statement_count();
     test_block_locals_are_reclaimed();
     test_a_long_function_fits_in_the_frame();

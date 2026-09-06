@@ -1,7 +1,7 @@
 #ifndef GAB_LIST_H
 #define GAB_LIST_H
 
-#include "allocator.h"
+#include "memory/allocator.h"
 
 #include <assert.h>
 #include <stdlib.h>

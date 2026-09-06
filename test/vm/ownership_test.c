@@ -491,7 +491,7 @@ static void test_a_branch_join_takes_the_shorter_lived_borrow() {
                           "        if 1 < 2 { a = inner; } else { a = heap; }\n"
                           "        out = a;\n"
                           "    }\n"
-                          "    return 0;\n"
+                          "    return out.n;\n"
                           "}\n"));
 
     assert(test_compiles("struct Box { n: int }\n"
@@ -504,7 +504,7 @@ static void test_a_branch_join_takes_the_shorter_lived_borrow() {
                          "        if 1 < 2 { a = heap; } else { a = heap; }\n"
                          "        out = a;\n"
                          "    }\n"
-                         "    return 0;\n"
+                         "    return out.n;\n"
                          "}\n"));
 }
 
@@ -521,7 +521,7 @@ static void test_a_borrow_taken_late_in_a_loop_reaches_the_next_iteration() {
                           "            a = inner;\n"
                           "        }\n"
                           "    }\n"
-                          "    return 0;\n"
+                          "    return out.n;\n"
                           "}\n"));
 }
 
@@ -536,7 +536,7 @@ static void test_reassigning_a_borrow_replaces_what_it_names() {
                          "        a = heap;\n"
                          "        out = a;\n"
                          "    }\n"
-                         "    return 0;\n"
+                         "    return out.n;\n"
                          "}\n"));
 
     assert(!test_compiles("struct Box { n: int }\n"
@@ -548,7 +548,7 @@ static void test_reassigning_a_borrow_replaces_what_it_names() {
                           "        let a: &Box = inner;\n"
                           "        out = a;\n"
                           "    }\n"
-                          "    return 0;\n"
+                          "    return out.n;\n"
                           "}\n"));
 }
 
@@ -563,7 +563,7 @@ static void test_an_arm_that_returns_does_not_reach_the_join() {
                          "        if 1 < 2 { a = inner; return 0; } else { a = heap; }\n"
                          "        out = a;\n"
                          "    }\n"
-                         "    return 0;\n"
+                         "    return out.n;\n"
                          "}\n"));
 
     assert(!test_compiles("struct Box { n: int }\n"
@@ -576,7 +576,7 @@ static void test_an_arm_that_returns_does_not_reach_the_join() {
                           "        if 1 < 2 { a = inner; } else { a = heap; }\n"
                           "        out = a;\n"
                           "    }\n"
-                          "    return 0;\n"
+                          "    return out.n;\n"
                           "}\n"));
 }
 

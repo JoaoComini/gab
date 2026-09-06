@@ -1,7 +1,7 @@
 #ifndef GAB_LINK_H
 #define GAB_LINK_H
 
-#include "arena.h"
+#include "memory/arena.h"
 #include "diagnostics.h"
 #include "string/string.h"
 #include "type/type.h"
@@ -52,6 +52,10 @@ typedef struct {
     int max_registers;
 
     FrameRefList refs;
+
+    /* For a script's body, the slot its first declaration was given; a caller reading what the script
+     * produced looks there rather than assuming where a slot lands. */
+    int result_slot;
 } FuncPrototype;
 
 void func_proto_free(FuncPrototype *proto);
@@ -114,9 +118,12 @@ typedef struct {
 
     size_t *type_map;
     size_t *string_map;
-} Unit;
+} ObjectFile;
 
-void unit_free(Unit *unit);
+/* Moves the top level out, leaving the unit safe to free. */
+void object_file_take_top_level(ObjectFile *unit, FuncPrototype *out);
+
+void object_file_free(ObjectFile *unit);
 
 GAB_LIST(TopLevelList, top_level_list, FuncPrototype)
 
@@ -145,8 +152,8 @@ typedef struct {
     ExternBindingList extern_bindings;
 } Program;
 
-bool link_check(Program *program, Unit *unit, TypeRegistry *registry, Diagnostics *diagnostics);
+bool link_check(Program *program, ObjectFile *unit, TypeRegistry *registry, Diagnostics *diagnostics);
 
-void link_install(Program *program, Unit *unit);
+void link_install(Program *program, ObjectFile *unit);
 
 #endif

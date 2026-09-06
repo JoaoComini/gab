@@ -108,7 +108,7 @@ static void test_a_push_takes_the_element_it_was_given() {
 static void test_a_vec_holds_a_vec() {
     assert(test_run_int("import std;\n"
                         "func f(): int {\n"
-                        "    let xs: Vec<Vec<int>>;\n"
+                        "    let xs = Vec<Vec<int>>::new(0);\n"
                         "    return xs.len();\n"
                         "}\n"
                         "let r: int = f();") == 0);

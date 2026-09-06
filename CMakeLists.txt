@@ -35,28 +35,39 @@ if(GAB_SANITIZE)
 endif()
 
 add_library(gab
-    src/allocator.c
-    src/arena.c
+    src/memory/allocator.c
+    src/memory/arena.c
     src/diagnostics.c
-    src/lexer.c
-    src/parser.c
+    src/syntax/lexer.c
+    src/syntax/parser.c
     src/object.c
     src/type/type.c
     src/type/type_registry.c
     src/function_registry.c
     src/scope.c
     src/ast/ast.c
+    src/ast/facts.c
+    src/ast/pending.c
     src/ast/resolve.c
-    src/ast/flow.c
-    src/ast/cfg.c
-    src/ast/flow_pass.c
-    src/ast/clone.c
+    src/mir/mir.c
+    src/mir/mir_print.c
+    src/mir/mir_build.c
+    src/mir/mir_lower.c
+    src/mir/mir_instantiate.c
+    src/mir/mir_liveness.c
+    src/mir/mir_state.c
+    src/mir/mir_borrowck.c
+    src/mir/mir_drop.c
+    src/constant.c
+    src/vm/regalloc.c
+    src/mir/mir_module.c
+    src/mir/mir_fold.c
     src/ast/expr.c
     src/ast/type_expr.c
     src/ast/stmt.c
     src/string/string_ref.c
     src/string/string.c
-    src/library.c
+    src/api/library.c
     src/core/core.c
     src/core/str.c
     src/core/slice.c
@@ -70,8 +81,9 @@ add_library(gab
     src/vm/link.c
     src/vm/interp.c
     src/vm/codegen.c
+    src/vm/codegen_mir.c
     src/compile.c
-    src/gab.c
+    src/api/gab.c
 )
 
 find_library(MATH_LIBRARY m)

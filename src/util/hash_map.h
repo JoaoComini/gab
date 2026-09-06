@@ -1,7 +1,7 @@
 #ifndef GAB_HASH_MAP_H
 #define GAB_HASH_MAP_H
 
-#include "allocator.h"
+#include "memory/allocator.h"
 #include <assert.h>
 #include <stdbool.h>
 #include <stdlib.h>

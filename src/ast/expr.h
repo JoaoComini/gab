@@ -1,7 +1,7 @@
 #ifndef GAB_AST_EXPR_H
 #define GAB_AST_EXPR_H
 
-#include "arena.h"
+#include "memory/arena.h"
 #include "ast/type_expr.h"
 #include "binding.h"
 #include "diagnostics.h"
@@ -9,17 +9,31 @@
 #include "type/type.h"
 #include "util/list.h"
 
+#include <stdbool.h>
 #include <stdint.h>
 
+/* What the source spelled, before any type exists to describe it; the parser knows this much and the
+ * resolver turns it into a type. Only these four can be written, which a 'TypeKind' would not say. */
+typedef enum {
+    LITERAL_INT,
+    LITERAL_FLOAT,
+    LITERAL_BOOL,
+    LITERAL_STRING,
+} LiteralKind;
+
 typedef struct {
-    TypeKind kind;
+    LiteralKind kind;
     union {
         int32_t as_int;
         float as_float;
+        bool as_bool;
 
         String *as_string;
     };
 } Literal;
+
+/* The type a literal of this kind has, which is what the resolver gives the expression holding it. */
+TypeKind literal_type_kind(LiteralKind kind);
 
 typedef enum {
     EXPR_LITERAL,
@@ -30,12 +44,11 @@ typedef enum {
     EXPR_ADDR_OF,
     EXPR_DEREF,
 
-    EXPR_LEND,
-    EXPR_UNSIZE,
     EXPR_NEG,
     EXPR_NOT,
-    EXPR_CAST,
     EXPR_BOX,
+
+    /* The length of an array whose length is still a parameter, fixed when that parameter is. */
 
     EXPR_INDEX,
 
@@ -115,7 +128,6 @@ typedef struct ASTExpr {
             ASTExpr *target;
             StringRef name;
 
-            const Type *owner;
             size_t index;
         } field;
 
@@ -124,36 +136,11 @@ typedef struct ASTExpr {
         } unary;
 
         struct {
-            ASTExpr *target;
-
-            const LentPart *parts;
-            size_t part_count;
-        } lend;
-
-        struct {
-            ASTExpr *target;
-            int32_t length;
-        } unsize;
-
-        struct {
-            ASTExpr *operand;
-        } cast;
-
-        struct {
             ASTExpr *value;
-
-            const Type *type;
         } box_expr;
     };
 
     Span span;
-
-    const Type *type;
-
-    Binding *binding;
-    Function *callee;
-
-    bool moves;
 } ASTExpr;
 
 ASTExpr *ast_literal_expr_create(Arena *arena, Span span, Literal value);
@@ -163,21 +150,11 @@ ASTExpr *ast_call_expr_create(Arena *arena, Span span, ASTExpr *target, ASTExprL
 ASTExpr *ast_field_expr_create(Arena *arena, Span span, ASTExpr *target, StringRef name);
 ASTExpr *ast_addr_of_expr_create(Arena *arena, Span span, ASTExpr *target);
 ASTExpr *ast_deref_expr_create(Arena *arena, Span span, ASTExpr *target);
-ASTExpr *ast_lend_expr_create(Arena *arena, Span span, ASTExpr *target);
-ASTExpr *ast_unsize_expr_create(Arena *arena, Span span, ASTExpr *target, int32_t length);
 ASTExpr *ast_neg_expr_create(Arena *arena, Span span, ASTExpr *target);
 ASTExpr *ast_not_expr_create(Arena *arena, Span span, ASTExpr *target);
-ASTExpr *ast_cast_expr_create(Arena *arena, Span span, ASTExpr *operand);
 ASTExpr *ast_box_expr_create(Arena *arena, Span span, ASTExpr *value);
 ASTExpr *ast_array_lit_expr_create(Arena *arena, Span span, ASTExprList elements);
 ASTExpr *ast_struct_lit_expr_create(Arena *arena, Span span, TypeExpr *type_expr, ASTFieldInitList fields);
 ASTExpr *ast_index_expr_create(Arena *arena, Span span, ASTExpr *target, ASTExpr *index);
-
-const TypeField *ast_field_of(TypeRegistry *registry, const ASTExpr *expr);
-
-Binding *ast_root_local(const ASTExpr *expr);
-
-Binding *ast_binding_of(const ASTExpr *expr);
-void ast_bind(ASTExpr *expr, Binding *binding);
 
 #endif

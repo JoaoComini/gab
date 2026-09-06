@@ -1,11 +1,10 @@
 #include "vm/vm.h"
 
-#include "arena.h"
+#include "memory/arena.h"
 #include "ast/ast.h"
 #include "core/core.h"
-#include "lexer.h"
 #include "object.h"
-#include "parser.h"
+#include "syntax/parser.h"
 #include "scope.h"
 #include "std/std.h"
 #include "string/string.h"

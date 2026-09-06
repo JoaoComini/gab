@@ -143,13 +143,13 @@ static void test_a_returned_struct_names_only_the_arguments_it_reaches() {
                        "func bad(q: &Node): View { let local = Node { n: 1 }; return make(local, q); }\n"));
 }
 
-static void test_a_field_holds_a_borrow_as_long_as_the_struct_it_sits_in() {
+static void test_a_field_holds_a_borrow_only_as_far_as_it_is_read() {
     assert(test_compiles("struct Node { n: int }\n"
                          "struct View { r: &Node }\n"
                          "func f(p: &Node): int {\n"
+                         "    let v = View { r: p };\n"
                          "    if true {\n"
                          "        let inner = Node { n: 1 };\n"
-                         "        let v = View { r: p };\n"
                          "        v.r = inner;\n"
                          "    }\n"
                          "    return 0;\n"
@@ -163,7 +163,7 @@ static void test_a_field_holds_a_borrow_as_long_as_the_struct_it_sits_in() {
                           "        let inner = Node { n: 1 };\n"
                           "        v.r = inner;\n"
                           "    }\n"
-                          "    return 0;\n"
+                          "    return v.r.n;\n"
                           "}\n"));
 }
 
@@ -318,7 +318,7 @@ int main(void) {
     test_a_returned_struct_of_borrows_names_the_arguments_it_came_from();
     test_a_returned_struct_that_owns_is_free_of_its_arguments();
     test_a_returned_struct_names_only_the_arguments_it_reaches();
-    test_a_field_holds_a_borrow_as_long_as_the_struct_it_sits_in();
+    test_a_field_holds_a_borrow_only_as_far_as_it_is_read();
     test_a_field_reached_through_a_heap_slot_outlives_every_scope();
     test_a_field_given_a_borrow_narrows_the_struct_that_holds_it();
     test_a_field_read_names_only_what_that_field_was_given();

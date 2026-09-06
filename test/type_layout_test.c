@@ -1,6 +1,5 @@
 #include "ast/resolve.h"
-#include "lexer.h"
-#include "parser.h"
+#include "syntax/parser.h"
 #include "support/test_context.h"
 #include "type/type.h"
 #include "type/type_registry.h"
@@ -41,9 +40,7 @@ typedef struct {
 
 static const Type *resolve_struct(TestContext *ctx, const char *source, const char *name,
                                   TypeRegistry **out_registry) {
-    Lexer lexer = lexer_create(test_in_a_module(source), ctx->arena, &ctx->strings, &ctx->diagnostics);
-    Parser parser = parser_create(&lexer, &ctx->diagnostics);
-    ASTUnit *unit = ast_unit_create(ctx->arena);
+    ASTUnit *unit;
 
     Scope global_scope;
     scope_init(&global_scope, ctx->arena, &ctx->strings, NULL);
@@ -52,8 +49,10 @@ static const Type *resolve_struct(TestContext *ctx, const char *source, const ch
         *out_registry = global_scope.type_registry;
     }
 
-    if (parser_parse(&parser, unit)) {
-        resolve_unit(ctx->arena, unit, &global_scope, NULL, false, &ctx->diagnostics);
+    ResolvedUnit *resolved;
+
+    if (parse_unit(test_in_a_module(source), ctx->arena, &ctx->strings, &unit, &ctx->diagnostics)) {
+        resolve_unit(ctx->arena, unit, &global_scope, NULL, false, &resolved, &ctx->diagnostics);
     }
 
     if (diagnostics_has_errors(&ctx->diagnostics)) {
@@ -197,16 +196,16 @@ static void test_unknown_field_type_is_not_registered() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Lexer lexer = lexer_create("module test;\nstruct Broken { value: Nope }", ctx.arena, &ctx.strings,
-                               &ctx.diagnostics);
-    Parser parser = parser_create(&lexer, &ctx.diagnostics);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
+    const char *source = "module test;\nstruct Broken { value: Nope }";
 
     Scope global_scope;
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
 
-    parser_parse(&parser, unit);
-    resolve_unit(ctx.arena, unit, &global_scope, NULL, false, &ctx.diagnostics);
+    ResolvedUnit *resolved;
+
+    parse_unit(source, ctx.arena, &ctx.strings, &unit, &ctx.diagnostics);
+    resolve_unit(ctx.arena, unit, &global_scope, NULL, false, &resolved, &ctx.diagnostics);
 
     assert(diagnostics_count(&ctx.diagnostics) == 1);
 
@@ -280,6 +279,31 @@ static void test_raw_pointer_owns_nothing() {
     test_context_free(&ctx);
 }
 
+/* A type is interned under the arguments it was given, so two lengths name two array types and one
+ * length names one, however many times it is asked for. */
+static void test_an_array_is_interned_under_its_length() {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope global_scope;
+    scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
+    TypeRegistry *registry = global_scope.type_registry;
+
+    const Type *element = type_registry_get_primitive(registry, TYPE_INT);
+
+    const Type *three = type_registry_array_of(registry, element, 3);
+    const Type *four = type_registry_array_of(registry, element, 4);
+    const Type *three_again = type_registry_array_of(registry, element, 3);
+
+    assert(three != four);
+    assert(three == three_again);
+
+    assert(type_array_length(three) == 3);
+    assert(type_array_length(four) == 4);
+
+    test_context_free(&ctx);
+}
+
 static void test_a_borrow_and_a_box_are_distinct_constructors() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -336,17 +360,17 @@ static void test_a_failed_field_poisons_what_holds_it() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Lexer lexer = lexer_create(test_in_a_module("struct A { b: B }\n"
-                                                "struct B { a: A }\n"),
-                               ctx.arena, &ctx.strings, &ctx.diagnostics);
-    Parser parser = parser_create(&lexer, &ctx.diagnostics);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
+    const char *source = test_in_a_module("struct A { b: B }\n"
+                                          "struct B { a: A }\n");
 
     Scope global_scope;
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
 
-    parser_parse(&parser, unit);
-    resolve_unit(ctx.arena, unit, &global_scope, NULL, false, &ctx.diagnostics);
+    ResolvedUnit *resolved;
+
+    parse_unit(source, ctx.arena, &ctx.strings, &unit, &ctx.diagnostics);
+    resolve_unit(ctx.arena, unit, &global_scope, NULL, false, &resolved, &ctx.diagnostics);
 
     assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "A")) == NULL);
     assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "B")) == NULL);
@@ -390,16 +414,16 @@ static void test_rejects_an_array_of_the_struct_declaring_it() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Lexer lexer = lexer_create(test_in_a_module("struct A { cells: array<A, 2> }"), ctx.arena, &ctx.strings,
-                               &ctx.diagnostics);
-    Parser parser = parser_create(&lexer, &ctx.diagnostics);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTUnit *unit;
+    const char *source = test_in_a_module("struct A { cells: array<A, 2> }");
 
     Scope global_scope;
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
 
-    parser_parse(&parser, unit);
-    resolve_unit(ctx.arena, unit, &global_scope, NULL, false, &ctx.diagnostics);
+    ResolvedUnit *resolved;
+
+    parse_unit(source, ctx.arena, &ctx.strings, &unit, &ctx.diagnostics);
+    resolve_unit(ctx.arena, unit, &global_scope, NULL, false, &resolved, &ctx.diagnostics);
 
     assert(diagnostics_count(&ctx.diagnostics) == 1);
     assert(strcmp(diagnostics_get(&ctx.diagnostics, 0)->message,
@@ -413,6 +437,7 @@ int main(void) {
     test_builtin_widths();
     test_raw_pointer_owns_nothing();
     test_a_borrow_and_a_box_are_distinct_constructors();
+    test_an_array_is_interned_under_its_length();
 
     test_homogeneous_struct();
     test_interior_padding();

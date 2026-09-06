@@ -1,6 +1,6 @@
 #include "scope.h"
 
-#include "arena.h"
+#include "memory/arena.h"
 #include "binding.h"
 #include "function_registry.h"
 #include "string/string.h"
@@ -49,22 +49,6 @@ void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope 
 
     scope->type_registry = type_registry_create(arena, &names);
     scope->functions = function_registry_create(arena, scope->type_registry);
-    scope_declare_primitives(scope);
-}
-
-void scope_init_over(Scope *scope, Arena *arena, StringPool *strings, TypeRegistry *registry) {
-    scope->arena = arena;
-    scope->strings = strings;
-    scope->bindings = binding_table_create_alloc(arena_allocator(arena), BINDING_TABLE_INITIAL_CAPACITY);
-    scope->types = type_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
-    scope->interfaces = interface_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
-    scope->parent = NULL;
-    scope->depth = 0;
-    scope->declares_module = false;
-
-    scope->type_registry = registry;
-    scope->functions = function_registry_create(arena, registry);
-
     scope_declare_primitives(scope);
 }
 

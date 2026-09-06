@@ -39,8 +39,14 @@ set(
     vm/owning_param_test.c
     vm/field_ownership_test.c
     vm/uninitialized_test.c
-    ast/cfg_test.c
-    ast/clone_test.c
+    mir/mir_print_test.c
+    mir/mir_lower_test.c
+    mir/mir_liveness_test.c
+    mir/mir_drop_test.c
+    vm/regalloc_test.c
+    mir/mir_module_test.c
+    mir/mir_fold_test.c
+    vm/codegen_mir_test.c
     vm/string_test.c
     vm/str_test.c
     vm/array_test.c
