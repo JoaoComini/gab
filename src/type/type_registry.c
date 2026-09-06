@@ -92,11 +92,6 @@ static void layout_of_indirect(const Type *type, size_t *size, size_t *alignment
     *size = sizeof(void *);
     *alignment = _Alignof(void *);
 
-    if (type->kind == TYPE_BLOCK) {
-        *size = align_up(*size + 2 * sizeof(int32_t), *alignment);
-        return;
-    }
-
     if (type_metadata_of(type_pointee(type)) == TYPE_META_LENGTH) {
         *size = align_up(*size + sizeof(int32_t), *alignment);
     }
@@ -149,7 +144,6 @@ const TypeLayout *type_registry_layout_of(TypeRegistry *registry, const Type *ty
         case TYPE_BOX:
         case TYPE_REF:
         case TYPE_PTR:
-        case TYPE_BLOCK:
             layout_of_indirect(type, &layout->size, &layout->alignment);
             break;
 
@@ -488,10 +482,6 @@ const Type *type_registry_substitute(TypeRegistry *registry, const Type *type, c
         return type_registry_ptr_to(registry,
                                     type_registry_substitute(registry, type_pointee(type), args, arg_count));
 
-    case TYPE_BLOCK:
-        return type_registry_block_of(
-            registry, type_registry_substitute(registry, type_pointee(type), args, arg_count));
-
     case TYPE_ARRAY:
         return type_registry_array_with(
             registry, type_registry_substitute(registry, type_array_element(type), args, arg_count),
@@ -558,18 +548,6 @@ const TypeFields *type_registry_fields_of(TypeRegistry *registry, const Type *ty
     return result;
 }
 
-bool type_registry_holds_its_memory_inline(TypeRegistry *registry, const Type *type) {
-    const TypeFields *fields = type_registry_fields_of(registry, type);
-
-    for (size_t i = 0; i < fields->count; i++) {
-        if (fields->fields[i].type && fields->fields[i].type->kind == TYPE_BLOCK) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
 bool type_registry_owns(TypeRegistry *registry, const Type *type) {
     if (!type) {
         return false;
@@ -580,9 +558,6 @@ bool type_registry_owns(TypeRegistry *registry, const Type *type) {
         return true;
     case TYPE_REF:
         return false;
-
-    case TYPE_BLOCK:
-        return true;
 
     case TYPE_PTR:
         return false;
@@ -620,7 +595,6 @@ bool type_registry_borrows(TypeRegistry *registry, const Type *type) {
 
     case TYPE_BOX:
     case TYPE_PTR:
-    case TYPE_BLOCK:
         return false;
 
     case TYPE_ARRAY:
@@ -656,9 +630,6 @@ bool type_registry_copies(TypeRegistry *registry, const Type *type) {
     case TYPE_REF:
     case TYPE_PTR:
         return true;
-
-    case TYPE_BLOCK:
-        return false;
 
     case TYPE_ARRAY:
         return type_registry_copies(registry, type_array_element(type));
@@ -721,10 +692,6 @@ const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDecl *de
     key.args = owned;
 
     return intern(registry, &key);
-}
-
-const Type *type_registry_block_of(TypeRegistry *registry, const Type *element) {
-    return indirect_to(registry, TYPE_BLOCK, element);
 }
 
 const Type *type_registry_ref_to(TypeRegistry *registry, const Type *inner) {

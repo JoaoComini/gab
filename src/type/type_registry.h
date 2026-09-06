@@ -64,8 +64,6 @@ const TypeFields *type_registry_fields_of(TypeRegistry *registry, const Type *ty
 
 const TypeField *type_registry_find_field(TypeRegistry *registry, const Type *type, const String *name);
 
-bool type_registry_holds_its_memory_inline(TypeRegistry *registry, const Type *type);
-
 bool type_registry_owns(TypeRegistry *registry, const Type *type);
 
 /* True when a value of this type names memory it does not own, at any depth. */
@@ -115,8 +113,6 @@ const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDecl *de
 
 const Type *type_registry_apply(TypeRegistry *registry, const TypeDecl *decl, const Type *const *args,
                                 size_t arg_count);
-
-const Type *type_registry_block_of(TypeRegistry *registry, const Type *element);
 
 const Type *type_registry_substitute(TypeRegistry *registry, const Type *type, const TypeArg *args,
                                      size_t arg_count);

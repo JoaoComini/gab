@@ -79,7 +79,6 @@ const Type *type_pointee(const Type *type) {
     case TYPE_BOX:
     case TYPE_REF:
     case TYPE_PTR:
-    case TYPE_BLOCK:
         return type->indirect.pointee;
 
     default:
@@ -156,7 +155,6 @@ size_t type_structural_hash(const Type *type) {
     case TYPE_BOX:
     case TYPE_REF:
     case TYPE_PTR:
-    case TYPE_BLOCK:
         hash = ((hash << 5) + hash) + (size_t)(uintptr_t)type->indirect.pointee;
         break;
 
@@ -191,7 +189,6 @@ bool type_structurally_equals(const Type *type, const Type *other) {
     case TYPE_BOX:
     case TYPE_REF:
     case TYPE_PTR:
-    case TYPE_BLOCK:
         return type->indirect.pointee == other->indirect.pointee;
 
     case TYPE_ARRAY:

@@ -26,8 +26,6 @@ float args_float(Args *args, int index);
 bool args_bool(Args *args, int index);
 StrRef args_string(Args *args, int index);
 
-StringValue args_string_at(Args *args, int index);
-
 ArrayValue args_array(Args *args, int index);
 void *args_pointer(Args *args, int index);
 
@@ -38,7 +36,5 @@ void args_return_float(Args *args, float value);
 void args_return_bool(Args *args, bool value);
 void args_return_pointer(Args *args, void *pointer);
 void args_return_struct(Args *args, const void *data, size_t size);
-
-bool args_return_string_copy(Args *args, const char *data, int32_t length);
 
 #endif

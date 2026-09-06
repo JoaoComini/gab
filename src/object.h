@@ -9,16 +9,6 @@
 typedef struct TypeRegistry TypeRegistry;
 
 typedef struct {
-    void *data;
-    int32_t capacity;
-    int32_t length;
-} BlockValue;
-
-typedef struct {
-    BlockValue block;
-} StringValue;
-
-typedef struct {
     const char *data;
     int32_t length;
 } StrRef;
@@ -35,8 +25,6 @@ typedef struct ObjectHeader {
 _Static_assert(sizeof(ObjectHeader) % 8 == 0, "the header must not misalign the payload that follows it");
 
 _Static_assert(sizeof(size_t) >= 8, "an array's size computation assumes a 64-bit size_t");
-
-bool block_reserve(const Allocator *allocator, BlockValue *block, int32_t extra, size_t stride);
 
 const DropPlan *object_build_drop(Arena *arena, TypeRegistry *registry, const Type *type);
 

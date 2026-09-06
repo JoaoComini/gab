@@ -89,17 +89,6 @@ StrRef args_string(Args *args, int index) {
     return value;
 }
 
-StringValue args_string_at(Args *args, int index) {
-    const uint8_t *at = args_pointer(args, index);
-
-    assert(at && "a C body read a string through a pointer holding nothing");
-
-    StringValue value;
-    memcpy(&value, at, sizeof(value));
-
-    return value;
-}
-
 ArrayValue args_array(Args *args, int index) {
     ArrayValue value;
     memcpy(&value, args_address_of_kind(args, index, TYPE_ARRAY), sizeof(value));
@@ -145,27 +134,6 @@ void args_return_bool(Args *args, bool value) {
 
 void args_return_pointer(Args *args, void *pointer) {
     memcpy(args_return_address(args), &pointer, sizeof(pointer));
-}
-
-bool args_return_string_copy(Args *args, const char *data, int32_t length) {
-    int32_t capacity = length == 0 ? 1 : length;
-
-    char *characters = DEFAULT_ALLOCATOR.alloc(DEFAULT_ALLOCATOR.ctx, (size_t)capacity);
-
-    if (!characters) {
-        vm_fail(args->vm, VM_RUN_ERR_OUT_OF_MEMORY, "out of memory copying a string");
-        return false;
-    }
-
-    if (length) {
-        memcpy(characters, data, (size_t)length);
-    }
-
-    StringValue value = {.block = {.data = characters, .capacity = capacity, .length = length}};
-
-    memcpy(args_return_address(args), &value, sizeof(value));
-
-    return true;
 }
 
 const Type *args_return_type(Args *args) { return args->function->return_type; }

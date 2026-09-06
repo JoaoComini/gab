@@ -30,8 +30,6 @@ typedef enum {
     TYPE_BOX,
     TYPE_REF,
 
-    TYPE_BLOCK,
-
     TYPE_PARAM,
 
     TYPE_UNKNOWN,

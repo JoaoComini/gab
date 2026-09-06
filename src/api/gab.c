@@ -177,10 +177,6 @@ void gab_ctx_return_struct(GabCtx *ctx, const void *data, size_t size) {
 
 void gab_ctx_return_pointer(GabCtx *ctx, void *pointer) { args_return_pointer(ctx, pointer); }
 
-bool gab_ctx_return_string(GabCtx *ctx, const char *data, int32_t length) {
-    return args_return_string_copy(ctx, data, length);
-}
-
 size_t gab_ctx_type_count(GabCtx *ctx) { return ctx ? ctx->function->type_arg_count : 0; }
 
 GabTypeKind gab_ctx_type_kind(GabCtx *ctx, size_t index) {

@@ -38,7 +38,6 @@ typedef enum {
     GAB_TYPE_STRUCT,
     GAB_TYPE_BOX,
     GAB_TYPE_REF,
-    GAB_TYPE_BLOCK,
 } GabTypeKind;
 
 /* ---- The VM, and the host's side of a call into it ---- */
@@ -93,7 +92,6 @@ void gab_ctx_return_float(GabCtx *ctx, float value);
 void gab_ctx_return_bool(GabCtx *ctx, bool value);
 void gab_ctx_return_struct(GabCtx *ctx, const void *data, size_t size);
 void gab_ctx_return_pointer(GabCtx *ctx, void *pointer);
-bool gab_ctx_return_string(GabCtx *ctx, const char *data, int32_t length);
 
 /* What the declaration's type parameters were instantiated with, in order. One body serves every
  * specialization, so these are how it tells them apart. */

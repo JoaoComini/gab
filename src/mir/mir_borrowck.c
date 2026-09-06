@@ -73,19 +73,11 @@ static const Type *type_of(const MIRFlow *flow, MIRValueId value) {
     return info ? info->type : NULL;
 }
 
-/* Whether a value holds an object this body frees: a heap slot, or a struct owning a block inline. */
+/* Whether a value holds an object this body frees, which is a heap slot. */
 static bool holds_its_own_object(MIRFlow *flow, MIRValueId value) {
     const Type *type = type_of(flow, value);
 
-    if (!type) {
-        return false;
-    }
-
-    if (type_kind(type) == TYPE_BOX || type_kind(type) == TYPE_BLOCK) {
-        return true;
-    }
-
-    return type_kind(type) == TYPE_STRUCT && type_registry_holds_its_memory_inline(flow->registry, type);
+    return type && type_kind(type) == TYPE_BOX;
 }
 
 /* The tracked state a place names, following each field projection into its own slot. */

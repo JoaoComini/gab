@@ -45,23 +45,6 @@ static void drop_array_at(const Allocator *allocator, const DropPlan *plan, void
     }
 }
 
-static void drop_block_at(const Allocator *allocator, const DropPlan *plan, void *value) {
-    BlockValue block;
-    memcpy(&block, value, sizeof(block));
-
-    if (!block.data) {
-        return;
-    }
-
-    if (plan->inner) {
-        for (int32_t i = 0; i < block.length; i++) {
-            drop_run(allocator, plan->inner, (char *)block.data + (size_t)i * plan->stride);
-        }
-    }
-
-    allocator->free(allocator->ctx, block.data, (size_t)block.capacity * plan->stride);
-}
-
 static void drop_fields_at(const Allocator *allocator, const DropPlan *plan, void *value) {
     for (size_t i = 0; i < plan->step_count; i++) {
         const DropStep *step = &plan->steps[i];
@@ -82,60 +65,10 @@ static void drop_run(const Allocator *allocator, const DropPlan *plan, void *val
     case DROP_ARRAY:
         drop_array_at(allocator, plan, value);
         break;
-    case DROP_BLOCK:
-        drop_block_at(allocator, plan, value);
-        break;
     case DROP_FIELDS:
         drop_fields_at(allocator, plan, value);
         break;
     }
-}
-
-#define BLOCK_INITIAL_CAPACITY 8
-
-bool block_reserve(const Allocator *allocator, BlockValue *block, int32_t extra, size_t stride) {
-    if (extra <= 0) {
-        return true;
-    }
-
-    if (block->length > INT32_MAX - extra) {
-        return false;
-    }
-
-    int32_t needed = block->length + extra;
-
-    if (needed <= block->capacity) {
-        return true;
-    }
-
-    if (block->capacity > INT32_MAX / 2) {
-        return false;
-    }
-
-    int32_t capacity = block->capacity ? block->capacity * 2 : BLOCK_INITIAL_CAPACITY;
-
-    if (capacity < needed) {
-        capacity = needed;
-    }
-
-    void *memory = allocator->alloc(allocator->ctx, (size_t)capacity * stride);
-
-    if (!memory) {
-        return false;
-    }
-
-    if (block->length) {
-        memcpy(memory, block->data, (size_t)block->length * stride);
-    }
-
-    if (block->data) {
-        allocator->free(allocator->ctx, block->data, (size_t)block->capacity * stride);
-    }
-
-    block->data = memory;
-    block->capacity = capacity;
-
-    return true;
 }
 
 const DropPlan *object_build_drop(Arena *arena, TypeRegistry *registry, const Type *type) {
@@ -159,12 +92,6 @@ const DropPlan *object_build_drop(Arena *arena, TypeRegistry *registry, const Ty
         plan->inner = type_registry_drop_of(registry, type_array_element(type));
         plan->stride = type_registry_size_of(registry, type_array_element(type));
         plan->length = type_array_length(type);
-        break;
-
-    case TYPE_BLOCK:
-        plan->kind = DROP_BLOCK;
-        plan->inner = type_registry_drop_of(registry, type_pointee(type));
-        plan->stride = type_registry_size_of(registry, type_pointee(type));
         break;
 
     default: {

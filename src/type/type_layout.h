@@ -11,8 +11,6 @@ typedef struct DropPlan DropPlan;
 typedef enum {
     DROP_BOX,
 
-    DROP_BLOCK,
-
     DROP_ARRAY,
 
     DROP_FIELDS,

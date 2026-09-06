@@ -154,8 +154,6 @@ typedef enum {
 #define VM_MAX_HEAP_TYPES VM_MAX_CONSTANTS
 #define VM_MAX_STRINGS VM_MAX_CONSTANTS
 
-#define VM_STRING_SLOTS ((unsigned int)(sizeof(StringValue) / VM_SLOT_SIZE))
-
 #define VM_MAX_FRAME_SLOTS ((1 << 8) - 1)
 
 #define VM_MAX_FIELD_OFFSET ((1 << 8) - 1)
