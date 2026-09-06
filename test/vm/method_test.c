@@ -1,9 +1,9 @@
 #include "ast/ast.h"
-#include "syntax/parser.h"
 #include "scope.h"
 #include "string/string.h"
 #include "support/run.h"
 #include "support/test_context.h"
+#include "syntax/parser.h"
 #include "type/type.h"
 #include "vm/vm.h"
 
@@ -508,19 +508,17 @@ static void test_parameter_zero_takes_the_form_it_declares() {
 }
 
 static void test_a_pointer_receiver_is_not_reached_from_another_type() {
-    assert(!test_compiles_on_vm("import std;\n"
-                                "func f(): int {\n"
-                                "    let s: &str = \"hi\";\n"
-                                "    let c: String = s.clone();\n"
-                                "    return 0;\n"
-                                "}\n"));
+    assert(!test_compiles("struct Box { n: int }\n"
+                          "impl Box {\n"
+                          "    func take(self: *Self): int { return self.n; }\n"
+                          "}\n"
+                          "func f(): int { let b: &Box = box Box { n: 1 }; return b.take(); }\n"));
 
-    assert(test_compiles_on_vm("import std;\n"
-                               "func f(): int {\n"
-                               "    let o: String = String::from(\"hi\");\n"
-                               "    let c: String = o.clone();\n"
-                               "    return 0;\n"
-                               "}\n"));
+    assert(test_compiles("struct Box { n: int }\n"
+                         "impl Box {\n"
+                         "    func peek(self: &Self): int { return self.n; }\n"
+                         "}\n"
+                         "func f(): int { let b: *Box = box Box { n: 1 }; return b.peek(); }\n"));
 }
 
 int main(void) {

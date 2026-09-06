@@ -171,11 +171,4 @@ bool type_array_length_is_known(const Type *type);
 
 const Type *type_slice_element(const Type *type);
 
-typedef struct LentPart {
-    size_t offset;
-    size_t size;
-} LentPart;
-
-#define GAB_MAX_LENT_PARTS 4
-
 #endif

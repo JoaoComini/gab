@@ -237,14 +237,6 @@ void gab_ctx_fail(GabCtx *ctx, GabFailure failure, const char *message) {
     vm_fail(ctx->vm, gab_failure_status(failure), message ? message : "the extern function failed");
 }
 
-bool gab_block_reserve(GabCtx *ctx, GabBlock *block, int32_t extra, size_t stride) {
-    (void)ctx;
-
-    _Static_assert(sizeof(GabBlock) == sizeof(BlockValue), "a block's public layout is the VM's layout");
-
-    return block_reserve(&DEFAULT_ALLOCATOR, (BlockValue *)block, extra, stride);
-}
-
 bool gab_extern(GabVM *handle, const char *module, const char *type, const char *name, GabExternFn fn,
                 GabError *err) {
     gab_error_clear(err);

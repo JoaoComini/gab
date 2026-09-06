@@ -1,5 +1,5 @@
-#include "vm/slot.h"
 #include "support/run.h"
+#include "vm/slot.h"
 #include "vm/vm.h"
 
 #include <assert.h>

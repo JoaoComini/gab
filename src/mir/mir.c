@@ -207,7 +207,6 @@ static const char *const mir_op_names[MIR__COUNT] = {
     [MIR_BOUNDS] = "bounds",
     [MIR_COPY] = "copy",
     [MIR_MAKE_SLICE] = "make_slice",
-    [MIR_LEND] = "lend",
     [MIR_SLICE_LEN] = "slice_len",
     [MIR_CALL] = "call",
     [MIR_CALL_EXTERN] = "call_extern",

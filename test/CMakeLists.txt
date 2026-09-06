@@ -7,7 +7,6 @@ set(
     scope_test.c
     string/string_pool_test.c
     object_test.c
-    library_test.c
     type_layout_test.c
     type_generic_test.c
     util/hash_map_test.c
@@ -28,7 +27,7 @@ set(
     vm/generic_method_test.c
     vm/interface_bound_test.c
     vm/interface_generic_test.c
-    std/index_test.c
+    vm/index_test.c
     vm/borrow_return_test.c
     vm/generic_struct_test.c
     vm/owned_func_test.c
@@ -47,14 +46,11 @@ set(
     mir/mir_module_test.c
     mir/mir_fold_test.c
     vm/codegen_mir_test.c
-    vm/string_test.c
     vm/str_test.c
     vm/array_test.c
     vm/slice_test.c
     vm/const_generic_test.c
     vm/intrinsic_test.c
-    std/string_method_test.c
-    std/vec_test.c
     vm/neg_test.c
     vm/not_test.c
     vm/modulo_test.c

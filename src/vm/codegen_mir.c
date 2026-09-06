@@ -155,19 +155,6 @@ bool codegen_mir_supports(const MIRFunction *ir) {
             case MIR_SLICE_LEN:
                 break;
 
-            /* A part starting inside a slot cannot be copied by slots, which is all a lend emits. */
-            case MIR_LEND:
-                if (block->insts[j].lend.part_count == 0) {
-                    return false;
-                }
-
-                for (size_t k = 0; k < block->insts[j].lend.part_count; k++) {
-                    if (block->insts[j].lend.parts[k].offset % VM_SLOT_SIZE != 0) {
-                        return false;
-                    }
-                }
-                break;
-
             case MIR_DROP:
             case MIR_NULL:
                 if (!place_is_direct(ir->registry, &block->insts[j].place,
@@ -1176,26 +1163,6 @@ static void emit_inst(MIREmitter *emitter, const MIRInst *inst, MIRBlockId next)
         emit_copy(emitter, result, operand_slot(emitter, inst->args[0]), VM_INDIRECT_SLOTS);
 
         emit_copy(emitter, result + VM_INDIRECT_SLOTS, operand_slot(emitter, inst->args[1]), 1);
-
-        break;
-    }
-
-    /* A view is gathered from the parts it borrows, which sit apart in what it borrows from. */
-    case MIR_LEND: {
-        unsigned int result = slot_of(emitter, inst->result);
-        unsigned int source = operand_slot(emitter, inst->args[0]);
-
-        unsigned int at = 0;
-
-        for (size_t i = 0; i < inst->lend.part_count; i++) {
-            const LentPart *part = &inst->lend.parts[i];
-
-            unsigned int width = (unsigned int)((part->size + VM_SLOT_SIZE - 1) / VM_SLOT_SIZE);
-
-            emit_copy(emitter, result + at, source + (unsigned int)(part->offset / VM_SLOT_SIZE), width);
-
-            at += width;
-        }
 
         break;
     }

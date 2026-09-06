@@ -33,35 +33,30 @@ static void test_a_nested_field_is_returned_as_a_borrow() {
                          "func peek(b: &Bag): &Inner { return b.i; }\n"));
 }
 
-static void test_at_returns_a_borrow_of_its_element() {
-    assert(test_run_int("import std;\n"
-                        "func main(): int {\n"
-                        "    let xs: Vec<int> = Vec<int>::new(0);\n"
-                        "    xs.push(4);\n"
+static void test_index_returns_a_borrow_of_its_element() {
+    assert(test_run_int("func main(): int {\n"
+                        "    let xs: array<int, 2> = [4, 1];\n"
                         "    let e: &int = xs.index(0);\n"
                         "    return *e;\n"
                         "}\n"
                         "let r: int = main();") == 4);
 }
 
-static void test_at_borrows_rather_than_copying() {
-    assert(test_run_int("import std;\n"
-                        "func main(): int {\n"
-                        "    let xs: Vec<int> = Vec<int>::new(0);\n"
-                        "    xs.push(1);\n"
+static void test_index_borrows_rather_than_copying() {
+    assert(test_run_int("func main(): int {\n"
+                        "    let xs: array<int, 2> = [1, 2];\n"
                         "    let e: &int = xs.index(0);\n"
-                        "    xs.push(2);\n"
-                        "    return xs.len();\n"
+                        "    xs[0] = 9;\n"
+                        "    return *e;\n"
                         "}\n"
-                        "let r: int = main();") == 2);
+                        "let r: int = main();") == 9);
 }
 
-static void test_an_index_outside_the_vector_fails_the_run() {
-    assert(test_run_status("import std;\n"
-                           "func main(): int {\n"
-                           "    let xs: Vec<int> = Vec<int>::new(0);\n"
-                           "    xs.push(1);\n"
-                           "    return *xs.index(3);\n"
+static void test_an_index_outside_the_container_fails_the_run() {
+    assert(test_run_status("func main(): int {\n"
+                           "    let xs: array<int, 2> = [1, 2];\n"
+                           "    let at: int = 3;\n"
+                           "    return *xs.index(at);\n"
                            "}\n"
                            "let r: int = main();") != VM_RUN_OK);
 }
@@ -71,9 +66,9 @@ int main(void) {
     test_a_field_of_a_local_is_not_returned_as_a_borrow();
     test_a_returned_borrow_reads_through_to_the_caller();
     test_a_nested_field_is_returned_as_a_borrow();
-    test_at_returns_a_borrow_of_its_element();
-    test_at_borrows_rather_than_copying();
-    test_an_index_outside_the_vector_fails_the_run();
+    test_index_returns_a_borrow_of_its_element();
+    test_index_borrows_rather_than_copying();
+    test_an_index_outside_the_container_fails_the_run();
 
     return 0;
 }

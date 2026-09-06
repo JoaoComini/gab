@@ -144,27 +144,29 @@ static void test_a_method_parameter_may_own() {
 }
 
 static void test_a_by_value_parameter_takes_ownership() {
-    assert(test_compiles_on_vm("import std;\n"
-                               "func take(s: String): int { return 0; }\n"
-                               "func main(): int {\n"
-                               "    let s: String = String::from(\"hi\");\n"
-                               "    return take(s);\n"
-                               "}\n"));
+    assert(test_compiles("struct Inner { n: int }\n"
+                         "struct Owner { i: *Inner }\n"
+                         "func take(o: Owner): int { return 0; }\n"
+                         "func main(): int {\n"
+                         "    let o = Owner { i: box Inner { n: 1 } };\n"
+                         "    return take(o);\n"
+                         "}\n"));
 
-    assert(!test_compiles_on_vm("import std;\n"
-                                "func take(s: String): int { return 0; }\n"
-                                "func main(): int {\n"
-                                "    let s: String = String::from(\"hi\");\n"
-                                "    take(s);\n"
-                                "    return take(s);\n"
-                                "}\n"));
+    assert(!test_compiles("struct Inner { n: int }\n"
+                          "struct Owner { i: *Inner }\n"
+                          "func take(o: Owner): int { return 0; }\n"
+                          "func main(): int {\n"
+                          "    let o = Owner { i: box Inner { n: 1 } };\n"
+                          "    take(o);\n"
+                          "    return take(o);\n"
+                          "}\n"));
 
-    assert(test_compiles_on_vm("import std;\n"
-                               "func take(s: *String): int { return 0; }\n"
-                               "func main(): int {\n"
-                               "    let s: *String = box String::from(\"\");\n"
-                               "    return take(s);\n"
-                               "}\n"));
+    assert(test_compiles("struct Inner { n: int }\n"
+                         "func take(i: *Inner): int { return 0; }\n"
+                         "func main(): int {\n"
+                         "    let i: *Inner = box Inner { n: 1 };\n"
+                         "    return take(i);\n"
+                         "}\n"));
 }
 
 int main(void) {

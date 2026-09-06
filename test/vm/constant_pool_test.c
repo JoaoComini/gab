@@ -1,5 +1,5 @@
-#include "vm/slot.h"
 #include "vm/constant_pool.h"
+#include "vm/slot.h"
 #include <assert.h>
 
 static void test_create_and_free() {

@@ -58,22 +58,6 @@ static void test_an_element_type_must_match() {
                           "func f(): int { let xs: array<bool, 2>; return g(xs); }\n"));
 }
 
-static void test_a_vector_lends_a_slice() {
-    assert(test_run_int("import std;\n"
-                        "func total(xs: &slice<int>): int {\n"
-                        "    let sum: int = 0;\n"
-                        "    for let i: int = 0; i < xs.len(); i = i + 1 { sum = sum + xs[i]; }\n"
-                        "    return sum;\n"
-                        "}\n"
-                        "func f(): int {\n"
-                        "    let xs: Vec<int> = Vec<int>::new(0);\n"
-                        "    xs.push(3);\n"
-                        "    xs.push(40);\n"
-                        "    return total(xs);\n"
-                        "}\n"
-                        "let r: int = f();") == 43);
-}
-
 static void test_a_slice_supplies_index() {
     assert(test_run_int("func first<C: Index<int>>(c: &C): int { return *c.index(0); }\n"
                         "func g(xs: &slice<int>): int { return first(xs); }\n"
@@ -89,7 +73,6 @@ int main() {
     test_an_index_is_checked_against_the_length_the_slice_carries();
     test_a_slice_element_may_be_written_through();
     test_an_element_type_must_match();
-    test_a_vector_lends_a_slice();
     test_a_slice_supplies_index();
 
     return 0;

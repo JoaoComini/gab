@@ -1,10 +1,10 @@
 #ifndef GAB_MIR_H
 #define GAB_MIR_H
 
-#include "memory/arena.h"
 #include "binding.h"
 #include "constant.h"
 #include "diagnostics.h"
+#include "memory/arena.h"
 #include "string/string.h"
 #include "type/type.h"
 #include "type/type_registry.h"
@@ -67,9 +67,6 @@ typedef enum {
 
     MIR_MAKE_SLICE,
     MIR_SLICE_LEN,
-
-    /* A borrowed view gathered from parts of what it borrows, which are not the whole of it. */
-    MIR_LEND,
 
     MIR_CALL,
     MIR_CALL_EXTERN,
@@ -190,12 +187,6 @@ typedef struct {
         };
 
         Function *callee;
-
-        /* 'MIR_LEND' only: the parts of its source the view is gathered from, in the order they sit. */
-        struct {
-            const LentPart *parts;
-            size_t part_count;
-        } lend;
 
         /* 'MIR_JMP' names one; 'MIR_BRANCH' takes the first when its argument is true. */
         MIRBlockId targets[2];

@@ -116,56 +116,9 @@ typedef enum {
 
 void gab_ctx_fail(GabCtx *ctx, GabFailure failure, const char *message);
 
-/* ---- An owned, growable buffer ---- */
-
-/* The layout a script sees for a host type's storage field, so a host struct embedding one has the
- * same bytes the VM reads. */
-typedef struct {
-    void *data;
-    int32_t capacity;
-    int32_t length;
-} GabBlock;
-
-bool gab_block_reserve(GabCtx *ctx, GabBlock *block, int32_t extra, size_t stride);
-
 /* ---- Declaring a library ---- */
 
 GabLib *gab_lib_open(GabVM *vm, const char *module, GabError *err);
-
-/* The types a declaration's fields are built from. Valid until the VM is freed. */
-const GabType *gab_lib_primitive(GabLib *lib, GabTypeKind kind);
-const GabType *gab_lib_param(GabLib *lib, size_t index);
-const GabType *gab_lib_block_of(GabLib *lib, const GabType *element);
-const GabType *gab_lib_array_of(GabLib *lib, const GabType *element, int32_t length);
-const GabType *gab_lib_slice_of(GabLib *lib, const GabType *element);
-const GabType *gab_lib_ptr_to(GabLib *lib, const GabType *pointee);
-
-typedef struct {
-    const char *name;
-    const GabType *type;
-} GabFieldSpec;
-
-/* A part of a value that names memory the value does not own, as an offset and size into it. */
-typedef struct {
-    size_t offset;
-    size_t size;
-} GabLentPart;
-
-typedef struct {
-    const char *name;
-    size_t params;
-
-    const GabFieldSpec *fields;
-    size_t field_count;
-
-    /* The type '&self' reads as, for a type that is a view over one it owns. */
-    const GabType *derefs_to;
-
-    const GabLentPart *lends;
-    size_t lend_count;
-} GabTypeSpec;
-
-const GabType *gab_lib_type(GabLib *lib, const GabTypeSpec *spec, GabError *err);
 
 /* The declarations, without the 'module' line: the module is the one gab_lib_open named. */
 bool gab_lib_source(GabLib *lib, const char *source, GabError *err);

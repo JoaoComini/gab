@@ -179,57 +179,13 @@ size_t type_registry_align_of(TypeRegistry *registry, const Type *type) {
     return type_registry_layout_of(registry, type)->alignment;
 }
 
-static Deref *deref_create(TypeRegistry *registry, const Type *to, const LentPart *parts, size_t part_count) {
-    Deref *deref = arena_alloc(registry->arena, sizeof(Deref));
-
-    *deref = (Deref){.to = to, .part_count = part_count};
-
-    for (size_t i = 0; i < part_count; i++) {
-        deref->parts[i] = parts[i];
-    }
-
-    return deref;
-}
-
-/* Stated in the declaration's own parameters, so one entry serves every instantiation of it. */
-void type_registry_set_deref(TypeRegistry *registry, const TypeDecl *decl, const Type *to,
-                             const LentPart *parts, size_t part_count) {
-    assert(decl && to && "a deref relates a declaration to a type");
-    assert(part_count <= GAB_MAX_LENT_PARTS && "a reference is built from at most GAB_MAX_LENT_PARTS parts");
-    assert(!deref_key_lookup(registry->derefs, decl) && "a declaration derefs to one thing");
-
-    deref_key_insert(registry->derefs, decl, deref_create(registry, to, parts, part_count));
-}
-
-const Deref *type_registry_deref(TypeRegistry *registry, const Type *type) {
-    if (!type || !type_decl(type)) {
-        return NULL;
-    }
-
-    const Deref **declared = deref_key_lookup(registry->derefs, type_decl(type));
-
-    if (!declared) {
-        return NULL;
-    }
-
-    if (type_arg_count(type) == 0) {
-        return *declared;
-    }
-
-    return deref_create(
-        registry, type_registry_substitute(registry, (*declared)->to, type_args(type), type_arg_count(type)),
-        (*declared)->parts, (*declared)->part_count);
-}
-
+/* An array reads as a slice of its element, which is where the two share their methods. */
 const Type *type_registry_deref_of(TypeRegistry *registry, const Type *type) {
-    /* An array reads as a slice of its element, which is where the two share their methods. */
     if (type && type_kind(type) == TYPE_ARRAY) {
         return type_registry_slice_of(registry, type_array_element(type));
     }
 
-    const Deref *deref = type_registry_deref(registry, type);
-
-    return deref ? deref->to : NULL;
+    return NULL;
 }
 
 const DropPlan *type_registry_drop_of(TypeRegistry *registry, const Type *type) {
@@ -253,7 +209,6 @@ const DropPlan *type_registry_drop_of(TypeRegistry *registry, const Type *type) 
 TypeRegistry *type_registry_create(Arena *arena, const TypePrimitiveNames *names) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
     registry->drops = drop_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
-    registry->derefs = deref_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->layouts = layout_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->owned = owned_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->conformances =
@@ -272,7 +227,6 @@ void type_registry_destroy(TypeRegistry *registry) {
     type_intern_destroy(registry->applications);
     owned_key_destroy(registry->owned);
     drop_key_destroy(registry->drops);
-    deref_key_destroy(registry->derefs);
 }
 
 void type_registry_complete(TypeRegistry *registry, const Type *type) {
@@ -280,21 +234,13 @@ void type_registry_complete(TypeRegistry *registry, const Type *type) {
     type_registry_drop_of(registry, type);
 }
 
-const Type *type_registry_declare(TypeRegistry *registry, const TypeDeclSpec *spec) {
-    assert(spec && spec->decl && spec->decl->name && "a declared type is found by name");
-    assert((spec->derefs_to != NULL) == (spec->lent_part_count > 0) &&
-           "a deref and the parts naming it are one statement");
+const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl) {
+    assert(decl && decl->name && "a declared type is found by name");
 
-    const Type *type =
-        spec->decl->param_count == 0 ? type_registry_apply(registry, spec->decl, NULL, 0) : NULL;
+    const Type *type = decl->param_count == 0 ? type_registry_apply(registry, decl, NULL, 0) : NULL;
 
     if (type) {
         type_registry_complete(registry, type);
-    }
-
-    if (spec->derefs_to) {
-        type_registry_set_deref(registry, spec->decl, spec->derefs_to, spec->lent_parts,
-                                spec->lent_part_count);
     }
 
     return type;
@@ -315,9 +261,7 @@ const Type *type_registry_declare_struct(TypeRegistry *registry, String *name, c
 
     *decl = (TypeDecl){.name = name, .fields = owned, .field_count = field_count};
 
-    const TypeDeclSpec spec = {.decl = decl};
-
-    return type_registry_declare(registry, &spec);
+    return type_registry_declare(registry, decl);
 }
 
 static OwnedKey owned_key_of(const Type *type, const String *name) {

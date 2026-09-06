@@ -1,8 +1,8 @@
 #include "api/library.h"
 
-#include "memory/arena.h"
 #include "compile.h"
 #include "diagnostics.h"
+#include "memory/arena.h"
 #include "string/string.h"
 #include "type/type.h"
 #include "type/type_registry.h"
@@ -64,91 +64,6 @@ GabLib *gab_lib_open(GabVM *handle, const char *module, GabError *err) {
 }
 
 void gab_lib_close(GabLib *lib) { free(lib); }
-
-/* A host kind is cast straight to a 'TypeKind', so the two enumerations must stay in step. */
-_Static_assert((int)GAB_TYPE_BLOCK == (int)TYPE_BLOCK, "a host type kind is the VM's own");
-
-static TypeRegistry *lib_registry(GabLib *lib) { return lib->vm->env.global_scope.type_registry; }
-
-const GabType *gab_lib_primitive(GabLib *lib, GabTypeKind kind) {
-    return lib ? (const GabType *)type_registry_get_primitive(lib_registry(lib), (TypeKind)kind) : NULL;
-}
-
-const GabType *gab_lib_param(GabLib *lib, size_t index) {
-    return lib ? (const GabType *)type_registry_param(lib_registry(lib), index) : NULL;
-}
-
-const GabType *gab_lib_block_of(GabLib *lib, const GabType *element) {
-    return lib ? (const GabType *)type_registry_block_of(lib_registry(lib), (const Type *)element) : NULL;
-}
-
-const GabType *gab_lib_array_of(GabLib *lib, const GabType *element, int32_t length) {
-    return lib ? (const GabType *)type_registry_array_of(lib_registry(lib), (const Type *)element, length)
-               : NULL;
-}
-
-const GabType *gab_lib_slice_of(GabLib *lib, const GabType *element) {
-    return lib ? (const GabType *)type_registry_slice_of(lib_registry(lib), (const Type *)element) : NULL;
-}
-
-const GabType *gab_lib_ptr_to(GabLib *lib, const GabType *pointee) {
-    return lib ? (const GabType *)type_registry_ptr_to(lib_registry(lib), (const Type *)pointee) : NULL;
-}
-
-const GabType *gab_lib_type(GabLib *lib, const GabTypeSpec *spec, GabError *err) {
-    if (!lib || !spec || !spec->name) {
-        lib_error(err, "gab_lib_type requires a library and a named type");
-        return NULL;
-    }
-
-    if (spec->lend_count > GAB_MAX_LENT_PARTS) {
-        lib_error(err, "a type lends more parts than the VM tracks");
-        return NULL;
-    }
-
-    VM *vm = lib->vm;
-    Arena *arena = vm->env.arena;
-
-    TypeField *fields = spec->field_count ? arena_alloc(arena, spec->field_count * sizeof(TypeField)) : NULL;
-
-    for (size_t i = 0; i < spec->field_count; i++) {
-        fields[i] = (TypeField){
-            .name = string_from_cstr(&vm->env.strings, spec->fields[i].name),
-            .type = (const Type *)spec->fields[i].type,
-        };
-    }
-
-    TypeDecl *decl = arena_alloc(arena, sizeof(TypeDecl));
-
-    *decl = (TypeDecl){
-        .name = string_from_cstr(&vm->env.strings, spec->name),
-        .param_count = spec->params,
-        .fields = fields,
-        .field_count = spec->field_count,
-    };
-
-    LentPart lends[GAB_MAX_LENT_PARTS];
-
-    for (size_t i = 0; i < spec->lend_count; i++) {
-        lends[i] = (LentPart){.offset = spec->lends[i].offset, .size = spec->lends[i].size};
-    }
-
-    const TypeDeclSpec declaration = {
-        .decl = decl,
-        .derefs_to = (const Type *)spec->derefs_to,
-        .lent_parts = spec->lend_count ? lends : NULL,
-        .lent_part_count = spec->lend_count,
-    };
-
-    type_registry_declare(lib_registry(lib), &declaration);
-
-    scope_bind_decl(lib->scope, decl->name, decl);
-
-    /* A type with no parameters has one instantiation, and its layout is settled here. */
-    const Type *type = spec->params == 0 ? type_registry_apply(lib_registry(lib), decl, NULL, 0) : NULL;
-
-    return (const GabType *)type;
-}
 
 bool gab_lib_bind(GabLib *lib, const char *type, const char *name, GabExternFn body, GabError *err) {
     if (!lib) {

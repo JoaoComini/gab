@@ -241,9 +241,8 @@ static void collect_sources(MIRFlow *flow, MIRValueId value, MIRSlot *into) {
         collect_place_sources(flow, &inst->place, into);
         return;
 
-    /* A lend hands over the parts of what it copies, so it names whatever its source names. */
+    /* A view hands over what it is built from, so it names whatever its source names. */
     case MIR_COPY:
-    case MIR_LEND:
     case MIR_MAKE_SLICE:
         for (size_t i = 0; i < inst->arg_count; i++) {
             collect_sources(flow, mir_operand_as_value(inst->args[i]), into);
@@ -520,7 +519,6 @@ static void flow_inst(MIRFlow *flow, const MIRInst *inst) {
     case MIR_CALL_EXTERN:
     case MIR_BOX:
     case MIR_MAKE_SLICE:
-    case MIR_LEND:
     case MIR_COPY: {
         /* Passing a value reads it whole, so a freed borrow in any field dangles the read. */
         for (size_t i = 0; i < inst->arg_count; i++) {

@@ -736,22 +736,6 @@ static MIRValueId lower_expr(Lowering *lowering, ASTExpr *expr) {
         return result;
     }
 
-    case ADJUST_LEND: {
-        MIRValueId source = lower_derefs(lowering, expr, &adjustment);
-        MIRValueId result = lower_temp(lowering, adjustment.to, expr->span);
-
-        emit(lowering,
-             (MIRInst){.op = MIR_LEND,
-                       .type = adjustment.to,
-                       .result = result,
-                       .args = lower_args(lowering, &source, 1),
-                       .arg_count = 1,
-                       .lend = {.parts = adjustment.lend.parts, .part_count = adjustment.lend.part_count},
-                       .span = expr->span});
-
-        return result;
-    }
-
     case ADJUST_BORROW: {
         MIRValueId result = lower_temp(lowering, adjustment.to, expr->span);
 

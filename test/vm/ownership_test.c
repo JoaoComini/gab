@@ -26,8 +26,6 @@ static void test_conversion_is_owned_to_ref_only() {
 
 static void test_a_top_level_variable_may_not_own() {
     assert(!test_compiles("struct Node { n: int }\nlet n: *Node = box Node { n: 0 };\n"));
-    assert(!test_compiles("let s: String = String::from(\"ab\");\n"));
-
     assert(test_compiles("let s: &str = \"hi\";\n"));
 }
 

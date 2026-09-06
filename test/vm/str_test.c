@@ -21,188 +21,101 @@ static void test_nothing_holds_the_characters_themselves() {
     assert(test_compiles("struct Person { name: &str }\n"));
 }
 
-static void test_a_literal_names_borrowed_characters() {
+static void test_a_literal_is_a_string() {
     assert(test_compiles("func f(): int { let s: &str = \"hi\"; return 0; }\n"));
 
     assert(!test_compiles("func f(): int { let n: int = \"hi\"; return 0; }\n"));
-
-    assert(!test_compiles("import std;\n"
-                          "func f(): int { let s: String = \"hi\"; return 0; }\n"));
 }
 
-static void test_a_string_lends_a_reference_to_its_characters() {
-    assert(test_run_int("import std;\n"
-                        "func f(): int {\n"
-                        "    let o: String = String::from(\"hi\");\n"
-                        "    let b: &str = o;\n"
-                        "    return b.len();\n"
-                        "}\n"
-                        "let r: int = f();") == 2);
+static void test_a_literal_loads_its_characters_and_length() {
+    char text[8];
+    int32_t length = 0;
+
+    test_run_string("let s: &str = \"a\\nb\";", text, sizeof(text), &length);
+
+    assert(length == 3);
+    assert(memcmp(text, "a\nb", 3) == 0);
 }
 
-static void test_a_string_lends_to_a_parameter() {
-    assert(test_run_int("import std;\n"
-                        "func g(s: &str): int { return s.len(); }\n"
-                        "func f(): int { let o: String = String::from(\"hi\"); return g(o); }\n"
-                        "let r: int = f();") == 2);
-
-    assert(test_run_int("func g(s: &str): int { return s.len(); }\n"
-                        "func f(): int { return g(\"abc\"); }\n"
-                        "let r: int = f();") == 3);
-}
-
-static void test_a_reference_cannot_borrow_a_temporary() {
-    assert(!test_compiles("import std;\n"
-                          "func f(): int { let s: &str = String::from(\"ab\"); return 0; }\n"));
-}
-
-static void test_a_reference_may_not_outlive_what_it_borrows() {
-    assert(!test_compiles("import std;\n"
-                          "func f(): &str {\n"
-                          "    let o: String = String::from(\"ab\");\n"
-                          "    return o;\n"
-                          "}\n"));
-}
-
-static void test_clone_belongs_to_the_owning_string() {
-    assert(test_run_bool("import std;\n"
-                         "func f(): bool {\n"
-                         "    let o: String = String::from(\"hi\");\n"
-                         "    let c: String = o.clone();\n"
-                         "    return c == \"hi\";\n"
-                         "}\n"
+static void test_equal_strings_compare_equal() {
+    assert(test_run_bool("func f(): bool { let a: &str = \"hi\"; let b: &str = \"hi\"; return a == b; }\n"
                          "let r: bool = f();") == true);
 
-    assert(!test_compiles_on_vm("import std;\n"
-                                "func f(): int {\n"
-                                "    let s: &str = \"hi\";\n"
-                                "    let c: String = s.clone();\n"
-                                "    return 0;\n"
-                                "}\n"));
+    assert(test_run_bool("func f(): bool { let a: &str = \"hi\"; let b: &str = \"ho\"; return a == b; }\n"
+                         "let r: bool = f();") == false);
 }
 
-static void test_a_reference_to_a_header_reaches_the_characters() {
-    assert(test_compiles_on_vm("import std;\n"
-                               "func f(): int {\n"
-                               "    let o: String = String::from(\"hi\");\n"
-                               "    let p: &String = o;\n"
-                               "    return 0;\n"
-                               "}\n"));
-
-    assert(test_run_int("import std;\n"
-                        "func g(s: &str): int { return s.len(); }\n"
-                        "func f(): int {\n"
-                        "    let o: String = String::from(\"hi\");\n"
-                        "    let p: &String = o;\n"
-                        "    return g(p);\n"
-                        "}\n"
-                        "let r: int = f();") == 2);
+static void test_a_prefix_is_not_equal() {
+    assert(test_run_bool("func f(): bool { let a: &str = \"hi\"; let b: &str = \"hit\"; return a == b; }\n"
+                         "let r: bool = f();") == false);
 }
 
-static void test_a_header_two_levels_out_reaches_the_characters() {
-    assert(test_run_int("import std;\n"
-                        "func g(s: &str): int { return s.len(); }\n"
-                        "func f(): int {\n"
-                        "    let o: *String = box String::from(\"\");\n"
-                        "    *o = String::from(\"hey\");\n"
-                        "    let p: &*String = o;\n"
-                        "    return g(p);\n"
-                        "}\n"
-                        "let r: int = f();") == 3);
-}
-
-static void test_a_ref_string_reaches_the_characters_by_dereferencing() {
-    assert(test_run_int("import std;\n"
-                        "func g(s: &str): int { return s.len(); }\n"
-                        "func f(): int {\n"
-                        "    let o: String = String::from(\"hi\");\n"
-                        "    let p: &String = o;\n"
-                        "    return g(*p);\n"
-                        "}\n"
-                        "let r: int = f();") == 2);
-
-    assert(test_run_int("import std;\n"
-                        "func f(): int {\n"
-                        "    let o: String = String::from(\"hi\");\n"
-                        "    let p: &String = o;\n"
-                        "    return p.len();\n"
-                        "}\n"
-                        "let r: int = f();") == 2);
-}
-
-static void test_either_naming_compares_and_joins() {
-    assert(test_run_bool("func f(): bool { let a: &str = \"hi\"; return a == \"hi\"; }\n"
+static void test_strings_compare_unequal() {
+    assert(test_run_bool("func f(): bool { let a: &str = \"hi\"; let b: &str = \"ho\"; return a != b; }\n"
                          "let r: bool = f();") == true);
-
-    assert(test_run_int("import std;\n"
-                        "func f(): int {\n"
-                        "    let o: String = String::from(\"abcd\");\n"
-                        "    return o.len();\n"
-                        "}\n"
-                        "let r: int = f();") == 4);
 }
 
-static void test_a_lend_carries_the_length_not_the_capacity() {
-    assert(test_run_int("import std;\n"
-                        "func f(): int {\n"
-                        "    let o: String = String::from(\"ab\");\n"
-                        "    o.push(99);\n"
-                        "    let b: &str = o;\n"
-                        "    return b.len();\n"
-                        "}\n"
-                        "let r: int = f();") == 3);
+static void test_a_null_is_compared_like_any_character() {
+    assert(test_run_bool("func f(): bool { let a: &str = \"a\\0b\"; let b: &str = \"a\\0c\"; "
+                         "return a == b; }\n"
+                         "let r: bool = f();") == false);
 }
 
-static void test_a_lend_fits_the_reference_it_builds() {
-    TestContext ctx;
-    test_context_init(&ctx);
+static void test_strings_are_not_ordered() {
+    assert(!test_compiles("func f(): bool { let a: &str = \"a\"; return a < a; }\n"));
+}
 
-    VM *vm = vm_create();
+static void test_a_literal_is_not_released() {
+    TestProgram program = test_compile("func f(): int { let s: &str = \"a\"; return 0; }\n");
 
-    Scope *scope_ptr = test_std_scope(vm);
+    Chunk *chunk = test_func_chunk(&program, 0);
 
-    TypeRegistry *registry = scope_ptr->type_registry;
+    assert(test_count_opcode(chunk, OP_RELEASE) == 0);
 
-    const Type *string_type = scope_type_lookup(scope_ptr, string_from_cstr(&vm->env.strings, "String"));
-    const Type *reference = type_registry_ref_to(registry, type_registry_get_primitive(registry, TYPE_STR));
+    test_program_free(&program);
+}
 
-    const Deref *deref = type_registry_deref(registry, string_type);
+static void test_a_struct_field_borrows_its_characters() {
+    assert(test_compiles("struct Person { name: &str }\n"));
 
-    assert(deref && deref->to == type_registry_get_primitive(registry, TYPE_STR));
+    TestProgram program = test_compile("struct Person { name: &str }\n"
+                                       "func f(): int { let p = Person { name: \"\" }; return 0; }\n");
 
-    assert(deref->part_count == 2);
+    Chunk *chunk = test_func_chunk(&program, 0);
 
-    size_t total = 0;
+    assert(test_count_opcode(chunk, OP_RELEASE) == 0);
 
-    for (size_t i = 0; i < deref->part_count; i++) {
-        assert(deref->parts[i].offset + deref->parts[i].size <= type_registry_size_of(registry, string_type));
+    test_program_free(&program);
+}
 
-        total += deref->parts[i].size;
-    }
+static void test_a_returnable_borrow_outlives_its_frame() {
+    assert(test_compiles("func f(a: &str): &str { return a; }\n"));
 
-    assert(total <= type_registry_size_of(registry, reference));
+    assert(test_compiles("func f(): &str { return \"hi\"; }\n"));
 
-    assert(!type_registry_deref(registry, reference));
+    assert(test_run_bool("func f(a: &str): &str { return a; }\n"
+                         "func g(): bool { return f(\"hi\") == \"hi\"; }\n"
+                         "let r: bool = g();") == true);
+}
 
-    test_context_free(&ctx);
-    vm_free(vm);
+static void test_a_literal_borrows() {
+    assert(test_compiles("func f(): int { let s: &str = \"hi\"; return 0; }\n"));
 }
 
 int main(void) {
     test_characters_are_reached_through_a_reference();
     test_nothing_holds_the_characters_themselves();
-    test_a_literal_names_borrowed_characters();
-    test_a_string_lends_a_reference_to_its_characters();
-    test_a_lend_carries_the_length_not_the_capacity();
-    test_a_lend_fits_the_reference_it_builds();
-    test_a_string_lends_to_a_parameter();
-    test_a_reference_cannot_borrow_a_temporary();
-    test_a_reference_may_not_outlive_what_it_borrows();
-    test_clone_belongs_to_the_owning_string();
-    test_a_reference_to_a_header_reaches_the_characters();
-    test_a_header_two_levels_out_reaches_the_characters();
-    test_a_ref_string_reaches_the_characters_by_dereferencing();
-    test_either_naming_compares_and_joins();
+    test_a_literal_is_a_string();
+    test_a_literal_loads_its_characters_and_length();
+    test_equal_strings_compare_equal();
+    test_a_prefix_is_not_equal();
+    test_strings_compare_unequal();
+    test_a_null_is_compared_like_any_character();
+    test_strings_are_not_ordered();
+    test_a_struct_field_borrows_its_characters();
+    test_a_literal_is_not_released();
+    test_a_returnable_borrow_outlives_its_frame();
+    test_a_literal_borrows();
 
     return 0;
 }

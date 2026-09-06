@@ -304,73 +304,6 @@ static void test_freeing_null_is_a_no_op() {
     assert(counts.frees == 0);
 }
 
-static void test_a_block_is_freed_with_the_size_it_was_reserved_with() {
-    VM *vm = vm_create();
-
-    Scope *scope = test_std_scope(vm);
-    TypeRegistry *registry = scope->type_registry;
-
-    const Type *owning = scope_type_lookup(scope, string_from_cstr(&vm->env.strings, "String"));
-
-    AllocCounts counts = {0};
-    Allocator allocator = counting_allocator(&counts);
-
-    StringValue string = {0};
-
-    assert(block_reserve(&allocator, &string.block, 8, sizeof(char)));
-
-    object_release(&allocator, type_registry_drop_of(registry, owning), &string);
-
-    assert(counts.frees == 1);
-    assert(counts.freed_bytes == (size_t)string.block.capacity * sizeof(char));
-
-    vm_free(vm);
-}
-
-static void test_a_string_owns_and_a_reference_to_one_does_not() {
-    VM *vm = vm_create();
-
-    TestContext ctx;
-    test_context_init(&ctx);
-
-    Scope *scope = test_std_scope(vm);
-    TypeRegistry *registry = scope->type_registry;
-
-    const Type *owning = scope_type_lookup(scope, string_from_cstr(&vm->env.strings, "String"));
-    const Type *borrowing = type_registry_ref_to(registry, type_registry_get_primitive(registry, TYPE_STR));
-
-    assert(owning);
-
-    assert(type_registry_size_of(registry, owning) == type_registry_size_of(registry, borrowing));
-
-    assert(type_registry_owns(registry, owning));
-    assert(!type_registry_owns(registry, borrowing));
-
-    assert(!type_registry_copies(registry, owning));
-    assert(type_registry_copies(registry, borrowing));
-
-    assert(!type_is_sized(type_registry_get_primitive(registry, TYPE_STR)));
-    assert(type_is_sized(borrowing));
-
-    assert(type_metadata_of(type_registry_get_primitive(registry, TYPE_STR)) == TYPE_META_LENGTH);
-    assert(type_metadata_of(borrowing) == TYPE_META_NONE);
-    assert(type_metadata_of(owning) == TYPE_META_NONE);
-    assert(type_is_sized(owning));
-
-    const Type *ints = type_registry_array_of(registry, type_registry_get_primitive(registry, TYPE_INT), 4);
-
-    assert(type_registry_drop_of(registry, ints) == NULL);
-    assert(!type_registry_owns(registry, ints));
-
-    const Type *strings = type_registry_array_of(registry, owning, 2);
-
-    assert(type_registry_drop_of(registry, strings) != NULL);
-    assert(type_registry_owns(registry, strings));
-
-    test_context_free(&ctx);
-    vm_free(vm);
-}
-
 static void test_an_array_is_its_elements_laid_end_to_end() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -518,8 +451,6 @@ static void test_a_builtin_is_interned_and_found_by_its_kind() {
 
 int main(void) {
     test_a_raw_pointer_carries_a_stride_and_drops_nothing();
-    test_a_block_is_freed_with_the_size_it_was_reserved_with();
-    test_a_string_owns_and_a_reference_to_one_does_not();
     test_a_type_carries_only_what_its_kind_has();
     test_methods_live_beside_the_type_not_in_it();
     test_a_builtin_is_interned_and_found_by_its_kind();

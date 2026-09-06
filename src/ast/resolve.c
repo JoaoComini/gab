@@ -347,7 +347,7 @@ static Function *find_method_on_chain(TypeRegistry *registry, FunctionRegistry *
 
 static bool type_accepts(TypeRegistry *registry, const Type *to, const Type *from);
 static bool accepts_by_borrowing(const Type *to, const Type *from);
-static bool lends_by_value(TypeRegistry *registry, const Type *to, const Type *from);
+static bool reads_as_a_view(TypeRegistry *registry, const Type *to, const Type *from);
 static bool lends_by_pointer(const Type *to, const Type *from);
 static bool borrow_into(ResolverState *state, ASTExpr *expr, const Type *destination, Span span);
 static void adjust_derefs(ResolverState *state, Adjustment *adjustment, const Type *from, unsigned int count);
@@ -474,7 +474,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
             return true;
         }
 
-        if (lends_by_value(state->current_scope->type_registry, declared, at) ||
+        if (reads_as_a_view(state->current_scope->type_registry, declared, at) ||
             lends_by_pointer(declared, at)) {
             *out = (ReceiverAdjustment){.derefs = derefs, .address_of = false};
             return true;
@@ -1015,7 +1015,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     fact_set_type(state->facts, expr, method->return_type);
 }
 
-static bool lends_by_value(TypeRegistry *registry, const Type *to, const Type *from) {
+static bool reads_as_a_view(TypeRegistry *registry, const Type *to, const Type *from) {
     const Type *view = type_registry_deref_of(registry, from);
 
     return view && type_kind(to) == TYPE_REF && view == type_pointee(to);
@@ -1060,7 +1060,7 @@ static bool type_accepts(TypeRegistry *registry, const Type *to, const Type *fro
     }
 
     for (const Type *at = from;; at = type_pointee(at)) {
-        if (lends_by_value(registry, to, at) || lends_by_pointer(to, at)) {
+        if (reads_as_a_view(registry, to, at) || lends_by_pointer(to, at)) {
             return true;
         }
 
@@ -1120,14 +1120,6 @@ static bool borrow_into(ResolverState *state, ASTExpr *expr, const Type *destina
         return unsize_into(state, expr, destination, span);
     }
 
-    if (type_is_str_ref(destination) && type_registry_deref_of(state->current_scope->type_registry, from) &&
-        !is_addressable(state, expr)) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, span,
-                   "cannot borrow a string that nothing holds, since its characters are freed where the "
-                   "expression ends");
-        return false;
-    }
-
     const Type *at = from;
     unsigned int derefs = 0;
 
@@ -1135,19 +1127,6 @@ static bool borrow_into(ResolverState *state, ASTExpr *expr, const Type *destina
            type_pointee(destination) != at) {
         at = type_pointee(at);
         derefs++;
-    }
-
-    if (lends_by_value(state->current_scope->type_registry, destination, at)) {
-        const Deref *deref = type_registry_deref(state->current_scope->type_registry, at);
-
-        Adjustment adjustment = {.kind = ADJUST_LEND,
-                                 .to = destination,
-                                 .lend = {.parts = deref->parts, .part_count = deref->part_count}};
-
-        adjust_derefs(state, &adjustment, from, derefs);
-        fact_set_adjustment(state->facts, expr, adjustment);
-
-        return true;
     }
 
     if (!accepts_by_borrowing(destination, at)) {

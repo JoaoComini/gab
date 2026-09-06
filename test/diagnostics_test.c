@@ -1,12 +1,12 @@
-#include "memory/arena.h"
 #include "ast/resolve.h"
 #include "diagnostics.h"
-#include "syntax/lexer.h"
+#include "memory/arena.h"
 #include "mir/mir_build.h"
-#include "syntax/parser.h"
 #include "scope.h"
 #include "string/string.h"
 #include "support/test_context.h"
+#include "syntax/lexer.h"
+#include "syntax/parser.h"
 #include "vm/vm.h"
 
 #include <assert.h>
@@ -799,67 +799,6 @@ static void test_reports_a_pointer_escaping_its_block() {
     test_context_free(&ctx);
 }
 
-static void test_reports_returning_a_string_borrow_of_a_local() {
-    TestContext ctx;
-    test_context_init(&ctx);
-    Diagnostics *diagnostics = &ctx.diagnostics;
-
-    compile_with_library(&ctx, "import std;\n"
-                               "func test(a: &str): &str { let s: String = String::from(\"\"); return s; }");
-
-    assert(diagnostics_count(diagnostics) == 1);
-
-    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
-    assert(diagnostic->kind == GAB_ERR_LIFETIME);
-    assert(strcmp(diagnostic->message, "this names memory that has been freed") == 0);
-
-    test_context_free(&ctx);
-}
-
-static void test_reports_a_string_borrow_escaping_its_block() {
-    TestContext ctx;
-    test_context_init(&ctx);
-    Diagnostics *diagnostics = &ctx.diagnostics;
-
-    compile_with_library(&ctx, "import std;\n"
-                               "func test(a: &str): &str {\n"
-                               "    let p: &str;\n"
-                               "    { let s: String = String::from(\"\"); p = s; }\n"
-                               "    return p;\n"
-                               "}\n");
-
-    assert(diagnostics_count(diagnostics) > 0);
-
-    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
-    assert(diagnostic->kind == GAB_ERR_LIFETIME);
-    assert(strcmp(diagnostic->message, "this borrow outlives what it names, so it cannot be stored here") ==
-           0);
-
-    test_context_free(&ctx);
-}
-
-static void test_reports_a_string_borrow_stored_into_a_heap_object() {
-    TestContext ctx;
-    test_context_init(&ctx);
-    Diagnostics *diagnostics = &ctx.diagnostics;
-
-    compile_with_library(
-        &ctx,
-        "import std;\n"
-        "struct Doc { body: &str }\n"
-        "func test(a: &str) { let d: *Doc = box Doc { body: \"\" }; let s: String = String::from(\"\"); "
-        "d.body = s; }");
-
-    assert(diagnostics_count(diagnostics) == 1);
-
-    const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
-    assert(diagnostic->kind == GAB_ERR_LIFETIME);
-    assert(strcmp(diagnostic->message, "this borrow outlives what it names, so it cannot be stored here") ==
-           0);
-
-    test_context_free(&ctx);
-}
-
 static void test_reports_a_stack_pointer_stored_into_a_heap_object() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -942,9 +881,6 @@ int main(void) {
     test_reports_field_access_through_a_non_struct_pointer();
     test_reports_returning_a_pointer_to_a_local();
     test_reports_a_pointer_escaping_its_block();
-    test_reports_returning_a_string_borrow_of_a_local();
-    test_reports_a_string_borrow_escaping_its_block();
-    test_reports_a_string_borrow_stored_into_a_heap_object();
     test_reports_a_stack_pointer_stored_into_a_heap_object();
     test_accepts_pointers_that_do_not_outlive_their_pointee();
 

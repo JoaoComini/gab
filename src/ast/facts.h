@@ -1,10 +1,10 @@
 #ifndef GAB_AST_FACTS_H
 #define GAB_AST_FACTS_H
 
-#include "memory/arena.h"
 #include "ast/expr.h"
 #include "ast/stmt.h"
 #include "binding.h"
+#include "memory/arena.h"
 #include "type/type.h"
 #include "util/hash_map.h"
 
@@ -43,12 +43,11 @@ typedef enum {
 } CallKind;
 
 /* How a value reaches the type its destination takes: dereferenced some number of times, then
- * borrowed, widened to a slice, or lent by the parts its type names. */
+ * borrowed or widened to a slice. */
 typedef enum {
     ADJUST_NONE,
     ADJUST_BORROW,
     ADJUST_UNSIZE,
-    ADJUST_LEND,
 } AdjustKind;
 
 typedef struct {
@@ -65,12 +64,6 @@ typedef struct {
     union {
         /* The element count the slice is given. */
         int32_t length;
-
-        /* The parts of what it borrows that the view gathers. */
-        struct {
-            const LentPart *parts;
-            size_t part_count;
-        } lend;
     };
 } Adjustment;
 

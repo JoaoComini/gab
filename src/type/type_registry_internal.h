@@ -32,11 +32,6 @@ GAB_HASH_MAP(ConformanceTable, conformance_key, OwnedKey, bool)
 
 GAB_HASH_MAP(DropTable, drop_key, const Type *, const DropPlan *)
 
-#define deref_key_hash(key) (size_t)key
-#define deref_key_key_equals(key, other) key == other
-
-GAB_HASH_MAP(DerefTable, deref_key, const TypeDecl *, const Deref *)
-
 #define layout_key_hash(key) (size_t)key
 #define layout_key_key_equals(key, other) key == other
 
@@ -70,8 +65,6 @@ typedef struct TypeRegistry {
     ConformanceTable *conformances;
 
     DropTable *drops;
-
-    DerefTable *derefs;
 
     LayoutTable *layouts;
 

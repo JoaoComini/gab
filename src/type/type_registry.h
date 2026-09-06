@@ -38,14 +38,6 @@ typedef struct {
 
 GAB_HASH_MAP(TypeMap, type_map, String *, TypeBinding)
 
-typedef struct TypeDeclSpec {
-    const TypeDecl *decl;
-
-    const Type *derefs_to;
-    const LentPart *lent_parts;
-    size_t lent_part_count;
-} TypeDeclSpec;
-
 typedef struct TypeFieldSpec {
     String *name;
     const Type *type;
@@ -53,13 +45,6 @@ typedef struct TypeFieldSpec {
 
 const Type *type_registry_declare_struct(TypeRegistry *registry, String *name, const TypeFieldSpec *fields,
                                          size_t field_count);
-
-typedef struct Deref {
-    const Type *to;
-
-    LentPart parts[GAB_MAX_LENT_PARTS];
-    size_t part_count;
-} Deref;
 
 bool type_registry_declare_owned(TypeRegistry *registry, const Type *type, Function *function);
 
@@ -103,15 +88,9 @@ void type_registry_destroy(TypeRegistry *registry);
 
 const Type *type_registry_get_primitive(TypeRegistry *registry, TypeKind kind);
 
-const Type *type_registry_declare(TypeRegistry *registry, const TypeDeclSpec *spec);
-
-/* The deref a declaration states, named in its own parameters and substituted per instantiation. */
-void type_registry_set_deref(TypeRegistry *registry, const TypeDecl *decl, const Type *to,
-                             const LentPart *parts, size_t part_count);
+const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl);
 
 const Type *type_registry_deref_of(TypeRegistry *registry, const Type *type);
-
-const Deref *type_registry_deref(TypeRegistry *registry, const Type *type);
 
 const Type *type_registry_error_type(TypeRegistry *registry);
 

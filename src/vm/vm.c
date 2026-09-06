@@ -1,13 +1,12 @@
 #include "vm/vm.h"
 
-#include "memory/arena.h"
 #include "ast/ast.h"
 #include "core/core.h"
+#include "memory/arena.h"
 #include "object.h"
-#include "syntax/parser.h"
 #include "scope.h"
-#include "std/std.h"
 #include "string/string.h"
+#include "syntax/parser.h"
 #include "type/type.h"
 #include "vm/chunk.h"
 #include "vm/codegen.h"
@@ -104,7 +103,6 @@ VM *vm_create() {
     vm->error = (VmError){.status = VM_RUN_OK};
 
     core_register_all(vm);
-    std_register_all((GabVM *)vm);
 
     return vm;
 }

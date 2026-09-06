@@ -147,8 +147,9 @@ static void test_a_length_takes_no_argument() {
 }
 
 static void test_a_borrowed_array_knows_its_length() {
-    assert(test_run_int("func f(): int { let xs: array<int, 4>; let r: &array<int, 4> = xs; return r.len(); }\n"
-                        "let r: int = f();") == 4);
+    assert(
+        test_run_int("func f(): int { let xs: array<int, 4>; let r: &array<int, 4> = xs; return r.len(); }\n"
+                     "let r: int = f();") == 4);
 }
 
 static void test_an_array_knows_its_length() {
