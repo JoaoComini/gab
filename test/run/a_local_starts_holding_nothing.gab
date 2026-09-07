@@ -1,0 +1,31 @@
+func dirties(): i32 {
+    let xs: array<i32, 8>;
+
+    for let i: i32 = 0; i < 8; i = i + 1 { xs[i] = 99; }
+
+    return xs[0];
+}
+
+func an_array_starts_zeroed(): i32 {
+    let xs: array<i32, 8>;
+    let total: i32 = 0;
+
+    for let i: i32 = 0; i < 8; i = i + 1 { total = total + xs[i]; }
+
+    return total;
+}
+
+func a_scalar_starts_zeroed(): i32 {
+    let n: i32;
+
+    return n;
+}
+
+func run(): i32 {
+    dirties();
+
+    assert(an_array_starts_zeroed() == 0);
+    assert(a_scalar_starts_zeroed() == 0);
+
+    return 0;
+}

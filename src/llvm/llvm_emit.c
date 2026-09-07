@@ -560,6 +560,10 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
 
         emitter->value_types[inst->place.base.id] = held;
         values[inst->place.base.id] = LLVMBuildAlloca(emitter->entry, held, "");
+
+        /* A local holds nothing until it is given a value, and reading one is spelled as reading zero.
+         * The store sits where scope opens rather than beside the alloca, so a loop clears each pass. */
+        LLVMBuildStore(builder, LLVMConstNull(held), values[inst->place.base.id]);
         break;
     }
 

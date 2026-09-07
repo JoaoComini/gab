@@ -1,4 +1,4 @@
 func total<T>(x: &T): i32 { return x.count(); }
 
 // error
-// :1:37: name error: *none has no method 'count'
+// :1:37: name error: a type parameter has the methods its bound declares, and this one has no bound

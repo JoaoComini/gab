@@ -1,0 +1,4 @@
+func count(x: &Self): i32 { return 0; }
+
+// error
+// :1:12: name error: 'Self' names the type an 'impl' block is for, and there is none here

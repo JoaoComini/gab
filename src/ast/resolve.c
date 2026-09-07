@@ -248,6 +248,11 @@ static const char *type_name(ResolverState *state, const Type *type) {
         return type_name_of(type)->data;
     }
 
+    /* A parameter interns by index and carries no name, so what a declaration called it is not here. */
+    if (type_kind(type) == TYPE_PARAM) {
+        return "a type parameter";
+    }
+
     const char *inner = type_name(state, type_pointee(type));
     const char *prefix = type_kind(type) == TYPE_REF ? "&" : "*";
     size_t length = strlen(prefix) + strlen(inner) + 1;
@@ -952,6 +957,14 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     Function *method = find_method(state, receiver_type, method_name, expr->span, &base);
 
     if (!method) {
+        /* A parameter's methods are its bound's, so one with no bound has none to name. */
+        if (base && type_kind(base) == TYPE_PARAM && !state->param_bounds[type_param_index(base)]) {
+            diag_error(state->diagnostics, GAB_ERR_NAME, expr->span,
+                       "a type parameter has the methods its bound declares, and this one has no bound");
+            fact_set_type(state->facts, expr, resolver_error_type(state));
+            return;
+        }
+
         diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "%s has no method '%s'",
                    type_name(state, base), method_name->data);
         fact_set_type(state->facts, expr, resolver_error_type(state));
@@ -3003,13 +3016,19 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
 static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
     size_t errors_before = diagnostics_count(state->diagnostics);
 
+    const Function *signature = stmt->func_decl.function;
+
     resolver_enter_scope(state);
 
     for (size_t i = 0; i < stmt->func_decl.params.size; i++) {
         ASTField *param = stmt->func_decl.params.data[i];
 
         String *param_name = resolver_intern(state, param->name);
-        const Type *param_type = resolve_type_expr(state, param->type_expr, param->span);
+
+        /* The signature resolved this already, so resolving it again would report its errors twice. */
+        const Type *param_type = signature && i < signature->param_count
+                                     ? signature->params[i]
+                                     : resolve_type_expr(state, param->type_expr, param->span);
 
         if (reject_self_as_name(state, param_name, param->span)) {
             continue;
