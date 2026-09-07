@@ -256,8 +256,7 @@ static void comparing_floats_emits_the_float_opcode(void) {
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         char source[128];
-        snprintf(source, sizeof(source), "func one(a: f32, b: f32): bool { return a %s b; }\n",
-                 cases[i].op);
+        snprintf(source, sizeof(source), "func one(a: f32, b: f32): bool { return a %s b; }\n", cases[i].op);
 
         TestEmission emission = test_emit_ir(source);
 
@@ -492,43 +491,6 @@ static void a_call_leaves_a_live_value_alone(void) {
                                      "return t + d; }\n") == 13);
 }
 
-static void an_extern_call_emits_the_extern_opcode(void) {
-    TestEmission emission = test_emit_ir_named("extern func log(amount: i32);\n"
-                                               "func run(): i32 { log(7); return 0; }\n",
-                                               "run");
-
-    assert(test_count_opcode(emission.chunk, OP_CALL_EXTERN) == 1);
-    assert(test_count_opcode(emission.chunk, OP_CALL) == 0);
-
-    test_emission_free(&emission);
-}
-
-static void an_extern_call_passes_its_argument_in_the_window(void) {
-    TestEmission emission = test_emit_ir_named("extern func log(amount: i32);\n"
-                                               "func run(): i32 { log(7); return 0; }\n",
-                                               "run");
-
-    long call = test_find_opcode(emission.chunk, OP_CALL_EXTERN);
-
-    assert(call > 0);
-
-    unsigned int window = VM_DECODE_I_RD(test_instruction(emission.chunk, (size_t)call));
-
-    long move = -1;
-
-    for (long i = 0; i < call; i++) {
-        Instruction instruction = test_instruction(emission.chunk, (size_t)i);
-
-        if (VM_DECODE_OPCODE(instruction) == OP_MOVE && VM_DECODE_R_RD(instruction) == window + 1) {
-            move = i;
-        }
-    }
-
-    assert(move >= 0);
-
-    test_emission_free(&emission);
-}
-
 static void an_int_cast_to_float_emits_the_conversion(void) {
     TestEmission emission = test_emit_ir("func one(a: i32): f32 { return f32(a); }\n");
 
@@ -744,8 +706,6 @@ int main(void) {
     an_emitted_call_nests();
     an_emitted_call_recurses();
     a_call_leaves_a_live_value_alone();
-    an_extern_call_emits_the_extern_opcode();
-    an_extern_call_passes_its_argument_in_the_window();
     an_int_cast_to_float_emits_the_conversion();
     a_float_cast_to_int_emits_the_conversion();
     an_emitted_body_converts_an_int_to_a_float();

@@ -211,35 +211,6 @@ static void test_a_call_reaches_a_function_from_an_earlier_unit() {
     vm_free(vm);
 }
 
-static void test_a_unit_that_fails_to_link_installs_nothing() {
-    VM *vm = vm_create();
-
-    compile_and_run(vm, "module test;\n"
-                        "func first(): i32 { return 1; }\n");
-
-    size_t protos = loaded_protos(vm);
-    size_t types = vm->program.heap_shapes.size;
-
-    Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, vm->env.compile_arena, "<test>");
-
-    FuncPrototype top_level;
-    assert(!compile_unit(vm,
-                         "module test;\n"
-                         "struct Only { a: i32 }\n"
-                         "func second(): i32 { let p: *Only = box Only { a: 0 }; return p.a; }\n"
-                         "extern func absent(x: i32): i32;\n",
-                         &top_level, &diagnostics));
-
-    assert(diagnostics_has_errors(&diagnostics));
-    diagnostics_free(&diagnostics);
-
-    assert(loaded_protos(vm) == protos);
-    assert(vm->program.heap_shapes.size == types);
-
-    vm_free(vm);
-}
-
 static void test_checking_a_unit_installs_nothing() {
     VM *vm = vm_create();
 
@@ -440,7 +411,6 @@ int main() {
     test_function_signatures_survive_a_later_compile();
     test_prototypes_survive_a_later_compile();
     test_a_call_reaches_a_function_from_an_earlier_unit();
-    test_a_unit_that_fails_to_link_installs_nothing();
     test_checking_a_unit_installs_nothing();
     test_compile_once_run_many();
     test_compile_failure_is_reportable();

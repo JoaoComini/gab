@@ -185,8 +185,7 @@ static void mir_print_inst(MIRPrinter *printer, const MIRInst *inst) {
         mir_print_args(printer, inst);
         break;
 
-    case MIR_CALL:
-    case MIR_CALL_EXTERN: {
+    case MIR_CALL: {
         const FuncDecl *decl = inst->callee ? inst->callee->decl : NULL;
 
         mir_printf(printer, " %s", decl && decl->name ? decl->name->data : "?");

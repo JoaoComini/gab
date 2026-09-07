@@ -41,12 +41,12 @@ static bool is_given_away(TypeRegistry *registry, const MIRFunction *ir, MIRValu
         for (size_t j = 0; j < block->inst_count; j++) {
             const MIRInst *inst = &block->insts[j];
 
-            if (inst->op != MIR_STORE && inst->op != MIR_CALL && inst->op != MIR_CALL_EXTERN &&
-                inst->op != MIR_RETURN && inst->op != MIR_BOX && inst->op != MIR_MAKE_SLICE) {
+            if (inst->op != MIR_STORE && inst->op != MIR_CALL && inst->op != MIR_RETURN &&
+                inst->op != MIR_BOX && inst->op != MIR_MAKE_SLICE) {
                 continue;
             }
 
-            bool is_call = inst->op == MIR_CALL || inst->op == MIR_CALL_EXTERN;
+            bool is_call = inst->op == MIR_CALL;
 
             for (size_t a = 0; a < inst->arg_count; a++) {
                 MIRValueId arg = mir_operand_as_value(inst->args[a]);

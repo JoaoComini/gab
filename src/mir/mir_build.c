@@ -14,7 +14,7 @@ static void collect_called_instances(PendingBodies *work, const MIRFunction *bod
         for (size_t i = 0; i < block->inst_count; i++) {
             const MIRInst *inst = &block->insts[i];
 
-            if (inst->op != MIR_CALL && inst->op != MIR_CALL_EXTERN) {
+            if (inst->op != MIR_CALL) {
                 continue;
             }
 

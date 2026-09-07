@@ -111,8 +111,8 @@ static MIROperand *clone_args(Instantiation *in, const MIROperand *args, size_t 
 
 /* A bound resolving to an intrinsic names instructions, not a body, so the call becomes them here. */
 static bool expand_intrinsic(MIRFunction *out, MIRBlock *block, const MIRInst *inst) {
-    if ((inst->op != MIR_CALL && inst->op != MIR_CALL_EXTERN) || !inst->callee ||
-        inst->callee->decl->body_kind != BODY_INTRINSIC || inst->arg_count != 2) {
+    if (inst->op != MIR_CALL || !inst->callee || inst->callee->decl->body_kind != BODY_INTRINSIC ||
+        inst->arg_count != 2) {
         return false;
     }
 
@@ -162,13 +162,8 @@ static MIRInst subst_inst(Instantiation *in, const MIRInst *inst) {
     if (mir_op_has_place(inst->op)) {
         out.place.projections = clone_projections(in, inst->place.projections, inst->place.projection_count);
         subst_place(in, &out.place);
-    } else if (inst->op == MIR_CALL || inst->op == MIR_CALL_EXTERN) {
+    } else if (inst->op == MIR_CALL) {
         out.callee = subst_callee(in, inst->callee);
-
-        /* Which call this is follows the body it resolved to, since a bound may name a native one. */
-        if (out.callee) {
-            out.op = function_runs_native(out.callee) ? MIR_CALL_EXTERN : MIR_CALL;
-        }
     } else if (inst->op == MIR_CONST_INT || inst->op == MIR_CONST_FLOAT || inst->op == MIR_CONST_BOOL ||
                inst->op == MIR_CONST_STR) {
         out.constant = subst_constant(in, inst->constant);

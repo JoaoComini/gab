@@ -542,7 +542,7 @@ static MIRValueId lower_call(Lowering *lowering, ASTExpr *expr) {
 
     Function *callee = fact_callee_of(lowering->facts, expr);
 
-    emit(lowering, (MIRInst){.op = callee && function_runs_native(callee) ? MIR_CALL_EXTERN : MIR_CALL,
+    emit(lowering, (MIRInst){.op = MIR_CALL,
                              .type = fact_type_of(lowering->facts, expr),
                              .result = result,
                              .args = args,

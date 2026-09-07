@@ -65,15 +65,6 @@ GabLib *gab_lib_open(GabVM *handle, const char *module, GabError *err) {
 
 void gab_lib_close(GabLib *lib) { free(lib); }
 
-bool gab_lib_bind(GabLib *lib, const char *type, const char *name, GabExternFn body, GabError *err) {
-    if (!lib) {
-        lib_error(err, "gab_lib_bind requires a library");
-        return false;
-    }
-
-    return gab_extern((GabVM *)lib->vm, lib->module, type, name, body, err);
-}
-
 bool gab_lib_source(GabLib *lib, const char *source, GabError *err) {
     if (!lib || !source) {
         lib_error(err, "gab_lib_source requires a library and a source string");

@@ -69,7 +69,6 @@ typedef enum {
     MIR_SLICE_LEN,
 
     MIR_CALL,
-    MIR_CALL_EXTERN,
 
     /* Leaves a place holding nothing, so releasing it afterwards frees nothing. */
     MIR_NULL,

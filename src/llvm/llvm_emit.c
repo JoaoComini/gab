@@ -329,8 +329,7 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         break;
     }
 
-    case MIR_CALL:
-    case MIR_CALL_EXTERN: {
+    case MIR_CALL: {
         LLVMValueRef args[GAB_MAX_CALL_ARGS];
 
         size_t count = inst->arg_count < GAB_MAX_CALL_ARGS ? inst->arg_count : GAB_MAX_CALL_ARGS;

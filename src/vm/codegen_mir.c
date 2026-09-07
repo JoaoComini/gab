@@ -144,7 +144,6 @@ bool codegen_mir_supports(const MIRFunction *ir) {
                 break;
 
             case MIR_CALL:
-            case MIR_CALL_EXTERN:
                 if (!block->insts[j].callee) {
                     return false;
                 }
@@ -865,7 +864,7 @@ static void emit_load(MIREmitter *emitter, const MIRInst *inst) {
 static void emit_call(MIREmitter *emitter, const MIRInst *inst) {
     unsigned int saved = emitter->scratch;
 
-    bool native = inst->op == MIR_CALL_EXTERN;
+    bool native = inst->callee && function_runs_native(inst->callee);
 
     /* A call yielding nothing still needs its window, but copies no result back out of it. */
     unsigned int returned = inst->type ? slots_of(emitter, inst->type) : 0;
@@ -1075,7 +1074,7 @@ static void plan_redirects(MIREmitter *emitter) {
             }
 
             /* A call writes its result through the window its frame starts at, not into a slot. */
-            if (computed->op == MIR_CALL || computed->op == MIR_CALL_EXTERN) {
+            if (computed->op == MIR_CALL) {
                 continue;
             }
 
@@ -1148,7 +1147,6 @@ static void emit_inst(MIREmitter *emitter, const MIRInst *inst, MIRBlockId next)
         break;
 
     case MIR_CALL:
-    case MIR_CALL_EXTERN:
         emit_call(emitter, inst);
         break;
 

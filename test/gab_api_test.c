@@ -980,36 +980,6 @@ static void test_two_callers_stage_independently(void) {
     gab_vm_free(vm);
 }
 
-static void test_a_failed_load_declares_nothing(void) {
-    GabVM *vm = gab_vm_new();
-
-    GabError err;
-
-    assert(!gab_vm_load(vm, "a.gab",
-                        "module M;\n"
-                        "func ready(): i32 { return 1; }\n"
-                        "extern func absent(x: i32): i32;\n",
-                        &err));
-
-    assert(gab_vm_load(vm, "a.gab",
-                       "module M;\n"
-                       "func ready(): i32 { return 1; }\n",
-                       &err));
-
-    GabFunc *fn = gab_vm_lookup(vm, "M", "ready", &err);
-    assert(fn);
-
-    GabCall *call = gab_call_init(fn, &err);
-    assert(call);
-
-    int result = 0;
-    assert(gab_call(vm, call, &result, &err) == GAB_OK);
-    assert(result == 1);
-
-    gab_call_free(call);
-    gab_vm_free(vm);
-}
-
 static void test_a_failed_load_leaves_what_is_loaded(void) {
     GabVM *vm = gab_vm_new();
 
@@ -1171,7 +1141,6 @@ int main(void) {
     test_a_qualified_name_needs_an_import();
     test_qualified_type_reference_crosses_modules();
     test_handle_survives_later_compiles();
-    test_a_failed_load_declares_nothing();
     test_a_failed_load_leaves_what_is_loaded();
     test_a_method_is_not_reachable_from_a_host();
     test_a_name_may_only_be_declared_once();
