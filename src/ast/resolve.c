@@ -1467,7 +1467,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
 
         if (fact_type_of(state->facts, expr->index.index) !=
             type_registry_get_primitive(state->current_scope->type_registry, TYPE_INT)) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "an index must be an int, not %s",
+            diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "an index must be an i32, not %s",
                        type_name(state, fact_type_of(state->facts, expr->index.index)));
             fact_set_type(state->facts, expr, resolver_error_type(state));
             break;
@@ -1743,7 +1743,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         if (!expected || type_kind(expected) != TYPE_ARRAY) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "an array's elements need the array's type to be written, as "
-                       "'let xs: [int; 3] = [1, 2, 3];'");
+                       "'let xs: [i32; 3] = [1, 2, 3];'");
             fact_set_type(state->facts, expr, resolver_error_type(state));
             break;
         }
@@ -1870,10 +1870,10 @@ static const Type *resolve_element_type(ResolverState *state, TypeExpr *expr, Sp
     return element;
 }
 
-/* 'N: int' declares a value parameter, as Rust spells 'const N: usize'; any other bound names an interface.
+/* 'N: i32' declares a value parameter, as Rust spells 'const N: usize'; any other bound names an interface.
  */
 static bool param_is_a_value(const TypeExpr *bound) {
-    return bound && bound->kind == TYPE_EXPR_NAME && string_ref_equals_cstr(bound->name, "int");
+    return bound && bound->kind == TYPE_EXPR_NAME && string_ref_equals_cstr(bound->name, "i32");
 }
 
 static bool bind_type_param(Scope *params, String *name, size_t index, const TypeExpr *bound) {
@@ -1905,7 +1905,7 @@ static bool resolve_array_length(ResolverState *state, TypeExpr *expr, Span span
     }
 
     diag_error(state->diagnostics, GAB_ERR_TYPE, span,
-               "an array's length is a literal or a value parameter, as 'array<int, 3>'");
+               "an array's length is a literal or a value parameter, as 'array<i32, 3>'");
     return false;
 }
 
@@ -1914,7 +1914,7 @@ static const Type *resolve_array_type(ResolverState *state, TypeExpr *expr, Span
 
     if (expr->apply.args.size != 2) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, span,
-                   "'array' takes an element and a length, as 'array<int, 3>'");
+                   "'array' takes an element and a length, as 'array<i32, 3>'");
         return resolver_error_type(state);
     }
 

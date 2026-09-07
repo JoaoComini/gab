@@ -64,7 +64,7 @@ static size_t count_op(const MIRFunction *ir, MIROp op) {
 
 static void test_a_value_owning_nothing_is_never_marked_for_dropping(void) {
     Elaborated out;
-    MIRFunction *ir = elaborate(&out, "func f(): int { let a: int = 1; return a; }", "f");
+    MIRFunction *ir = elaborate(&out, "func f(): i32 { let a: i32 = 1; return a; }", "f");
 
     assert(count_op(ir, MIR_DROP) == 0);
 
@@ -74,8 +74,8 @@ static void test_a_value_owning_nothing_is_never_marked_for_dropping(void) {
 static void test_a_drop_of_an_owning_value_survives(void) {
     Elaborated out;
     MIRFunction *ir = elaborate(&out,
-                                "struct Node { n: int }\n"
-                                "func f(): int {\n"
+                                "struct Node { n: i32 }\n"
+                                "func f(): i32 {\n"
                                 "    let a: *Node = box Node { n: 1 };\n"
                                 "    return a.n;\n"
                                 "}\n",
@@ -89,8 +89,8 @@ static void test_a_drop_of_an_owning_value_survives(void) {
 static void test_an_owned_temporary_is_dropped_where_it_is_last_read(void) {
     Elaborated out;
     MIRFunction *ir = elaborate(&out,
-                                "struct Node { n: int }\n"
-                                "func f(): int { return (box Node { n: 1 }).n; }\n",
+                                "struct Node { n: i32 }\n"
+                                "func f(): i32 { return (box Node { n: 1 }).n; }\n",
                                 "f");
 
     assert(count_op(ir, MIR_DROP) == 1);
@@ -102,9 +102,9 @@ static void test_an_owned_temporary_is_dropped_where_it_is_last_read(void) {
 static void test_a_move_nulls_what_it_gave_away(void) {
     Elaborated out;
     MIRFunction *ir = elaborate(&out,
-                                "struct Node { n: int }\n"
-                                "func take(p: *Node): int { return p.n; }\n"
-                                "func f(): int {\n"
+                                "struct Node { n: i32 }\n"
+                                "func take(p: *Node): i32 { return p.n; }\n"
+                                "func f(): i32 {\n"
                                 "    let a: *Node = box Node { n: 1 };\n"
                                 "    return take(a);\n"
                                 "}\n",
@@ -119,9 +119,9 @@ static void test_a_move_nulls_what_it_gave_away(void) {
 static void test_a_null_follows_the_move_it_answers_for(void) {
     Elaborated out;
     MIRFunction *ir = elaborate(&out,
-                                "struct Node { n: int }\n"
-                                "func take(p: *Node): int { return p.n; }\n"
-                                "func f(): int {\n"
+                                "struct Node { n: i32 }\n"
+                                "func take(p: *Node): i32 { return p.n; }\n"
+                                "func f(): i32 {\n"
                                 "    let a: *Node = box Node { n: 1 };\n"
                                 "    return take(a);\n"
                                 "}\n",
@@ -153,11 +153,11 @@ static void test_a_null_follows_the_move_it_answers_for(void) {
 static void test_a_value_moved_on_one_path_still_reaches_one_drop(void) {
     Elaborated out;
     MIRFunction *ir = elaborate(&out,
-                                "struct Node { n: int }\n"
-                                "func take(p: *Node): int { return p.n; }\n"
-                                "func f(c: bool): int {\n"
+                                "struct Node { n: i32 }\n"
+                                "func take(p: *Node): i32 { return p.n; }\n"
+                                "func f(c: bool): i32 {\n"
                                 "    let a: *Node = box Node { n: 1 };\n"
-                                "    if c { let x: int = take(a); }\n"
+                                "    if c { let x: i32 = take(a); }\n"
                                 "    return 0;\n"
                                 "}\n",
                                 "f");
@@ -170,7 +170,7 @@ static void test_a_value_moved_on_one_path_still_reaches_one_drop(void) {
 
 static void test_a_move_of_a_value_owning_nothing_needs_no_null(void) {
     Elaborated out;
-    MIRFunction *ir = elaborate(&out, "func f(): int { let a: int = 1; let b: int = a; return b; }", "f");
+    MIRFunction *ir = elaborate(&out, "func f(): i32 { let a: i32 = 1; let b: i32 = a; return b; }", "f");
 
     assert(count_op(ir, MIR_NULL) == 0);
 

@@ -16,7 +16,7 @@ static void test_negates_a_variable() {
 }
 
 static void test_negates_a_comparison() {
-    assert(test_run_bool("func f(): bool { let x: int = 1; return !(x < 2); }\n"
+    assert(test_run_bool("func f(): bool { let x: i32 = 1; return !(x < 2); }\n"
                          "let r: bool = f();\n") == false);
 }
 
@@ -50,9 +50,9 @@ static void test_binds_looser_than_a_postfix() {
 static void test_not_is_typed_boolean() {
     assert(test_compiles("func f(): bool { let b: bool = true; return !b; }\n"));
 
-    assert(!test_compiles("func f(): bool { let x: int = 1; return !x; }\n"));
-    assert(!test_compiles("func f(): bool { let x: float = 1.0; return !x; }\n"));
-    assert(!test_compiles("func f(): bool { let x: int = 1; let p: &int = x; return !p; }\n"));
+    assert(!test_compiles("func f(): bool { let x: i32 = 1; return !x; }\n"));
+    assert(!test_compiles("func f(): bool { let x: f32 = 1.0; return !x; }\n"));
+    assert(!test_compiles("func f(): bool { let x: i32 = 1; let p: &i32 = x; return !p; }\n"));
 }
 
 static void test_not_is_a_temporary() {

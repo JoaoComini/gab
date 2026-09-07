@@ -9,16 +9,16 @@
 #include <string.h>
 
 static void test_read_back_what_was_written() {
-    assert(test_run_float("struct Vec3 { x: float, y: float, z: float }\n"
-                          "func f(): float { let v = Vec3 { x: 1.5, y: 0.0, z: 0.0 }; return v.x; }\n"
-                          "let r: float = f();") == 1.5f);
+    assert(test_run_float("struct Vec3 { x: f32, y: f32, z: f32 }\n"
+                          "func f(): f32 { let v = Vec3 { x: 1.5, y: 0.0, z: 0.0 }; return v.x; }\n"
+                          "let r: f32 = f();") == 1.5f);
 }
 
 static void test_every_field_is_independent() {
-    const char *body = "struct Vec3 { x: float, y: float, z: float }\n"
-                       "func f(): float { let v = Vec3 { x: 1.0, y: 2.0, z: 4.0 };\n"
+    const char *body = "struct Vec3 { x: f32, y: f32, z: f32 }\n"
+                       "func f(): f32 { let v = Vec3 { x: 1.0, y: 2.0, z: 4.0 };\n"
                        "return %s; }\n"
-                       "let r: float = f();";
+                       "let r: f32 = f();";
 
     char source[512];
 
@@ -57,117 +57,117 @@ static void test_sub_word_fields_do_not_clobber() {
 }
 
 static void test_mixed_widths() {
-    assert(test_run_int("struct M { flag: bool, value: int }\n"
+    assert(test_run_int("struct M { flag: bool, value: i32 }\n"
                         "func f(): bool { let v = M { flag: true, value: 77 }; return v.flag; }\n"
                         "let r: bool = f();") == 1);
 
-    assert(test_run_int("struct M { flag: bool, value: int }\n"
-                        "func f(): int { let v = M { flag: true, value: 77 }; return v.value; }\n"
-                        "let r: int = f();") == 77);
+    assert(test_run_int("struct M { flag: bool, value: i32 }\n"
+                        "func f(): i32 { let v = M { flag: true, value: 77 }; return v.value; }\n"
+                        "let r: i32 = f();") == 77);
 
-    assert(test_run_int("struct M { flag: bool, value: int }\n"
+    assert(test_run_int("struct M { flag: bool, value: i32 }\n"
                         "func f(): bool { let v = M { flag: true, value: 77 }; return v.flag; }\n"
                         "let r: bool = f();") == 1);
 }
 
 static void test_nested_field_access() {
-    assert(test_run_int("struct In { x: int, y: int }\n"
-                        "struct Out { a: int, inner: In }\n"
-                        "func f(): int { let v = Out { a: 1, inner: In { x: 5, y: 9 } };\n"
+    assert(test_run_int("struct In { x: i32, y: i32 }\n"
+                        "struct Out { a: i32, inner: In }\n"
+                        "func f(): i32 { let v = Out { a: 1, inner: In { x: 5, y: 9 } };\n"
                         "return v.a + v.inner.x + v.inner.y; }\n"
-                        "let r: int = f();") == 15);
+                        "let r: i32 = f();") == 15);
 }
 
 static void test_whole_struct_assignment() {
-    assert(test_run_int("struct V { x: int, y: int }\n"
-                        "func f(): int { let b = V { x: 3, y: 4 };\n"
+    assert(test_run_int("struct V { x: i32, y: i32 }\n"
+                        "func f(): i32 { let b = V { x: 3, y: 4 };\n"
                         "let a: V = b;\n"
                         "return a.x + a.y; }\n"
-                        "let r: int = f();") == 7);
+                        "let r: i32 = f();") == 7);
 
-    assert(test_run_int("struct V { x: int, y: int }\n"
-                        "func f(): int { let b = V { x: 3, y: 4 };\n"
+    assert(test_run_int("struct V { x: i32, y: i32 }\n"
+                        "func f(): i32 { let b = V { x: 3, y: 4 };\n"
                         "let a: V = b; a.x = 99;\n"
                         "return b.x; }\n"
-                        "let r: int = f();") == 3);
+                        "let r: i32 = f();") == 3);
 }
 
 static void test_struct_local_is_per_frame() {
-    assert(test_run_int("struct Acc { total: int }\n"
-                        "func sum(n: int): int {\n"
+    assert(test_run_int("struct Acc { total: i32 }\n"
+                        "func sum(n: i32): i32 {\n"
                         "let a = Acc { total: n };\n"
                         "if n <= 0 { return 0; }\n"
-                        "let rest: int = sum(n - 1);\n"
+                        "let rest: i32 = sum(n - 1);\n"
                         "return a.total + rest;\n"
                         "}\n"
-                        "func main(): int { return sum(4); }\n"
-                        "let r: int = main();") == 10);
+                        "func main(): i32 { return sum(4); }\n"
+                        "let r: i32 = main();") == 10);
 }
 
 static void test_struct_parameter() {
-    assert(test_run_int("struct V { x: int, y: int }\n"
-                        "func sum(v: V): int { return v.x + v.y; }\n"
-                        "func main(): int { let a = V { x: 3, y: 4 }; return sum(a); }\n"
-                        "let r: int = main();") == 7);
+    assert(test_run_int("struct V { x: i32, y: i32 }\n"
+                        "func sum(v: V): i32 { return v.x + v.y; }\n"
+                        "func main(): i32 { let a = V { x: 3, y: 4 }; return sum(a); }\n"
+                        "let r: i32 = main();") == 7);
 }
 
 static void test_struct_parameter_is_by_value() {
-    assert(test_run_int("struct V { x: int, y: int }\n"
-                        "func bump(v: V): int { v.x = 999; return v.x; }\n"
-                        "func main(): int { let a = V { x: 3, y: 4 };\n"
-                        "let ignored: int = bump(a);\n"
+    assert(test_run_int("struct V { x: i32, y: i32 }\n"
+                        "func bump(v: V): i32 { v.x = 999; return v.x; }\n"
+                        "func main(): i32 { let a = V { x: 3, y: 4 };\n"
+                        "let ignored: i32 = bump(a);\n"
                         "return a.x; }\n"
-                        "let r: int = main();") == 3);
+                        "let r: i32 = main();") == 3);
 }
 
 static void test_struct_return() {
-    assert(test_run_int("struct V { x: int, y: int }\n"
+    assert(test_run_int("struct V { x: i32, y: i32 }\n"
                         "func make(): V { let v = V { x: 11, y: 22 }; return v; }\n"
-                        "func main(): int { let g: V = make(); return g.x + g.y; }\n"
-                        "let r: int = main();") == 33);
+                        "func main(): i32 { let g: V = make(); return g.x + g.y; }\n"
+                        "let r: i32 = main();") == 33);
 }
 
 static void test_function_takes_and_returns_structs() {
-    assert(test_run_int("struct V { x: int, y: int }\n"
+    assert(test_run_int("struct V { x: i32, y: i32 }\n"
                         "func twice(v: V): V { let o = V { x: v.x + v.x, y: v.y + v.y }; return o; }\n"
-                        "func main(): int { let a = V { x: 3, y: 4 };\n"
+                        "func main(): i32 { let a = V { x: 3, y: 4 };\n"
                         "let b: V = twice(a);\n"
                         "return b.x + b.y; }\n"
-                        "let r: int = main();") == 14);
+                        "let r: i32 = main();") == 14);
 }
 
 static void test_struct_return_larger_than_arguments() {
-    assert(test_run_int("struct Big { a: int, b: int, c: int, d: int }\n"
-                        "func make(n: int): Big { let v = Big { a: n, b: n + 1, c: n + 2, d: n + 3 };\n"
+    assert(test_run_int("struct Big { a: i32, b: i32, c: i32, d: i32 }\n"
+                        "func make(n: i32): Big { let v = Big { a: n, b: n + 1, c: n + 2, d: n + 3 };\n"
                         "return v; }\n"
-                        "func main(): int { let g: Big = make(10); return g.a + g.b + g.c + g.d; }\n"
-                        "let r: int = main();") == 46);
+                        "func main(): i32 { let g: Big = make(10); return g.a + g.b + g.c + g.d; }\n"
+                        "let r: i32 = main();") == 46);
 }
 
 static void test_mixed_scalar_and_struct_arguments() {
-    assert(test_run_int("struct V { x: int, y: int }\n"
-                        "func f(n: int, v: V, m: int): int { return n + v.x + v.y + m; }\n"
-                        "func main(): int { let a = V { x: 5, y: 6 }; return f(1, a, 100); }\n"
-                        "let r: int = main();") == 112);
+    assert(test_run_int("struct V { x: i32, y: i32 }\n"
+                        "func f(n: i32, v: V, m: i32): i32 { return n + v.x + v.y + m; }\n"
+                        "func main(): i32 { let a = V { x: 5, y: 6 }; return f(1, a, 100); }\n"
+                        "let r: i32 = main();") == 112);
 
-    assert(test_run_int("struct V { x: int, y: int }\n"
-                        "func add(a: V, b: V): int { return a.x + a.y + b.x + b.y; }\n"
-                        "func main(): int { let p = V { x: 1, y: 2 };\n"
+    assert(test_run_int("struct V { x: i32, y: i32 }\n"
+                        "func add(a: V, b: V): i32 { return a.x + a.y + b.x + b.y; }\n"
+                        "func main(): i32 { let p = V { x: 1, y: 2 };\n"
                         "let q = V { x: 10, y: 20 };\n"
                         "return add(p, q); }\n"
-                        "let r: int = main();") == 33);
+                        "let r: i32 = main();") == 33);
 }
 
 static void test_struct_round_trip_through_recursion() {
-    assert(test_run_int("struct V { x: int, y: int }\n"
-                        "func go(n: int, v: V): V {\n"
+    assert(test_run_int("struct V { x: i32, y: i32 }\n"
+                        "func go(n: i32, v: V): V {\n"
                         "if n <= 0 { return v; }\n"
                         "let w = V { x: v.x + 1, y: v.y + 2 };\n"
                         "return go(n - 1, w); }\n"
-                        "func main(): int { let a = V { x: 0, y: 0 };\n"
+                        "func main(): i32 { let a = V { x: 0, y: 0 };\n"
                         "let b: V = go(3, a);\n"
                         "return b.x * 100 + b.y; }\n"
-                        "let r: int = main();") == 306);
+                        "let r: i32 = main();") == 306);
 }
 
 static bool slots_match(VM *vm, const void *expected, size_t size) {
@@ -196,10 +196,10 @@ static void test_layout_agrees_with_c() {
     VM *vm = vm_create();
 
     compile_and_run(vm, "module test;\n"
-                        "struct Vec3 { x: float, y: float, z: float }\n"
-                        "func f(): float { let v = Vec3 { x: 1.5, y: 2.25, z: 7.0 };\n"
+                        "struct Vec3 { x: f32, y: f32, z: f32 }\n"
+                        "func f(): f32 { let v = Vec3 { x: 1.5, y: 2.25, z: 7.0 };\n"
                         "return v.x; }\n"
-                        "let r: float = f();");
+                        "let r: f32 = f();");
 
     struct Vec3 expected = {.x = 1.5f, .y = 2.25f, .z = 7.0f};
     assert_slots_match(vm, &expected, sizeof expected);
@@ -216,10 +216,10 @@ static void test_mixed_width_layout_agrees_with_c() {
     VM *vm = vm_create();
 
     compile_and_run(vm, "module test;\n"
-                        "struct M { flag: bool, value: int }\n"
-                        "func f(): int { let v = M { flag: true, value: 305419896 };\n"
+                        "struct M { flag: bool, value: i32 }\n"
+                        "func f(): i32 { let v = M { flag: true, value: 305419896 };\n"
                         "return v.value; }\n"
-                        "let r: int = f();");
+                        "let r: i32 = f();");
 
     struct Mixed expected;
     memset(&expected, 0, sizeof expected);
@@ -246,12 +246,12 @@ static void test_layout_comparison_rejects_wrong_layouts() {
     VM *vm = vm_create();
 
     compile_and_run(vm, "module test;\n"
-                        "struct Vec3 { x: float, y: float, z: float }\n"
-                        "struct M { flag: bool, value: int }\n"
-                        "func f(): float { let v = Vec3 { x: 1.5, y: 2.25, z: 7.0 };\n"
+                        "struct Vec3 { x: f32, y: f32, z: f32 }\n"
+                        "struct M { flag: bool, value: i32 }\n"
+                        "func f(): f32 { let v = Vec3 { x: 1.5, y: 2.25, z: 7.0 };\n"
                         "let m = M { flag: true, value: 305419896 };\n"
                         "return v.x; }\n"
-                        "let r: float = f();");
+                        "let r: f32 = f();");
 
     struct Shuffled shuffled = {.z = 7.0f, .x = 1.5f, .y = 2.25f};
     assert(!slots_match(vm, &shuffled, sizeof shuffled));
@@ -267,15 +267,15 @@ static void test_layout_comparison_rejects_wrong_layouts() {
 }
 
 static void test_an_overlapping_struct_copy_is_exact() {
-    assert(test_run_int("struct Inner { a: int, b: int, c: int }\n"
-                        "struct Outer { head: int, inner: Inner }\n"
-                        "func f(): int {\n"
+    assert(test_run_int("struct Inner { a: i32, b: i32, c: i32 }\n"
+                        "struct Outer { head: i32, inner: Inner }\n"
+                        "func f(): i32 {\n"
                         "    let o = Outer { head: 1, inner: Inner { a: 2, b: 3, c: 4 } };\n"
                         "    let copy: Inner = o.inner;\n"
                         "    o.inner = copy;\n"
                         "    return o.head * 1000 + o.inner.a * 100 + o.inner.b * 10 + o.inner.c;\n"
                         "}\n"
-                        "let r: int = f();") == 1234);
+                        "let r: i32 = f();") == 1234);
 }
 
 int main() {

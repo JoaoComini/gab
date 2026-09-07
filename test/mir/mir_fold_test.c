@@ -17,7 +17,7 @@ static size_t count_op(const MIRFunction *ir, MIROp op) {
 }
 
 static void negating_a_literal_leaves_no_negation(void) {
-    TestEmission emission = test_lower_ir("func one(): int { return -42; }\n");
+    TestEmission emission = test_lower_ir("func one(): i32 { return -42; }\n");
 
     assert(count_op(emission.ir, MIR_NEG) == 0);
     assert(count_op(emission.ir, MIR_CONST_INT) == 1);
@@ -26,7 +26,7 @@ static void negating_a_literal_leaves_no_negation(void) {
 }
 
 static void adding_two_literals_leaves_no_addition(void) {
-    TestEmission emission = test_lower_ir("func one(): int { return 2 + 3; }\n");
+    TestEmission emission = test_lower_ir("func one(): i32 { return 2 + 3; }\n");
 
     assert(count_op(emission.ir, MIR_ADD) == 0);
     assert(count_op(emission.ir, MIR_CONST_INT) == 1);
@@ -35,7 +35,7 @@ static void adding_two_literals_leaves_no_addition(void) {
 }
 
 static void a_nested_constant_expression_folds_wholly(void) {
-    TestEmission emission = test_lower_ir("func one(): int { return 2 + 3 * 4; }\n");
+    TestEmission emission = test_lower_ir("func one(): i32 { return 2 + 3 * 4; }\n");
 
     assert(count_op(emission.ir, MIR_ADD) == 0);
     assert(count_op(emission.ir, MIR_MUL) == 0);
@@ -45,7 +45,7 @@ static void a_nested_constant_expression_folds_wholly(void) {
 }
 
 static void adding_two_float_literals_leaves_no_addition(void) {
-    TestEmission emission = test_lower_ir("func one(): float { return 1.5 + 2.0; }\n");
+    TestEmission emission = test_lower_ir("func one(): f32 { return 1.5 + 2.0; }\n");
 
     assert(count_op(emission.ir, MIR_ADD) == 0);
 
@@ -53,7 +53,7 @@ static void adding_two_float_literals_leaves_no_addition(void) {
 }
 
 static void a_division_by_zero_keeps_its_division(void) {
-    TestEmission emission = test_lower_ir("func one(): int { return 1 / 0; }\n");
+    TestEmission emission = test_lower_ir("func one(): i32 { return 1 / 0; }\n");
 
     assert(count_op(emission.ir, MIR_DIV) == 1);
 
@@ -61,7 +61,7 @@ static void a_division_by_zero_keeps_its_division(void) {
 }
 
 static void an_operand_no_instruction_reads_is_dropped(void) {
-    TestEmission emission = test_lower_ir("func one(): int { return -42; }\n");
+    TestEmission emission = test_lower_ir("func one(): i32 { return -42; }\n");
 
     assert(count_op(emission.ir, MIR_CONST_INT) == 1);
 
@@ -69,7 +69,7 @@ static void an_operand_no_instruction_reads_is_dropped(void) {
 }
 
 static void a_variable_operand_keeps_its_operation(void) {
-    TestEmission emission = test_lower_ir("func one(a: int): int { return a + 3; }\n");
+    TestEmission emission = test_lower_ir("func one(a: i32): i32 { return a + 3; }\n");
 
     assert(count_op(emission.ir, MIR_ADD) == 1);
 
@@ -78,7 +78,7 @@ static void a_variable_operand_keeps_its_operation(void) {
 
 static void an_index_a_place_reads_is_not_dropped(void) {
     TestEmission emission =
-        test_lower_ir("func one(): int { let a: array<int, 3>; a[0] = 7; return a[1]; }\n");
+        test_lower_ir("func one(): i32 { let a: array<i32, 3>; a[0] = 7; return a[1]; }\n");
 
     for (size_t i = 0; i < emission.ir->block_count; i++) {
         const MIRBlock *block = emission.ir->blocks[i];

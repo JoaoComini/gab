@@ -77,13 +77,13 @@ static void test_emit_site_rejects_an_over_large_frame() {
     VM *vm = vm_create();
 
     char source[8192];
-    size_t used = (size_t)snprintf(source, sizeof(source), "func f(n: int): int {\n");
+    size_t used = (size_t)snprintf(source, sizeof(source), "func f(n: i32): i32 {\n");
 
     for (unsigned int i = 0; i < 254; i++) {
         used += (size_t)snprintf(source + used, sizeof(source) - used, "let s%u = n + 1;\n", i);
     }
 
-    snprintf(source + used, sizeof(source) - used, "return n;\n}\nlet r: int = f(7);\n");
+    snprintf(source + used, sizeof(source) - used, "return n;\n}\nlet r: i32 = f(7);\n");
 
     compile_and_run(vm, source);
 

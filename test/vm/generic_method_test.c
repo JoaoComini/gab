@@ -4,35 +4,35 @@
 #include <stdbool.h>
 
 static void test_a_method_declares_its_own_type_parameter() {
-    assert(test_compiles("struct Bag { n: int }\n"
+    assert(test_compiles("struct Bag { n: i32 }\n"
                          "impl Bag {\n"
                          "    func pick<U>(self: &Bag, other: U): U { return other; }\n"
                          "}\n"));
 }
 
 static void test_a_method_type_parameter_is_inferred_from_the_argument() {
-    assert(test_run_int("struct Bag { n: int }\n"
+    assert(test_run_int("struct Bag { n: i32 }\n"
                         "impl Bag {\n"
                         "    func pick<U>(self: &Bag, other: U): U { return other; }\n"
                         "}\n"
-                        "func main(): int {\n"
+                        "func main(): i32 {\n"
                         "    let b = Bag { n: 1 };\n"
                         "    return b.pick(9);\n"
                         "}\n"
-                        "let r: int = main();") == 9);
+                        "let r: i32 = main();") == 9);
 }
 
 static void test_one_method_serves_each_type_it_is_called_with() {
-    assert(test_run_float("struct Bag { n: int }\n"
+    assert(test_run_float("struct Bag { n: i32 }\n"
                           "impl Bag {\n"
                           "    func pick<U>(self: &Bag, other: U): U { return other; }\n"
                           "}\n"
-                          "func main(): float {\n"
+                          "func main(): f32 {\n"
                           "    let b = Bag { n: 1 };\n"
-                          "    let i: int = b.pick(3);\n"
+                          "    let i: i32 = b.pick(3);\n"
                           "    return b.pick(2.5);\n"
                           "}\n"
-                          "let r: float = main();") == 2.5f);
+                          "let r: f32 = main();") == 2.5f);
 }
 
 static void test_a_method_on_a_generic_type_declares_its_own_parameter() {
@@ -40,11 +40,11 @@ static void test_a_method_on_a_generic_type_declares_its_own_parameter() {
                         "impl<T> Holder<T> {\n"
                         "    func pick<U>(self: &Holder<T>, other: U): U { return other; }\n"
                         "}\n"
-                        "func main(): int {\n"
-                        "    let h = Holder<int> { value: 1 };\n"
+                        "func main(): i32 {\n"
+                        "    let h = Holder<i32> { value: 1 };\n"
                         "    return h.pick(7);\n"
                         "}\n"
-                        "let r: int = main();") == 7);
+                        "let r: i32 = main();") == 7);
 }
 
 static void test_a_method_reaches_both_its_own_parameter_and_its_owners() {
@@ -52,19 +52,19 @@ static void test_a_method_reaches_both_its_own_parameter_and_its_owners() {
                         "impl<T> Holder<T> {\n"
                         "    func swap<U>(self: &Holder<T>, other: U): T { return self.value; }\n"
                         "}\n"
-                        "func main(): int {\n"
-                        "    let h = Holder<int> { value: 5 };\n"
+                        "func main(): i32 {\n"
+                        "    let h = Holder<i32> { value: 5 };\n"
                         "    return h.swap(2.5);\n"
                         "}\n"
-                        "let r: int = main();") == 5);
+                        "let r: i32 = main();") == 5);
 }
 
 static void test_a_miscounted_call_names_the_count_rather_than_inference() {
-    assert(test_diagnostic_mentions("struct Bag { n: int }\n"
+    assert(test_diagnostic_mentions("struct Bag { n: i32 }\n"
                                     "impl Bag {\n"
                                     "    func pick<U>(self: &Bag, other: U): U { return other; }\n"
                                     "}\n"
-                                    "func main(): int {\n"
+                                    "func main(): i32 {\n"
                                     "    let b = Bag { n: 1 };\n"
                                     "    return b.pick();\n"
                                     "}\n",
@@ -73,18 +73,18 @@ static void test_a_miscounted_call_names_the_count_rather_than_inference() {
 
 static void test_a_generic_free_call_names_its_count_too() {
     assert(test_diagnostic_mentions("func pick<U>(a: U, b: U): U { return a; }\n"
-                                    "func main(): int { return pick(1); }\n",
+                                    "func main(): i32 { return pick(1); }\n",
                                     "expected 2 argument(s), found 1"));
 }
 
 static void test_a_written_type_argument_still_counts_its_arguments() {
     assert(test_diagnostic_mentions("func pick<U>(a: U, b: U): U { return a; }\n"
-                                    "func main(): int { return pick<int>(1); }\n",
+                                    "func main(): i32 { return pick<i32>(1); }\n",
                                     "expected 2 argument(s), found 1"));
 }
 
 static void test_a_parameter_no_argument_names_is_refused() {
-    assert(!test_compiles("struct Bag { n: int }\n"
+    assert(!test_compiles("struct Bag { n: i32 }\n"
                           "impl Bag {\n"
                           "    func make<U>(self: &Bag): U;\n"
                           "}\n"));

@@ -10,7 +10,7 @@ static bool cmp_int(int a, const char *op, int b) {
     char source[256];
 
     snprintf(source, sizeof(source),
-             "func f(): bool { let a: int = %d; let b: int = %d; return a %s b; }\n"
+             "func f(): bool { let a: i32 = %d; let b: i32 = %d; return a %s b; }\n"
              "let r: bool = f();\n",
              a, b, op);
 
@@ -21,7 +21,7 @@ static bool cmp_float(double a, const char *op, double b) {
     char source[256];
 
     snprintf(source, sizeof(source),
-             "func f(): bool { let a: float = %.1f; let b: float = %.1f; return a %s b; }\n"
+             "func f(): bool { let a: f32 = %.1f; let b: f32 = %.1f; return a %s b; }\n"
              "let r: bool = f();\n",
              a, b, op);
 
@@ -97,36 +97,36 @@ static void test_float_not_equal() {
 }
 
 static void test_immediate_operand_compares_the_same() {
-    assert(test_run_bool("func f(): bool { let a: int = 5; return a >= 3; }\n"
+    assert(test_run_bool("func f(): bool { let a: i32 = 5; return a >= 3; }\n"
                          "let r: bool = f();\n"));
 
-    assert(!test_run_bool("func f(): bool { let a: int = 3; return a >= 5; }\n"
+    assert(!test_run_bool("func f(): bool { let a: i32 = 3; return a >= 5; }\n"
                           "let r: bool = f();\n"));
 
-    assert(test_run_bool("func f(): bool { let a: int = 4; return a >= 4; }\n"
+    assert(test_run_bool("func f(): bool { let a: i32 = 4; return a >= 4; }\n"
                          "let r: bool = f();\n"));
 }
 
 static void test_a_float_literal_compares_the_same() {
-    assert(test_run_bool("func f(): bool { let a: float = 1.5; return a < 2.5; }\n"
+    assert(test_run_bool("func f(): bool { let a: f32 = 1.5; return a < 2.5; }\n"
                          "let r: bool = f();\n"));
 
-    assert(!test_run_bool("func f(): bool { let a: float = 3.5; return a < 2.5; }\n"
+    assert(!test_run_bool("func f(): bool { let a: f32 = 3.5; return a < 2.5; }\n"
                           "let r: bool = f();\n"));
 
-    assert(test_run_bool("func f(): bool { let a: float = 1.5; return a > 0.5; }\n"
+    assert(test_run_bool("func f(): bool { let a: f32 = 1.5; return a > 0.5; }\n"
                          "let r: bool = f();\n"));
 
-    assert(test_run_bool("func f(): bool { let a: float = 1.5; return a <= 1.5; }\n"
+    assert(test_run_bool("func f(): bool { let a: f32 = 1.5; return a <= 1.5; }\n"
                          "let r: bool = f();\n"));
 
-    assert(test_run_bool("func f(): bool { let a: float = 1.5; return a >= 1.5; }\n"
+    assert(test_run_bool("func f(): bool { let a: f32 = 1.5; return a >= 1.5; }\n"
                          "let r: bool = f();\n"));
 
-    assert(test_run_bool("func f(): bool { let a: float = 1.5; return a == 1.5; }\n"
+    assert(test_run_bool("func f(): bool { let a: f32 = 1.5; return a == 1.5; }\n"
                          "let r: bool = f();\n"));
 
-    assert(test_run_bool("func f(): bool { let a: float = 1.5; return a != 2.5; }\n"
+    assert(test_run_bool("func f(): bool { let a: f32 = 1.5; return a != 2.5; }\n"
                          "let r: bool = f();\n"));
 }
 

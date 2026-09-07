@@ -69,13 +69,13 @@ static const MIRInst *find_op(const MIRFunction *ir, MIROp op) {
 
 static void test_a_block_ends_in_exactly_one_terminator(void) {
     static const char *const sources[] = {
-        "func f(): int { return 1; }",
-        "func f(a: int): int { if a > 0 { return 1; } return 2; }",
-        "func f(a: int): int { for let i: int = 0; i < a; i = i + 1 { if i > 2 { break; } } return a; }",
-        "func f(a: int): int { for let i: int = 0; i < a; i = i + 1 { continue; } return a; }",
-        "func f(a: int): int { if a > 0 { return 1; } else { return 2; } }",
-        "func f(a: int, b: int): bool { return a > 0 && b > 0; }",
-        "func f(a: int) { }",
+        "func f(): i32 { return 1; }",
+        "func f(a: i32): i32 { if a > 0 { return 1; } return 2; }",
+        "func f(a: i32): i32 { for let i: i32 = 0; i < a; i = i + 1 { if i > 2 { break; } } return a; }",
+        "func f(a: i32): i32 { for let i: i32 = 0; i < a; i = i + 1 { continue; } return a; }",
+        "func f(a: i32): i32 { if a > 0 { return 1; } else { return 2; } }",
+        "func f(a: i32, b: i32): bool { return a > 0 && b > 0; }",
+        "func f(a: i32) { }",
     };
 
     for (size_t s = 0; s < sizeof(sources) / sizeof(sources[0]); s++) {
@@ -105,7 +105,7 @@ static void test_a_block_ends_in_exactly_one_terminator(void) {
 static void test_a_terminator_names_only_blocks_that_exist(void) {
     Lowered lowered;
     MIRFunction *ir = lower_first_function(
-        &lowered, "func f(a: int): int { for let i: int = 0; i < a; i = i + 1 { break; } return a; }");
+        &lowered, "func f(a: i32): i32 { for let i: i32 = 0; i < a; i = i + 1 { break; } return a; }");
 
     for (size_t i = 0; i < ir->block_count; i++) {
         MIRBlockId successors[2];
@@ -122,9 +122,9 @@ static void test_a_terminator_names_only_blocks_that_exist(void) {
 
 static void test_a_field_read_is_one_place_rather_than_a_load_chain(void) {
     Lowered lowered;
-    MIRFunction *ir = lower_first_function(&lowered, "struct Inner { v: int }\n"
+    MIRFunction *ir = lower_first_function(&lowered, "struct Inner { v: i32 }\n"
                                                      "struct Outer { inner: Inner }\n"
-                                                     "func f(o: Outer): int { return o.inner.v; }\n");
+                                                     "func f(o: Outer): i32 { return o.inner.v; }\n");
 
     const MIRInst *load = find_op(ir, MIR_LOAD);
 
@@ -141,8 +141,8 @@ static void test_a_field_read_is_one_place_rather_than_a_load_chain(void) {
 /* Reaching a field through a pointer is a hop the source does not spell, so the place must show it. */
 static void test_a_field_read_through_a_pointer_projects_a_deref(void) {
     Lowered lowered;
-    MIRFunction *ir = lower_first_function(&lowered, "struct Point { x: int }\n"
-                                                     "func f(p: &Point): int { return p.x; }\n");
+    MIRFunction *ir = lower_first_function(&lowered, "struct Point { x: i32 }\n"
+                                                     "func f(p: &Point): i32 { return p.x; }\n");
 
     const MIRInst *load = find_op(ir, MIR_LOAD);
 
@@ -156,7 +156,7 @@ static void test_a_field_read_through_a_pointer_projects_a_deref(void) {
 
 static void test_an_assignment_stores_into_the_place_it_names(void) {
     Lowered lowered;
-    MIRFunction *ir = lower_first_function(&lowered, "struct Point { x: int }\n"
+    MIRFunction *ir = lower_first_function(&lowered, "struct Point { x: i32 }\n"
                                                      "func f(p: &Point) { p.x = 3; }\n");
 
     const MIRInst *store = find_op(ir, MIR_STORE);
@@ -171,7 +171,7 @@ static void test_an_assignment_stores_into_the_place_it_names(void) {
 
 static void test_a_comparison_carries_its_predicate(void) {
     Lowered lowered;
-    MIRFunction *ir = lower_first_function(&lowered, "func f(a: int, b: int): bool { return a <= b; }");
+    MIRFunction *ir = lower_first_function(&lowered, "func f(a: i32, b: i32): bool { return a <= b; }");
 
     const MIRInst *cmp = find_op(ir, MIR_CMP);
 
@@ -185,7 +185,7 @@ static void test_a_comparison_carries_its_predicate(void) {
 /* 'b' runs only where 'a' allows it, so it cannot share a block with 'a'. */
 static void test_an_added_literal_is_named_in_its_instruction(void) {
     Lowered lowered;
-    MIRFunction *ir = lower_first_function(&lowered, "func f(a: int): int { return a + 7; }");
+    MIRFunction *ir = lower_first_function(&lowered, "func f(a: i32): i32 { return a + 7; }");
 
     const MIRInst *add = find_op(ir, MIR_ADD);
 
@@ -199,7 +199,7 @@ static void test_an_added_literal_is_named_in_its_instruction(void) {
 static void test_a_logical_operator_puts_its_second_operand_in_its_own_block(void) {
     Lowered lowered;
     MIRFunction *ir =
-        lower_first_function(&lowered, "func f(a: int, b: int): bool { return a > 0 && b > 0; }");
+        lower_first_function(&lowered, "func f(a: i32, b: i32): bool { return a > 0 && b > 0; }");
 
     assert(count_op(ir, MIR_BRANCH) == 1);
     assert(count_op(ir, MIR_CMP) == 2);
@@ -215,7 +215,7 @@ static void test_a_logical_operator_puts_its_second_operand_in_its_own_block(voi
 static void test_a_loop_returns_to_its_header(void) {
     Lowered lowered;
     MIRFunction *ir = lower_first_function(
-        &lowered, "func f(a: int): int { for let i: int = 0; i < a; i = i + 1 { } return a; }");
+        &lowered, "func f(a: i32): i32 { for let i: i32 = 0; i < a; i = i + 1 { } return a; }");
 
     bool found_back_edge = false;
 
@@ -270,8 +270,8 @@ static MIRFunction *lower_named_function(Lowered *lowered, const char *source, c
 static void test_a_call_names_its_callee_and_its_arguments(void) {
     Lowered lowered;
     MIRFunction *ir = lower_named_function(&lowered,
-                                           "func g(a: int, b: int): int { return a + b; }\n"
-                                           "func f(): int { return g(1, 2); }\n",
+                                           "func g(a: i32, b: i32): i32 { return a + b; }\n"
+                                           "func f(): i32 { return g(1, 2); }\n",
                                            "f");
 
     const MIRInst *call = find_op(ir, MIR_CALL);
@@ -285,7 +285,7 @@ static void test_a_call_names_its_callee_and_its_arguments(void) {
 
 static void test_a_parameter_is_a_value_the_body_names(void) {
     Lowered lowered;
-    MIRFunction *ir = lower_first_function(&lowered, "func f(a: int, b: int): int { return a; }");
+    MIRFunction *ir = lower_first_function(&lowered, "func f(a: i32, b: i32): i32 { return a; }");
 
     assert(ir->param_count == 2);
 
@@ -300,7 +300,7 @@ static void test_a_parameter_is_a_value_the_body_names(void) {
 
 static void test_a_body_that_runs_off_its_end_still_returns(void) {
     Lowered lowered;
-    MIRFunction *ir = lower_first_function(&lowered, "func f(a: int) { let b: int = a; }");
+    MIRFunction *ir = lower_first_function(&lowered, "func f(a: i32) { let b: i32 = a; }");
 
     assert(count_op(ir, MIR_RETURN) == 1);
 
@@ -309,7 +309,7 @@ static void test_a_body_that_runs_off_its_end_still_returns(void) {
 
 static void test_a_local_opens_and_closes_its_storage(void) {
     Lowered lowered;
-    MIRFunction *ir = lower_first_function(&lowered, "func f(): int { let a: int = 1; return a; }");
+    MIRFunction *ir = lower_first_function(&lowered, "func f(): i32 { let a: i32 = 1; return a; }");
 
     assert(count_op(ir, MIR_STORAGE_LIVE) == 1);
 
@@ -319,8 +319,8 @@ static void test_a_local_opens_and_closes_its_storage(void) {
 /* An owning local's object is released where the local's scope ends, on every path that leaves it. */
 static void test_a_local_is_ended_on_each_path_out_of_its_scope(void) {
     Lowered lowered;
-    MIRFunction *ir = lower_first_function(&lowered, "struct Node { n: int }\n"
-                                                     "func f(c: bool): int {\n"
+    MIRFunction *ir = lower_first_function(&lowered, "struct Node { n: i32 }\n"
+                                                     "func f(c: bool): i32 {\n"
                                                      "    let a: *Node = box Node { n: 1 };\n"
                                                      "    if c { return 0; }\n"
                                                      "    return a.n;\n"
@@ -335,8 +335,8 @@ static void test_a_local_is_ended_on_each_path_out_of_its_scope(void) {
 /* A scope closing without leaving the function still ends the locals it opened. */
 static void test_a_scope_that_falls_through_ends_its_locals(void) {
     Lowered lowered;
-    MIRFunction *ir = lower_first_function(&lowered, "struct Node { n: int }\n"
-                                                     "func f(c: bool): int {\n"
+    MIRFunction *ir = lower_first_function(&lowered, "struct Node { n: i32 }\n"
+                                                     "func f(c: bool): i32 {\n"
                                                      "    if c {\n"
                                                      "        let a: *Node = box Node { n: 1 };\n"
                                                      "    }\n"
@@ -352,9 +352,9 @@ static void test_a_scope_that_falls_through_ends_its_locals(void) {
 /* Leaving a loop leaves the scopes opened inside it, so their locals end at the jump. */
 static void test_a_break_ends_the_locals_the_loop_body_opened(void) {
     Lowered lowered;
-    MIRFunction *ir = lower_first_function(&lowered, "struct Node { n: int }\n"
-                                                     "func f(n: int): int {\n"
-                                                     "    for let i: int = 0; i < n; i = i + 1 {\n"
+    MIRFunction *ir = lower_first_function(&lowered, "struct Node { n: i32 }\n"
+                                                     "func f(n: i32): i32 {\n"
+                                                     "    for let i: i32 = 0; i < n; i = i + 1 {\n"
                                                      "        let a: *Node = box Node { n: 1 };\n"
                                                      "        break;\n"
                                                      "    }\n"
@@ -369,8 +369,8 @@ static void test_a_break_ends_the_locals_the_loop_body_opened(void) {
 /* A moving read leaves the place holding nothing, so it must be a load rather than a bare name. */
 static void test_a_move_reads_through_a_load_that_says_so(void) {
     Lowered lowered;
-    MIRFunction *ir = lower_first_function(&lowered, "struct Node { n: int }\n"
-                                                     "func f(): int {\n"
+    MIRFunction *ir = lower_first_function(&lowered, "struct Node { n: i32 }\n"
+                                                     "func f(): i32 {\n"
                                                      "    let a: *Node = box Node { n: 1 };\n"
                                                      "    let b: *Node = a;\n"
                                                      "    return b.n;\n"
@@ -393,7 +393,7 @@ static void test_a_move_reads_through_a_load_that_says_so(void) {
 
 static void test_a_copied_read_is_not_marked_as_a_move(void) {
     Lowered lowered;
-    MIRFunction *ir = lower_first_function(&lowered, "func f(a: int): int { let b: int = a; return b; }");
+    MIRFunction *ir = lower_first_function(&lowered, "func f(a: i32): i32 { let b: i32 = a; return b; }");
 
     for (size_t i = 0; i < ir->block_count; i++) {
         for (size_t j = 0; j < ir->blocks[i]->inst_count; j++) {
@@ -409,7 +409,7 @@ static void test_a_copied_read_is_not_marked_as_a_move(void) {
 static void indexing_checks_its_bounds(void) {
     Lowered lowered;
     MIRFunction *ir = lower_first_function(
-        &lowered, "func one(): int { let a: array<int, 3>; let i: int = 1; return a[i]; }\n");
+        &lowered, "func one(): i32 { let a: array<i32, 3>; let i: i32 = 1; return a[i]; }\n");
 
     assert(count_op(ir, MIR_BOUNDS) == 1);
 
@@ -419,7 +419,7 @@ static void indexing_checks_its_bounds(void) {
 static void a_bounds_check_precedes_the_read_it_guards(void) {
     Lowered lowered;
     MIRFunction *ir = lower_first_function(
-        &lowered, "func one(): int { let a: array<int, 3>; let i: int = 1; return a[i]; }\n");
+        &lowered, "func one(): i32 { let a: array<i32, 3>; let i: i32 = 1; return a[i]; }\n");
 
     const MIRBlock *block = ir->blocks[0];
 
@@ -444,7 +444,7 @@ static void a_bounds_check_precedes_the_read_it_guards(void) {
 static void indexing_a_constant_still_checks_its_bounds(void) {
     Lowered lowered;
     MIRFunction *ir =
-        lower_first_function(&lowered, "func one(): int { let a: array<int, 3>; return a[0]; }\n");
+        lower_first_function(&lowered, "func one(): i32 { let a: array<i32, 3>; return a[0]; }\n");
 
     assert(count_op(ir, MIR_BOUNDS) == 1);
 
@@ -454,7 +454,7 @@ static void indexing_a_constant_still_checks_its_bounds(void) {
 static void every_value_a_body_holds_names_its_type(void) {
     Lowered lowered;
     MIRFunction *ir = lower_first_function(
-        &lowered, "func one(): int { let a: array<int, 3> = [1, 20, 300]; return a[1]; }\n");
+        &lowered, "func one(): i32 { let a: array<i32, 3> = [1, 20, 300]; return a[1]; }\n");
 
     for (uint32_t v = 0; v < ir->value_count; v++) {
         const MIRValueInfo *info = mir_value_info(ir, (MIRValueId){v});
@@ -467,7 +467,7 @@ static void every_value_a_body_holds_names_its_type(void) {
 
 static void a_cast_between_equal_types_converts_nothing(void) {
     Lowered lowered;
-    MIRFunction *ir = lower_first_function(&lowered, "func one(a: int): int { return int(a); }\n");
+    MIRFunction *ir = lower_first_function(&lowered, "func one(a: i32): i32 { return i32(a); }\n");
 
     assert(count_op(ir, MIR_FTOI) == 0);
     assert(count_op(ir, MIR_ITOF) == 0);

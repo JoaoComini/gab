@@ -12,11 +12,11 @@ static void test_a_self_referential_struct_declares() {
 
 static void test_conversion_is_owned_to_ref_only() {
     assert(
-        test_compiles("struct Node { n: int }\n"
-                      "func f(): int { let o: *Node = box Node { n: 0 }; let b: &Node = o; return 0; }\n"));
+        test_compiles("struct Node { n: i32 }\n"
+                      "func f(): i32 { let o: *Node = box Node { n: 0 }; let b: &Node = o; return 0; }\n"));
 
-    assert(!test_compiles("struct Node { n: int }\n"
-                          "func f(): int {\n"
+    assert(!test_compiles("struct Node { n: i32 }\n"
+                          "func f(): i32 {\n"
                           "    let owner: *Node = box Node { n: 0 };\n"
                           "    let b: &Node = owner;\n"
                           "    let o: *Node = b;\n"
@@ -25,153 +25,153 @@ static void test_conversion_is_owned_to_ref_only() {
 }
 
 static void test_a_top_level_variable_may_not_own() {
-    assert(!test_compiles("struct Node { n: int }\nlet n: *Node = box Node { n: 0 };\n"));
+    assert(!test_compiles("struct Node { n: i32 }\nlet n: *Node = box Node { n: 0 };\n"));
     assert(test_compiles("let s: &str = \"hi\";\n"));
 }
 
 static void test_ref_and_box_nest_in_any_order() {
-    assert(test_compiles("struct Node { n: int }\nfunc f(): int { let a: &*Node; return 0; }\n"));
-    assert(test_compiles("struct Node { n: int }\nfunc f(): int { let b: *&Node; return 0; }\n"));
-    assert(test_compiles("struct Node { n: int }\nfunc f(): int { let c: &*&Node; return 0; }\n"));
+    assert(test_compiles("struct Node { n: i32 }\nfunc f(): i32 { let a: &*Node; return 0; }\n"));
+    assert(test_compiles("struct Node { n: i32 }\nfunc f(): i32 { let b: *&Node; return 0; }\n"));
+    assert(test_compiles("struct Node { n: i32 }\nfunc f(): i32 { let c: &*&Node; return 0; }\n"));
 }
 
 static void test_box_allocates_the_value_it_is_given() {
-    assert(test_compiles("struct Node { n: int }\n"
-                         "func f(): int { let o: **Node = box (box Node { n: 0 }); return 0; }\n"));
+    assert(test_compiles("struct Node { n: i32 }\n"
+                         "func f(): i32 { let o: **Node = box (box Node { n: 0 }); return 0; }\n"));
 
-    assert(!test_compiles("struct Node { n: int }\n"
-                          "func f(): int { let n = Node { n: 0 }; let b: &Node = n;\n"
+    assert(!test_compiles("struct Node { n: i32 }\n"
+                          "func f(): i32 { let n = Node { n: 0 }; let b: &Node = n;\n"
                           "                let o: *&Node = box b; return 0; }\n"));
 }
 
 static void test_freeing_an_owning_pointer_frees_beneath_it() {
-    assert(test_run_int("struct Node { n: int }\n"
-                        "func f(): int {\n"
+    assert(test_run_int("struct Node { n: i32 }\n"
+                        "func f(): i32 {\n"
                         "    let o: **Node = box (box Node { n: 0 });\n"
                         "    *o = box Node { n: 0 };\n"
                         "    o.n = 4;\n"
                         "    return o.n;\n"
                         "}\n"
-                        "let r: int = f();") == 4);
+                        "let r: i32 = f();") == 4);
 }
 
 static void test_lending_stops_at_the_first_level_that_matches() {
-    assert(test_run_int("struct Node { n: int }\n"
-                        "func object(b: &Node): int { return b.n; }\n"
-                        "func slot(s: &*Node): int { return s.n + 3; }\n"
-                        "func f(): int {\n"
+    assert(test_run_int("struct Node { n: i32 }\n"
+                        "func object(b: &Node): i32 { return b.n; }\n"
+                        "func slot(s: &*Node): i32 { return s.n + 3; }\n"
+                        "func f(): i32 {\n"
                         "    let o: **Node = box (box Node { n: 0 });\n"
                         "    *o = box Node { n: 0 };\n"
                         "    o.n = 4;\n"
                         "    return object(o) * 100 + slot(o);\n"
                         "}\n"
-                        "let r: int = f();") == 407);
+                        "let r: i32 = f();") == 407);
 }
 
 static void test_lending_reaches_through_a_borrow() {
-    assert(test_run_int("struct Node { n: int }\n"
-                        "func object(b: &Node): int { return b.n; }\n"
-                        "func slot(s: &*Node): int { return object(s); }\n"
-                        "func f(): int {\n"
+    assert(test_run_int("struct Node { n: i32 }\n"
+                        "func object(b: &Node): i32 { return b.n; }\n"
+                        "func slot(s: &*Node): i32 { return object(s); }\n"
+                        "func f(): i32 {\n"
                         "    let o: *Node = box Node { n: 0 };\n"
                         "    o.n = 4;\n"
                         "    return slot(o);\n"
                         "}\n"
-                        "let r: int = f();") == 4);
+                        "let r: i32 = f();") == 4);
 
-    assert(test_run_int("struct Node { n: int }\n"
-                        "func fill(b: &Node): int { b.n = 8; return 0; }\n"
-                        "func slot(s: &*Node): int { fill(s); return 0; }\n"
-                        "func f(): int {\n"
+    assert(test_run_int("struct Node { n: i32 }\n"
+                        "func fill(b: &Node): i32 { b.n = 8; return 0; }\n"
+                        "func slot(s: &*Node): i32 { fill(s); return 0; }\n"
+                        "func f(): i32 {\n"
                         "    let o: *Node = box Node { n: 0 };\n"
                         "    slot(o);\n"
                         "    return o.n;\n"
                         "}\n"
-                        "let r: int = f();") == 8);
+                        "let r: i32 = f();") == 8);
 }
 
 static void test_lending_through_a_borrow_keeps_its_lifetime() {
-    assert(!test_compiles("struct Node { n: int }\n"
+    assert(!test_compiles("struct Node { n: i32 }\n"
                           "func bad(): &Node {\n"
                           "    let local: *Node = box Node { n: 0 };\n"
                           "    let s: &*Node = local;\n"
                           "    return s;\n"
                           "}\n"));
 
-    assert(test_compiles("struct Node { n: int }\n"
+    assert(test_compiles("struct Node { n: i32 }\n"
                          "func ok(s: &*Node): &Node { return s; }\n"));
 }
 
 static void test_a_value_initializes_a_ref_binding() {
-    assert(test_run_int("struct Box { n: int }\n"
-                        "func main(): int {\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
+                        "func main(): i32 {\n"
                         "    let owned = Box { n: 4 };\n"
                         "    let borrowed: &Box = owned;\n"
                         "    return borrowed.n;\n"
                         "}\n"
-                        "let r: int = main();") == 4);
+                        "let r: i32 = main();") == 4);
 }
 
 static void test_a_borrowed_binding_writes_through() {
-    assert(test_run_int("struct Box { n: int }\n"
-                        "func main(): int {\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
+                        "func main(): i32 {\n"
                         "    let owned = Box { n: 1 };\n"
                         "    let borrowed: &Box = owned;\n"
                         "    borrowed.n = 9;\n"
                         "    return owned.n;\n"
                         "}\n"
-                        "let r: int = main();") == 9);
+                        "let r: i32 = main();") == 9);
 }
 
 static void test_a_temporary_cannot_be_borrowed() {
-    assert(!test_compiles("func f(): int { let p: &int = 1; return *p; }\n"));
+    assert(!test_compiles("func f(): i32 { let p: &i32 = 1; return *p; }\n"));
 
-    assert(!test_compiles("struct Box { n: int }\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
                           "func make(): Box { let b = Box { n: 0 }; return b; }\n"
-                          "func peek(b: &Box): int { return b.n; }\n"
-                          "func main(): int { return peek(make()); }\n"));
+                          "func peek(b: &Box): i32 { return b.n; }\n"
+                          "func main(): i32 { return peek(make()); }\n"));
 }
 
 static void test_a_field_reaches_through_every_pointer_level() {
-    assert(test_run_int("struct Box { n: int }\n"
-                        "func peek(s: &*Box): int { return s.n; }\n"
-                        "func main(): int {\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
+                        "func peek(s: &*Box): i32 { return s.n; }\n"
+                        "func main(): i32 {\n"
                         "    let o: *Box = box Box { n: 0 };\n"
                         "    o.n = 6;\n"
                         "    return peek(o);\n"
                         "}\n"
-                        "let r: int = main();") == 6);
+                        "let r: i32 = main();") == 6);
 }
 
 static void test_a_method_reaches_through_every_pointer_level() {
-    assert(test_run_int("struct Box { n: int }\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
                         "impl Box {\n"
-                        "    func bump(b: &Box): int { b.n = b.n + 1; return b.n; }\n"
+                        "    func bump(b: &Box): i32 { b.n = b.n + 1; return b.n; }\n"
                         "}\n"
-                        "func poke(s: &*Box): int { return s.bump(); }\n"
-                        "func main(): int {\n"
+                        "func poke(s: &*Box): i32 { return s.bump(); }\n"
+                        "func main(): i32 {\n"
                         "    let o: *Box = box Box { n: 0 };\n"
                         "    o.n = 11;\n"
                         "    return poke(o) * 100 + o.n;\n"
                         "}\n"
-                        "let r: int = main();") == 1212);
+                        "let r: i32 = main();") == 1212);
 }
 
 static void test_an_out_parameter_repoints_the_callers_slot() {
-    assert(test_run_int("struct Box { n: int }\n"
-                        "func replace(s: &*Box): int { *s = box Box { n: 0 }; (*s).n = 9; return 0; }\n"
-                        "func main(): int {\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
+                        "func replace(s: &*Box): i32 { *s = box Box { n: 0 }; (*s).n = 9; return 0; }\n"
+                        "func main(): i32 {\n"
                         "    let o: *Box = box Box { n: 0 };\n"
                         "    o.n = 1;\n"
                         "    replace(o);\n"
                         "    return o.n;\n"
                         "}\n"
-                        "let r: int = main();") == 9);
+                        "let r: i32 = main();") == 9);
 }
 
 static void test_an_out_parameter_leaves_one_owner() {
-    TestProgram program = test_compile("struct Box { n: int }\n"
-                                       "func replace(s: &*Box): int { *s = box Box { n: 0 }; return 0; }\n");
+    TestProgram program = test_compile("struct Box { n: i32 }\n"
+                                       "func replace(s: &*Box): i32 { *s = box Box { n: 0 }; return 0; }\n");
 
     assert(test_count_opcode(test_func_chunk(&program, 0), OP_RELEASE) == 1);
 
@@ -179,53 +179,53 @@ static void test_an_out_parameter_leaves_one_owner() {
 }
 
 static void test_a_ref_field_reads_and_writes() {
-    assert(test_run_int("struct Node { n: int, parent: &Leaf }\n"
-                        "struct Leaf { n: int }\n"
-                        "func main(): int {\n"
+    assert(test_run_int("struct Node { n: i32, parent: &Leaf }\n"
+                        "struct Leaf { n: i32 }\n"
+                        "func main(): i32 {\n"
                         "    let a = Leaf { n: 7 };\n"
                         "    let b: *Node = box Node { n: 0, parent: a };\n"
                         "    return b.parent.n;\n"
                         "}\n"
-                        "let r: int = main();") == 7);
+                        "let r: i32 = main();") == 7);
 }
 
 static void test_a_ref_passes_to_a_ref_parameter() {
-    assert(test_run_int("struct Box { n: int }\n"
-                        "func peek(b: &Box): int { return b.n; }\n"
-                        "func main(): int {\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
+                        "func peek(b: &Box): i32 { return b.n; }\n"
+                        "func main(): i32 {\n"
                         "    let owner: *Box = box Box { n: 0 };\n"
                         "    owner.n = 8;\n"
                         "    let borrowed: &Box = owner;\n"
                         "    return peek(borrowed);\n"
                         "}\n"
-                        "let r: int = main();") == 8);
+                        "let r: i32 = main();") == 8);
 }
 
 static void test_an_owned_pointer_passes_to_a_ref_parameter() {
-    assert(test_run_int("struct Box { n: int }\n"
-                        "func peek(b: &Box): int { return b.n; }\n"
-                        "func main(): int {\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
+                        "func peek(b: &Box): i32 { return b.n; }\n"
+                        "func main(): i32 {\n"
                         "    let owner: *Box = box Box { n: 0 };\n"
                         "    owner.n = 3;\n"
                         "    return peek(owner);\n"
                         "}\n"
-                        "let r: int = main();") == 3);
+                        "let r: i32 = main();") == 3);
 }
 
 static void test_a_call_returning_a_ref_is_not_freed() {
-    assert(test_run_int("struct Box { n: int }\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
                         "func borrow(b: &Box): &Box { return b; }\n"
-                        "func main(): int {\n"
+                        "func main(): i32 {\n"
                         "    let owner: *Box = box Box { n: 0 };\n"
                         "    owner.n = 2;\n"
                         "    let got: &Box = borrow(owner);\n"
                         "    return got.n + owner.n;\n"
                         "}\n"
-                        "let r: int = main();") == 4);
+                        "let r: i32 = main();") == 4);
 }
 
 static void test_a_ref_to_a_local_cannot_be_returned() {
-    assert(!test_compiles("struct Box { n: int }\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
                           "func bad(): &Box {\n"
                           "    let local = Box { n: 0 };\n"
                           "    return local;\n"
@@ -233,9 +233,9 @@ static void test_a_ref_to_a_local_cannot_be_returned() {
 }
 
 static void test_a_ref_returned_from_a_call_cannot_outlive_its_argument() {
-    assert(!test_compiles("struct Box { n: int }\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
                           "func borrow(b: &Box): &Box { return b; }\n"
-                          "func main(): int {\n"
+                          "func main(): i32 {\n"
                           "    let escaped: &Box;\n"
                           "    { let inner = Box { n: 0 }; escaped = borrow(inner); }\n"
                           "    return escaped.n;\n"
@@ -243,7 +243,7 @@ static void test_a_ref_returned_from_a_call_cannot_outlive_its_argument() {
 }
 
 static void test_a_ref_declared_from_a_call_carries_the_argument_lifetime() {
-    assert(!test_compiles("struct Box { n: int }\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
                           "func borrow(b: &Box): &Box { return b; }\n"
                           "func leak(): &Box {\n"
                           "    let local = Box { n: 0 };\n"
@@ -253,9 +253,9 @@ static void test_a_ref_declared_from_a_call_carries_the_argument_lifetime() {
 }
 
 static void test_a_returned_borrow_names_only_the_argument_it_came_from() {
-    assert(test_compiles("struct Box { n: int }\n"
+    assert(test_compiles("struct Box { n: i32 }\n"
                          "func pick(a: &Box, b: &Box): &Box { return a; }\n"
-                         "func main(): int {\n"
+                         "func main(): i32 {\n"
                          "    let owner: *Box = box Box { n: 0 };\n"
                          "    let got: &Box = owner;\n"
                          "    { let inner = Box { n: 1 }; got = pick(owner, inner); }\n"
@@ -264,12 +264,12 @@ static void test_a_returned_borrow_names_only_the_argument_it_came_from() {
 }
 
 static void test_a_returned_borrow_names_every_argument_it_may_come_from() {
-    assert(!test_compiles("struct Box { n: int }\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
                           "func choose(a: &Box, b: &Box, flag: bool): &Box {\n"
                           "    if flag { return a; }\n"
                           "    return b;\n"
                           "}\n"
-                          "func main(): int {\n"
+                          "func main(): i32 {\n"
                           "    let owner: *Box = box Box { n: 0 };\n"
                           "    let got: &Box = owner;\n"
                           "    { let inner = Box { n: 1 }; got = choose(owner, inner, true); }\n"
@@ -278,12 +278,12 @@ static void test_a_returned_borrow_names_every_argument_it_may_come_from() {
 }
 
 static void test_a_recursive_call_names_every_argument() {
-    assert(!test_compiles("struct Box { n: int }\n"
-                          "func walk(a: &Box, b: &Box, n: int): &Box {\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
+                          "func walk(a: &Box, b: &Box, n: i32): &Box {\n"
                           "    if n == 0 { return a; }\n"
                           "    return walk(b, a, n - 1);\n"
                           "}\n"
-                          "func main(): int {\n"
+                          "func main(): i32 {\n"
                           "    let owner: *Box = box Box { n: 0 };\n"
                           "    let got: &Box = owner;\n"
                           "    { let inner = Box { n: 1 }; got = walk(owner, inner, 1); }\n"
@@ -292,9 +292,9 @@ static void test_a_recursive_call_names_every_argument() {
 }
 
 static void test_a_call_without_a_body_names_every_argument() {
-    assert(!test_compiles("struct Box { n: int }\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
                           "extern func pick(a: &Box, b: &Box): &Box;\n"
-                          "func main(): int {\n"
+                          "func main(): i32 {\n"
                           "    let owner: *Box = box Box { n: 0 };\n"
                           "    let got: &Box = owner;\n"
                           "    { let inner = Box { n: 1 }; got = pick(owner, inner); }\n"
@@ -303,8 +303,8 @@ static void test_a_call_without_a_body_names_every_argument() {
 }
 
 static void test_a_borrow_returned_by_a_function_declared_below_names_its_argument() {
-    assert(test_compiles("struct Box { n: int }\n"
-                         "func main(): int {\n"
+    assert(test_compiles("struct Box { n: i32 }\n"
+                         "func main(): i32 {\n"
                          "    let owner: *Box = box Box { n: 0 };\n"
                          "    let got: &Box = owner;\n"
                          "    { let inner = Box { n: 1 }; got = pick(owner, inner); }\n"
@@ -314,32 +314,32 @@ static void test_a_borrow_returned_by_a_function_declared_below_names_its_argume
 }
 
 static void test_a_lone_borrowed_parameter_is_what_a_bodiless_call_returns() {
-    assert(test_compiles("struct Box { n: int }\n"
+    assert(test_compiles("struct Box { n: i32 }\n"
                          "extern func peek(b: &Box, other: Box): &Box;\n"
-                         "func f(): int {\n"
+                         "func f(): i32 {\n"
                          "    let owner: *Box = box Box { n: 0 };\n"
                          "    let got: &Box;\n"
                          "    { let scratch = Box { n: 1 }; got = peek(owner, scratch); }\n"
                          "    return got.n;\n"
                          "}\n"
-                         "let r: int = f();"));
+                         "let r: i32 = f();"));
 }
 
 static void test_a_ref_borrowed_from_a_heap_object_is_accepted() {
-    assert(test_run_int("struct Box { n: int }\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
                         "func borrow(b: &Box): &Box { return b; }\n"
-                        "func main(): int {\n"
+                        "func main(): i32 {\n"
                         "    let owner: *Box = box Box { n: 0 };\n"
                         "    owner.n = 5;\n"
                         "    let got: &Box = borrow(owner);\n"
                         "    return got.n;\n"
                         "}\n"
-                        "let r: int = main();") == 5);
+                        "let r: i32 = main();") == 5);
 }
 
 static void test_a_borrow_does_not_survive_what_it_names() {
-    assert(!test_compiles("struct Box { n: int }\n"
-                          "func f(): int {\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
+                          "func f(): i32 {\n"
                           "    let o: *Box = box Box { n: 7 };\n"
                           "    let b: &Box = o;\n"
                           "    o = box Box { n: 9 };\n"
@@ -348,9 +348,9 @@ static void test_a_borrow_does_not_survive_what_it_names() {
 }
 
 static void test_a_borrowing_field_does_not_survive_what_it_names() {
-    assert(!test_compiles("struct Box { n: int }\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
                           "struct Watcher { b: &Box }\n"
-                          "func f(): int {\n"
+                          "func f(): i32 {\n"
                           "    let o: *Box = box Box { n: 7 };\n"
                           "    let w = Watcher { b: o };\n"
                           "    o = box Box { n: 9 };\n"
@@ -359,8 +359,8 @@ static void test_a_borrowing_field_does_not_survive_what_it_names() {
 }
 
 static void test_a_borrow_does_not_survive_the_scope_that_owns_it() {
-    assert(!test_compiles("struct Box { n: int }\n"
-                          "func f(): int {\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
+                          "func f(): i32 {\n"
                           "    let b: &Box;\n"
                           "    { let o: *Box = box Box { n: 7 }; b = o; }\n"
                           "    return b.n;\n"
@@ -368,9 +368,9 @@ static void test_a_borrow_does_not_survive_the_scope_that_owns_it() {
 }
 
 static void test_a_value_borrowing_from_two_slots_names_both() {
-    assert(!test_compiles("struct Box { n: int }\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
                           "struct Pair { a: &Box, b: &Box }\n"
-                          "func f(): int {\n"
+                          "func f(): i32 {\n"
                           "    let x: *Box = box Box { n: 1 };\n"
                           "    let y: *Box = box Box { n: 2 };\n"
                           "    let p = Pair { a: x, b: y };\n"
@@ -380,9 +380,9 @@ static void test_a_value_borrowing_from_two_slots_names_both() {
 }
 
 static void test_a_value_borrowing_from_more_slots_than_fit_names_them_all() {
-    assert(!test_compiles("struct Box { n: int }\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
                           "struct Five { a: &Box, b: &Box, c: &Box, d: &Box, e: &Box }\n"
-                          "func f(): int {\n"
+                          "func f(): i32 {\n"
                           "    let v: *Box = box Box { n: 1 };\n"
                           "    let w: *Box = box Box { n: 2 };\n"
                           "    let x: *Box = box Box { n: 3 };\n"
@@ -395,66 +395,66 @@ static void test_a_value_borrowing_from_more_slots_than_fit_names_them_all() {
 }
 
 static void test_an_owned_return_does_not_inherit_argument_lifetimes() {
-    assert(test_run_int("struct Box { n: int }\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
                         "func make(seed: &Box): *Box {\n"
                         "    let fresh: *Box = box Box { n: 0 };\n"
                         "    fresh.n = seed.n + 1;\n"
                         "    return fresh;\n"
                         "}\n"
-                        "func main(): int {\n"
+                        "func main(): i32 {\n"
                         "    let out: *Box = box Box { n: 0 };\n"
                         "    { let tmp: *Box = box Box { n: 0 }; tmp.n = 1; out = make(tmp); }\n"
                         "    return out.n;\n"
                         "}\n"
-                        "let r: int = main();") == 2);
+                        "let r: i32 = main();") == 2);
 }
 
 static void test_an_owned_return_is_still_allowed() {
-    assert(test_run_int("struct Box { n: int }\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
                         "func make(): *Box {\n"
                         "    let b: *Box = box Box { n: 0 };\n"
                         "    b.n = 4;\n"
                         "    return b;\n"
                         "}\n"
-                        "func main(): int { let b: *Box = make(); return b.n; }\n"
-                        "let r: int = main();") == 4);
+                        "func main(): i32 { let b: *Box = make(); return b.n; }\n"
+                        "let r: i32 = main();") == 4);
 }
 
 static void test_an_owning_pointer_does_not_reach_a_double_borrow() {
-    assert(!test_compiles("struct Box { n: int }\n"
-                          "func replace(slot: &&Box): int { return 0; }\n"
-                          "func main(): int {\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
+                          "func replace(slot: &&Box): i32 { return 0; }\n"
+                          "func main(): i32 {\n"
                           "    let o: *Box = box Box { n: 0 };\n"
                           "    return replace(o);\n"
                           "}\n"));
 }
 
 static void test_a_borrow_of_a_borrow_is_allowed() {
-    assert(test_run_int("func f(): int {\n"
-                        "    let x: int = 5;\n"
-                        "    let p: &int = x;\n"
-                        "    let q: &&int = p;\n"
+    assert(test_run_int("func f(): i32 {\n"
+                        "    let x: i32 = 5;\n"
+                        "    let p: &i32 = x;\n"
+                        "    let q: &&i32 = p;\n"
                         "    **q = 11;\n"
                         "    return x;\n"
                         "}\n"
-                        "let r: int = f();") == 11);
+                        "let r: i32 = f();") == 11);
 }
 
 static void test_a_ref_parameter_is_an_out_parameter_for_values() {
-    assert(test_run_int("struct Box { n: int }\n"
-                        "func fill(b: &Box): int { b.n = 42; return 0; }\n"
-                        "func main(): int {\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
+                        "func fill(b: &Box): i32 { b.n = 42; return 0; }\n"
+                        "func main(): i32 {\n"
                         "    let o: *Box = box Box { n: 0 };\n"
                         "    fill(o);\n"
                         "    return o.n;\n"
                         "}\n"
-                        "let r: int = main();") == 42);
+                        "let r: i32 = main();") == 42);
 }
 
 static void test_an_owned_temporary_in_an_assignment_does_not_leak() {
     TestProgram program =
-        test_compile("struct Node { v: int }\n"
-                     "func f(): int { let x: int = 0; x = (box Node { v: 0 }).v; return x; }\n");
+        test_compile("struct Node { v: i32 }\n"
+                     "func f(): i32 { let x: i32 = 0; x = (box Node { v: 0 }).v; return x; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
@@ -467,8 +467,8 @@ static void test_an_owned_temporary_in_an_assignment_does_not_leak() {
 }
 
 static void test_a_field_read_from_an_owned_temporary_does_not_leak() {
-    TestProgram program = test_compile("struct Node { v: int }\n"
-                                       "func f(): int { return (box Node { v: 0 }).v; }\n");
+    TestProgram program = test_compile("struct Node { v: i32 }\n"
+                                       "func f(): i32 { return (box Node { v: 0 }).v; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
@@ -479,8 +479,8 @@ static void test_a_field_read_from_an_owned_temporary_does_not_leak() {
 }
 
 static void test_a_branch_join_takes_the_shorter_lived_borrow() {
-    assert(!test_compiles("struct Box { n: int }\n"
-                          "func main(): int {\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
+                          "func main(): i32 {\n"
                           "    let heap: *Box = box Box { n: 0 };\n"
                           "    let out: &Box = heap;\n"
                           "    {\n"
@@ -492,8 +492,8 @@ static void test_a_branch_join_takes_the_shorter_lived_borrow() {
                           "    return out.n;\n"
                           "}\n"));
 
-    assert(test_compiles("struct Box { n: int }\n"
-                         "func main(): int {\n"
+    assert(test_compiles("struct Box { n: i32 }\n"
+                         "func main(): i32 {\n"
                          "    let heap: *Box = box Box { n: 0 };\n"
                          "    let out: &Box = heap;\n"
                          "    {\n"
@@ -507,8 +507,8 @@ static void test_a_branch_join_takes_the_shorter_lived_borrow() {
 }
 
 static void test_a_borrow_taken_late_in_a_loop_reaches_the_next_iteration() {
-    assert(!test_compiles("struct Box { n: int }\n"
-                          "func main(): int {\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
+                          "func main(): i32 {\n"
                           "    let heap: *Box = box Box { n: 0 };\n"
                           "    let out: &Box = heap;\n"
                           "    {\n"
@@ -524,8 +524,8 @@ static void test_a_borrow_taken_late_in_a_loop_reaches_the_next_iteration() {
 }
 
 static void test_reassigning_a_borrow_replaces_what_it_names() {
-    assert(test_compiles("struct Box { n: int }\n"
-                         "func main(): int {\n"
+    assert(test_compiles("struct Box { n: i32 }\n"
+                         "func main(): i32 {\n"
                          "    let heap: *Box = box Box { n: 0 };\n"
                          "    let out: &Box = heap;\n"
                          "    {\n"
@@ -537,8 +537,8 @@ static void test_reassigning_a_borrow_replaces_what_it_names() {
                          "    return out.n;\n"
                          "}\n"));
 
-    assert(!test_compiles("struct Box { n: int }\n"
-                          "func main(): int {\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
+                          "func main(): i32 {\n"
                           "    let heap: *Box = box Box { n: 0 };\n"
                           "    let out: &Box = heap;\n"
                           "    {\n"
@@ -551,8 +551,8 @@ static void test_reassigning_a_borrow_replaces_what_it_names() {
 }
 
 static void test_an_arm_that_returns_does_not_reach_the_join() {
-    assert(test_compiles("struct Box { n: int }\n"
-                         "func main(): int {\n"
+    assert(test_compiles("struct Box { n: i32 }\n"
+                         "func main(): i32 {\n"
                          "    let heap: *Box = box Box { n: 0 };\n"
                          "    let out: &Box = heap;\n"
                          "    {\n"
@@ -564,8 +564,8 @@ static void test_an_arm_that_returns_does_not_reach_the_join() {
                          "    return out.n;\n"
                          "}\n"));
 
-    assert(!test_compiles("struct Box { n: int }\n"
-                          "func main(): int {\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
+                          "func main(): i32 {\n"
                           "    let heap: *Box = box Box { n: 0 };\n"
                           "    let out: &Box = heap;\n"
                           "    {\n"

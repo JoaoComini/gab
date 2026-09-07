@@ -13,7 +13,7 @@ static void test_compile_error_is_reported_not_printed(void) {
     GabError err;
     assert(!gab_vm_load(vm, "<bad>",
                         "module test;\n"
-                        "func broken(: int { return",
+                        "func broken(: i32 { return",
                         &err));
     assert(err.message[0] != '\0');
     assert(err.line > 0);
@@ -27,7 +27,7 @@ static void test_compile_once_run_many(void) {
     GabError err;
     bool mod = gab_vm_load(vm, "<m>",
                            "module test;\n"
-                           "func seven(): int { return 7; }\nlet r: int = seven();\n",
+                           "func seven(): i32 { return 7; }\nlet r: i32 = seven();\n",
                            &err);
     assert(mod);
 
@@ -44,7 +44,7 @@ static void test_type_survives_a_later_compile(void) {
 
     bool first = gab_vm_load(vm, "<first>",
                              "module test;\n"
-                             "struct Player { health: int, mana: int }\n",
+                             "struct Player { health: i32, mana: i32 }\n",
                              &err);
     assert(first);
 
@@ -76,7 +76,7 @@ static void test_layout_matches_c(void) {
     GabError err;
     bool mod = gab_vm_load(vm, "<layout>",
                            "module test;\n"
-                           "struct Player { health: int, mana: int }\n",
+                           "struct Player { health: i32, mana: i32 }\n",
                            &err);
     assert(mod);
 
@@ -105,7 +105,7 @@ static void test_lookup_failures(void) {
     GabError err;
     bool mod = gab_vm_load(vm, "<m>",
                            "module test;\n"
-                           "func real(): int { return 1; }\nlet notafunc: int = 3;\n",
+                           "func real(): i32 { return 1; }\nlet notafunc: i32 = 3;\n",
                            &err);
     assert(mod);
 
@@ -133,7 +133,7 @@ static void test_a_host_call_reaches_a_builtin_method(void) {
     GabError err;
     bool mod = gab_vm_load(vm, "<m>",
                            "module test;\n"
-                           "func size(): int { let s: &str = \"abcd\"; return s.len(); }\n",
+                           "func size(): i32 { let s: &str = \"abcd\"; return s.len(); }\n",
                            &err);
     assert(mod);
 
@@ -158,7 +158,7 @@ static void test_call_with_scalar_args(void) {
     GabError err;
     bool mod = gab_vm_load(vm, "<m>",
                            "module test;\n"
-                           "func mix(a: int, b: float, flag: bool): int {\n"
+                           "func mix(a: i32, b: f32, flag: bool): i32 {\n"
                            "  if flag { return a * 2; } else { return a; }\n"
                            "}\n",
                            &err);
@@ -194,7 +194,7 @@ static void test_call_in_a_loop(void) {
     GabError err;
     bool mod = gab_vm_load(vm, "<m>",
                            "module test;\n"
-                           "func step(n: int): int { return n + 1; }\n",
+                           "func step(n: i32): i32 { return n + 1; }\n",
                            &err);
     assert(mod);
 
@@ -223,8 +223,8 @@ static void test_struct_argument_and_return(void) {
     GabError err;
     bool mod = gab_vm_load(vm, "<m>",
                            "module test;\n"
-                           "struct Player { health: int, mana: int }\n"
-                           "func hurt(p: Player, amount: int): Player {\n"
+                           "struct Player { health: i32, mana: i32 }\n"
+                           "func hurt(p: Player, amount: i32): Player {\n"
                            "  let out = Player { health: p.health - amount, mana: p.mana };\n"
                            "  return out;\n"
                            "}\n",
@@ -259,8 +259,8 @@ static void test_bad_arguments_are_rejected(void) {
     GabError err;
     bool mod = gab_vm_load(vm, "<m>",
                            "module test;\n"
-                           "struct Player { health: int, mana: int }\n"
-                           "func take(p: Player, n: int): int { return n; }\n",
+                           "struct Player { health: i32, mana: i32 }\n"
+                           "func take(p: Player, n: i32): i32 { return n; }\n",
                            &err);
     assert(mod);
 
@@ -300,7 +300,7 @@ static void test_runtime_error_is_reported(void) {
     GabError err;
     bool mod = gab_vm_load(vm, "<m>",
                            "module test;\n"
-                           "func boom(n: int): int { return boom(n); }\n",
+                           "func boom(n: i32): i32 { return boom(n); }\n",
                            &err);
     assert(mod);
 
@@ -320,7 +320,7 @@ static void test_runtime_error_is_reported(void) {
 
     bool ok = gab_vm_load(vm, "<ok>",
                           "module test;\n"
-                          "func fine(n: int): int { return n + 1; }\n",
+                          "func fine(n: i32): i32 { return n + 1; }\n",
                           &err);
     assert(ok);
 
@@ -348,8 +348,8 @@ static void test_runtime_error_in_a_top_level_fails_the_load(void) {
 
     assert(!gab_vm_load(vm, "<m>",
                         "module test;\n"
-                        "func boom(n: int): int { return boom(n); }\n"
-                        "let r: int = boom(1);\n",
+                        "func boom(n: i32): i32 { return boom(n); }\n"
+                        "let r: i32 = boom(1);\n",
                         &err));
 
     assert(err.message[0] != '\0');
@@ -363,7 +363,7 @@ static void test_unset_arguments_are_rejected(void) {
     GabError err;
     bool mod = gab_vm_load(vm, "<m>",
                            "module test;\n"
-                           "func two(a: int, b: int): int { return a + b; }\n",
+                           "func two(a: i32, b: i32): i32 { return a + b; }\n",
                            &err);
     assert(mod);
 
@@ -398,7 +398,7 @@ static void test_rejected_setter_does_not_supply_an_argument(void) {
     GabError err;
     bool mod = gab_vm_load(vm, "<m>",
                            "module test;\n"
-                           "func two(a: int, b: int): int { return a + b; }\n",
+                           "func two(a: i32, b: i32): i32 { return a + b; }\n",
                            &err);
     assert(mod);
 
@@ -437,13 +437,13 @@ static void test_two_modules_can_share_a_function_name(void) {
 
     bool player = gab_vm_load(vm, "player.gab",
                               "module Player;\n"
-                              "func on_update(): int { return 1; }\n",
+                              "func on_update(): i32 { return 1; }\n",
                               &err);
     assert(player);
 
     bool enemy = gab_vm_load(vm, "enemy.gab",
                              "module Enemy;\n"
-                             "func on_update(): int { return 2; }\n",
+                             "func on_update(): i32 { return 2; }\n",
                              &err);
     assert(enemy);
     assert(err.message[0] == '\0');
@@ -474,7 +474,7 @@ static void test_the_script_names_its_module_not_the_filename(void) {
 
     GabError err;
 
-    bool named = gab_vm_load(vm, "some_file.gab", "module Player;\nfunc f(): int { return 1; }\n", &err);
+    bool named = gab_vm_load(vm, "some_file.gab", "module Player;\nfunc f(): i32 { return 1; }\n", &err);
     assert(named);
 
     GabFunc *f = gab_vm_lookup(vm, "Player", "f", &err);
@@ -488,7 +488,7 @@ static void test_the_script_names_its_module_not_the_filename(void) {
 
     bool anonymous = gab_vm_load(vm, "other.gab",
                                  "module test;\n"
-                                 "func g(): int { return 2; }\n",
+                                 "func g(): i32 { return 2; }\n",
                                  &err);
     assert(anonymous);
 
@@ -508,7 +508,7 @@ static void test_lookup_by_module_name(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    bool mod = gab_vm_load(vm, "m.gab", "module Enemy;\nfunc hp(): int { return 42; }\n", &err);
+    bool mod = gab_vm_load(vm, "m.gab", "module Enemy;\nfunc hp(): i32 { return 42; }\n", &err);
     assert(mod);
 
     GabFunc *fn = gab_vm_lookup(vm, "Enemy", "hp", &err);
@@ -537,10 +537,10 @@ static void test_two_modules_can_share_a_type_name(void) {
     GabError err;
 
     bool player =
-        gab_vm_load(vm, "player.gab", "module Player;\nstruct Config { health: int, mana: int }\n", &err);
+        gab_vm_load(vm, "player.gab", "module Player;\nstruct Config { health: i32, mana: i32 }\n", &err);
     assert(player);
 
-    bool enemy = gab_vm_load(vm, "enemy.gab", "module Enemy;\nstruct Config { hp: int }\n", &err);
+    bool enemy = gab_vm_load(vm, "enemy.gab", "module Enemy;\nstruct Config { hp: i32 }\n", &err);
     assert(enemy);
 
     const GabType *player_config = gab_vm_find_type(vm, "Player", "Config");
@@ -572,20 +572,20 @@ static void test_builtins_are_shared_across_modules(void) {
 
     bool player = gab_vm_load(vm, "player.gab",
                               "module Player;\n"
-                              "struct Config { health: int }\n"
-                              "func player_size(): int { let p: *Config; return 1; }\n",
+                              "struct Config { health: i32 }\n"
+                              "func player_size(): i32 { let p: *Config; return 1; }\n",
                               &err);
     assert(player);
 
     bool enemy = gab_vm_load(vm, "enemy.gab",
                              "module Enemy;\n"
-                             "struct Config { hp: int }\n"
-                             "func enemy_size(): int { let p: *Config; return 1; }\n",
+                             "struct Config { hp: i32 }\n"
+                             "func enemy_size(): i32 { let p: *Config; return 1; }\n",
                              &err);
     assert(enemy);
 
-    const GabType *player_int = gab_vm_find_type(vm, "Player", "int");
-    const GabType *enemy_int = gab_vm_find_type(vm, "Enemy", "int");
+    const GabType *player_int = gab_vm_find_type(vm, "Player", "i32");
+    const GabType *enemy_int = gab_vm_find_type(vm, "Enemy", "i32");
 
     assert(player_int);
     assert(player_int == enemy_int);
@@ -606,11 +606,11 @@ static void test_module_type_shadows_the_root(void) {
 
     bool root = gab_vm_load(vm, "root.gab",
                             "module test;\n"
-                            "struct Config { a: int, b: int }\n",
+                            "struct Config { a: i32, b: i32 }\n",
                             &err);
     assert(root);
 
-    bool player = gab_vm_load(vm, "player.gab", "module Player;\nstruct Config { only: int }\n", &err);
+    bool player = gab_vm_load(vm, "player.gab", "module Player;\nstruct Config { only: i32 }\n", &err);
     assert(player);
 
     const GabType *root_config = gab_vm_find_type(vm, "test", "Config");
@@ -621,7 +621,7 @@ static void test_module_type_shadows_the_root(void) {
     assert(gab_type_size(vm, root_config) == 2 * sizeof(int));
     assert(gab_type_size(vm, player_config) == sizeof(int));
 
-    bool enemy = gab_vm_load(vm, "enemy.gab", "module Enemy;\nfunc noop(): int { return 0; }\n", &err);
+    bool enemy = gab_vm_load(vm, "enemy.gab", "module Enemy;\nfunc noop(): i32 { return 0; }\n", &err);
     assert(enemy);
     assert(gab_vm_find_type(vm, "Enemy", "Config") == NULL);
 
@@ -635,12 +635,12 @@ static void test_a_module_may_be_imported_twice(void) {
 
     GabError err;
 
-    assert(gab_vm_load(vm, "a.gab", "module A;\nstruct T { v: int }\n", &err));
+    assert(gab_vm_load(vm, "a.gab", "module A;\nstruct T { v: i32 }\n", &err));
     assert(gab_vm_load(vm, "b.gab",
                        "module B;\n"
                        "import A;\n"
                        "import A;\n"
-                       "func f(): int { let t = A::T { v: 0 }; return t.v; }\n",
+                       "func f(): i32 { let t = A::T { v: 0 }; return t.v; }\n",
                        &err));
 
     gab_vm_free(vm);
@@ -651,11 +651,11 @@ static void test_a_call_crosses_modules(void) {
 
     GabError err;
 
-    assert(gab_vm_load(vm, "a.gab", "module A;\nfunc add(x: int): int { return x + 1; }\n", &err));
+    assert(gab_vm_load(vm, "a.gab", "module A;\nfunc add(x: i32): i32 { return x + 1; }\n", &err));
     assert(gab_vm_load(vm, "b.gab",
                        "module B;\n"
                        "import A;\n"
-                       "func f(): int { return A::add(1); }\n",
+                       "func f(): i32 { return A::add(1); }\n",
                        &err));
 
     GabFunc *fn = gab_vm_lookup(vm, "B", "f", &err);
@@ -678,8 +678,8 @@ static void test_a_cross_module_call_needs_an_import(void) {
 
     GabError err;
 
-    assert(gab_vm_load(vm, "a.gab", "module A;\nfunc add(x: int): int { return x + 1; }\n", &err));
-    assert(!gab_vm_load(vm, "b.gab", "module B;\nfunc f(): int { return A::add(1); }\n", &err));
+    assert(gab_vm_load(vm, "a.gab", "module A;\nfunc add(x: i32): i32 { return x + 1; }\n", &err));
+    assert(!gab_vm_load(vm, "b.gab", "module B;\nfunc f(): i32 { return A::add(1); }\n", &err));
     assert(strstr(err.message, "A::add"));
 
     gab_vm_free(vm);
@@ -690,11 +690,11 @@ static void test_a_cross_module_call_names_a_declared_function(void) {
 
     GabError err;
 
-    assert(gab_vm_load(vm, "a.gab", "module A;\nfunc add(x: int): int { return x + 1; }\n", &err));
+    assert(gab_vm_load(vm, "a.gab", "module A;\nfunc add(x: i32): i32 { return x + 1; }\n", &err));
     assert(!gab_vm_load(vm, "b.gab",
                         "module B;\n"
                         "import A;\n"
-                        "func f(): int { return A::sub(1); }\n",
+                        "func f(): i32 { return A::sub(1); }\n",
                         &err));
     assert(strstr(err.message, "sub"));
 
@@ -706,10 +706,10 @@ static void test_an_import_names_a_loaded_module(void) {
 
     GabError err;
 
-    assert(!gab_vm_load(vm, "a.gab", "module A;\nimport Absent;\nfunc f(): int { return 1; }\n", &err));
+    assert(!gab_vm_load(vm, "a.gab", "module A;\nimport Absent;\nfunc f(): i32 { return 1; }\n", &err));
     assert(strstr(err.message, "Absent"));
 
-    assert(!gab_vm_load(vm, "b.gab", "module B;\nimport B;\nfunc f(): int { return 1; }\n", &err));
+    assert(!gab_vm_load(vm, "b.gab", "module B;\nimport B;\nfunc f(): i32 { return 1; }\n", &err));
     assert(err.message[0] != '\0');
 
     gab_vm_free(vm);
@@ -720,14 +720,14 @@ static void test_modules_cannot_import_each_other(void) {
 
     GabError err;
 
-    assert(gab_vm_load(vm, "base.gab", "module Base;\nstruct T { v: int }\n", &err));
+    assert(gab_vm_load(vm, "base.gab", "module Base;\nstruct T { v: i32 }\n", &err));
     assert(gab_vm_load(vm, "mid.gab",
                        "module Mid;\n"
                        "import Base;\n"
-                       "func f(): int { let t = Base::T { v: 0 }; return t.v; }\n",
+                       "func f(): i32 { let t = Base::T { v: 0 }; return t.v; }\n",
                        &err));
 
-    assert(!gab_vm_load(vm, "base2.gab", "module Base;\nimport Mid;\nfunc g(): int { return 1; }\n", &err));
+    assert(!gab_vm_load(vm, "base2.gab", "module Base;\nimport Mid;\nfunc g(): i32 { return 1; }\n", &err));
     assert(strstr(err.message, "Mid"));
 
     gab_vm_free(vm);
@@ -738,21 +738,21 @@ static void test_a_qualified_name_needs_an_import(void) {
 
     GabError err;
 
-    assert(gab_vm_load(vm, "a.gab", "module A;\nstruct Thing { v: int }\n", &err));
+    assert(gab_vm_load(vm, "a.gab", "module A;\nstruct Thing { v: i32 }\n", &err));
 
-    assert(!gab_vm_load(vm, "b.gab", "module B;\nfunc f(): int { let t = A::Thing { v: 0 }; return t.v; }\n",
+    assert(!gab_vm_load(vm, "b.gab", "module B;\nfunc f(): i32 { let t = A::Thing { v: 0 }; return t.v; }\n",
                         &err));
     assert(err.message[0] != '\0');
 
     assert(gab_vm_load(vm, "b.gab",
                        "module B;\n"
                        "import A;\n"
-                       "func f(): int { let t = A::Thing { v: 0 }; return t.v; }\n",
+                       "func f(): i32 { let t = A::Thing { v: 0 }; return t.v; }\n",
                        &err));
 
     assert(gab_vm_load(vm, "a2.gab",
                        "module A;\n"
-                       "func g(): int { let t = A::Thing { v: 0 }; return t.v; }\n",
+                       "func g(): i32 { let t = A::Thing { v: 0 }; return t.v; }\n",
                        &err));
 
     gab_vm_free(vm);
@@ -763,14 +763,14 @@ static void test_qualified_type_reference_crosses_modules(void) {
 
     GabError err;
 
-    bool player = gab_vm_load(vm, "player.gab", "module Player;\nstruct Config { health: int }\n", &err);
+    bool player = gab_vm_load(vm, "player.gab", "module Player;\nstruct Config { health: i32 }\n", &err);
     assert(player);
 
     bool enemy = gab_vm_load(vm, "enemy.gab",
                              "module Enemy;\n"
                              "import Player;\n"
-                             "struct Config { hp: int }\n"
-                             "func f(): int { let c = Player::Config { health: 0 }; return c.health; }\n",
+                             "struct Config { hp: i32 }\n"
+                             "func f(): i32 { let c = Player::Config { health: 0 }; return c.health; }\n",
                              &err);
     assert(enemy);
 
@@ -778,9 +778,9 @@ static void test_qualified_type_reference_crosses_modules(void) {
 
     assert(!gab_vm_load(
         vm, "bad.gab",
-        "module A;\nimport Nope;\nfunc f(): int { let c = Nope::Config { health: 0 }; return 0; }\n", &err));
+        "module A;\nimport Nope;\nfunc f(): i32 { let c = Nope::Config { health: 0 }; return 0; }\n", &err));
     assert(!gab_vm_load(vm, "bad2.gab",
-                        "module B;\nfunc f(): int { let c = Player::Missing { health: 0 }; return 0; }\n",
+                        "module B;\nfunc f(): i32 { let c = Player::Missing { health: 0 }; return 0; }\n",
                         &err));
 
     gab_vm_free(vm);
@@ -793,7 +793,7 @@ static void test_handle_survives_later_compiles(void) {
 
     bool first = gab_vm_load(vm, "first.gab",
                              "module test;\n"
-                             "func step(n: int): int { return n + 1; }\n",
+                             "func step(n: i32): i32 { return n + 1; }\n",
                              &err);
     assert(first);
 
@@ -812,13 +812,13 @@ static void test_handle_survives_later_compiles(void) {
 
     bool second = gab_vm_load(vm, "second.gab",
                               "module Later;\n"
-                              "struct Wide { a: int, b: int, c: int }\n"
-                              "func takes_wide(w: Wide, k: int): int { return k; }\n",
+                              "struct Wide { a: i32, b: i32, c: i32 }\n"
+                              "func takes_wide(w: Wide, k: i32): i32 { return k; }\n",
                               &err);
     assert(second);
 
     bool third = gab_vm_load(vm, "third.gab",
-                             "module Other;\nfunc unrelated(a: int, b: int): int { return a; }\n", &err);
+                             "module Other;\nfunc unrelated(a: i32, b: i32): i32 { return a; }\n", &err);
     assert(third);
 
     gab_call_int(fn_call, 0, 10);
@@ -839,9 +839,9 @@ static void test_a_method_is_not_reachable_from_a_host(void) {
 
     assert(gab_vm_load(vm, "m.gab",
                        "module M;\n"
-                       "struct Player { health: int }\n"
+                       "struct Player { health: i32 }\n"
                        "impl Player {\n"
-                       "    func hp(p: &Player): int { return p.health; }\n"
+                       "    func hp(p: &Player): i32 { return p.health; }\n"
                        "}\n",
                        &err));
 
@@ -857,35 +857,35 @@ static void test_a_name_may_only_be_declared_once(void) {
 
     assert(!gab_vm_load(vm, "a.gab",
                         "module test;\n"
-                        "struct P { a: int }\nstruct P { b: int }\n",
+                        "struct P { a: i32 }\nstruct P { b: i32 }\n",
                         &err));
     assert(err.message[0] != '\0');
 
     assert(!gab_vm_load(vm, "b.gab",
                         "module test;\n"
-                        "func f(): int { return 1; }\nfunc f(): int { return 2; }\n",
+                        "func f(): i32 { return 1; }\nfunc f(): i32 { return 2; }\n",
                         &err));
     assert(err.message[0] != '\0');
 
     assert(!gab_vm_load(vm, "c.gab",
                         "module test;\n"
-                        "let x: int = 1;\nlet x: int = 2;\n",
+                        "let x: i32 = 1;\nlet x: i32 = 2;\n",
                         &err));
     assert(err.message[0] != '\0');
 
     assert(!gab_vm_load(vm, "d.gab",
                         "module test;\n"
-                        "func f(): int { let y: int = 1; let y: int = 2; return y; }\n",
+                        "func f(): i32 { let y: i32 = 1; let y: i32 = 2; return y; }\n",
                         &err));
     assert(err.message[0] != '\0');
 
-    assert(gab_vm_load(vm, "first.gab", "module M;\nfunc shared(): int { return 1; }\n", &err));
-    assert(!gab_vm_load(vm, "second.gab", "module M;\nfunc shared(): int { return 2; }\n", &err));
+    assert(gab_vm_load(vm, "first.gab", "module M;\nfunc shared(): i32 { return 1; }\n", &err));
+    assert(!gab_vm_load(vm, "second.gab", "module M;\nfunc shared(): i32 { return 2; }\n", &err));
 
     assert(strstr(err.message, "shared"));
     assert(err.line == 2);
 
-    assert(!gab_vm_load(vm, "first.gab", "module M;\nfunc shared(): int { return 3; }\n", &err));
+    assert(!gab_vm_load(vm, "first.gab", "module M;\nfunc shared(): i32 { return 3; }\n", &err));
     assert(err.message[0] != '\0');
 
     gab_vm_free(vm);
@@ -898,9 +898,9 @@ static void test_the_vm_owns_its_handles(void) {
 
     bool script = gab_vm_load(vm, "m.gab",
                               "module test;\n"
-                              "func a(n: int): int { return n + 1; }\n"
-                              "func b(n: int): int { return n + 2; }\n"
-                              "func c(n: int): int { return n + 3; }\n",
+                              "func a(n: i32): i32 { return n + 1; }\n"
+                              "func b(n: i32): i32 { return n + 2; }\n"
+                              "func c(n: i32): i32 { return n + 3; }\n",
                               &err);
     assert(script);
 
@@ -938,7 +938,7 @@ static void test_two_callers_stage_independently(void) {
 
     bool mod = gab_vm_load(vm, "<m>",
                            "module test;\n"
-                           "func damage(target: int, amount: int): int { return target - amount; }\n",
+                           "func damage(target: i32, amount: i32): i32 { return target - amount; }\n",
                            &err);
     assert(mod);
 
@@ -987,13 +987,13 @@ static void test_a_failed_load_declares_nothing(void) {
 
     assert(!gab_vm_load(vm, "a.gab",
                         "module M;\n"
-                        "func ready(): int { return 1; }\n"
-                        "extern func absent(x: int): int;\n",
+                        "func ready(): i32 { return 1; }\n"
+                        "extern func absent(x: i32): i32;\n",
                         &err));
 
     assert(gab_vm_load(vm, "a.gab",
                        "module M;\n"
-                       "func ready(): int { return 1; }\n",
+                       "func ready(): i32 { return 1; }\n",
                        &err));
 
     GabFunc *fn = gab_vm_lookup(vm, "M", "ready", &err);
@@ -1015,9 +1015,9 @@ static void test_a_failed_load_leaves_what_is_loaded(void) {
 
     GabError err;
 
-    assert(gab_vm_load(vm, "s.gab", "module S;\nfunc step(n: int): int { return n + 1; }\n", &err));
+    assert(gab_vm_load(vm, "s.gab", "module S;\nfunc step(n: i32): i32 { return n + 1; }\n", &err));
 
-    assert(!gab_vm_load(vm, "t.gab", "module T;\nfunc broken(n: int): int { return n +", &err));
+    assert(!gab_vm_load(vm, "t.gab", "module T;\nfunc broken(n: i32): i32 { return n +", &err));
     assert(err.message[0] != '\0');
 
     GabFunc *fn = gab_vm_lookup(vm, "S", "step", &err);
@@ -1042,8 +1042,8 @@ static void test_a_host_pointer_reaches_a_script() {
 
     assert(gab_vm_load(vm, "u",
                        "module test;\n"
-                       "struct Player { health: int }\n"
-                       "func hurt(p: &Player, amount: int): int {\n"
+                       "struct Player { health: i32 }\n"
+                       "func hurt(p: &Player, amount: i32): i32 {\n"
                        "  p.health = p.health - amount;\n"
                        "  return p.health;\n"
                        "}\n",
@@ -1085,9 +1085,9 @@ static void test_a_pointer_argument_checks_its_pointee() {
 
     assert(gab_vm_load(vm, "u",
                        "module test;\n"
-                       "struct Player { health: int }\n"
-                       "struct Enemy { health: int }\n"
-                       "func hurt(p: &Player): int { return p.health; }\n",
+                       "struct Player { health: i32 }\n"
+                       "struct Enemy { health: i32 }\n"
+                       "func hurt(p: &Player): i32 { return p.health; }\n",
                        &err));
 
     const GabType *player = gab_vm_find_type(vm, "test", "Player");
@@ -1115,7 +1115,7 @@ static void test_a_type_reports_the_layout_a_host_allocates_by() {
 
     assert(gab_vm_load(vm, "u",
                        "module test;\n"
-                       "struct Player { health: int, mana: int }\n",
+                       "struct Player { health: i32, mana: i32 }\n",
                        &err));
 
     const GabType *player = gab_vm_find_type(vm, "test", "Player");
@@ -1138,15 +1138,15 @@ static void test_a_builtin_type_may_not_be_redeclared(void) {
     GabVM *vm = gab_vm_new();
     GabError err;
 
-    assert(!gab_vm_load(vm, "a.gab", "module A;\nstruct int { x: float }\n", &err));
-    assert(strstr(err.message, "int"));
+    assert(!gab_vm_load(vm, "a.gab", "module A;\nstruct i32 { x: f32 }\n", &err));
+    assert(strstr(err.message, "i32"));
     assert(err.line == 2);
 
-    assert(!gab_vm_load(vm, "b.gab", "module B;\nstruct bool { x: float }\n", &err));
+    assert(!gab_vm_load(vm, "b.gab", "module B;\nstruct bool { x: f32 }\n", &err));
     assert(strstr(err.message, "bool"));
 
-    assert(gab_vm_load(vm, "c.gab", "module C;\nstruct Config { a: int }\n", &err));
-    assert(gab_vm_load(vm, "d.gab", "module D;\nstruct Config { b: int }\n", &err));
+    assert(gab_vm_load(vm, "c.gab", "module C;\nstruct Config { a: i32 }\n", &err));
+    assert(gab_vm_load(vm, "d.gab", "module D;\nstruct Config { b: i32 }\n", &err));
 
     gab_vm_free(vm);
 }

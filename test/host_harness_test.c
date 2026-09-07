@@ -66,22 +66,22 @@ static void host_reenter(GabCtx *ctx) {
 }
 
 static const char *const SOURCE = "module game;\n"
-                                  "struct Player { health: int, mana: int }\n"
-                                  "extern func tick(): int;\n"
-                                  "extern func spawn(count: int): int;\n"
-                                  "extern func buff(p: Player, amount: int): Player;\n"
+                                  "struct Player { health: i32, mana: i32 }\n"
+                                  "extern func tick(): i32;\n"
+                                  "extern func spawn(count: i32): i32;\n"
+                                  "extern func buff(p: Player, amount: i32): Player;\n"
                                   "extern func log(text: &str);\n"
-                                  "extern func refuse(): int;\n"
-                                  "func update(p: Player): int {\n"
+                                  "extern func refuse(): i32;\n"
+                                  "func update(p: Player): i32 {\n"
                                   "    log(\"tick\");\n"
-                                  "    let t: int = tick();\n"
+                                  "    let t: i32 = tick();\n"
                                   "    let b: Player = buff(p, t);\n"
                                   "    return b.health + spawn(1);\n"
                                   "}\n"
-                                  "func fails(): int { return refuse(); }\n"
-                                  "extern func reenter(): int;\n"
-                                  "func doubled(n: int): int { return n * 2; }\n"
-                                  "func through_host(): int { return reenter() + 1; }\n";
+                                  "func fails(): i32 { return refuse(); }\n"
+                                  "extern func reenter(): i32;\n"
+                                  "func doubled(n: i32): i32 { return n * 2; }\n"
+                                  "func through_host(): i32 { return reenter() + 1; }\n";
 
 static GabVM *harness_vm(void) {
     GabVM *vm = gab_vm_new();

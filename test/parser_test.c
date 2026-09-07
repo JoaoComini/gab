@@ -201,7 +201,7 @@ static void test_var_declaration() {
 }
 
 static void test_var_uninit_declaration() {
-    ASTUnit *unit = assert_parse(func_wrap("let x: int;"));
+    ASTUnit *unit = assert_parse(func_wrap("let x: i32;"));
 
     ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_VAR_DECL);
@@ -215,7 +215,7 @@ static void test_var_untyped_uninti_declaration() {
 }
 
 static void test_struct_declaration() {
-    ASTUnit *unit = assert_parse("struct Vec3 { x: float, y: float, z: float }");
+    ASTUnit *unit = assert_parse("struct Vec3 { x: f32, y: f32, z: f32 }");
 
     ASTStmt *stmt = unit->statements.data[0];
     assert(stmt->kind == STMT_STRUCT_DECL);
@@ -225,13 +225,13 @@ static void test_struct_declaration() {
     assert(fields.size == 3);
 
     assert(string_ref_equals_cstr(fields.data[0]->name, "x"));
-    assert(string_ref_equals_cstr(fields.data[0]->type_expr->name, "float"));
+    assert(string_ref_equals_cstr(fields.data[0]->type_expr->name, "f32"));
     assert(string_ref_equals_cstr(fields.data[1]->name, "y"));
     assert(string_ref_equals_cstr(fields.data[2]->name, "z"));
 }
 
 static void test_struct_trailing_comma() {
-    ASTUnit *unit = assert_parse("struct Pair { a: int, b: int, }");
+    ASTUnit *unit = assert_parse("struct Pair { a: i32, b: i32, }");
 
     ASTStmt *stmt = unit->statements.data[0];
     assert(stmt->kind == STMT_STRUCT_DECL);
@@ -247,7 +247,7 @@ static void test_empty_struct_declaration() {
 }
 
 static void test_struct_missing_name() {
-    assert_parse_error("struct { x: int }", "expected a struct name, found '{'");
+    assert_parse_error("struct { x: i32 }", "expected a struct name, found '{'");
 }
 
 static void test_struct_missing_colon() {
@@ -255,11 +255,11 @@ static void test_struct_missing_colon() {
 }
 
 static void test_struct_unterminated() {
-    assert_parse_error("struct Bad { x: int", "expected ',' or '}' after field, found end of input");
+    assert_parse_error("struct Bad { x: i32", "expected ',' or '}' after field, found end of input");
 }
 
 static void test_func_declaration() {
-    ASTUnit *unit = assert_parse("func add(x : int, y : int): int {"
+    ASTUnit *unit = assert_parse("func add(x : i32, y : i32): i32 {"
                                  "    return x + y;"
                                  "}");
 
@@ -267,7 +267,7 @@ static void test_func_declaration() {
     assert(stmt->kind == STMT_FUNC_DECL);
 
     assert(string_ref_equals_cstr(stmt->func_decl.name, "add"));
-    assert(string_ref_equals_cstr(stmt->func_decl.return_type->name, "int"));
+    assert(string_ref_equals_cstr(stmt->func_decl.return_type->name, "i32"));
 
     ASTFieldList params = stmt->func_decl.params;
     assert(string_ref_equals_cstr(params.data[0]->name, "x"));
@@ -279,7 +279,7 @@ static void test_func_declaration() {
 }
 
 static void test_unit_func_declaration() {
-    ASTUnit *unit = assert_parse("func test(x : int, y : int) {"
+    ASTUnit *unit = assert_parse("func test(x : i32, y : i32) {"
                                  "    let a = x + y;"
                                  "}");
 
@@ -389,7 +389,7 @@ static void test_expression_not_assignable() {
 }
 
 static void test_module_directive() {
-    ASTUnit *unit = assert_parse("module Player;\nfunc f(): int { return 1; }\n");
+    ASTUnit *unit = assert_parse("module Player;\nfunc f(): i32 { return 1; }\n");
 
     assert(unit->module_name.data);
     assert(unit->module_name.length == 6);
@@ -405,7 +405,7 @@ static void test_a_unit_must_name_its_module() {
 
     ASTUnit *unit;
 
-    assert(!parse_unit("func f(): int { return 1; }\n", ctx.arena, &ctx.strings, &unit, &ctx.diagnostics));
+    assert(!parse_unit("func f(): i32 { return 1; }\n", ctx.arena, &ctx.strings, &unit, &ctx.diagnostics));
     assert(diagnostics_has_errors(&ctx.diagnostics));
 
     test_context_free(&ctx);
@@ -419,17 +419,17 @@ static void test_module_directive_alone() {
 }
 
 static void test_module_name_cannot_be_nested() {
-    assert_parse_error("module Player::Movement;\nfunc f(): int { return 1; }\n",
+    assert_parse_error("module Player::Movement;\nfunc f(): i32 { return 1; }\n",
                        "module names cannot be nested; 'Player::Movement' must be a single identifier");
 }
 
 static void test_module_must_come_first() {
-    assert_parse_error("func f(): int { return 1; }\nmodule Player;\n",
+    assert_parse_error("func f(): i32 { return 1; }\nmodule Player;\n",
                        "'module' must appear once, before any declaration");
 }
 
 static void test_module_cannot_be_declared_twice() {
-    assert_parse_error("module A;\nmodule B;\nfunc f(): int { return 1; }\n",
+    assert_parse_error("module A;\nmodule B;\nfunc f(): i32 { return 1; }\n",
                        "'module' must appear once, before any declaration");
 }
 
@@ -438,29 +438,29 @@ static void test_module_needs_a_name() {
 }
 
 static void test_module_needs_a_semicolon() {
-    assert_parse_error("module Player\nfunc f(): int { return 1; }\n",
+    assert_parse_error("module Player\nfunc f(): i32 { return 1; }\n",
                        "expected ';' after the module name, found 'func'");
 }
 
 static void test_function_cannot_be_declared_inside_another() {
-    assert_parse_error("func outer(): int {\n"
-                       "    func inner(): int { return 1; }\n"
+    assert_parse_error("func outer(): i32 {\n"
+                       "    func inner(): i32 { return 1; }\n"
                        "    return inner();\n"
                        "}\n",
                        "a function cannot be declared inside another; declare it at module level");
 }
 
 static void test_a_function_on_a_type_is_declared_in_an_impl_block() {
-    assert_parse_error("struct P { n: int }\n"
-                       "func P::m(p: &P): int { return 0; }\n",
+    assert_parse_error("struct P { n: i32 }\n"
+                       "func P::m(p: &P): i32 { return 0; }\n",
                        "a function on a type is declared in an 'impl' block for that type");
 }
 
 static void test_function_cannot_be_declared_inside_a_method() {
-    assert_parse_error("struct P { n: int }\n"
+    assert_parse_error("struct P { n: i32 }\n"
                        "impl P {\n"
-                       "    func m(p: &P): int {\n"
-                       "        func inner(): int { return 1; }\n"
+                       "    func m(p: &P): i32 {\n"
+                       "        func inner(): i32 { return 1; }\n"
                        "        return 0;\n"
                        "    }\n"
                        "}\n",
@@ -491,7 +491,7 @@ static void test_for_condition() {
 }
 
 static void test_for_clauses() {
-    ASTUnit *unit = assert_parse(func_wrap("for let i: int = 0; i < 3; i = i + 1 { 10; }"));
+    ASTUnit *unit = assert_parse(func_wrap("for let i: i32 = 0; i < 3; i = i + 1 { 10; }"));
 
     ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_FOR);
@@ -521,19 +521,19 @@ static void test_break_and_continue() {
 }
 
 static void test_a_type_takes_several_arguments() {
-    ASTUnit *unit = assert_parse("struct Holder { a: Map<int,float> }");
+    ASTUnit *unit = assert_parse("struct Holder { a: Map<i32,f32> }");
 
     TypeExpr *apply = unit->statements.data[0]->struct_decl.fields.data[0]->type_expr;
 
     assert(apply->kind == TYPE_EXPR_APPLY);
     assert(string_ref_equals_cstr(apply->apply.base->name, "Map"));
     assert(apply->apply.args.size == 2);
-    assert(string_ref_equals_cstr(apply->apply.args.data[0]->name, "int"));
-    assert(string_ref_equals_cstr(apply->apply.args.data[1]->name, "float"));
+    assert(string_ref_equals_cstr(apply->apply.args.data[0]->name, "i32"));
+    assert(string_ref_equals_cstr(apply->apply.args.data[1]->name, "f32"));
 }
 
 static void test_an_argument_may_be_an_application() {
-    ASTUnit *unit = assert_parse("struct Holder { a: Vec<Vec<int>> }");
+    ASTUnit *unit = assert_parse("struct Holder { a: Vec<Vec<i32>> }");
 
     TypeExpr *outer = unit->statements.data[0]->struct_decl.fields.data[0]->type_expr;
 
@@ -544,11 +544,11 @@ static void test_an_argument_may_be_an_application() {
 
     assert(inner->kind == TYPE_EXPR_APPLY);
     assert(string_ref_equals_cstr(inner->apply.base->name, "Vec"));
-    assert(string_ref_equals_cstr(inner->apply.args.data[0]->name, "int"));
+    assert(string_ref_equals_cstr(inner->apply.args.data[0]->name, "i32"));
 }
 
 static void test_a_type_is_a_tree() {
-    ASTUnit *unit = assert_parse("struct Holder { a: &*array<int, 3> }");
+    ASTUnit *unit = assert_parse("struct Holder { a: &*array<i32, 3> }");
 
     ASTStmt *stmt = unit->statements.data[0];
     ASTFieldList fields = stmt->struct_decl.fields;
@@ -562,7 +562,7 @@ static void test_a_type_is_a_tree() {
     TypeExpr *array = box->indirect.inner;
     assert(array->kind == TYPE_EXPR_APPLY);
     assert(string_ref_equals_cstr(array->apply.base->name, "array"));
-    assert(string_ref_equals_cstr(array->apply.args.data[0]->name, "int"));
+    assert(string_ref_equals_cstr(array->apply.args.data[0]->name, "i32"));
     assert(array->apply.args.data[1]->constant == 3);
 }
 

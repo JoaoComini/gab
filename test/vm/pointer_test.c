@@ -31,7 +31,7 @@ static void test_pointer_types_are_interned() {
     ASTUnit *unit;
 
     bool ok = test_resolve(&ctx, scope, &unit,
-                           "struct Player { health: int }\n"
+                           "struct Player { health: i32 }\n"
                            "struct Holder { p: *Player, q: *Player }\n");
     assert(ok);
 
@@ -55,14 +55,14 @@ static void test_pointer_depth_nests() {
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
     ASTUnit *unit;
 
-    bool ok = test_resolve(&ctx, scope, &unit, "struct Holder { p: *int, q: **int }\n");
+    bool ok = test_resolve(&ctx, scope, &unit, "struct Holder { p: *i32, q: **i32 }\n");
     assert(ok);
 
     const Type *p = field_type(&ctx, scope, "Holder", "p");
     const Type *q = field_type(&ctx, scope, "Holder", "q");
 
     assert(type_pointee(q) == p);
-    assert(type_pointee(p) == scope_type_lookup(scope, string_from_cstr(&ctx.strings, "int")));
+    assert(type_pointee(p) == scope_type_lookup(scope, string_from_cstr(&ctx.strings, "i32")));
 
     test_context_free(&ctx);
 }
@@ -75,7 +75,7 @@ static void test_pointer_is_a_word() {
     ASTUnit *unit;
 
     bool ok = test_resolve(&ctx, scope, &unit,
-                           "struct Big { a: int, b: int, c: int, d: int }\n"
+                           "struct Big { a: i32, b: i32, c: i32, d: i32 }\n"
                            "struct Holder { p: *Big, q: *bool }\n");
     assert(ok);
 
@@ -100,7 +100,7 @@ static void test_ref_is_a_distinct_type() {
     ASTUnit *unit;
 
     bool ok = test_resolve(&ctx, scope, &unit,
-                           "struct Node { n: int }\n"
+                           "struct Node { n: i32 }\n"
                            "struct Holder { o: *Node, b: &Node }\n");
     assert(ok);
 
@@ -126,7 +126,7 @@ static void test_ref_pointers_are_interned() {
     ASTUnit *unit;
 
     bool ok = test_resolve(&ctx, scope, &unit,
-                           "struct Node { n: int }\n"
+                           "struct Node { n: i32 }\n"
                            "let a: &Node;\n"
                            "let b: &Node;\n");
     assert(ok);
@@ -140,120 +140,120 @@ static void test_ref_pointers_are_interned() {
 }
 
 static void test_scalar_read_and_write_through_a_pointer() {
-    assert(test_run_int("func f(): int { let x: int = 7; let p: &int = x; return *p; }\n"
-                        "let r: int = f();") == 7);
+    assert(test_run_int("func f(): i32 { let x: i32 = 7; let p: &i32 = x; return *p; }\n"
+                        "let r: i32 = f();") == 7);
 
-    assert(test_run_int("func f(): int { let x: int = 3; let p: &int = x; *p = 42; return x; }\n"
-                        "let r: int = f();") == 42);
+    assert(test_run_int("func f(): i32 { let x: i32 = 3; let p: &i32 = x; *p = 42; return x; }\n"
+                        "let r: i32 = f();") == 42);
 
-    assert(test_run_float("func f(): float { let x: float = 1.5; let p: &float = x; *p = 2.5; return x; }\n"
-                          "let r: float = f();") == 2.5f);
+    assert(test_run_float("func f(): f32 { let x: f32 = 1.5; let p: &f32 = x; *p = 2.5; return x; }\n"
+                          "let r: f32 = f();") == 2.5f);
 }
 
 static void test_field_write_through_a_pointer() {
-    assert(test_run_int("struct Player { health: int, mana: int }\n"
-                        "func f(): int { let p = Player { health: 1, mana: 2 };\n"
+    assert(test_run_int("struct Player { health: i32, mana: i32 }\n"
+                        "func f(): i32 { let p = Player { health: 1, mana: 2 };\n"
                         "let q: &Player = p; (*q).health = 10;\n"
                         "return p.health * 100 + p.mana; }\n"
-                        "let r: int = f();") == 1002);
+                        "let r: i32 = f();") == 1002);
 }
 
 static void test_pointer_to_a_struct_field() {
-    assert(test_run_int("struct Point { x: int, y: int }\n"
-                        "func f(): int { let v = Point { x: 1, y: 2 };\n"
-                        "let p: &int = v.y; *p = 9;\n"
+    assert(test_run_int("struct Point { x: i32, y: i32 }\n"
+                        "func f(): i32 { let v = Point { x: 1, y: 2 };\n"
+                        "let p: &i32 = v.y; *p = 9;\n"
                         "return v.x * 100 + v.y; }\n"
-                        "let r: int = f();") == 109);
+                        "let r: i32 = f();") == 109);
 }
 
 static void test_pointer_to_a_sub_word_field() {
     assert(test_run_int("struct Flags { a: bool, b: bool, c: bool, d: bool }\n"
-                        "func f(): int { let v = Flags { a: true, b: true, c: true, d: true };\n"
+                        "func f(): i32 { let v = Flags { a: true, b: true, c: true, d: true };\n"
                         "let p: &bool = v.b; *p = false;\n"
-                        "let n: int = 0;\n"
+                        "let n: i32 = 0;\n"
                         "if v.a { n = n + 1000; }\n"
                         "if v.b { n = n + 100; }\n"
                         "if v.c { n = n + 10; }\n"
                         "if v.d { n = n + 1; }\n"
                         "return n; }\n"
-                        "let r: int = f();") == 1011);
+                        "let r: i32 = f();") == 1011);
 }
 
 static void test_dereferencing_a_whole_struct() {
-    assert(test_run_int("struct Point { x: int, y: int }\n"
-                        "func f(): int { let v = Point { x: 3, y: 4 };\n"
+    assert(test_run_int("struct Point { x: i32, y: i32 }\n"
+                        "func f(): i32 { let v = Point { x: 3, y: 4 };\n"
                         "let p: &Point = v;\n"
                         "let copy: Point = *p;\n"
                         "v.x = 100;\n"
                         "return copy.x * 10 + copy.y; }\n"
-                        "let r: int = f();") == 34);
+                        "let r: i32 = f();") == 34);
 }
 
 static void test_pointer_to_a_pointer() {
-    assert(test_run_int("func f(): int { let x: int = 5;\n"
-                        "let p: &int = x;\n"
-                        "let q: &&int = p;\n"
+    assert(test_run_int("func f(): i32 { let x: i32 = 5;\n"
+                        "let p: &i32 = x;\n"
+                        "let q: &&i32 = p;\n"
                         "**q = 11;\n"
                         "return x; }\n"
-                        "let r: int = f();") == 11);
+                        "let r: i32 = f();") == 11);
 }
 
 static void test_a_pointer_survives_a_stack_growth() {
-    assert(test_run_int("func deep(n: int, p: &int): int {\n"
+    assert(test_run_int("func deep(n: i32, p: &i32): i32 {\n"
                         "if n > 0 { return deep(n - 1, p); }\n"
                         "return *p;\n"
                         "}\n"
-                        "func f(): int { let x: int = 77; return deep(200, x); }\n"
-                        "let r: int = f();") == 77);
+                        "func f(): i32 { let x: i32 = 77; return deep(200, x); }\n"
+                        "let r: i32 = f();") == 77);
 
-    assert(test_run_int("func deep(n: int, p: &int): int {\n"
+    assert(test_run_int("func deep(n: i32, p: &i32): i32 {\n"
                         "if n > 0 { return deep(n - 1, p); }\n"
                         "*p = 88;\n"
                         "return 0;\n"
                         "}\n"
-                        "func f(): int { let x: int = 1; let ignored: int = deep(200, x); return x; }\n"
-                        "let r: int = f();") == 88);
+                        "func f(): i32 { let x: i32 = 1; let ignored: i32 = deep(200, x); return x; }\n"
+                        "let r: i32 = f();") == 88);
 }
 
 static void test_field_access_auto_derefs() {
-    assert(test_run_int("struct Player { health: int, mana: int }\n"
-                        "func f(): int { let p = Player { health: 1, mana: 2 };\n"
+    assert(test_run_int("struct Player { health: i32, mana: i32 }\n"
+                        "func f(): i32 { let p = Player { health: 1, mana: 2 };\n"
                         "let q: &Player = p; q.health = 10;\n"
                         "return p.health * 100 + p.mana; }\n"
-                        "let r: int = f();") == 1002);
+                        "let r: i32 = f();") == 1002);
 
-    assert(test_run_int("struct Player { health: int, mana: int }\n"
-                        "func f(): int { let p = Player { health: 10, mana: 0 };\n"
+    assert(test_run_int("struct Player { health: i32, mana: i32 }\n"
+                        "func f(): i32 { let p = Player { health: 10, mana: 0 };\n"
                         "let q: &Player = p; return q.health; }\n"
-                        "let r: int = f();") == 10);
+                        "let r: i32 = f();") == 10);
 }
 
 static void test_auto_deref_reaches_a_nested_field() {
-    assert(test_run_int("struct Inner { v: int }\n"
-                        "struct Outer { a: int, inner: Inner }\n"
-                        "func f(): int { let o = Outer { a: 0, inner: Inner { v: 0 } };\n"
+    assert(test_run_int("struct Inner { v: i32 }\n"
+                        "struct Outer { a: i32, inner: Inner }\n"
+                        "func f(): i32 { let o = Outer { a: 0, inner: Inner { v: 0 } };\n"
                         "let q: &Outer = o;\n"
                         "q.inner.v = 7; return o.inner.v; }\n"
-                        "let r: int = f();") == 7);
+                        "let r: i32 = f();") == 7);
 }
 
 static void test_address_of_a_field_through_a_pointer() {
-    assert(test_run_int("struct Player { health: int, mana: int }\n"
-                        "func f(): int { let p = Player { health: 0, mana: 2 };\n"
+    assert(test_run_int("struct Player { health: i32, mana: i32 }\n"
+                        "func f(): i32 { let p = Player { health: 0, mana: 2 };\n"
                         "let q: &Player = p;\n"
-                        "let h: &int = q.health; *h = 9;\n"
+                        "let h: &i32 = q.health; *h = 9;\n"
                         "return p.health * 100 + p.mana; }\n"
-                        "let r: int = f();") == 902);
+                        "let r: i32 = f();") == 902);
 }
 
 static void test_a_pointer_type_is_spelled_with_a_sigil() {
-    assert(test_compiles("func f(): int { let p: *int; return 0; }\n"));
-    assert(!test_compiles("func f(): int { let p: box int; return 0; }\n"));
+    assert(test_compiles("func f(): i32 { let p: *i32; return 0; }\n"));
+    assert(!test_compiles("func f(): i32 { let p: box int; return 0; }\n"));
 }
 
 static void test_a_borrow_has_no_operator() {
-    assert(test_compiles("func f(): int { let x: int = 1; let p: &int = x; return *p; }\n"));
-    assert(!test_compiles("func f(): int { let x: int = 1; let p: &int = &x; return *p; }\n"));
+    assert(test_compiles("func f(): i32 { let x: i32 = 1; let p: &i32 = x; return *p; }\n"));
+    assert(!test_compiles("func f(): i32 { let x: i32 = 1; let p: &i32 = &x; return *p; }\n"));
 }
 
 int main() {

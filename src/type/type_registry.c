@@ -729,11 +729,11 @@ const Type *type_registry_get_primitive(TypeRegistry *registry, TypeKind kind) {
 
 TypePrimitiveNames type_primitive_names(StringPool *strings) {
     return (TypePrimitiveNames){
-        .int_name = string_from_cstr(strings, "int"),
-        .float_name = string_from_cstr(strings, "float"),
+        .int_name = string_from_cstr(strings, "i32"),
+        .float_name = string_from_cstr(strings, "f32"),
         .bool_name = string_from_cstr(strings, "bool"),
 
-        .byte_name = string_from_cstr(strings, "byte"),
+        .byte_name = string_from_cstr(strings, "u8"),
         .str_name = string_from_cstr(strings, "str"),
         .slice_name = string_from_cstr(strings, "slice"),
         .array_name = string_from_cstr(strings, "array"),

@@ -95,7 +95,7 @@ static void test_a_raw_pointer_carries_a_stride_and_drops_nothing() {
     assert(type_registry_size_of(registry, type_pointee(characters)) == 1 &&
            type_registry_align_of(registry, type_pointee(characters)) == 1);
 
-    assert(test_compiles("func f(b: byte): int { return 0; }\n"));
+    assert(test_compiles("func f(b: u8): i32 { return 0; }\n"));
 
     test_context_free(&ctx);
 }

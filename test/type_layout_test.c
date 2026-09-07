@@ -79,7 +79,7 @@ static void test_homogeneous_struct() {
 
     TypeRegistry *registry = NULL;
     const Type *type =
-        resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float }", "Vec3", &registry);
+        resolve_struct(&ctx, "struct Vec3 { x: f32, y: f32, z: f32 }", "Vec3", &registry);
 
     assert(type != NULL);
     assert(type_kind(type) == TYPE_STRUCT);
@@ -100,7 +100,7 @@ static void test_interior_padding() {
     test_context_init(&ctx);
 
     TypeRegistry *registry = NULL;
-    const Type *type = resolve_struct(&ctx, "struct Pad { flag: bool, value: int }", "Pad", &registry);
+    const Type *type = resolve_struct(&ctx, "struct Pad { flag: bool, value: i32 }", "Pad", &registry);
 
     assert(type_registry_size_of(registry, type) == sizeof(LeadingPadC));
     assert(type_registry_align_of(registry, type) == _Alignof(LeadingPadC));
@@ -116,7 +116,7 @@ static void test_trailing_padding() {
     test_context_init(&ctx);
 
     TypeRegistry *registry = NULL;
-    const Type *type = resolve_struct(&ctx, "struct Pad { value: int, flag: bool }", "Pad", &registry);
+    const Type *type = resolve_struct(&ctx, "struct Pad { value: i32, flag: bool }", "Pad", &registry);
 
     assert(type_registry_size_of(registry, type) == sizeof(TrailingPadC));
     assert(offset_of(&ctx, registry, type, "value") == offsetof(TrailingPadC, value));
@@ -131,7 +131,7 @@ static void test_nested_struct() {
 
     TypeRegistry *registry = NULL;
     const Type *type = resolve_struct(&ctx,
-                                      "struct Vec3 { x: float, y: float, z: float }"
+                                      "struct Vec3 { x: f32, y: f32, z: f32 }"
                                       "struct Nested { flag: bool, position: Vec3 }",
                                       "Nested", &registry);
 
@@ -154,7 +154,7 @@ static void test_single_field_struct() {
     test_context_init(&ctx);
 
     TypeRegistry *registry = NULL;
-    const Type *type = resolve_struct(&ctx, "struct Single { only: int }", "Single", &registry);
+    const Type *type = resolve_struct(&ctx, "struct Single { only: i32 }", "Single", &registry);
 
     assert(type_registry_size_of(registry, type) == sizeof(SingleC));
     assert(type_registry_align_of(registry, type) == _Alignof(SingleC));
@@ -184,7 +184,7 @@ static void test_trailing_comma_allowed() {
 
     TypeRegistry *registry = NULL;
     const Type *type =
-        resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float, }", "Vec3", &registry);
+        resolve_struct(&ctx, "struct Vec3 { x: f32, y: f32, z: f32, }", "Vec3", &registry);
 
     assert(type_registry_fields_of(registry, type)->count == 3);
     assert(type_registry_size_of(registry, type) == sizeof(Vec3C));
@@ -220,7 +220,7 @@ static void test_field_lookup_misses() {
 
     TypeRegistry *registry = NULL;
     const Type *type =
-        resolve_struct(&ctx, "struct Vec3 { x: float, y: float, z: float }", "Vec3", &registry);
+        resolve_struct(&ctx, "struct Vec3 { x: f32, y: f32, z: f32 }", "Vec3", &registry);
 
     assert(type_registry_find_field(registry, type, string_from_cstr(&ctx.strings, "w")) == NULL);
 
@@ -385,7 +385,7 @@ static void test_array_of_a_struct_declared_below() {
     TypeRegistry *registry = NULL;
     const Type *holder = resolve_struct(&ctx,
                                         "struct Holder { cells: array<Cell, 2> }\n"
-                                        "struct Cell { value: int }\n",
+                                        "struct Cell { value: i32 }\n",
                                         "Holder", &registry);
 
     assert(type_registry_size_of(registry, holder) == 2 * sizeof(int32_t));
@@ -399,7 +399,7 @@ static void test_a_ring_through_a_box_is_laid_out() {
 
     TypeRegistry *registry = NULL;
     const Type *a = resolve_struct(&ctx,
-                                   "struct A { b: *B, tag: int }\n"
+                                   "struct A { b: *B, tag: i32 }\n"
                                    "struct B { a: *A }\n",
                                    "A", &registry);
 

@@ -25,12 +25,12 @@ static void test_stack_does_not_move_under_deep_recursion() {
     size_t capacity_before = vm->stack_capacity;
 
     compile_and_run(vm, "module test;\n"
-                        "func down(n: int): int {\n"
+                        "func down(n: i32): i32 {\n"
                         "if n <= 0 { return 0; }\n"
                         "let a = n + 1; let b = n + 2; let c = n + 3;\n"
                         "return down(n - 1) + a + b + c;\n"
                         "}\n"
-                        "let r: int = down(200);\n");
+                        "let r: i32 = down(200);\n");
 
     assert(vm->stack == before);
     assert(vm->stack_capacity == capacity_before);
@@ -44,13 +44,13 @@ static void test_deep_recursion_preserves_live_frames() {
     VM *vm = vm_create();
 
     compile_and_run(vm, "module test;\n"
-                        "func down(n: int): int {\n"
+                        "func down(n: i32): i32 {\n"
                         "if n <= 0 { return 0; }\n"
                         "let keep = n;\n"
                         "let rest = down(n - 1);\n"
                         "return keep + rest;\n"
                         "}\n"
-                        "let r: int = down(200);\n");
+                        "let r: i32 = down(200);\n");
 
     int32_t result;
     memcpy(&result, vm_slot_at(vm, test_result_slot(vm)), sizeof(result));

@@ -29,14 +29,14 @@ static int compile_max_registers(const char *source, size_t index) {
 }
 
 static void test_frame_size_is_flat_in_statement_count() {
-    int few = compile_max_registers("func f(n: int): int {\n"
+    int few = compile_max_registers("func f(n: i32): i32 {\n"
                                     "let a = n + 1;\n"
                                     "let b = n + 2;\n"
                                     "return a + b;\n"
                                     "}\n",
                                     0);
 
-    int many = compile_max_registers("func f(n: int): int {\n"
+    int many = compile_max_registers("func f(n: i32): i32 {\n"
                                      "let a = n + 1;\n"
                                      "let b = n + 2;\n"
                                      "let c = n + 3;\n"
@@ -54,7 +54,7 @@ static void test_frame_size_is_flat_in_statement_count() {
 }
 
 static void test_block_locals_are_reclaimed() {
-    const char *two_inner = "func f(n: int): int {\n"
+    const char *two_inner = "func f(n: i32): i32 {\n"
                             "let a = n + 1;\n"
                             "if n > 0 {\n"
                             "let b = n + 2;\n"
@@ -64,7 +64,7 @@ static void test_block_locals_are_reclaimed() {
                             "return a + d;\n"
                             "}\n";
 
-    const char *four_inner = "func f(n: int): int {\n"
+    const char *four_inner = "func f(n: i32): i32 {\n"
                              "let a = n + 1;\n"
                              "if n > 0 {\n"
                              "let b = n + 2;\n"
@@ -82,7 +82,7 @@ static void test_block_locals_are_reclaimed() {
 }
 
 static void test_a_long_function_fits_in_the_frame() {
-    assert(test_run_int("func f(n: int): int {\n"
+    assert(test_run_int("func f(n: i32): i32 {\n"
                         "let s01 = n + 1; let s02 = n + 1; let s03 = n + 1; let s04 = n + 1;\n"
                         "let s05 = n + 1; let s06 = n + 1; let s07 = n + 1; let s08 = n + 1;\n"
                         "let s09 = n + 1; let s10 = n + 1; let s11 = n + 1; let s12 = n + 1;\n"
@@ -96,39 +96,39 @@ static void test_a_long_function_fits_in_the_frame() {
                         "let s41 = n + 1; let s42 = n + 1; let s43 = n + 1;\n"
                         "return s43;\n"
                         "}\n"
-                        "func main(): int { return f(41); }\n"
-                        "let r: int = main();") == 42);
+                        "func main(): i32 { return f(41); }\n"
+                        "let r: i32 = main();") == 42);
 }
 
 static void test_expression_statements_reuse_slots() {
-    int one = compile_max_registers("func f(n: int): int { n + 1; return n; }\n", 0);
-    int several = compile_max_registers("func f(n: int): int { n + 1; n + 2; n + 3; n + 4; return n; }\n", 0);
+    int one = compile_max_registers("func f(n: i32): i32 { n + 1; return n; }\n", 0);
+    int several = compile_max_registers("func f(n: i32): i32 { n + 1; n + 2; n + 3; n + 4; return n; }\n", 0);
 
     assert(one == several);
 }
 
 static void test_call_result_survives_in_larger_expression() {
-    assert(test_run_int("func add(a: int, b: int): int { return a + b; }\n"
-                        "func main(): int { return add(1, 2) * 10 + add(3, 4); }\n"
-                        "let r: int = main();") == 37);
+    assert(test_run_int("func add(a: i32, b: i32): i32 { return a + b; }\n"
+                        "func main(): i32 { return add(1, 2) * 10 + add(3, 4); }\n"
+                        "let r: i32 = main();") == 37);
 }
 
 static void test_nested_call_results_survive() {
-    assert(test_run_int("func add(a: int, b: int): int { return a + b; }\n"
-                        "func main(): int { return add(add(add(1, 2), add(3, 4)), add(5, 6)); }\n"
-                        "let r: int = main();") == 21);
+    assert(test_run_int("func add(a: i32, b: i32): i32 { return a + b; }\n"
+                        "func main(): i32 { return add(add(add(1, 2), add(3, 4)), add(5, 6)); }\n"
+                        "let r: i32 = main();") == 21);
 }
 
 static int compile_sequential_lets(unsigned int count) {
     size_t capacity = 64 + (size_t)count * 24;
     char *source = malloc(capacity);
-    size_t used = (size_t)snprintf(source, capacity, "func f(n: int): int {\n");
+    size_t used = (size_t)snprintf(source, capacity, "func f(n: i32): i32 {\n");
 
     for (unsigned int i = 0; i < count; i++) {
         used += (size_t)snprintf(source + used, capacity - used, "let s%u = n + 1;\n", i);
     }
 
-    snprintf(source + used, capacity - used, "return n;\n}\nlet r: int = f(7);\n");
+    snprintf(source + used, capacity - used, "return n;\n}\nlet r: i32 = f(7);\n");
 
     VM *vm = vm_create();
     compile_and_run(vm, test_in_a_module(source));
@@ -153,7 +153,7 @@ static void test_each_live_local_costs_one_slot() {
     assert(more - few == 50);
 }
 
-/* A frame is addressed by one byte, so a function needing more slots than that is rejected rather
+/* A frame is addressed by one u8, so a function needing more slots than that is rejected rather
  * than emitted with a slot the VM cannot name. */
 static void test_a_function_too_large_for_the_frame_is_rejected() {
     unsigned int fits = 1;

@@ -9,93 +9,93 @@
 #include <stdio.h>
 
 static void test_box_allocates_a_value_of_any_type() {
-    assert(test_run_int("func f(): int { let p: *int = box 7; return *p; }\n"
-                        "let r: int = f();") == 7);
+    assert(test_run_int("func f(): i32 { let p: *i32 = box 7; return *p; }\n"
+                        "let r: i32 = f();") == 7);
 
     assert(test_run_bool("func f(): bool { let p: *bool = box true; return *p; }\n"
                          "let r: bool = f();") == true);
 }
 
 static void test_box_allocates_a_usable_object() {
-    assert(test_run_int("struct Player { health: int }\n"
-                        "func main(): int {\n"
+    assert(test_run_int("struct Player { health: i32 }\n"
+                        "func main(): i32 {\n"
                         "    let p: *Player = box Player { health: 0 };\n"
                         "    p.health = 42;\n"
                         "    return p.health;\n"
                         "}\n"
-                        "let r: int = main();") == 42);
+                        "let r: i32 = main();") == 42);
 }
 
 static void test_the_payload_holds_the_value_it_was_given() {
-    assert(test_run_int("struct Player { health: int, mana: int }\n"
-                        "func main(): int {\n"
+    assert(test_run_int("struct Player { health: i32, mana: i32 }\n"
+                        "func main(): i32 {\n"
                         "    let p: *Player = box Player { health: 3, mana: 4 };\n"
                         "    return p.health + p.mana;\n"
                         "}\n"
-                        "let r: int = main();") == 7);
+                        "let r: i32 = main();") == 7);
 }
 
 static void test_a_heap_pointer_may_be_returned() {
-    assert(test_run_int("struct Box { n: int }\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
                         "func make(): *Box {\n"
                         "    let b: *Box = box Box { n: 0 };\n"
                         "    b.n = 7;\n"
                         "    return b;\n"
                         "}\n"
-                        "func main(): int { let b: *Box = make(); return b.n; }\n"
-                        "let r: int = main();") == 7);
+                        "func main(): i32 { let b: *Box = make(); return b.n; }\n"
+                        "let r: i32 = main();") == 7);
 }
 
 static void test_two_objects_are_distinct() {
-    assert(test_run_int("struct Box { n: int }\n"
-                        "func main(): int {\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
+                        "func main(): i32 {\n"
                         "    let a: *Box = box Box { n: 0 };\n"
                         "    let b: *Box = box Box { n: 0 };\n"
                         "    a.n = 1;\n"
                         "    b.n = 2;\n"
                         "    return a.n * 10 + b.n;\n"
                         "}\n"
-                        "let r: int = main();") == 12);
+                        "let r: i32 = main();") == 12);
 }
 
 static void test_method_on_a_heap_object() {
     assert(
-        test_run_int("struct Player { health: int }\n"
+        test_run_int("struct Player { health: i32 }\n"
                      "impl Player {\n"
-                     "    func hurt(p: &Player, n: int): int { p.health = p.health - n; return p.health; }\n"
+                     "    func hurt(p: &Player, n: i32): i32 { p.health = p.health - n; return p.health; }\n"
                      "}\n"
-                     "func main(): int {\n"
+                     "func main(): i32 {\n"
                      "    let p: *Player = box Player { health: 0 };\n"
                      "    p.health = 50;\n"
                      "    return p.hurt(8);\n"
                      "}\n"
-                     "let r: int = main();") == 42);
+                     "let r: i32 = main();") == 42);
 }
 
 static void test_an_object_can_hold_another() {
-    assert(test_run_int("struct Inner { n: int }\n"
+    assert(test_run_int("struct Inner { n: i32 }\n"
                         "struct Outer { child: *Inner }\n"
-                        "func main(): int {\n"
+                        "func main(): i32 {\n"
                         "    let o: *Outer = box Outer { child: box Inner { n: 0 } };\n"
                         "    o.child = box Inner { n: 0 };\n"
                         "    o.child.n = 9;\n"
                         "    return o.child.n;\n"
                         "}\n"
-                        "let r: int = main();") == 9);
+                        "let r: i32 = main();") == 9);
 }
 
 static void test_an_alias_is_borrowed_not_owned() {
-    assert(test_run_int("struct Box { n: int }\n"
-                        "func main(): int {\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
+                        "func main(): i32 {\n"
                         "    let a: *Box = box Box { n: 0 };\n"
                         "    a.n = 5;\n"
                         "    let b: &Box = a;\n"
                         "    return b.n;\n"
                         "}\n"
-                        "let r: int = main();") == 5);
+                        "let r: i32 = main();") == 5);
 
-    assert(!test_compiles("struct Box { n: int }\n"
-                          "func main(): int {\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
+                          "func main(): i32 {\n"
                           "    let a: *Box = box Box { n: 0 };\n"
                           "    let b: *Box = a;\n"
                           "    return a.n;\n"
@@ -103,28 +103,28 @@ static void test_an_alias_is_borrowed_not_owned() {
 }
 
 static void test_released_at_the_end_of_its_block() {
-    assert(test_run_int("struct Box { n: int }\n"
-                        "func main(): int {\n"
-                        "    let t: int = 0;\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
+                        "func main(): i32 {\n"
+                        "    let t: i32 = 0;\n"
                         "    { let a: *Box = box Box { n: 0 }; a.n = 3; t = a.n; }\n"
                         "    return t;\n"
                         "}\n"
-                        "let r: int = main();") == 3);
+                        "let r: i32 = main();") == 3);
 }
 
 static void test_a_reused_slot_is_not_released_twice() {
-    assert(test_run_int("struct Box { n: int }\n"
-                        "func main(): int {\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
+                        "func main(): i32 {\n"
                         "    { let a: *Box = box Box { n: 0 }; a.n = 1; }\n"
-                        "    { let x: int = 7; let y: int = 8; return x + y; }\n"
+                        "    { let x: i32 = 7; let y: i32 = 8; return x + y; }\n"
                         "}\n"
-                        "let r: int = main();") == 15);
+                        "let r: i32 = main();") == 15);
 }
 
 static void test_a_bare_new_does_not_leak() {
-    assert(test_run_int("struct Box { n: int }\n"
-                        "func main(): int { box Box { n: 0 }; return 4; }\n"
-                        "let r: int = main();") == 4);
+    assert(test_run_int("struct Box { n: i32 }\n"
+                        "func main(): i32 { box Box { n: 0 }; return 4; }\n"
+                        "let r: i32 = main();") == 4);
 }
 
 static void test_an_abnormal_unwind_frees_what_it_held() {
@@ -136,10 +136,10 @@ static void test_an_abnormal_unwind_frees_what_it_held() {
     FuncPrototype script;
     assert(compile_unit(vm,
                         "module test;\n"
-                        "struct Node { n: int }\n"
-                        "func deep(n: int): int { return deep(n + 1); }\n"
-                        "func main(): int { let p: *Node = box Node { n: 0 }; return deep(0); }\n"
-                        "let r: int = main();",
+                        "struct Node { n: i32 }\n"
+                        "func deep(n: i32): i32 { return deep(n + 1); }\n"
+                        "func main(): i32 { let p: *Node = box Node { n: 0 }; return deep(0); }\n"
+                        "let r: i32 = main();",
                         &script, &diagnostics));
 
     diagnostics_free(&diagnostics);
@@ -151,20 +151,20 @@ static void test_an_abnormal_unwind_frees_what_it_held() {
 }
 
 static void test_storing_an_owning_value_into_a_field_transfers_it() {
-    assert(test_run_int("struct Inner { n: int }\n"
+    assert(test_run_int("struct Inner { n: i32 }\n"
                         "struct Outer { child: *Inner }\n"
-                        "func main(): int {\n"
+                        "func main(): i32 {\n"
                         "    let o: *Outer = box Outer { child: box Inner { n: 0 } };\n"
                         "    let i: *Inner = box Inner { n: 0 };\n"
                         "    i.n = 6;\n"
                         "    o.child = i;\n"
                         "    return o.child.n;\n"
                         "}\n"
-                        "let r: int = main();") == 6);
+                        "let r: i32 = main();") == 6);
 
-    assert(!test_compiles("struct Inner { n: int }\n"
+    assert(!test_compiles("struct Inner { n: i32 }\n"
                           "struct Outer { child: *Inner }\n"
-                          "func main(): int {\n"
+                          "func main(): i32 {\n"
                           "    let o: *Outer = box Outer { child: box Inner { n: 0 } };\n"
                           "    let i: *Inner = box Inner { n: 0 };\n"
                           "    o.child = i;\n"
@@ -173,63 +173,63 @@ static void test_storing_an_owning_value_into_a_field_transfers_it() {
 }
 
 static void test_storing_a_parameter_into_a_field_is_refused() {
-    assert(!test_codegens("struct Inner { n: int }\n"
+    assert(!test_codegens("struct Inner { n: i32 }\n"
                           "struct Outer { child: *Inner }\n"
-                          "func adopt(o: &Outer, i: &Inner): int {\n"
+                          "func adopt(o: &Outer, i: &Inner): i32 {\n"
                           "    o.child = i;\n"
                           "    return 0;\n"
                           "}\n"
-                          "let r: int = 0;"));
+                          "let r: i32 = 0;"));
 }
 
 static void test_storing_a_call_result_into_a_field_is_allowed() {
-    assert(test_run_int("struct Inner { n: int }\n"
+    assert(test_run_int("struct Inner { n: i32 }\n"
                         "struct Outer { child: *Inner }\n"
                         "func make(): *Inner {\n"
                         "    let i: *Inner = box Inner { n: 0 };\n"
                         "    i.n = 6;\n"
                         "    return i;\n"
                         "}\n"
-                        "func main(): int {\n"
+                        "func main(): i32 {\n"
                         "    let o: *Outer = box Outer { child: box Inner { n: 0 } };\n"
                         "    o.child = make();\n"
                         "    return o.child.n;\n"
                         "}\n"
-                        "let r: int = main();") == 6);
+                        "let r: i32 = main();") == 6);
 }
 
 static void test_an_owned_argument_is_freed_by_the_call_site() {
-    assert(test_run_int("struct Box { n: int }\n"
-                        "func take(b: &Box): int { return b.n + 1; }\n"
-                        "func main(): int { return take(box Box { n: 0 }); }\n"
-                        "let r: int = main();") == 1);
+    assert(test_run_int("struct Box { n: i32 }\n"
+                        "func take(b: &Box): i32 { return b.n + 1; }\n"
+                        "func main(): i32 { return take(box Box { n: 0 }); }\n"
+                        "let r: i32 = main();") == 1);
 }
 
 static void test_an_owned_receiver_is_freed_by_the_call_site() {
-    assert(test_run_int("struct Box { n: int }\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
                         "impl Box {\n"
-                        "    func get(b: &Box): int { return b.n + 2; }\n"
+                        "    func get(b: &Box): i32 { return b.n + 2; }\n"
                         "}\n"
-                        "func main(): int { return (box Box { n: 0 }).get(); }\n"
-                        "let r: int = main();") == 2);
+                        "func main(): i32 { return (box Box { n: 0 }).get(); }\n"
+                        "let r: i32 = main();") == 2);
 }
 
 static void test_a_borrowed_argument_is_not_freed_by_the_call_site() {
-    assert(test_run_int("struct Box { n: int }\n"
-                        "func take(b: &Box): int { return b.n; }\n"
-                        "func main(): int {\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
+                        "func take(b: &Box): i32 { return b.n; }\n"
+                        "func main(): i32 {\n"
                         "    let b: *Box = box Box { n: 0 };\n"
                         "    b.n = 5;\n"
                         "    take(b);\n"
                         "    return b.n;\n"
                         "}\n"
-                        "let r: int = main();") == 5);
+                        "let r: i32 = main();") == 5);
 }
 
 static void test_overwriting_a_field_releases_the_old_value() {
-    assert(test_run_int("struct Inner { n: int }\n"
+    assert(test_run_int("struct Inner { n: i32 }\n"
                         "struct Outer { child: *Inner }\n"
-                        "func main(): int {\n"
+                        "func main(): i32 {\n"
                         "    let o: *Outer = box Outer { child: box Inner { n: 0 } };\n"
                         "    o.child = box Inner { n: 0 };\n"
                         "    o.child.n = 1;\n"
@@ -237,50 +237,50 @@ static void test_overwriting_a_field_releases_the_old_value() {
                         "    o.child.n = 2;\n"
                         "    return o.child.n;\n"
                         "}\n"
-                        "let r: int = main();") == 2);
+                        "let r: i32 = main();") == 2);
 }
 
 static void test_reassigning_a_variable_releases_the_old_value() {
-    assert(test_run_int("struct Box { n: int }\n"
-                        "func main(): int {\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
+                        "func main(): i32 {\n"
                         "    let p: *Box = box Box { n: 0 };\n"
                         "    p.n = 1;\n"
                         "    p = box Box { n: 0 };\n"
                         "    p.n = 9;\n"
                         "    return p.n;\n"
                         "}\n"
-                        "let r: int = main();") == 9);
+                        "let r: i32 = main();") == 9);
 }
 
 static void test_field_self_assignment_is_refused() {
-    assert(!test_codegens("struct Inner { n: int }\n"
+    assert(!test_codegens("struct Inner { n: i32 }\n"
                           "struct Outer { child: *Inner }\n"
-                          "func main(): int {\n"
+                          "func main(): i32 {\n"
                           "    let o: *Outer = box Outer { child: box Inner { n: 0 } };\n"
                           "    o.child = box Inner { n: 0 };\n"
                           "    o.child.n = 5;\n"
                           "    o.child = o.child;\n"
                           "    return o.child.n;\n"
                           "}\n"
-                          "let r: int = main();"));
+                          "let r: i32 = main();"));
 }
 
 static void test_variable_self_assignment_is_refused() {
-    assert(!test_codegens("struct Box { n: int }\n"
-                          "func main(): int { let p: *Box = box Box { n: 0 }; p.n = 3; p = p; return p.n; }\n"
-                          "let r: int = main();"));
+    assert(!test_codegens("struct Box { n: i32 }\n"
+                          "func main(): i32 { let p: *Box = box Box { n: 0 }; p.n = 3; p = p; return p.n; }\n"
+                          "let r: i32 = main();"));
 }
 
 static void test_reassigning_an_owning_variable_frees_the_old_object() {
-    assert(test_run_int("struct Box { n: int }\n"
-                        "func main(): int {\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
+                        "func main(): i32 {\n"
                         "    let p: *Box = box Box { n: 0 };\n"
                         "    p.n = 1;\n"
                         "    p = box Box { n: 0 };\n"
                         "    p.n = 9;\n"
                         "    return p.n;\n"
                         "}\n"
-                        "let r: int = main();") == 9);
+                        "let r: i32 = main();") == 9);
 }
 
 int main(void) {

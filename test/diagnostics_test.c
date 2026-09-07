@@ -52,8 +52,8 @@ static void test_a_struct_local_without_a_literal_reports_once() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    compile(&ctx, "struct Point { x: int, y: int }\n"
-                  "func f(): int { let v: Point; v.x = 1; return v.x + v.y; }\n");
+    compile(&ctx, "struct Point { x: i32, y: i32 }\n"
+                  "func f(): i32 { let v: Point; v.x = 1; return v.x + v.y; }\n");
 
     assert(diagnostics_count(&ctx.diagnostics) == 1);
 
@@ -65,8 +65,8 @@ static void test_records_kind_and_position() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    diag_error(diagnostics, GAB_ERR_TYPE, (Span){.line = 3, .column = 7}, "expected %s, found %s", "int",
-               "float");
+    diag_error(diagnostics, GAB_ERR_TYPE, (Span){.line = 3, .column = 7}, "expected %s, found %s", "i32",
+               "f32");
 
     assert(diagnostics_has_errors(diagnostics));
     assert(diagnostics_count(diagnostics) == 1);
@@ -75,7 +75,7 @@ static void test_records_kind_and_position() {
     assert(diagnostic->kind == GAB_ERR_TYPE);
     assert(diagnostic->span.line == 3);
     assert(diagnostic->span.column == 7);
-    assert(strcmp(diagnostic->message, "expected int, found float") == 0);
+    assert(strcmp(diagnostic->message, "expected i32, found f32") == 0);
 
     test_context_free(&ctx);
 }
@@ -118,7 +118,7 @@ static void test_poison_suppresses_cascades() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test() { let x: int = undefined_var + 1; }");
+    compile(&ctx, "func test() { let x: i32 = undefined_var + 1; }");
 
     if (diagnostics_count(diagnostics) != 1) {
         diagnostics_print(diagnostics, stderr);
@@ -138,7 +138,7 @@ static void test_reports_multiple_semantic_errors() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test() { let a: int = first; let b: int = second; }");
+    compile(&ctx, "func test() { let a: i32 = first; let b: i32 = second; }");
 
     assert(diagnostics_count(diagnostics) == 2);
     assert(strcmp(diagnostics_get(diagnostics, 0)->message, "undeclared variable 'first'") == 0);
@@ -152,14 +152,14 @@ static void test_reports_type_mismatch() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test() { let x: int = 1.5; }");
+    compile(&ctx, "func test() { let x: i32 = 1.5; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_TYPE);
     assert(strcmp(diagnostic->message,
-                  "cannot initialize a variable of type int with a value of type float") == 0);
+                  "cannot initialize a variable of type i32 with a value of type f32") == 0);
 
     test_context_free(&ctx);
 }
@@ -169,7 +169,7 @@ static void test_reports_a_bad_binary_operand() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test(): int { let a: bool = true; let b: bool = false; return a - b; }");
+    compile(&ctx, "func test(): i32 { let a: bool = true; let b: bool = false; return a - b; }");
 
     assert(diagnostics_count(diagnostics) >= 1);
 
@@ -185,13 +185,13 @@ static void test_reports_a_bad_compound_assignment_operand() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test(): float { let a: float = 1.0; a %= 2.0; return a; }");
+    compile(&ctx, "func test(): f32 { let a: f32 = 1.0; a %= 2.0; return a; }");
 
     assert(diagnostics_count(diagnostics) >= 1);
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_TYPE);
-    assert(strcmp(diagnostic->message, "'%' requires an integer type, found float") == 0);
+    assert(strcmp(diagnostic->message, "'%' requires an integer type, found f32") == 0);
 
     test_context_free(&ctx);
 }
@@ -201,13 +201,13 @@ static void test_reports_a_mismatched_compound_assignment() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test(): int { let a: int = 1; a += 2.0; return a; }");
+    compile(&ctx, "func test(): i32 { let a: i32 = 1; a += 2.0; return a; }");
 
     assert(diagnostics_count(diagnostics) >= 1);
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_TYPE);
-    assert(strcmp(diagnostic->message, "cannot apply '+=' to int and float") == 0);
+    assert(strcmp(diagnostic->message, "cannot apply '+=' to i32 and f32") == 0);
 
     test_context_free(&ctx);
 }
@@ -217,13 +217,13 @@ static void test_reports_an_illegal_conversion() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test(): int { let a: bool = true; return int(a); }");
+    compile(&ctx, "func test(): i32 { let a: bool = true; return i32(a); }");
 
     assert(diagnostics_count(diagnostics) >= 1);
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_TYPE);
-    assert(strcmp(diagnostic->message, "cannot convert bool to int") == 0);
+    assert(strcmp(diagnostic->message, "cannot convert bool to i32") == 0);
 
     test_context_free(&ctx);
 }
@@ -233,13 +233,13 @@ static void test_reports_a_conversion_with_the_wrong_operand_count() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test(): int { return int(); }");
+    compile(&ctx, "func test(): i32 { return i32(); }");
 
     assert(diagnostics_count(diagnostics) >= 1);
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_TYPE);
-    assert(strcmp(diagnostic->message, "a conversion to int takes one operand") == 0);
+    assert(strcmp(diagnostic->message, "a conversion to i32 takes one operand") == 0);
 
     test_context_free(&ctx);
 }
@@ -265,7 +265,7 @@ static void test_reports_duplicate_declaration() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test() { let x: int = 1; let x: int = 2; }");
+    compile(&ctx, "func test() { let x: i32 = 1; let x: i32 = 2; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -297,8 +297,8 @@ static void test_reports_unknown_field_name() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "struct Vec3 { x: float, y: float, z: float }\n"
-                  "func f(): float { let v = Vec3 { x: 0.0, y: 0.0, z: 0.0 }; return v.w; }");
+    compile(&ctx, "struct Vec3 { x: f32, y: f32, z: f32 }\n"
+                  "func f(): f32 { let v = Vec3 { x: 0.0, y: 0.0, z: 0.0 }; return v.w; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -314,13 +314,13 @@ static void test_reports_field_access_on_a_non_struct() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func f(): int { let n: int = 1; return n.x; }");
+    compile(&ctx, "func f(): i32 { let n: i32 = 1; return n.x; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_TYPE);
-    assert(strcmp(diagnostic->message, "int is not a struct, so it has no fields") == 0);
+    assert(strcmp(diagnostic->message, "i32 is not a struct, so it has no fields") == 0);
 
     test_context_free(&ctx);
 }
@@ -330,14 +330,14 @@ static void test_reports_mismatched_field_assignment() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "struct Vec3 { x: float, y: float, z: float }\n"
-                  "func f(): float { let v = Vec3 { x: 0.0, y: 0.0, z: 0.0 }; v.x = true; return v.x; }");
+    compile(&ctx, "struct Vec3 { x: f32, y: f32, z: f32 }\n"
+                  "func f(): f32 { let v = Vec3 { x: 0.0, y: 0.0, z: 0.0 }; v.x = true; return v.x; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_TYPE);
-    assert(strcmp(diagnostic->message, "cannot assign a value of type bool to a target of type float") == 0);
+    assert(strcmp(diagnostic->message, "cannot assign a value of type bool to a target of type f32") == 0);
 
     test_context_free(&ctx);
 }
@@ -347,7 +347,7 @@ static void test_reports_duplicate_field() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "struct Broken { value: int, value: float }");
+    compile(&ctx, "struct Broken { value: i32, value: f32 }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -363,7 +363,7 @@ static void test_reports_duplicate_struct_name() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "struct Vec2 { x: float } struct Vec2 { y: float }");
+    compile(&ctx, "struct Vec2 { x: f32 } struct Vec2 { y: f32 }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -379,10 +379,10 @@ static void test_rejects_shadowing_a_builtin() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "struct int { x: float }");
+    compile(&ctx, "struct i32 { x: f32 }");
 
     assert(diagnostics_count(diagnostics) == 1);
-    assert(strcmp(diagnostics_get(diagnostics, 0)->message, "type 'int' is already declared") == 0);
+    assert(strcmp(diagnostics_get(diagnostics, 0)->message, "type 'i32' is already declared") == 0);
 
     test_context_free(&ctx);
 }
@@ -535,8 +535,8 @@ static void test_a_unit_may_declare_a_struct_called_array() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    compile(&ctx, "struct Array { n: int }\n"
-                  "struct Holder { a: Array, xs: array<int, 2> }\n");
+    compile(&ctx, "struct Array { n: i32 }\n"
+                  "struct Holder { a: Array, xs: array<i32, 2> }\n");
 
     assert(diagnostics_count(&ctx.diagnostics) == 0);
 
@@ -547,10 +547,10 @@ static void test_rejects_type_arguments_on_a_primitive() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    compile(&ctx, "struct V { a: int<bool> }\n");
+    compile(&ctx, "struct V { a: i32<bool> }\n");
 
     assert(diagnostics_count(&ctx.diagnostics) == 1);
-    assert(strcmp(diagnostics_get(&ctx.diagnostics, 0)->message, "int does not take a type argument") == 0);
+    assert(strcmp(diagnostics_get(&ctx.diagnostics, 0)->message, "i32 does not take a type argument") == 0);
 
     test_context_free(&ctx);
 }
@@ -559,11 +559,11 @@ static void test_an_array_is_named_by_its_shape() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    compile(&ctx, "func f(): int { let xs: array<int, 3>; let y: int = xs; return y; }\n");
+    compile(&ctx, "func f(): i32 { let xs: array<i32, 3>; let y: i32 = xs; return y; }\n");
 
     assert(diagnostics_count(&ctx.diagnostics) == 1);
     assert(strcmp(diagnostics_get(&ctx.diagnostics, 0)->message,
-                  "cannot initialize a variable of type int with a value of type array<int, 3>") == 0);
+                  "cannot initialize a variable of type i32 with a value of type array<i32, 3>") == 0);
 
     test_context_free(&ctx);
 }
@@ -587,7 +587,7 @@ static void test_reports_wrong_argument_count() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func f(a: int): int { return a; } func g(): int { return f(1, 2); }");
+    compile(&ctx, "func f(a: i32): i32 { return a; } func g(): i32 { return f(1, 2); }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -603,13 +603,13 @@ static void test_reports_wrong_argument_type() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func f(a: int): int { return a; } func g(): int { return f(1.5); }");
+    compile(&ctx, "func f(a: i32): i32 { return a; } func g(): i32 { return f(1.5); }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_TYPE);
-    assert(strcmp(diagnostic->message, "argument 1 is float, but int was declared") == 0);
+    assert(strcmp(diagnostic->message, "argument 1 is f32, but i32 was declared") == 0);
 
     test_context_free(&ctx);
 }
@@ -619,7 +619,7 @@ static void test_reports_calling_a_non_function() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func g(): int { let x: int = 1; return x(); }");
+    compile(&ctx, "func g(): i32 { let x: i32 = 1; return x(); }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -651,7 +651,7 @@ static void test_syntax_errors_name_the_found_token() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test() { let x: int = 1 }");
+    compile(&ctx, "func test() { let x: i32 = 1 }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -687,7 +687,7 @@ static void test_spans_track_lines_and_columns() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "module test;\nfunc test() {\n    let x: int = 1;\n    let y: int = nope;\n}");
+    compile(&ctx, "module test;\nfunc test() {\n    let x: i32 = 1;\n    let y: i32 = nope;\n}");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -704,7 +704,7 @@ static void test_reports_borrowing_a_temporary() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test() { let p: &int = 1; }");
+    compile(&ctx, "func test() { let p: &i32 = 1; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -720,7 +720,7 @@ static void test_reports_borrowing_a_call_result() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func g(): int { return 1; }\nfunc test() { let p: &int = g(); }");
+    compile(&ctx, "func g(): i32 { return 1; }\nfunc test() { let p: &i32 = g(); }");
 
     assert(diagnostics_count(diagnostics) == 1);
     assert(strcmp(diagnostics_get(diagnostics, 0)->message,
@@ -734,13 +734,13 @@ static void test_reports_dereferencing_a_non_pointer() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test() { let x: int = 1; let y: int = *x; }");
+    compile(&ctx, "func test() { let x: i32 = 1; let y: i32 = *x; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_TYPE);
-    assert(strcmp(diagnostic->message, "cannot dereference int") == 0);
+    assert(strcmp(diagnostic->message, "cannot dereference i32") == 0);
 
     test_context_free(&ctx);
 }
@@ -750,13 +750,13 @@ static void test_reports_field_access_through_a_non_struct_pointer() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test() { let x: int = 1; let p: &int = x; let y: int = p.field; }");
+    compile(&ctx, "func test() { let x: i32 = 1; let p: &i32 = x; let y: i32 = p.field; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_TYPE);
-    assert(strcmp(diagnostic->message, "&int is not a struct, so it has no fields") == 0);
+    assert(strcmp(diagnostic->message, "&i32 is not a struct, so it has no fields") == 0);
 
     test_context_free(&ctx);
 }
@@ -766,7 +766,7 @@ static void test_reports_returning_a_pointer_to_a_local() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "func test(): &int { let x: int = 1; return x; }");
+    compile(&ctx, "func test(): &i32 { let x: i32 = 1; return x; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 
@@ -782,8 +782,8 @@ static void test_reports_a_pointer_escaping_its_block() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "struct Node { n: int }\n"
-                  "func test(): int {\n"
+    compile(&ctx, "struct Node { n: i32 }\n"
+                  "func test(): i32 {\n"
                   "    let p: &Node;\n"
                   "    { let x = Node { n: 1 }; p = x; }\n"
                   "    return p.n;\n"
@@ -804,7 +804,7 @@ static void test_reports_a_stack_pointer_stored_into_a_heap_object() {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    compile(&ctx, "struct Inner { n: int }\n"
+    compile(&ctx, "struct Inner { n: i32 }\n"
                   "struct Outer { child: &Inner }\n"
                   "func test() { let o: *Outer = box Outer { child: box Inner { n: 0 } }; let local = Inner "
                   "{ n: 0 }; o.child = local; }");
@@ -823,11 +823,11 @@ static void test_accepts_pointers_that_do_not_outlive_their_pointee() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    compile(&ctx, "func take(p: &int): int { return *p; }\n"
-                  "func test(): int {\n"
-                  "let x: int = 1;\n"
-                  "let p: &int = x;\n"
-                  "{ let inner: &int = x; }\n"
+    compile(&ctx, "func take(p: &i32): i32 { return *p; }\n"
+                  "func test(): i32 {\n"
+                  "let x: i32 = 1;\n"
+                  "let p: &i32 = x;\n"
+                  "{ let inner: &i32 = x; }\n"
                   "return take(x) + *p;\n"
                   "}");
 

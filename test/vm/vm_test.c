@@ -35,7 +35,7 @@ static void test_vm_execute() {
                         "let g = ((f + e) * (d - c)) / ((a + b) - (e / (d + 1)));\n"
                         "let h = g + f - e * (d + c - (b * a));\n"
                         "let i = (h / g) + (f - (e * (d / (c + (b - a)))));\n"
-                        "let result : int = ((i + h) * (g - f) + (e / d)) - ((c + b) * (a - 1));\n"
+                        "let result : i32 = ((i + h) * (g - f) + (e / d)) - ((c + b) * (a - 1));\n"
                         "let compare = result == 13120;\n"
                         "if compare { let a = 10; let b = 2; return a * b == 20; } else { return false; }\n"
                         "}");
@@ -48,9 +48,9 @@ static void test_two_vms_are_independent() {
     VM *second = vm_create();
 
     compile_and_run(first, "module test;\n"
-                           "func run(): int { let value : int = 1; return value; }");
+                           "func run(): i32 { let value : i32 = 1; return value; }");
     compile_and_run(second, "module test;\n"
-                            "func run(): int { let value : int = 2; return value; }");
+                            "func run(): i32 { let value : i32 = 2; return value; }");
 
     assert(&first->env.strings != &second->env.strings);
 
@@ -61,10 +61,10 @@ static void test_two_vms_are_independent() {
 
     vm_free(first);
 
-    assert(strcmp(type_name_of(second_int)->data, "int") == 0);
+    assert(strcmp(type_name_of(second_int)->data, "i32") == 0);
 
     compile_and_run(second, "module test;\n"
-                            "func again(): int { return 3; }");
+                            "func again(): i32 { return 3; }");
 
     vm_free(second);
 }
@@ -88,7 +88,7 @@ static void test_struct_typed_local() {
     VM *vm = vm_create();
 
     compile_and_run(vm, "module test;\n"
-                        "struct Vec3 { x: float, y: float, z: float }\n"
+                        "struct Vec3 { x: f32, y: f32, z: f32 }\n"
                         "func main() { let v = Vec3 { x: 0.0, y: 0.0, z: 0.0 }; }");
 
     assert(loaded_protos(vm) == 1);
@@ -104,7 +104,7 @@ static void test_top_level_runs_as_frame_zero() {
     assert(vm->frame_count == 0);
 
     compile_and_run(vm, "module test;\n"
-                        "let x: int = 7;");
+                        "let x: i32 = 7;");
     assert(vm->frame_count == 0);
 
     vm_free(vm);
@@ -114,7 +114,7 @@ static void test_types_survive_a_later_compile() {
     VM *vm = vm_create();
 
     compile_and_run(vm, "module test;\n"
-                        "struct Player { health: int, mana: int }\n");
+                        "struct Player { health: i32, mana: i32 }\n");
 
     const Type *player =
         scope_type_lookup(environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "test")),
@@ -126,8 +126,8 @@ static void test_types_survive_a_later_compile() {
 
     compile_and_run(vm,
                     "module test;\n"
-                    "func a(x: int, y: int): int { let q: int = x + y; let w: int = q * q; return w; }\n"
-                    "func b(x: int, y: int): int { let q: int = x - y; let w: int = q * q; return w; }\n");
+                    "func a(x: i32, y: i32): i32 { let q: i32 = x + y; let w: i32 = q * q; return w; }\n"
+                    "func b(x: i32, y: i32): i32 { let q: i32 = x - y; let w: i32 = q * q; return w; }\n");
 
     assert(strcmp(type_name_of(player)->data, "Player") == 0);
     assert(type_registry_size_of(vm->env.global_scope.type_registry, player) == size);
@@ -140,8 +140,8 @@ static void test_function_signatures_survive_a_later_compile() {
     VM *vm = vm_create();
 
     compile_and_run(vm, "module test;\n"
-                        "struct Player { health: int, mana: int }\n"
-                        "func on_update(p: Player, dt: float): int { return p.health; }\n");
+                        "struct Player { health: i32, mana: i32 }\n"
+                        "func on_update(p: Player, dt: f32): i32 { return p.health; }\n");
 
     Binding *on_update =
         scope_binding_lookup(environment_module_scope(&vm->env, string_from_cstr(&vm->env.strings, "test")),
@@ -151,13 +151,13 @@ static void test_function_signatures_survive_a_later_compile() {
 
     compile_and_run(vm,
                     "module test;\n"
-                    "func a(x: int, y: int): int { let q: int = x + y; let w: int = q * q; return w; }\n"
-                    "func b(x: int, y: int): int { let q: int = x - y; let w: int = q * q; return w; }\n");
+                    "func a(x: i32, y: i32): i32 { let q: i32 = x + y; let w: i32 = q * q; return w; }\n"
+                    "func b(x: i32, y: i32): i32 { let q: i32 = x - y; let w: i32 = q * q; return w; }\n");
 
     assert(on_update->func->param_count == 2);
     assert(strcmp(type_name_of(on_update->func->params[0])->data, "Player") == 0);
-    assert(strcmp(type_name_of(on_update->func->params[1])->data, "float") == 0);
-    assert(strcmp(type_name_of(on_update->func->return_type)->data, "int") == 0);
+    assert(strcmp(type_name_of(on_update->func->params[1])->data, "f32") == 0);
+    assert(strcmp(type_name_of(on_update->func->return_type)->data, "i32") == 0);
 
     vm_free(vm);
 }
@@ -166,7 +166,7 @@ static void test_prototypes_survive_a_later_compile() {
     VM *vm = vm_create();
 
     compile_and_run(vm, "module test;\n"
-                        "func seven(): int { return 7; }\n");
+                        "func seven(): i32 { return 7; }\n");
 
     assert(loaded_protos(vm) == 1);
 
@@ -175,14 +175,14 @@ static void test_prototypes_survive_a_later_compile() {
     int arity = seven->arity;
 
     compile_and_run(vm, "module test;\n"
-                        "func a(x: int): int { return x; }\n"
-                        "func b(x: int): int { return x; }\n"
-                        "func c(x: int): int { return x; }\n"
-                        "func d(x: int): int { return x; }\n"
-                        "func e(x: int): int { return x; }\n"
-                        "func f(x: int): int { return x; }\n"
-                        "func g(x: int): int { return x; }\n"
-                        "func h(x: int): int { return x; }\n");
+                        "func a(x: i32): i32 { return x; }\n"
+                        "func b(x: i32): i32 { return x; }\n"
+                        "func c(x: i32): i32 { return x; }\n"
+                        "func d(x: i32): i32 { return x; }\n"
+                        "func e(x: i32): i32 { return x; }\n"
+                        "func f(x: i32): i32 { return x; }\n"
+                        "func g(x: i32): i32 { return x; }\n"
+                        "func h(x: i32): i32 { return x; }\n");
 
     assert(loaded_protos(vm) > 1);
     assert(loaded_proto(vm, 0) == seven);
@@ -195,13 +195,13 @@ static void test_prototypes_survive_a_later_compile() {
 static void test_a_call_reaches_a_function_from_an_earlier_unit() {
     VM *vm = vm_create();
 
-    compile_and_run(vm, "module M;\nfunc seven(): int { return 7; }\n");
+    compile_and_run(vm, "module M;\nfunc seven(): i32 { return 7; }\n");
 
     compile_and_run(vm, "module M;\n"
-                        "func a(): int { return 1; }\n"
-                        "func b(): int { return 2; }\n"
-                        "func calls_across(): int { return seven(); }\n"
-                        "let r: int = calls_across();\n");
+                        "func a(): i32 { return 1; }\n"
+                        "func b(): i32 { return 2; }\n"
+                        "func calls_across(): i32 { return seven(); }\n"
+                        "let r: i32 = calls_across();\n");
 
     int32_t returned;
     memcpy(&returned, vm_slot_at(vm, test_result_slot(vm)), sizeof(returned));
@@ -215,7 +215,7 @@ static void test_a_unit_that_fails_to_link_installs_nothing() {
     VM *vm = vm_create();
 
     compile_and_run(vm, "module test;\n"
-                        "func first(): int { return 1; }\n");
+                        "func first(): i32 { return 1; }\n");
 
     size_t protos = loaded_protos(vm);
     size_t types = vm->program.heap_shapes.size;
@@ -226,9 +226,9 @@ static void test_a_unit_that_fails_to_link_installs_nothing() {
     FuncPrototype top_level;
     assert(!compile_unit(vm,
                          "module test;\n"
-                         "struct Only { a: int }\n"
-                         "func second(): int { let p: *Only = box Only { a: 0 }; return p.a; }\n"
-                         "extern func absent(x: int): int;\n",
+                         "struct Only { a: i32 }\n"
+                         "func second(): i32 { let p: *Only = box Only { a: 0 }; return p.a; }\n"
+                         "extern func absent(x: i32): i32;\n",
                          &top_level, &diagnostics));
 
     assert(diagnostics_has_errors(&diagnostics));
@@ -244,7 +244,7 @@ static void test_checking_a_unit_installs_nothing() {
     VM *vm = vm_create();
 
     compile_and_run(vm, "module test;\n"
-                        "func first(): int { return 1; }\n");
+                        "func first(): i32 { return 1; }\n");
 
     size_t protos = loaded_protos(vm);
     size_t types = vm->program.heap_shapes.size;
@@ -255,8 +255,8 @@ static void test_checking_a_unit_installs_nothing() {
     ASTUnit *ast;
 
     assert(parse_unit("module dry;\n"
-                      "struct Only { a: int }\n"
-                      "func second(): int { let p: *Only = box Only { a: 0 }; return p.a; }\n",
+                      "struct Only { a: i32 }\n"
+                      "func second(): i32 { let p: *Only = box Only { a: 0 }; return p.a; }\n",
                       vm->env.compile_arena, &vm->env.strings, &ast, &diagnostics));
 
     Scope staging;
@@ -298,7 +298,7 @@ static void test_compile_once_run_many() {
     FuncPrototype top_level;
     bool ok = compile_unit(vm,
                            "module test;\n"
-                           "func seven(): int { return 7; }\nlet r: int = seven();\n",
+                           "func seven(): i32 { return 7; }\nlet r: i32 = seven();\n",
                            &top_level, &diagnostics);
     assert(ok);
 
@@ -328,7 +328,7 @@ static void test_compile_failure_is_reportable() {
     FuncPrototype top_level;
     bool ok = compile_unit(vm,
                            "module test;\n"
-                           "func broken(: int { return",
+                           "func broken(: i32 { return",
                            &top_level, &diagnostics);
 
     assert(!ok);
@@ -357,8 +357,8 @@ static bool compile_ok(VM *vm, const char *source) {
 static void test_modules_isolate_declarations() {
     VM *vm = vm_create();
 
-    assert(compile_ok(vm, "module Player;\nfunc on_update(): int { return 1; }\n"));
-    assert(compile_ok(vm, "module Enemy;\nfunc on_update(): int { return 2; }\n"));
+    assert(compile_ok(vm, "module Player;\nfunc on_update(): i32 { return 1; }\n"));
+    assert(compile_ok(vm, "module Enemy;\nfunc on_update(): i32 { return 2; }\n"));
 
     vm_free(vm);
 }
@@ -366,10 +366,10 @@ static void test_modules_isolate_declarations() {
 static void test_modules_accumulate_across_units() {
     VM *vm = vm_create();
 
-    assert(compile_ok(vm, "module Player;\nfunc helper(): int { return 7; }\n"));
-    assert(compile_ok(vm, "module Player;\nfunc uses(): int { return helper(); }\n"));
+    assert(compile_ok(vm, "module Player;\nfunc helper(): i32 { return 7; }\n"));
+    assert(compile_ok(vm, "module Player;\nfunc uses(): i32 { return helper(); }\n"));
 
-    assert(!compile_ok(vm, "module Enemy;\nfunc bad(): int { return helper(); }\n"));
+    assert(!compile_ok(vm, "module Enemy;\nfunc bad(): i32 { return helper(); }\n"));
 
     vm_free(vm);
 }
@@ -377,10 +377,10 @@ static void test_modules_accumulate_across_units() {
 static void test_the_root_holds_only_builtins() {
     VM *vm = vm_create();
 
-    assert(compile_ok(vm, "module M;\nfunc uses_builtins(a: int, b: float): int { return a; }\n"));
+    assert(compile_ok(vm, "module M;\nfunc uses_builtins(a: i32, b: f32): i32 { return a; }\n"));
 
-    assert(compile_ok(vm, "module N;\nfunc also_builtins(a: int): int { return a; }\n"));
-    assert(!compile_ok(vm, "module P;\nfunc g(): int { return uses_builtins(1, 2.0); }\n"));
+    assert(compile_ok(vm, "module N;\nfunc also_builtins(a: i32): i32 { return a; }\n"));
+    assert(!compile_ok(vm, "module P;\nfunc g(): i32 { return uses_builtins(1, 2.0); }\n"));
 
     vm_free(vm);
 }
@@ -388,15 +388,15 @@ static void test_the_root_holds_only_builtins() {
 static void test_module_scope_does_not_change_pointer_lifetimes() {
     VM *vm = vm_create();
 
-    const char *takes_address = "func f(): int {\n"
-                                "  let x: int = 1;\n"
-                                "  let p: &int = x;\n"
+    const char *takes_address = "func f(): i32 {\n"
+                                "  let x: i32 = 1;\n"
+                                "  let p: &i32 = x;\n"
                                 "  return *p;\n"
                                 "}\n";
 
-    const char *escapes = "func g(): int {\n"
-                          "  let outer: *int;\n"
-                          "  { let inner: int = 1; outer = inner; }\n"
+    const char *escapes = "func g(): i32 {\n"
+                          "  let outer: *i32;\n"
+                          "  { let inner: i32 = 1; outer = inner; }\n"
                           "  return 0;\n"
                           "}\n";
 
@@ -417,8 +417,8 @@ static void test_a_load_name_replaces_nothing() {
 
     size_t loaded = ((VM *)handle)->program.top_levels.size;
 
-    assert(gab_vm_load(handle, "same.gab", "module test;\nfunc first(): int { return 1; }\n", &err));
-    assert(gab_vm_load(handle, "same.gab", "module test;\nfunc second(): int { return 2; }\n", &err));
+    assert(gab_vm_load(handle, "same.gab", "module test;\nfunc first(): i32 { return 1; }\n", &err));
+    assert(gab_vm_load(handle, "same.gab", "module test;\nfunc second(): i32 { return 2; }\n", &err));
 
     assert(((VM *)handle)->program.top_levels.size == loaded + 2);
 

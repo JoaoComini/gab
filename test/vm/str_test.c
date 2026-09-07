@@ -4,27 +4,27 @@
 #include <assert.h>
 
 static void test_characters_are_reached_through_a_reference() {
-    assert(test_run_int("func f(): int {\n"
+    assert(test_run_int("func f(): i32 {\n"
                         "    let s: &str = \"abc\";\n"
                         "    return s.len();\n"
                         "}\n"
-                        "let r: int = f();") == 3);
+                        "let r: i32 = f();") == 3);
 }
 
 static void test_nothing_holds_the_characters_themselves() {
-    assert(!test_compiles("func f(s: str): int { return 0; }\n"));
+    assert(!test_compiles("func f(s: str): i32 { return 0; }\n"));
     assert(!test_compiles("struct Person { name: str }\n"));
-    assert(!test_compiles("func f(): int { let s: str = \"hi\"; return 0; }\n"));
+    assert(!test_compiles("func f(): i32 { let s: str = \"hi\"; return 0; }\n"));
     assert(!test_compiles("func f(): str { return \"hi\"; }\n"));
 
-    assert(test_compiles("func f(s: &str): int { return 0; }\n"));
+    assert(test_compiles("func f(s: &str): i32 { return 0; }\n"));
     assert(test_compiles("struct Person { name: &str }\n"));
 }
 
 static void test_a_literal_is_a_string() {
-    assert(test_compiles("func f(): int { let s: &str = \"hi\"; return 0; }\n"));
+    assert(test_compiles("func f(): i32 { let s: &str = \"hi\"; return 0; }\n"));
 
-    assert(!test_compiles("func f(): int { let n: int = \"hi\"; return 0; }\n"));
+    assert(!test_compiles("func f(): i32 { let n: i32 = \"hi\"; return 0; }\n"));
 }
 
 static void test_a_literal_loads_its_characters_and_length() {
@@ -66,7 +66,7 @@ static void test_strings_are_not_ordered() {
 }
 
 static void test_a_literal_is_not_released() {
-    TestProgram program = test_compile("func f(): int { let s: &str = \"a\"; return 0; }\n");
+    TestProgram program = test_compile("func f(): i32 { let s: &str = \"a\"; return 0; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
@@ -79,7 +79,7 @@ static void test_a_struct_field_borrows_its_characters() {
     assert(test_compiles("struct Person { name: &str }\n"));
 
     TestProgram program = test_compile("struct Person { name: &str }\n"
-                                       "func f(): int { let p = Person { name: \"\" }; return 0; }\n");
+                                       "func f(): i32 { let p = Person { name: \"\" }; return 0; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
@@ -99,16 +99,16 @@ static void test_a_returnable_borrow_outlives_its_frame() {
 }
 
 static void test_a_literal_borrows() {
-    assert(test_compiles("func f(): int { let s: &str = \"hi\"; return 0; }\n"));
+    assert(test_compiles("func f(): i32 { let s: &str = \"hi\"; return 0; }\n"));
 }
 
 static void test_characters_are_read_as_bytes() {
-    assert(test_run_int("func f(): int {\n"
+    assert(test_run_int("func f(): i32 {\n"
                         "    let s: &str = \"abc\";\n"
-                        "    let b: &slice<byte> = s.as_bytes();\n"
+                        "    let b: &slice<u8> = s.as_bytes();\n"
                         "    return b.len();\n"
                         "}\n"
-                        "let r: int = f();") == 3);
+                        "let r: i32 = f();") == 3);
 }
 
 int main(void) {

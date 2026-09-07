@@ -105,10 +105,10 @@ static void test_colon_colon() {
     assert_identifier(&lexer, "Config");
     assert_token(&lexer, TOKEN_EOF);
 
-    lexer = test_lexer("x: int");
+    lexer = test_lexer("x: i32");
     assert_identifier(&lexer, "x");
     assert_token(&lexer, TOKEN_COLON);
-    assert_identifier(&lexer, "int");
+    assert_identifier(&lexer, "i32");
     assert_token(&lexer, TOKEN_EOF);
 
     lexer = test_lexer(": :");

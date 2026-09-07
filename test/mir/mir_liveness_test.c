@@ -40,7 +40,7 @@ static void lowered_free(Lowered *lowered) { test_context_free(&lowered->ctx); }
 
 static void test_a_parameter_read_at_the_end_is_live_throughout(void) {
     Lowered lowered;
-    lower(&lowered, "func f(a: int, b: int): int { let c: int = b; return a; }");
+    lower(&lowered, "func f(a: i32, b: i32): i32 { let c: i32 = b; return a; }");
 
     Liveness *liveness = mir_liveness_compute(lowered.ctx.arena, lowered.ir);
 
@@ -51,7 +51,7 @@ static void test_a_parameter_read_at_the_end_is_live_throughout(void) {
 
 static void test_a_value_never_read_again_is_not_live(void) {
     Lowered lowered;
-    lower(&lowered, "func f(a: int): int { let b: int = a; return 0; }");
+    lower(&lowered, "func f(a: i32): i32 { let b: i32 = a; return 0; }");
 
     Liveness *liveness = mir_liveness_compute(lowered.ctx.arena, lowered.ir);
 
@@ -65,7 +65,7 @@ static void test_a_value_never_read_again_is_not_live(void) {
 /* The counter is written in the body and read in the header, so it is live leaving the body. */
 static void test_a_value_read_on_the_next_turn_is_live_across_the_back_edge(void) {
     Lowered lowered;
-    lower(&lowered, "func f(n: int): int { for let i: int = 0; i < n; i = i + 1 { } return 0; }");
+    lower(&lowered, "func f(n: i32): i32 { for let i: i32 = 0; i < n; i = i + 1 { } return 0; }");
 
     Liveness *liveness = mir_liveness_compute(lowered.ctx.arena, lowered.ir);
 
@@ -103,7 +103,7 @@ static void test_a_value_read_on_the_next_turn_is_live_across_the_back_edge(void
 
 static void test_a_value_is_not_live_after_its_last_read(void) {
     Lowered lowered;
-    lower(&lowered, "func f(a: int, b: int): int { return a + b; }");
+    lower(&lowered, "func f(a: i32, b: i32): i32 { return a + b; }");
 
     Liveness *liveness = mir_liveness_compute(lowered.ctx.arena, lowered.ir);
 
@@ -128,7 +128,7 @@ static void test_a_value_is_not_live_after_its_last_read(void) {
 /* A place names every value its path needs, so an index is read where the place is used. */
 static void test_an_index_is_live_where_the_place_using_it_is(void) {
     Lowered lowered;
-    lower(&lowered, "func f(xs: array<int, 4>, i: int): int { return xs[i]; }");
+    lower(&lowered, "func f(xs: array<i32, 4>, i: i32): i32 { return xs[i]; }");
 
     Liveness *liveness = mir_liveness_compute(lowered.ctx.arena, lowered.ir);
 

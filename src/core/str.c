@@ -7,8 +7,8 @@
 #include <assert.h>
 
 static const char CORE_SRC[] = "impl str {\n"
-                               "    intrinsic func as_bytes(self: &str): &slice<byte>;\n"
-                               "    func len(self: &str): int { return self.as_bytes().len(); }\n"
+                               "    intrinsic func as_bytes(self: &str): &slice<u8>;\n"
+                               "    func len(self: &str): i32 { return self.as_bytes().len(); }\n"
                                "}\n";
 
 void core_register_str(VM *vm) {

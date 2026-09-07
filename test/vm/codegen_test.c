@@ -4,8 +4,8 @@
 #include <string.h>
 
 static void test_a_variable_operand_emits_its_operation() {
-    TestProgram program = test_compile("let a: int = 2;\n"
-                                       "let x: int = a + 3;\n");
+    TestProgram program = test_compile("let a: i32 = 2;\n"
+                                       "let x: i32 = a + 3;\n");
 
     assert(test_count_opcode(test_top_chunk(&program), OP_ADDI) == 1);
 
@@ -13,7 +13,7 @@ static void test_a_variable_operand_emits_its_operation() {
 }
 
 static void test_a_constant_division_by_zero_emits_its_division() {
-    TestProgram program = test_compile("func f(): int { return 1 / 0; }\n");
+    TestProgram program = test_compile("func f(): i32 { return 1 / 0; }\n");
 
     assert(test_count_opcode(test_func_chunk(&program, 0), OP_DIVI) == 1);
 
@@ -21,7 +21,7 @@ static void test_a_constant_division_by_zero_emits_its_division() {
 }
 
 static void test_a_float_compared_to_a_literal_uses_the_constant_form() {
-    TestProgram program = test_compile("func f(a: float): bool { return a < 0.0; }\n");
+    TestProgram program = test_compile("func f(a: f32): bool { return a < 0.0; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
@@ -35,8 +35,8 @@ static void test_a_float_compared_to_a_literal_uses_the_constant_form() {
 }
 
 static void test_a_binary_op_reads_its_operands() {
-    TestProgram program = test_compile("let a: float = 10.0;\n"
-                                       "let b: float = 5.0;\n"
+    TestProgram program = test_compile("let a: f32 = 10.0;\n"
+                                       "let b: f32 = 5.0;\n"
                                        "let c: bool = a > b;\n");
 
     Chunk *chunk = test_top_chunk(&program);
@@ -55,8 +55,8 @@ static void test_a_binary_op_reads_its_operands() {
 }
 
 static void test_a_small_literal_becomes_an_immediate() {
-    TestProgram program = test_compile("let a: int = 10;\n"
-                                       "let b: int = a + 1;\n");
+    TestProgram program = test_compile("let a: i32 = 10;\n"
+                                       "let b: i32 = a + 1;\n");
 
     Chunk *chunk = test_top_chunk(&program);
 
@@ -73,8 +73,8 @@ static void test_a_small_literal_becomes_an_immediate() {
 }
 
 static void test_a_compound_assignment_takes_an_immediate() {
-    TestProgram program = test_compile("let a: int = 10;\n"
-                                       "func f() { let b: int = 1; b += 1; }\n");
+    TestProgram program = test_compile("let a: i32 = 10;\n"
+                                       "func f() { let b: i32 = 1; b += 1; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
@@ -89,8 +89,8 @@ static void test_a_compound_assignment_takes_an_immediate() {
 }
 
 static void test_a_float_literal_is_never_an_immediate() {
-    TestProgram program = test_compile("let a: float = 10.0;\n"
-                                       "let b: float = a + 1.0;\n");
+    TestProgram program = test_compile("let a: f32 = 10.0;\n"
+                                       "let b: f32 = a + 1.0;\n");
 
     Chunk *chunk = test_top_chunk(&program);
 
@@ -104,9 +104,9 @@ static void test_a_float_literal_is_never_an_immediate() {
 }
 
 static void test_a_temporary_register_is_reused() {
-    TestProgram program = test_compile("func g(): int { return 1; }\n"
+    TestProgram program = test_compile("func g(): i32 { return 1; }\n"
                                        "func f() {\n"
-                                       "    let x: int = 0;\n"
+                                       "    let x: i32 = 0;\n"
                                        "    x = g() + 1;\n"
                                        "    x = g() + 2;\n"
                                        "}\n");
@@ -133,7 +133,7 @@ static void test_a_temporary_register_is_reused() {
 
 static void test_assignment_computes_into_its_target() {
     TestProgram program = test_compile("func f() {\n"
-                                       "    let x: int = 1;\n"
+                                       "    let x: i32 = 1;\n"
                                        "    x = x + 1;\n"
                                        "}\n");
 
@@ -152,8 +152,8 @@ static void test_assignment_computes_into_its_target() {
 
 static void test_if_jumps_past_its_then_block() {
     TestProgram program = test_compile("func f() {\n"
-                                       "    let a: int = 1;\n"
-                                       "    if a > 0 { let b: int = 2; }\n"
+                                       "    let a: i32 = 1;\n"
+                                       "    if a > 0 { let b: i32 = 2; }\n"
                                        "}\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
@@ -179,8 +179,8 @@ static void test_if_jumps_past_its_then_block() {
 
 static void test_if_else_jumps_over_the_else_block() {
     TestProgram program = test_compile("func f() {\n"
-                                       "    let a: int = 1;\n"
-                                       "    if a > 0 { let b: int = 2; } else { let c: int = 3; }\n"
+                                       "    let a: i32 = 1;\n"
+                                       "    if a > 0 { let b: i32 = 2; } else { let c: i32 = 3; }\n"
                                        "}\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
@@ -201,8 +201,8 @@ static void test_if_else_jumps_over_the_else_block() {
 
 static void test_one_instantiation_serves_every_call_that_names_it() {
     TestProgram program = test_compile("func id<T>(x: T): T { return x; }\n"
-                                       "func f(): int { return id<int>(1) + id<int>(2); }\n"
-                                       "let r: int = f();");
+                                       "func f(): i32 { return id<i32>(1) + id<i32>(2); }\n"
+                                       "let r: i32 = f();");
 
     assert(test_func_count(&program) == 2);
 
@@ -210,9 +210,9 @@ static void test_one_instantiation_serves_every_call_that_names_it() {
 }
 
 static void test_a_slice_length_costs_no_call() {
-    TestProgram program = test_compile("func g(xs: &slice<int>): int { return xs.len(); }\n"
-                                       "func f(): int { let xs: array<int, 4>; return g(xs); }\n"
-                                       "let r: int = f();");
+    TestProgram program = test_compile("func g(xs: &slice<i32>): i32 { return xs.len(); }\n"
+                                       "func f(): i32 { let xs: array<i32, 4>; return g(xs); }\n"
+                                       "let r: i32 = f();");
 
     Chunk *body = test_func_chunk(&program, 0);
 
@@ -223,8 +223,8 @@ static void test_a_slice_length_costs_no_call() {
 
 static void test_an_uninstantiated_generic_reserves_no_prototype() {
     TestProgram program = test_compile("func id<T>(x: T): T { return x; }\n"
-                                       "func f(): int { return 1; }\n"
-                                       "let r: int = f();");
+                                       "func f(): i32 { return 1; }\n"
+                                       "let r: i32 = f();");
 
     assert(test_func_count(&program) == 1);
 
@@ -233,8 +233,8 @@ static void test_an_uninstantiated_generic_reserves_no_prototype() {
 
 static void test_each_type_a_generic_is_called_with_gets_a_body() {
     TestProgram program = test_compile("func id<T>(x: T): T { return x; }\n"
-                                       "func f(): int { let a: float = id<float>(1.5); return id<int>(2); }\n"
-                                       "let r: int = f();");
+                                       "func f(): i32 { let a: f32 = id<f32>(1.5); return id<i32>(2); }\n"
+                                       "let r: i32 = f();");
 
     assert(test_func_count(&program) == 3);
 
@@ -244,8 +244,8 @@ static void test_each_type_a_generic_is_called_with_gets_a_body() {
 static void test_a_generic_calling_a_generic_instantiates_its_callee() {
     TestProgram program = test_compile("func id<T>(x: T): T { return x; }\n"
                                        "func twice<U>(x: U): U { return id<U>(x); }\n"
-                                       "func f(): int { return twice<int>(3); }\n"
-                                       "let r: int = f();");
+                                       "func f(): i32 { return twice<i32>(3); }\n"
+                                       "let r: i32 = f();");
 
     assert(test_func_count(&program) == 3);
 
@@ -253,7 +253,7 @@ static void test_a_generic_calling_a_generic_instantiates_its_callee() {
 }
 
 static void test_a_function_compiles_into_its_own_chunk() {
-    TestProgram program = test_compile("func add(a: int, b: int): int { return a + b; }\n");
+    TestProgram program = test_compile("func add(a: i32, b: i32): i32 { return a + b; }\n");
 
     assert(test_top_chunk(&program)->instructions.size == 1);
     assert(test_count_opcode(test_top_chunk(&program), OP_RETURN) == 1);
@@ -277,9 +277,9 @@ static void test_a_function_compiles_into_its_own_chunk() {
 }
 
 static void test_a_method_counts_its_receiver() {
-    TestProgram program = test_compile("struct Point { x: int }\n"
+    TestProgram program = test_compile("struct Point { x: i32 }\n"
                                        "impl Point {\n"
-                                       "    func scaled(v: &Point, by: int): int { return v.x * by; }\n"
+                                       "    func scaled(v: &Point, by: i32): i32 { return v.x * by; }\n"
                                        "}\n");
 
     assert(test_func_count(&program) == 1);
@@ -289,7 +289,7 @@ static void test_a_method_counts_its_receiver() {
 }
 
 static void test_a_struct_copy_is_one_instruction() {
-    TestProgram program = test_compile("struct Point { x: int, y: int, z: int }\n"
+    TestProgram program = test_compile("struct Point { x: i32, y: i32, z: i32 }\n"
                                        "func f() {\n"
                                        "    let a = Point { x: 0, y: 0, z: 0 };\n"
                                        "    let b: Point = a;\n"
@@ -307,9 +307,9 @@ static void test_a_struct_copy_is_one_instruction() {
 }
 
 static void test_a_scalar_copy_stays_a_single_move() {
-    TestProgram program = test_compile("func f(): int {\n"
-                                       "    let x: int = 1;\n"
-                                       "    let y: int = x;\n"
+    TestProgram program = test_compile("func f(): i32 {\n"
+                                       "    let x: i32 = 1;\n"
+                                       "    let y: i32 = x;\n"
                                        "    return y;\n"
                                        "}\n");
 
@@ -319,9 +319,9 @@ static void test_a_scalar_copy_stays_a_single_move() {
 }
 
 static void test_a_pointer_copy_batches_when_it_is_wide() {
-    TestProgram program = test_compile("func f(): int {\n"
-                                       "    let x: int = 1;\n"
-                                       "    let p: &int = x;\n"
+    TestProgram program = test_compile("func f(): i32 {\n"
+                                       "    let x: i32 = 1;\n"
+                                       "    let p: &i32 = x;\n"
                                        "    return *p;\n"
                                        "}\n");
 
@@ -345,7 +345,7 @@ static void test_a_pointer_copy_batches_when_it_is_wide() {
 }
 
 static void test_a_self_copy_emits_nothing() {
-    TestProgram self = test_compile("struct Point { x: int, y: int }\n"
+    TestProgram self = test_compile("struct Point { x: i32, y: i32 }\n"
                                     "func f() {\n"
                                     "    let a = Point { x: 0, y: 0 };\n"
                                     "    a = a;\n"
@@ -360,7 +360,7 @@ static void test_a_self_copy_emits_nothing() {
 }
 
 static void test_a_struct_read_through_a_pointer_is_one_instruction() {
-    TestProgram program = test_compile("struct Point { x: int, y: int, z: int }\n"
+    TestProgram program = test_compile("struct Point { x: i32, y: i32, z: i32 }\n"
                                        "func f() {\n"
                                        "    let a = Point { x: 0, y: 0, z: 0 };\n"
                                        "    let p: &Point = a;\n"
@@ -378,7 +378,7 @@ static void test_a_struct_read_through_a_pointer_is_one_instruction() {
 }
 
 static void test_a_struct_write_through_a_pointer_is_one_instruction() {
-    TestProgram program = test_compile("struct Point { x: int, y: int, z: int }\n"
+    TestProgram program = test_compile("struct Point { x: i32, y: i32, z: i32 }\n"
                                        "func f() {\n"
                                        "    let a = Point { x: 0, y: 0, z: 0 };\n"
                                        "    let b = Point { x: 0, y: 0, z: 0 };\n"
@@ -397,8 +397,8 @@ static void test_a_struct_write_through_a_pointer_is_one_instruction() {
 }
 
 static void test_a_release_names_what_it_frees() {
-    TestProgram program = test_compile("struct Node { n: int }\n"
-                                       "func f(): int {\n"
+    TestProgram program = test_compile("struct Node { n: i32 }\n"
+                                       "func f(): i32 {\n"
                                        "    let p: *Node = box Node { n: 0 };\n"
                                        "    return 0;\n"
                                        "}\n");
@@ -418,8 +418,8 @@ static void test_a_release_names_what_it_frees() {
 }
 
 static void test_break_releases_what_the_body_owns() {
-    TestProgram program = test_compile("struct Node { n: int }\n"
-                                       "func f(): int {\n"
+    TestProgram program = test_compile("struct Node { n: i32 }\n"
+                                       "func f(): i32 {\n"
                                        "    for { let p: *Node = box Node { n: 0 }; break; }\n"
                                        "    return 0;\n"
                                        "}\n");
@@ -432,7 +432,7 @@ static void test_break_releases_what_the_body_owns() {
 }
 
 static void test_a_float_literal_needs_no_load() {
-    TestProgram program = test_compile("func f(): float { let x: float = 1.0; return x + 1.5; }\n");
+    TestProgram program = test_compile("func f(): f32 { let x: f32 = 1.0; return x + 1.5; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
@@ -445,7 +445,7 @@ static void test_a_float_literal_needs_no_load() {
 }
 
 static void test_a_float_literal_on_the_left_keeps_the_register_form() {
-    TestProgram program = test_compile("func f(): float { let x: float = 1.0; return 1.5 - x; }\n");
+    TestProgram program = test_compile("func f(): f32 { let x: f32 = 1.0; return 1.5 - x; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
@@ -456,7 +456,7 @@ static void test_a_float_literal_on_the_left_keeps_the_register_form() {
 }
 
 static void test_an_int_literal_still_uses_the_immediate() {
-    TestProgram program = test_compile("func f(): int { let x: int = 1; return x + 2; }\n");
+    TestProgram program = test_compile("func f(): i32 { let x: i32 = 1; return x + 2; }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
@@ -468,41 +468,41 @@ static void test_an_int_literal_still_uses_the_immediate() {
 }
 
 static void test_float_constant_arithmetic_computes() {
-    assert(test_run_float("func f(): float { let x: float = 2.0; return x + 1.5; }\n"
-                          "let r: float = f();\n") == 3.5f);
+    assert(test_run_float("func f(): f32 { let x: f32 = 2.0; return x + 1.5; }\n"
+                          "let r: f32 = f();\n") == 3.5f);
 
-    assert(test_run_float("func f(): float { let x: float = 2.0; return x - 1.5; }\n"
-                          "let r: float = f();\n") == 0.5f);
+    assert(test_run_float("func f(): f32 { let x: f32 = 2.0; return x - 1.5; }\n"
+                          "let r: f32 = f();\n") == 0.5f);
 
-    assert(test_run_float("func f(): float { let x: float = 2.0; return x * 1.5; }\n"
-                          "let r: float = f();\n") == 3.0f);
+    assert(test_run_float("func f(): f32 { let x: f32 = 2.0; return x * 1.5; }\n"
+                          "let r: f32 = f();\n") == 3.0f);
 
-    assert(test_run_float("func f(): float { let x: float = 3.0; return x / 1.5; }\n"
-                          "let r: float = f();\n") == 2.0f);
+    assert(test_run_float("func f(): f32 { let x: f32 = 3.0; return x / 1.5; }\n"
+                          "let r: f32 = f();\n") == 2.0f);
 }
 
 static void test_the_constant_is_the_right_operand() {
-    assert(test_run_float("func f(): float { let x: float = 10.0; return x - 4.0; }\n"
-                          "let r: float = f();\n") == 6.0f);
+    assert(test_run_float("func f(): f32 { let x: f32 = 10.0; return x - 4.0; }\n"
+                          "let r: f32 = f();\n") == 6.0f);
 
-    assert(test_run_float("func f(): float { let x: float = 10.0; return x / 4.0; }\n"
-                          "let r: float = f();\n") == 2.5f);
+    assert(test_run_float("func f(): f32 { let x: f32 = 10.0; return x / 4.0; }\n"
+                          "let r: f32 = f();\n") == 2.5f);
 }
 
 static void test_a_float_compound_assignment_takes_the_constant() {
-    TestProgram program = test_compile("func f(): float { let x: float = 1.0; x *= 2.5; return x; }\n");
+    TestProgram program = test_compile("func f(): f32 { let x: f32 = 1.0; x *= 2.5; return x; }\n");
 
     assert(test_count_opcode(test_func_chunk(&program, 0), OP_MULFK) == 1);
 
     test_program_free(&program);
 
-    assert(test_run_float("func f(): float { let x: float = 4.0; x /= 2.0; return x; }\n"
-                          "let r: float = f();\n") == 2.0f);
+    assert(test_run_float("func f(): f32 { let x: f32 = 4.0; x /= 2.0; return x; }\n"
+                          "let r: f32 = f();\n") == 2.0f);
 }
 
 static void test_a_chunk_past_the_index_bound_falls_back() {
     char source[32768];
-    size_t used = (size_t)snprintf(source, sizeof(source), "func f(): float {\n    let x: float = 0.0;\n");
+    size_t used = (size_t)snprintf(source, sizeof(source), "func f(): f32 {\n    let x: f32 = 0.0;\n");
 
     for (unsigned int i = 0; i < 300; i++) {
         used += (size_t)snprintf(source + used, sizeof(source) - used, "    x += %u.5;\n", i);
@@ -522,12 +522,12 @@ static void test_a_chunk_past_the_index_bound_falls_back() {
 static void test_box_encodes_the_type_index_the_vm_holds() {
     TestProgram program = test_compile(
         "module M;\n"
-        "struct Wide { a: int, b: int, c: int, d: int }\n"
-        "func first(): int { let p: *Wide = box Wide { a: 0, b: 0, c: 0, d: 0 }; return p.a; }\n");
+        "struct Wide { a: i32, b: i32, c: i32, d: i32 }\n"
+        "func first(): i32 { let p: *Wide = box Wide { a: 0, b: 0, c: 0, d: 0 }; return p.a; }\n");
 
     test_compile_next(&program, "module M;\n"
-                                "struct Narrow { a: int }\n"
-                                "func second(): int {\n"
+                                "struct Narrow { a: i32 }\n"
+                                "func second(): i32 {\n"
                                 "    let n: *Narrow = box Narrow { a: 0 };\n"
                                 "    let w: *Wide = box Wide { a: 0, b: 0, c: 0, d: 0 };\n"
                                 "    return n.a + w.a;\n"
@@ -550,10 +550,10 @@ static void test_a_signature_too_wide_for_a_frame_is_refused(void) {
     at += (size_t)snprintf(source + at, sizeof(source) - at, "module test;\nstruct Big { ");
 
     for (int i = 0; i < 7; i++) {
-        at += (size_t)snprintf(source + at, sizeof(source) - at, "f%d: int, ", i);
+        at += (size_t)snprintf(source + at, sizeof(source) - at, "f%d: i32, ", i);
     }
 
-    at += (size_t)snprintf(source + at, sizeof(source) - at, "last: int }\nfunc fat(");
+    at += (size_t)snprintf(source + at, sizeof(source) - at, "last: i32 }\nfunc fat(");
 
     for (int i = 0; i < 40; i++) {
         at += (size_t)snprintf(source + at, sizeof(source) - at, "%sp%d: Big", i ? ", " : "", i);
@@ -565,9 +565,9 @@ static void test_a_signature_too_wide_for_a_frame_is_refused(void) {
 }
 
 static void test_every_chunk_ends_in_a_return() {
-    TestProgram program = test_compile("func f(): int { return 1; }\n"
-                                       "let a: int = 1;\n"
-                                       "let b: int = f();\n");
+    TestProgram program = test_compile("func f(): i32 { return 1; }\n"
+                                       "let a: i32 = 1;\n"
+                                       "let b: i32 = f();\n");
 
     Chunk *top = test_top_chunk(&program);
     Chunk *body = test_func_chunk(&program, 0);
@@ -582,13 +582,13 @@ static void test_every_chunk_ends_in_a_return() {
 }
 
 static void test_every_jump_lands_inside_its_chunk() {
-    TestProgram program = test_compile("func f(n: int): int {\n"
-                                       "    let acc: int = 0;\n"
-                                       "    for let i: int = 0; i < n; i += 1 {\n"
+    TestProgram program = test_compile("func f(n: i32): i32 {\n"
+                                       "    let acc: i32 = 0;\n"
+                                       "    for let i: i32 = 0; i < n; i += 1 {\n"
                                        "        if i > 3 { acc += i; } else { continue; }\n"
                                        "        if acc > 99 { break; }\n"
                                        "    }\n"
-                                       "    for let j: int = 0; j < n; j += 2 { acc += j; }\n"
+                                       "    for let j: i32 = 0; j < n; j += 2 { acc += j; }\n"
                                        "    return acc;\n"
                                        "}\n");
 
@@ -629,8 +629,8 @@ static void test_every_jump_lands_inside_its_chunk() {
 
 /* A read and the store it feeds name one element, so both cost what reaching it once costs. */
 static void test_reaching_an_element_twice_costs_reaching_it_once() {
-    TestProgram read = test_compile("func f(n: int, m: int): int {\n"
-                                    "    let xs: array<int, 4> = [0, 0, 0, 0];\n"
+    TestProgram read = test_compile("func f(n: i32, m: i32): i32 {\n"
+                                    "    let xs: array<i32, 4> = [0, 0, 0, 0];\n"
                                     "    return xs[n % 4];\n"
                                     "}\n");
 
@@ -640,8 +640,8 @@ static void test_reaching_an_element_twice_costs_reaching_it_once() {
 
     test_program_free(&read);
 
-    TestProgram both = test_compile("func f(n: int, m: int): int {\n"
-                                    "    let xs: array<int, 4> = [0, 0, 0, 0];\n"
+    TestProgram both = test_compile("func f(n: i32, m: i32): i32 {\n"
+                                    "    let xs: array<i32, 4> = [0, 0, 0, 0];\n"
                                     "    xs[n % 4] += 1;\n"
                                     "    return m;\n"
                                     "}\n");
@@ -654,11 +654,11 @@ static void test_reaching_an_element_twice_costs_reaching_it_once() {
 }
 
 static void test_an_array_indexes_without_a_call() {
-    TestProgram program = test_compile("func f(): int {\n"
-                                       "    let xs: array<int, 3> = [1, 2, 3];\n"
+    TestProgram program = test_compile("func f(): i32 {\n"
+                                       "    let xs: array<i32, 3> = [1, 2, 3];\n"
                                        "    return *xs.index(1);\n"
                                        "}\n"
-                                       "let r: int = f();");
+                                       "let r: i32 = f();");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
@@ -669,7 +669,7 @@ static void test_an_array_indexes_without_a_call() {
 }
 
 static void test_a_slice_indexes_without_a_call() {
-    TestProgram program = test_compile("func g(xs: &slice<int>): int { return *xs.index(0); }\n");
+    TestProgram program = test_compile("func g(xs: &slice<i32>): i32 { return *xs.index(0); }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
@@ -680,7 +680,7 @@ static void test_a_slice_indexes_without_a_call() {
 }
 
 static void test_an_array_length_folds_to_a_constant() {
-    TestProgram program = test_compile("func f(): int { let xs: array<int, 7>; return xs.len(); }\n");
+    TestProgram program = test_compile("func f(): i32 { let xs: array<i32, 7>; return xs.len(); }\n");
 
     Chunk *chunk = test_func_chunk(&program, 0);
 

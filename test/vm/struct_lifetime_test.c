@@ -9,8 +9,8 @@ static bool a_read_through_k_distinct_borrow_sources_compiles(int k) {
     size_t offset = 0;
 
     offset += (size_t)snprintf(source + offset, sizeof(source) - offset,
-                               "struct Node { n: int }\n"
-                               "func f(): int {\n"
+                               "struct Node { n: i32 }\n"
+                               "func f(): i32 {\n"
                                "    let p1: *Node = box Node { n: 1 };\n");
 
     for (int i = 2; i <= k; i++) {
@@ -48,20 +48,20 @@ static void test_a_borrow_with_many_distinct_sources_is_untouched_by_an_unrelate
 }
 
 static void test_a_struct_holding_a_borrow_of_a_local_is_not_returned() {
-    assert(!test_compiles("struct Node { n: int }\n"
+    assert(!test_compiles("struct Node { n: i32 }\n"
                           "struct View { r: &Node }\n"
                           "func bad(): View {\n"
                           "    let owned = Node { n: 1 };\n"
                           "    return View { r: owned };\n"
                           "}\n"));
 
-    assert(test_compiles("struct Node { n: int }\n"
+    assert(test_compiles("struct Node { n: i32 }\n"
                          "struct View { r: &Node }\n"
                          "func ok(p: &Node): View { return View { r: p }; }\n"));
 }
 
 static void test_a_borrow_nested_deeper_than_one_struct_is_still_seen() {
-    assert(!test_compiles("struct Node { n: int }\n"
+    assert(!test_compiles("struct Node { n: i32 }\n"
                           "struct View { r: &Node }\n"
                           "struct Outer { v: View }\n"
                           "func bad(): Outer {\n"
@@ -71,9 +71,9 @@ static void test_a_borrow_nested_deeper_than_one_struct_is_still_seen() {
 }
 
 static void test_a_struct_of_borrows_assigned_outward_names_what_outlives_it() {
-    assert(!test_compiles("struct Node { n: int }\n"
+    assert(!test_compiles("struct Node { n: i32 }\n"
                           "struct View { r: &Node }\n"
-                          "func bad(): int {\n"
+                          "func bad(): i32 {\n"
                           "    let v: View;\n"
                           "    if true {\n"
                           "        let inner = Node { n: 1 };\n"
@@ -84,27 +84,27 @@ static void test_a_struct_of_borrows_assigned_outward_names_what_outlives_it() {
 }
 
 static void test_a_struct_that_owns_its_field_is_free_to_leave() {
-    assert(test_run_int("struct Node { n: int }\n"
+    assert(test_run_int("struct Node { n: i32 }\n"
                         "struct Holder { b: *Node }\n"
                         "func make(): Holder { return Holder { b: box Node { n: 5 } }; }\n"
-                        "func main(): int { let h = make(); return h.b.n; }\n"
-                        "let r: int = main();") == 5);
+                        "func main(): i32 { let h = make(); return h.b.n; }\n"
+                        "let r: i32 = main();") == 5);
 }
 
 static void test_a_struct_of_borrows_lives_as_long_as_what_it_names() {
-    assert(test_run_int("struct Node { n: int }\n"
+    assert(test_run_int("struct Node { n: i32 }\n"
                         "struct View { r: &Node }\n"
-                        "func read(v: View): int { return v.r.n; }\n"
-                        "func main(): int {\n"
+                        "func read(v: View): i32 { return v.r.n; }\n"
+                        "func main(): i32 {\n"
                         "    let owned = Node { n: 6 };\n"
                         "    let v = View { r: owned };\n"
                         "    return read(v);\n"
                         "}\n"
-                        "let r: int = main();") == 6);
+                        "let r: i32 = main();") == 6);
 }
 
 static void test_a_returned_struct_of_borrows_names_the_arguments_it_came_from() {
-    assert(!test_compiles("struct Node { n: int }\n"
+    assert(!test_compiles("struct Node { n: i32 }\n"
                           "struct View { r: &Node }\n"
                           "func make(p: &Node): View { return View { r: p }; }\n"
                           "func bad(): View {\n"
@@ -112,41 +112,41 @@ static void test_a_returned_struct_of_borrows_names_the_arguments_it_came_from()
                           "    return make(owned);\n"
                           "}\n"));
 
-    assert(test_compiles("struct Node { n: int }\n"
+    assert(test_compiles("struct Node { n: i32 }\n"
                          "struct View { r: &Node }\n"
                          "func make(p: &Node): View { return View { r: p }; }\n"
                          "func ok(p: &Node): View { return make(p); }\n"));
 }
 
 static void test_a_returned_struct_that_owns_is_free_of_its_arguments() {
-    assert(test_run_int("struct Node { n: int }\n"
+    assert(test_run_int("struct Node { n: i32 }\n"
                         "struct Holder { b: *Node }\n"
                         "func make(p: &Node): Holder { return Holder { b: box Node { n: p.n } }; }\n"
-                        "func main(): int {\n"
+                        "func main(): i32 {\n"
                         "    let owned = Node { n: 9 };\n"
                         "    let h = make(owned);\n"
                         "    return h.b.n;\n"
                         "}\n"
-                        "let r: int = main();") == 9);
+                        "let r: i32 = main();") == 9);
 }
 
 static void test_a_returned_struct_names_only_the_arguments_it_reaches() {
-    assert(test_compiles("struct Node { n: int }\n"
+    assert(test_compiles("struct Node { n: i32 }\n"
                          "struct View { r: &Node }\n"
                          "func make(p: &Node, q: &Node): View { return View { r: p }; }\n"
                          "func ok(p: &Node): View { let local = Node { n: 1 }; return make(p, local); }\n"));
 
     assert(
-        !test_compiles("struct Node { n: int }\n"
+        !test_compiles("struct Node { n: i32 }\n"
                        "struct View { r: &Node }\n"
                        "func make(p: &Node, q: &Node): View { return View { r: p }; }\n"
                        "func bad(q: &Node): View { let local = Node { n: 1 }; return make(local, q); }\n"));
 }
 
 static void test_a_field_holds_a_borrow_only_as_far_as_it_is_read() {
-    assert(test_compiles("struct Node { n: int }\n"
+    assert(test_compiles("struct Node { n: i32 }\n"
                          "struct View { r: &Node }\n"
-                         "func f(p: &Node): int {\n"
+                         "func f(p: &Node): i32 {\n"
                          "    let v = View { r: p };\n"
                          "    if true {\n"
                          "        let inner = Node { n: 1 };\n"
@@ -155,9 +155,9 @@ static void test_a_field_holds_a_borrow_only_as_far_as_it_is_read() {
                          "    return 0;\n"
                          "}\n"));
 
-    assert(!test_compiles("struct Node { n: int }\n"
+    assert(!test_compiles("struct Node { n: i32 }\n"
                           "struct View { r: &Node }\n"
-                          "func f(p: &Node): int {\n"
+                          "func f(p: &Node): i32 {\n"
                           "    let v = View { r: p };\n"
                           "    if true {\n"
                           "        let inner = Node { n: 1 };\n"
@@ -168,9 +168,9 @@ static void test_a_field_holds_a_borrow_only_as_far_as_it_is_read() {
 }
 
 static void test_a_field_reached_through_a_heap_slot_outlives_every_scope() {
-    assert(!test_compiles("struct Node { n: int }\n"
+    assert(!test_compiles("struct Node { n: i32 }\n"
                           "struct View { r: &Node }\n"
-                          "func f(p: &Node): int {\n"
+                          "func f(p: &Node): i32 {\n"
                           "    if true {\n"
                           "        let inner = Node { n: 1 };\n"
                           "        let h = box View { r: p };\n"
@@ -181,7 +181,7 @@ static void test_a_field_reached_through_a_heap_slot_outlives_every_scope() {
 }
 
 static void test_a_field_given_a_borrow_narrows_the_struct_that_holds_it() {
-    assert(!test_compiles("struct Node { n: int }\n"
+    assert(!test_compiles("struct Node { n: i32 }\n"
                           "struct View { r: &Node }\n"
                           "func f(p: &Node): &Node {\n"
                           "    let v = View { r: p };\n"
@@ -190,7 +190,7 @@ static void test_a_field_given_a_borrow_narrows_the_struct_that_holds_it() {
                           "    return v.r;\n"
                           "}\n"));
 
-    assert(!test_compiles("struct Node { n: int }\n"
+    assert(!test_compiles("struct Node { n: i32 }\n"
                           "struct View { r: &Node }\n"
                           "func f(p: &Node): View {\n"
                           "    let v = View { r: p };\n"
@@ -199,7 +199,7 @@ static void test_a_field_given_a_borrow_narrows_the_struct_that_holds_it() {
                           "    return v;\n"
                           "}\n"));
 
-    assert(test_compiles("struct Node { n: int }\n"
+    assert(test_compiles("struct Node { n: i32 }\n"
                          "struct View { r: &Node }\n"
                          "func f(p: &Node, q: &Node): View {\n"
                          "    let v = View { r: p };\n"
@@ -209,7 +209,7 @@ static void test_a_field_given_a_borrow_narrows_the_struct_that_holds_it() {
 }
 
 static void test_a_field_read_names_only_what_that_field_was_given() {
-    assert(test_compiles("struct Node { n: int }\n"
+    assert(test_compiles("struct Node { n: i32 }\n"
                          "struct Pair { a: &Node, b: &Node }\n"
                          "func f(p: &Node): &Node {\n"
                          "    let l = Node { n: 1 };\n"
@@ -217,7 +217,7 @@ static void test_a_field_read_names_only_what_that_field_was_given() {
                          "    return x.a;\n"
                          "}\n"));
 
-    assert(!test_compiles("struct Node { n: int }\n"
+    assert(!test_compiles("struct Node { n: i32 }\n"
                           "struct Pair { a: &Node, b: &Node }\n"
                           "func f(p: &Node): &Node {\n"
                           "    let l = Node { n: 1 };\n"
@@ -227,7 +227,7 @@ static void test_a_field_read_names_only_what_that_field_was_given() {
 }
 
 static void test_a_field_of_a_field_names_only_what_it_was_given() {
-    assert(test_compiles("struct Node { n: int }\n"
+    assert(test_compiles("struct Node { n: i32 }\n"
                          "struct View { r: &Node }\n"
                          "struct Two { u: View, v: View }\n"
                          "func f(p: &Node): &Node {\n"
@@ -236,7 +236,7 @@ static void test_a_field_of_a_field_names_only_what_it_was_given() {
                          "    return t.u.r;\n"
                          "}\n"));
 
-    assert(!test_compiles("struct Node { n: int }\n"
+    assert(!test_compiles("struct Node { n: i32 }\n"
                           "struct View { r: &Node }\n"
                           "struct Two { u: View, v: View }\n"
                           "func f(p: &Node): &Node {\n"
@@ -247,7 +247,7 @@ static void test_a_field_of_a_field_names_only_what_it_was_given() {
 }
 
 static void test_a_whole_struct_names_every_field_it_holds() {
-    assert(!test_compiles("struct Node { n: int }\n"
+    assert(!test_compiles("struct Node { n: i32 }\n"
                           "struct Pair { a: &Node, b: &Node }\n"
                           "func f(p: &Node): Pair {\n"
                           "    let l = Node { n: 1 };\n"
@@ -257,7 +257,7 @@ static void test_a_whole_struct_names_every_field_it_holds() {
 }
 
 static void test_writing_one_field_leaves_the_others_as_they_were() {
-    assert(test_compiles("struct Node { n: int }\n"
+    assert(test_compiles("struct Node { n: i32 }\n"
                          "struct Pair { a: &Node, b: &Node }\n"
                          "func f(p: &Node): &Node {\n"
                          "    let l = Node { n: 1 };\n"
@@ -266,7 +266,7 @@ static void test_writing_one_field_leaves_the_others_as_they_were() {
                          "    return x.a;\n"
                          "}\n"));
 
-    assert(!test_compiles("struct Node { n: int }\n"
+    assert(!test_compiles("struct Node { n: i32 }\n"
                           "struct Pair { a: &Node, b: &Node }\n"
                           "func f(p: &Node, q: &Node): &Node {\n"
                           "    let l = Node { n: 1 };\n"
@@ -277,9 +277,9 @@ static void test_writing_one_field_leaves_the_others_as_they_were() {
 }
 
 static void test_freeing_a_box_dangles_only_the_fields_that_named_it() {
-    assert(test_compiles("struct Node { n: int }\n"
+    assert(test_compiles("struct Node { n: i32 }\n"
                          "struct Pair { a: &Node, b: &Node }\n"
-                         "func f(): int {\n"
+                         "func f(): i32 {\n"
                          "    let p: *Node = box Node { n: 1 };\n"
                          "    let q: *Node = box Node { n: 2 };\n"
                          "    let x = Pair { a: p, b: q };\n"
@@ -287,9 +287,9 @@ static void test_freeing_a_box_dangles_only_the_fields_that_named_it() {
                          "    return x.b.n;\n"
                          "}\n"));
 
-    assert(!test_compiles("struct Node { n: int }\n"
+    assert(!test_compiles("struct Node { n: i32 }\n"
                           "struct Pair { a: &Node, b: &Node }\n"
-                          "func f(): int {\n"
+                          "func f(): i32 {\n"
                           "    let p: *Node = box Node { n: 1 };\n"
                           "    let q: *Node = box Node { n: 2 };\n"
                           "    let x = Pair { a: p, b: q };\n"
@@ -297,10 +297,10 @@ static void test_freeing_a_box_dangles_only_the_fields_that_named_it() {
                           "    return x.a.n;\n"
                           "}\n"));
 
-    assert(!test_compiles("struct Node { n: int }\n"
+    assert(!test_compiles("struct Node { n: i32 }\n"
                           "struct Pair { a: &Node, b: &Node }\n"
-                          "func g(v: Pair): int { return 0; }\n"
-                          "func f(): int {\n"
+                          "func g(v: Pair): i32 { return 0; }\n"
+                          "func f(): i32 {\n"
                           "    let p: *Node = box Node { n: 1 };\n"
                           "    let q: *Node = box Node { n: 2 };\n"
                           "    let x = Pair { a: p, b: q };\n"

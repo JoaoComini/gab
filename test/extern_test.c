@@ -54,8 +54,8 @@ static void test_an_extern_returns_to_its_caller(void) {
 
     assert(gab_vm_load(vm, "<m>",
                        "module test;\n"
-                       "extern func twice(x: int): int;\n"
-                       "func run(): int { return twice(21); }\n",
+                       "extern func twice(x: i32): i32;\n"
+                       "func run(): i32 { return twice(21); }\n",
                        &err));
 
     GabFunc *fn = gab_vm_lookup(vm, "test", "run", &err);
@@ -80,7 +80,7 @@ static void test_an_extern_may_return_nothing(void) {
 
     assert(gab_vm_load(vm, "<m>",
                        "module test;\n"
-                       "extern func log(amount: int);\n"
+                       "extern func log(amount: i32);\n"
                        "func run() { log(7); }\n",
                        &err));
 
@@ -103,9 +103,9 @@ static void test_scalars_cross_the_boundary(void) {
 
     assert(gab_vm_load(vm, "<m>",
                        "module test;\n"
-                       "extern func scale(x: float): float;\n"
+                       "extern func scale(x: f32): f32;\n"
                        "extern func negate(b: bool): bool;\n"
-                       "func f(): float { return scale(1.5); }\n"
+                       "func f(): f32 { return scale(1.5); }\n"
                        "func b(): bool { return negate(true); }\n",
                        &err));
 
@@ -132,7 +132,7 @@ static void test_a_struct_crosses_by_value(void) {
 
     assert(gab_vm_load(vm, "<m>",
                        "module test;\n"
-                       "struct Player { health: int, mana: int }\n"
+                       "struct Player { health: i32, mana: i32 }\n"
                        "extern func heal(p: Player): Player;\n"
                        "func run(p: Player): Player { return heal(p); }\n",
                        &err));
@@ -172,9 +172,9 @@ static void test_a_parameter_after_a_wide_one_is_found(void) {
 
     assert(gab_vm_load(vm, "<m>",
                        "module test;\n"
-                       "struct Player { health: int, mana: int }\n"
-                       "extern func f(p: Player, x: int, q: Player, y: int): int;\n"
-                       "func run(): int {\n"
+                       "struct Player { health: i32, mana: i32 }\n"
+                       "extern func f(p: Player, x: i32, q: Player, y: i32): i32;\n"
+                       "func run(): i32 {\n"
                        "    return f(Player { health: 1, mana: 0 }, 2, Player { health: 3, mana: 0 }, 4);\n"
                        "}\n",
                        &err));
@@ -198,7 +198,7 @@ static void test_a_borrow_is_written_through(void) {
 
     assert(gab_vm_load(vm, "<m>",
                        "module test;\n"
-                       "struct Player { health: int, mana: int }\n"
+                       "struct Player { health: i32, mana: i32 }\n"
                        "extern func boost(p: &Player);\n"
                        "func run(p: &Player) { boost(p); }\n",
                        &err));
@@ -225,8 +225,8 @@ static void test_an_unbound_extern_fails_the_load(void) {
     GabError err;
     assert(!gab_vm_load(vm, "<m>",
                         "module test;\n"
-                        "func first(): int { return 1; }\n"
-                        "extern func missing(x: int): int;\n",
+                        "func first(): i32 { return 1; }\n"
+                        "extern func missing(x: i32): i32;\n",
                         &err));
 
     assert(strstr(err.message, "missing"));
@@ -241,14 +241,14 @@ static void test_an_extern_must_be_registered_before_the_load(void) {
     GabError err;
     assert(!gab_vm_load(vm, "<m>",
                         "module test;\n"
-                        "extern func twice(x: int): int;\n",
+                        "extern func twice(x: i32): i32;\n",
                         &err));
 
     assert(gab_extern(vm, "test", NULL, "twice", twice, &err));
     assert(gab_vm_load(vm, "<m>",
                        "module test;\n"
-                       "extern func twice(x: int): int;\n"
-                       "func run(): int { return twice(2); }\n",
+                       "extern func twice(x: i32): i32;\n"
+                       "func run(): i32 { return twice(2); }\n",
                        &err));
 
     GabCall *call = gab_call_init(gab_vm_lookup(vm, "test", "run", &err), &err);
@@ -267,7 +267,7 @@ static void test_a_host_may_call_an_extern_directly(void) {
     assert(gab_extern(vm, "test", NULL, "twice", twice, &err));
     assert(gab_vm_load(vm, "<m>",
                        "module test;\n"
-                       "extern func twice(x: int): int;\n",
+                       "extern func twice(x: i32): i32;\n",
                        &err));
 
     GabFunc *fn = gab_vm_lookup(vm, "test", "twice", &err);
@@ -292,8 +292,8 @@ static void test_an_extern_may_fail_the_run(void) {
 
     assert(gab_vm_load(vm, "<m>",
                        "module test;\n"
-                       "extern func refuse(): int;\n"
-                       "func run(): int { return refuse(); }\n",
+                       "extern func refuse(): i32;\n"
+                       "func run(): i32 { return refuse(); }\n",
                        &err));
 
     GabCall *call = gab_call_init(gab_vm_lookup(vm, "test", "run", &err), &err);
@@ -313,7 +313,7 @@ static void test_an_extern_may_not_have_a_body(void) {
     assert(gab_extern(vm, "test", NULL, "twice", twice, &err));
     assert(!gab_vm_load(vm, "<m>",
                         "module test;\n"
-                        "extern func twice(x: int): int { return x; }\n",
+                        "extern func twice(x: i32): i32 { return x; }\n",
                         &err));
 
     gab_vm_free(vm);
@@ -325,7 +325,7 @@ static void test_a_plain_func_still_needs_a_body(void) {
     GabError err;
     assert(!gab_vm_load(vm, "<m>",
                         "module test;\n"
-                        "func twice(x: int): int;\n",
+                        "func twice(x: i32): i32;\n",
                         &err));
 
     gab_vm_free(vm);
@@ -339,7 +339,7 @@ static void test_an_extern_lives_in_its_module(void) {
 
     assert(gab_vm_load(vm, "<m>",
                        "module game;\n"
-                       "extern func twice(x: int): int;\n",
+                       "extern func twice(x: i32): i32;\n",
                        &err));
 
     assert(gab_vm_lookup(vm, "game", "twice", &err));
@@ -358,8 +358,8 @@ static void test_an_extern_may_fail_without_a_message(void) {
 
     assert(gab_vm_load(vm, "<m>",
                        "module test;\n"
-                       "extern func refuse(): int;\n"
-                       "func run(): int { return refuse(); }\n",
+                       "extern func refuse(): i32;\n"
+                       "func run(): i32 { return refuse(); }\n",
                        &err));
 
     GabCall *call = gab_call_init(gab_vm_lookup(vm, "test", "run", &err), &err);
@@ -390,8 +390,8 @@ static void test_a_long_extern_message_is_truncated(void) {
 
     assert(gab_vm_load(vm, "<m>",
                        "module test;\n"
-                       "extern func refuse(): int;\n"
-                       "func run(): int { return refuse(); }\n",
+                       "extern func refuse(): i32;\n"
+                       "func run(): i32 { return refuse(); }\n",
                        &err));
 
     GabCall *call = gab_call_init(gab_vm_lookup(vm, "test", "run", &err), &err);
@@ -414,11 +414,11 @@ static void test_a_call_reaches_the_body_its_name_declares(void) {
     assert(gab_extern(vm, "test", NULL, "negate", negate, &err));
     assert(gab_vm_load(vm, "<m>",
                        "module test;\n"
-                       "extern func twice(x: int): int;\n"
-                       "func add_one(x: int): int { return x + 1; }\n"
+                       "extern func twice(x: i32): i32;\n"
+                       "func add_one(x: i32): i32 { return x + 1; }\n"
                        "extern func negate(b: bool): bool;\n"
-                       "func triple(x: int): int { return x * 3; }\n"
-                       "func mixed(x: int): int { return twice(add_one(triple(x))); }\n",
+                       "func triple(x: i32): i32 { return x * 3; }\n"
+                       "func mixed(x: i32): i32 { return twice(add_one(triple(x))); }\n",
                        &err));
 
     GabFunc *fn = gab_vm_lookup(vm, "test", "mixed", &err);
@@ -463,11 +463,11 @@ static void test_an_extern_may_be_owned_by_a_struct(void) {
 
     assert(gab_vm_load(vm, "<m>",
                        "module test;\n"
-                       "struct Counter { value: int }\n"
+                       "struct Counter { value: i32 }\n"
                        "impl Counter {\n"
-                       "    extern func get(self: &Counter): int;\n"
+                       "    extern func get(self: &Counter): i32;\n"
                        "}\n"
-                       "func run(): int {\n"
+                       "func run(): i32 {\n"
                        "    let c = Counter { value: 9 };\n"
                        "    return c.get();\n"
                        "}\n",
@@ -496,15 +496,15 @@ static void test_two_types_may_own_an_extern_of_one_name(void) {
 
     assert(gab_vm_load(vm, "<m>",
                        "module test;\n"
-                       "struct Counter { value: int }\n"
-                       "struct Gauge { reading: int }\n"
+                       "struct Counter { value: i32 }\n"
+                       "struct Gauge { reading: i32 }\n"
                        "impl Counter {\n"
-                       "    extern func get(self: &Counter): int;\n"
+                       "    extern func get(self: &Counter): i32;\n"
                        "}\n"
                        "impl Gauge {\n"
-                       "    extern func get(self: &Gauge): int;\n"
+                       "    extern func get(self: &Gauge): i32;\n"
                        "}\n"
-                       "func run(): int {\n"
+                       "func run(): i32 {\n"
                        "    let c = Counter { value: 3 };\n"
                        "    let g = Gauge { reading: 4 };\n"
                        "    return c.get() * 10 + g.get();\n"
@@ -546,10 +546,10 @@ static void test_each_specialization_of_a_host_method_reaches_one_body(void) {
                        "module m;\n"
                        "struct Pair<T> { a: T, b: T }\n"
                        "impl<T> Pair<T> {\n"
-                       "    extern func count(self: &Pair<T>): int;\n"
+                       "    extern func count(self: &Pair<T>): i32;\n"
                        "}\n"
-                       "func run(): int {\n"
-                       "    let ints = Pair<int> { a: 1, b: 2 };\n"
+                       "func run(): i32 {\n"
+                       "    let ints = Pair<i32> { a: 1, b: 2 };\n"
                        "    let bools = Pair<bool> { a: true, b: false };\n"
                        "    return ints.count() + bools.count();\n"
                        "}\n",
@@ -571,7 +571,7 @@ static void test_a_core_method_on_a_primitive_reaches_its_host_body(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_vm_load(vm, "<m>", "module test;\nfunc run(): int { return \"hello\".len(); }\n", &err));
+    assert(gab_vm_load(vm, "<m>", "module test;\nfunc run(): i32 { return \"hello\".len(); }\n", &err));
 
     GabFunc *fn = gab_vm_lookup(vm, "test", "run", &err);
     assert(fn);
@@ -592,7 +592,7 @@ static void test_a_primitive_is_owned_only_by_a_host_body(void) {
     assert(!gab_vm_load(vm, "<m>",
                         "module test;\n"
                         "impl str {\n"
-                        "    func length(self: &str): int { return 0; }\n"
+                        "    func length(self: &str): i32 { return 0; }\n"
                         "}\n",
                         &err));
 
@@ -608,7 +608,7 @@ static void test_only_the_core_library_owns_a_primitive(void) {
     assert(!gab_vm_load(vm, "<m>",
                         "module test;\n"
                         "impl str {\n"
-                        "    extern func length(self: &str): int;\n"
+                        "    extern func length(self: &str): i32;\n"
                         "}\n",
                         &err));
 
@@ -624,7 +624,7 @@ static void test_naming_the_core_library_does_not_own_a_primitive(void) {
     assert(!gab_vm_load(vm, "<m>",
                         "module core;\n"
                         "impl str {\n"
-                        "    extern func length(self: &str): int;\n"
+                        "    extern func length(self: &str): i32;\n"
                         "}\n",
                         &err));
 
@@ -639,7 +639,7 @@ static void test_a_qualified_name_does_not_declare_a_method(void) {
 
     assert(!gab_vm_load(vm, "<m>",
                         "module core;\n"
-                        "extern func str::length(self: &str): int;\n",
+                        "extern func str::length(self: &str): i32;\n",
                         &err));
 
     gab_vm_free(vm);
@@ -649,13 +649,13 @@ static void test_an_extern_does_not_claim_a_type_from_another_module(void) {
     GabVM *vm = gab_vm_new();
 
     GabError err;
-    assert(gab_vm_load(vm, "a.gab", "module A;\nstruct Counter { value: int }\n", &err));
+    assert(gab_vm_load(vm, "a.gab", "module A;\nstruct Counter { value: i32 }\n", &err));
 
     assert(!gab_vm_load(vm, "b.gab",
                         "module B;\n"
                         "import A;\n"
                         "impl A::Counter {\n"
-                        "    extern func get(self: &A::Counter): int;\n"
+                        "    extern func get(self: &A::Counter): i32;\n"
                         "}\n",
                         &err));
 
@@ -676,11 +676,11 @@ static void test_a_body_reads_what_its_specialization_chose(void) {
                        "module m;\n"
                        "struct Holder<T> { a: T }\n"
                        "impl<T> Holder<T> {\n"
-                       "    extern func tag(self: &Holder<T>): int;\n"
+                       "    extern func tag(self: &Holder<T>): i32;\n"
                        "}\n"
-                       "func run(): int {\n"
-                       "    let i = Holder<int> { a: 1 };\n"
-                       "    let f = Holder<float> { a: 1.0 };\n"
+                       "func run(): i32 {\n"
+                       "    let i = Holder<i32> { a: 1 };\n"
+                       "    let f = Holder<f32> { a: 1.0 };\n"
                        "    return i.tag() * 10 + f.tag();\n"
                        "}\n",
                        &err));
@@ -708,8 +708,8 @@ static void test_a_body_reads_the_shape_of_an_array_it_is_given(void) {
 
     assert(gab_vm_load(vm, "<m>",
                        "module test;\n"
-                       "extern func shape(xs: array<int, 3>): int;\n"
-                       "func run(): int { return shape([1, 2, 3]); }\n",
+                       "extern func shape(xs: array<i32, 3>): i32;\n"
+                       "func run(): i32 { return shape([1, 2, 3]); }\n",
                        &err));
 
     GabFunc *fn = gab_vm_lookup(vm, "test", "run", &err);

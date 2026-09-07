@@ -13,8 +13,8 @@ static void resolving_a_unit_lowers_every_function(void) {
     MIRModule *mir_unit = NULL;
 
     assert(test_resolve_ir(&ctx, scope, &unit, &mir_unit, NULL,
-                           "func one(): int { return 1; }\n"
-                           "func two(): int { return 2; }\n"));
+                           "func one(): i32 { return 1; }\n"
+                           "func two(): i32 { return 2; }\n"));
 
     for (size_t i = 0; i < unit->statements.size; i++) {
         ASTStmt *stmt = unit->statements.data[i];
@@ -35,7 +35,7 @@ static void a_function_the_unit_never_resolved_is_absent(void) {
     ASTUnit *unit = ast_unit_create(ctx.arena);
     MIRModule *mir_unit = NULL;
 
-    assert(test_resolve_ir(&ctx, scope, &unit, &mir_unit, NULL, "func one(): int { return 1; }\n"));
+    assert(test_resolve_ir(&ctx, scope, &unit, &mir_unit, NULL, "func one(): i32 { return 1; }\n"));
 
     Function absent = {0};
 
@@ -52,7 +52,7 @@ static void a_lowered_body_carries_the_function_it_came_from(void) {
     ASTUnit *unit = ast_unit_create(ctx.arena);
     MIRModule *mir_unit = NULL;
 
-    assert(test_resolve_ir(&ctx, scope, &unit, &mir_unit, NULL, "func one(a: int): int { return a; }\n"));
+    assert(test_resolve_ir(&ctx, scope, &unit, &mir_unit, NULL, "func one(a: i32): i32 { return a; }\n"));
 
     for (size_t i = 0; i < unit->statements.size; i++) {
         ASTStmt *stmt = unit->statements.data[i];

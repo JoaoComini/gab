@@ -4,19 +4,19 @@
 #include <stdio.h>
 
 static void test_a_type_owning_nothing_copies_implicitly() {
-    assert(test_run_int("struct Point { x: int, y: int }\n"
-                        "func main(): int {\n"
+    assert(test_run_int("struct Point { x: i32, y: i32 }\n"
+                        "func main(): i32 {\n"
                         "    let a = Point { x: 3, y: 0 };\n"
                         "    let b = a;\n"
                         "    return b.x;\n"
                         "}\n"
-                        "let r: int = main();") == 3);
+                        "let r: i32 = main();") == 3);
 }
 
 static void test_a_type_holding_an_owning_pointer_transfers() {
-    assert(!test_compiles("struct Box { n: int }\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
                           "struct Holder { b: *Box }\n"
-                          "func main(): int {\n"
+                          "func main(): i32 {\n"
                           "    let h = Holder { b: box Box { n: 0 } };\n"
                           "    let other = h;\n"
                           "    return h.b.n;\n"
@@ -24,9 +24,9 @@ static void test_a_type_holding_an_owning_pointer_transfers() {
 }
 
 static void test_a_type_holding_a_borrow_still_copies() {
-    assert(test_compiles("struct Box { n: int }\n"
+    assert(test_compiles("struct Box { n: i32 }\n"
                          "struct Watcher { b: &Box }\n"
-                         "func main(): int {\n"
+                         "func main(): i32 {\n"
                          "    let b = Box { n: 1 };\n"
                          "    let w = Watcher { b: b };\n"
                          "    let other = w;\n"
@@ -35,19 +35,19 @@ static void test_a_type_holding_a_borrow_still_copies() {
 }
 
 static void test_binding_an_owning_value_transfers_it() {
-    assert(test_run_int("struct Box { n: int }\n"
-                        "func main(): int {\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
+                        "func main(): i32 {\n"
                         "    let a: *Box = box Box { n: 0 };\n"
                         "    a.n = 7;\n"
                         "    let b = a;\n"
                         "    return b.n;\n"
                         "}\n"
-                        "let r: int = main();") == 7);
+                        "let r: i32 = main();") == 7);
 }
 
 static void test_a_moved_from_slot_is_dead() {
-    assert(!test_compiles("struct Box { n: int }\n"
-                          "func main(): int {\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
+                          "func main(): i32 {\n"
                           "    let a: *Box = box Box { n: 0 };\n"
                           "    let b = a;\n"
                           "    return a.n;\n"
@@ -55,20 +55,20 @@ static void test_a_moved_from_slot_is_dead() {
 }
 
 static void test_assigning_to_a_dead_slot_revives_it() {
-    assert(test_run_int("struct Box { n: int }\n"
-                        "func main(): int {\n"
+    assert(test_run_int("struct Box { n: i32 }\n"
+                        "func main(): i32 {\n"
                         "    let a: *Box = box Box { n: 0 };\n"
                         "    let b = a;\n"
                         "    a = box Box { n: 0 };\n"
                         "    a.n = 5;\n"
                         "    return a.n;\n"
                         "}\n"
-                        "let r: int = main();") == 5);
+                        "let r: i32 = main();") == 5);
 }
 
 static void test_a_slot_moved_on_one_arm_is_dead_after_the_join() {
-    assert(!test_compiles("struct Box { n: int }\n"
-                          "func main(): int {\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
+                          "func main(): i32 {\n"
                           "    let a: *Box = box Box { n: 0 };\n"
                           "    if 1 < 2 { let b = a; } else { }\n"
                           "    return a.n;\n"
@@ -76,8 +76,8 @@ static void test_a_slot_moved_on_one_arm_is_dead_after_the_join() {
 }
 
 static void test_transferring_the_same_slot_each_iteration_is_refused() {
-    assert(!test_compiles("struct Box { n: int }\n"
-                          "func main(): int {\n"
+    assert(!test_compiles("struct Box { n: i32 }\n"
+                          "func main(): i32 {\n"
                           "    let a: *Box = box Box { n: 0 };\n"
                           "    for let i = 0; i < 2; i = i + 1 {\n"
                           "        let b = a;\n"
@@ -87,8 +87,8 @@ static void test_transferring_the_same_slot_each_iteration_is_refused() {
 }
 
 static void test_reading_a_transferred_slot_names_the_slot() {
-    const char *source = "struct Box { n: int }\n"
-                         "func main(): int {\n"
+    const char *source = "struct Box { n: i32 }\n"
+                         "func main(): i32 {\n"
                          "    let a: *Box = box Box { n: 0 };\n"
                          "    let b = a;\n"
                          "    return a.n;\n"
