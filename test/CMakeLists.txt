@@ -13,9 +13,7 @@ set(
     util/list_test.c
     failed_compile_test.c
     vm/constant_pool_test.c
-    vm/call_test.c
     vm/register_reuse_test.c
-    vm/struct_value_test.c
     vm/codegen_test.c
     vm/loop_shape_test.c
     vm/chunk_test.c
@@ -58,7 +56,6 @@ set(
     vm/modulo_test.c
     vm/compound_assign_test.c
     vm/cast_test.c
-    vm/compare_test.c
     vm/struct_lit_test.c
     vm/if_test.c
     vm/loop_test.c

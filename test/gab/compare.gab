@@ -1,4 +1,54 @@
+func lt(a: i32, b: i32): bool { return a < b; }
+func gt(a: i32, b: i32): bool { return a > b; }
+func le(a: i32, b: i32): bool { return a <= b; }
+func ge(a: i32, b: i32): bool { return a >= b; }
+func eq(a: i32, b: i32): bool { return a == b; }
+func ne(a: i32, b: i32): bool { return a != b; }
+
+func flt(a: f32, b: f32): bool { return a < b; }
+func fge(a: f32, b: f32): bool { return a >= b; }
+func feq(a: f32, b: f32): bool { return a == b; }
+
 func run(): i32 {
+    assert(lt(1, 2));
+    assert(!lt(2, 2));
+    assert(!lt(3, 2));
+
+    assert(gt(3, 2));
+    assert(!gt(2, 2));
+    assert(!gt(1, 2));
+
+    assert(le(1, 2));
+    assert(le(2, 2));
+    assert(!le(3, 2));
+
+    assert(ge(3, 2));
+    assert(ge(2, 2));
+    assert(!ge(1, 2));
+
+    assert(eq(2, 2));
+    assert(!eq(1, 2));
+
+    assert(ne(1, 2));
+    assert(!ne(2, 2));
+
+    assert(lt(-3, -2));
+    assert(gt(-2, -3));
+    assert(eq(-2, -2));
+
+    assert(flt(1.5, 2.5));
+    assert(!flt(2.5, 2.5));
+    assert(fge(2.5, 2.5));
+    assert(feq(1.5, 1.5));
+    assert(!feq(1.5, 2.5));
+
+    let n: i32 = 5;
+    assert(n > 3);
+    assert(n <= 5);
+
+    let f: f32 = 2.5;
+    assert(f < 3.0);
+
     assert(1 < 2);
     assert(!(2 < 1));
     assert(2 > 1);

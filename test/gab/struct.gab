@@ -12,7 +12,38 @@ func bump(p: &Point) { p.x = p.x + 1; }
 
 func made(x: i32): Point { return Point { x: x, y: x * 2 }; }
 
+struct Flags { a: bool, b: bool, c: bool, d: bool }
+
+struct Acc { total: i32 }
+
+func summed(n: i32): i32 {
+    let a = Acc { total: n };
+    if n <= 0 { return 0; }
+    let rest: i32 = summed(n - 1);
+    return a.total + rest;
+}
+
+func swapped(p: Point): Point { return Point { x: p.y, y: p.x }; }
+
 func run(): i32 {
+    let flags = Flags { a: true, b: false, c: true, d: true };
+    assert(flags.a);
+    assert(!flags.b);
+    assert(flags.c);
+    assert(flags.d);
+
+    assert(summed(4) == 10);
+
+    let turned = swapped(Point { x: 1, y: 2 });
+    assert(turned.x == 2);
+    assert(turned.y == 1);
+
+    let assigned = Point { x: 0, y: 0 };
+    let source = Point { x: 8, y: 9 };
+    assigned = source;
+    assert(assigned.x == 8);
+    assert(assigned.y == 9);
+
     let p = Point { x: 40, y: 2 };
     assert(p.x == 40);
     assert(p.y == 2);
