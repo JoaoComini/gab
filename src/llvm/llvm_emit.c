@@ -4,6 +4,8 @@
 
 #include <llvm-c/Analysis.h>
 #include <llvm-c/Core.h>
+#include <llvm-c/Target.h>
+#include <llvm-c/TargetMachine.h>
 
 #include <assert.h>
 #include <string.h>
@@ -377,18 +379,41 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
     }
 }
 
-char *llvm_emit_function(Arena *arena, const MIRFunction *ir) {
-    LLVMEmitter emitter = {.ir = ir, .registry = ir->registry, .arena = arena};
+struct LLVMUnit {
+    LLVMContextRef context;
+    LLVMModuleRef module;
+    LLVMBuilderRef builder;
 
-    emitter.context = LLVMContextCreate();
-    emitter.module = LLVMModuleCreateWithNameInContext("gab", emitter.context);
-    emitter.builder = LLVMCreateBuilderInContext(emitter.context);
+    Arena *arena;
+};
+
+LLVMUnit *llvm_unit_open(Arena *arena) {
+    LLVMUnit *unit = arena_alloc(arena, sizeof(LLVMUnit));
+
+    unit->arena = arena;
+    unit->context = LLVMContextCreate();
+    unit->module = LLVMModuleCreateWithNameInContext("gab", unit->context);
+    unit->builder = LLVMCreateBuilderInContext(unit->context);
+
+    return unit;
+}
+
+void llvm_unit_add(LLVMUnit *unit, const MIRFunction *ir) {
+    Arena *arena = unit->arena;
+
+    LLVMEmitter emitter = {.ir = ir,
+                           .registry = ir->registry,
+                           .arena = arena,
+                           .context = unit->context,
+                           .module = unit->module,
+                           .builder = unit->builder};
 
     emitter.values = arena_alloc(arena, (ir->value_count + 1) * sizeof(LLVMValueRef));
     emitter.value_types = arena_alloc(arena, (ir->value_count + 1) * sizeof(LLVMTypeRef));
 
     /* A null entry is what says a register holds its value rather than storage for one. */
     memset(emitter.value_types, 0, (ir->value_count + 1) * sizeof(LLVMTypeRef));
+
     emitter.blocks = arena_alloc(arena, (ir->block_count + 1) * sizeof(LLVMBasicBlockRef));
 
     LLVMTypeRef *params = arena_alloc(arena, (ir->param_count + 1) * sizeof(LLVMTypeRef));
@@ -400,7 +425,15 @@ char *llvm_emit_function(Arena *arena, const MIRFunction *ir) {
     LLVMTypeRef signature = LLVMFunctionType(llvm_type_of(&emitter, ir->function->return_type), params,
                                              (unsigned)ir->param_count, false);
 
-    LLVMValueRef function = LLVMAddFunction(emitter.module, llvm_symbol_of(arena, ir->function), signature);
+    const char *symbol = llvm_symbol_of(arena, ir->function);
+
+    /* A callee declared before its body reached here already has the name, so it is filled in rather
+     * than added a second time. */
+    LLVMValueRef function = LLVMGetNamedFunction(unit->module, symbol);
+
+    if (!function) {
+        function = LLVMAddFunction(unit->module, symbol, signature);
+    }
 
     for (size_t i = 0; i < ir->param_count; i++) {
         emitter.values[ir->params[i].id] = LLVMGetParam(function, (unsigned)i);
@@ -410,14 +443,13 @@ char *llvm_emit_function(Arena *arena, const MIRFunction *ir) {
         char label[32];
         snprintf(label, sizeof(label), "b%u", ir->blocks[b]->id.id);
 
-        emitter.blocks[ir->blocks[b]->id.id] =
-            LLVMAppendBasicBlockInContext(emitter.context, function, label);
+        emitter.blocks[ir->blocks[b]->id.id] = LLVMAppendBasicBlockInContext(unit->context, function, label);
     }
 
     for (size_t b = 0; b < ir->block_count; b++) {
         const MIRBlock *block = ir->blocks[b];
 
-        LLVMPositionBuilderAtEnd(emitter.builder, emitter.blocks[block->id.id]);
+        LLVMPositionBuilderAtEnd(unit->builder, emitter.blocks[block->id.id]);
 
         for (size_t i = 0; i < block->inst_count; i++) {
             emit_inst(&emitter, &block->insts[i]);
@@ -425,19 +457,69 @@ char *llvm_emit_function(Arena *arena, const MIRFunction *ir) {
     }
 
     /* A malformed body is a compiler bug, and the verifier names it here rather than at link time. */
-    assert(LLVMVerifyModule(emitter.module, LLVMReturnStatusAction, NULL) == 0 &&
-           "an emitted module verifies");
+    assert(LLVMVerifyModule(unit->module, LLVMReturnStatusAction, NULL) == 0 && "an emitted module verifies");
+}
 
-    char *printed = LLVMPrintModuleToString(emitter.module);
+char *llvm_unit_text(LLVMUnit *unit) {
+    char *printed = LLVMPrintModuleToString(unit->module);
 
     size_t length = strlen(printed);
-    char *text = arena_alloc(arena, length + 1);
+    char *text = arena_alloc(unit->arena, length + 1);
     memcpy(text, printed, length + 1);
 
     LLVMDisposeMessage(printed);
-    LLVMDisposeBuilder(emitter.builder);
-    LLVMDisposeModule(emitter.module);
-    LLVMContextDispose(emitter.context);
+
+    return text;
+}
+
+bool llvm_unit_write_object(LLVMUnit *unit, const char *path, const char **error) {
+    LLVMInitializeNativeTarget();
+    LLVMInitializeNativeAsmPrinter();
+
+    char *triple = LLVMGetDefaultTargetTriple();
+    LLVMTargetRef target = NULL;
+    char *message = NULL;
+
+    if (LLVMGetTargetFromTriple(triple, &target, &message) != 0) {
+        *error = "no target for this host";
+        LLVMDisposeMessage(message);
+        LLVMDisposeMessage(triple);
+
+        return false;
+    }
+
+    LLVMTargetMachineRef machine = LLVMCreateTargetMachine(
+        target, triple, "generic", "", LLVMCodeGenLevelNone, LLVMRelocPIC, LLVMCodeModelDefault);
+
+    LLVMSetTarget(unit->module, triple);
+
+    bool failed = LLVMTargetMachineEmitToFile(machine, unit->module, path, LLVMObjectFile, &message) != 0;
+
+    if (failed) {
+        *error = "the target machine emitted no object";
+    }
+
+    LLVMDisposeMessage(message);
+    LLVMDisposeTargetMachine(machine);
+    LLVMDisposeMessage(triple);
+
+    return !failed;
+}
+
+void llvm_unit_close(LLVMUnit *unit) {
+    LLVMDisposeBuilder(unit->builder);
+    LLVMDisposeModule(unit->module);
+    LLVMContextDispose(unit->context);
+}
+
+char *llvm_emit_function(Arena *arena, const MIRFunction *ir) {
+    LLVMUnit *unit = llvm_unit_open(arena);
+
+    llvm_unit_add(unit, ir);
+
+    char *text = llvm_unit_text(unit);
+
+    llvm_unit_close(unit);
 
     return text;
 }
