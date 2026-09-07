@@ -109,7 +109,7 @@ ASTExpr *ast_index_expr_create(Arena *arena, Span span, ASTExpr *target, ASTExpr
 TypeKind literal_type_kind(LiteralKind kind) {
     switch (kind) {
     case LITERAL_FLOAT:
-        return TYPE_FLOAT;
+        return TYPE_F32;
     case LITERAL_BOOL:
         return TYPE_BOOL;
     case LITERAL_STRING:
@@ -118,5 +118,5 @@ TypeKind literal_type_kind(LiteralKind kind) {
         break;
     }
 
-    return TYPE_INT;
+    return TYPE_I32;
 }

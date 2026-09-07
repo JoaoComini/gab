@@ -56,14 +56,14 @@ static uint8_t *args_address_of_kind(Args *args, int index, TypeKind kind) {
 
 int32_t args_int(Args *args, int index) {
     int32_t value;
-    memcpy(&value, args_address_of_kind(args, index, TYPE_INT), sizeof(value));
+    memcpy(&value, args_address_of_kind(args, index, TYPE_I32), sizeof(value));
 
     return value;
 }
 
 float args_float(Args *args, int index) {
     float value;
-    memcpy(&value, args_address_of_kind(args, index, TYPE_FLOAT), sizeof(value));
+    memcpy(&value, args_address_of_kind(args, index, TYPE_F32), sizeof(value));
 
     return value;
 }

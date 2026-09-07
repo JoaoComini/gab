@@ -26,11 +26,11 @@ static Type *register_builtin(TypeRegistry *registry, TypeKind kind, String *nam
 }
 
 static void register_primitives(TypeRegistry *registry, const TypePrimitiveNames *names) {
-    registry->primitives.int_type = register_builtin(registry, TYPE_INT, names->int_name);
-    registry->primitives.float_type = register_builtin(registry, TYPE_FLOAT, names->float_name);
+    registry->primitives.i32_type = register_builtin(registry, TYPE_I32, names->i32_name);
+    registry->primitives.f32_type = register_builtin(registry, TYPE_F32, names->f32_name);
     registry->primitives.bool_type = register_builtin(registry, TYPE_BOOL, names->bool_name);
 
-    registry->primitives.byte_type = register_builtin(registry, TYPE_BYTE, names->byte_name);
+    registry->primitives.u8_type = register_builtin(registry, TYPE_U8, names->u8_name);
 
     registry->primitives.str_type = register_builtin(registry, TYPE_STR, names->str_name);
 
@@ -49,12 +49,12 @@ static void register_primitives(TypeRegistry *registry, const TypePrimitiveNames
 
 static bool layout_of_scalar(TypeKind kind, size_t *size, size_t *alignment) {
     switch (kind) {
-    case TYPE_INT:
+    case TYPE_I32:
         *size = sizeof(int32_t);
         *alignment = _Alignof(int32_t);
         return true;
 
-    case TYPE_FLOAT:
+    case TYPE_F32:
         *size = sizeof(float);
         *alignment = _Alignof(float);
         return true;
@@ -64,7 +64,7 @@ static bool layout_of_scalar(TypeKind kind, size_t *size, size_t *alignment) {
         *alignment = _Alignof(bool);
         return true;
 
-    case TYPE_BYTE:
+    case TYPE_U8:
         *size = 1;
         *alignment = 1;
         return true;
@@ -401,7 +401,7 @@ const Type *type_registry_array_with(TypeRegistry *registry, const Type *element
 }
 
 const Type *type_registry_array_of(TypeRegistry *registry, const Type *element, int32_t length) {
-    Constant count = constant_int(type_registry_get_primitive(registry, TYPE_INT), length);
+    Constant count = constant_int(type_registry_get_primitive(registry, TYPE_I32), length);
 
     return type_registry_array_with(
         registry, element,
@@ -706,14 +706,14 @@ const Type *type_registry_error_type(TypeRegistry *registry) { return registry->
 
 const Type *type_registry_get_primitive(TypeRegistry *registry, TypeKind kind) {
     switch (kind) {
-    case TYPE_INT:
-        return registry->primitives.int_type;
-    case TYPE_FLOAT:
-        return registry->primitives.float_type;
+    case TYPE_I32:
+        return registry->primitives.i32_type;
+    case TYPE_F32:
+        return registry->primitives.f32_type;
     case TYPE_BOOL:
         return registry->primitives.bool_type;
-    case TYPE_BYTE:
-        return registry->primitives.byte_type;
+    case TYPE_U8:
+        return registry->primitives.u8_type;
     case TYPE_STR:
         return registry->primitives.str_type;
 
@@ -729,11 +729,11 @@ const Type *type_registry_get_primitive(TypeRegistry *registry, TypeKind kind) {
 
 TypePrimitiveNames type_primitive_names(StringPool *strings) {
     return (TypePrimitiveNames){
-        .int_name = string_from_cstr(strings, "i32"),
-        .float_name = string_from_cstr(strings, "f32"),
+        .i32_name = string_from_cstr(strings, "i32"),
+        .f32_name = string_from_cstr(strings, "f32"),
         .bool_name = string_from_cstr(strings, "bool"),
 
-        .byte_name = string_from_cstr(strings, "u8"),
+        .u8_name = string_from_cstr(strings, "u8"),
         .str_name = string_from_cstr(strings, "str"),
         .slice_name = string_from_cstr(strings, "slice"),
         .array_name = string_from_cstr(strings, "array"),

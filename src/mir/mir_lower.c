@@ -37,8 +37,8 @@ static void lower_stmt(Lowering *lowering, ASTStmt *stmt);
 static void lower_struct_lit_into(Lowering *lowering, ASTExpr *expr, Place base);
 
 /* An index and a length are counted values, which the allocator sizes only when they say so. */
-static const Type *int_type(Lowering *lowering) {
-    return type_registry_get_primitive(lowering->registry, TYPE_INT);
+static const Type *i32_type(Lowering *lowering) {
+    return type_registry_get_primitive(lowering->registry, TYPE_I32);
 }
 
 static MIRValueId lower_temp(Lowering *lowering, const Type *type, Span span) {
@@ -455,7 +455,7 @@ static bool lower_intrinsic_call(Lowering *lowering, ASTExpr *expr, MIRValueId *
                            .type = fact_type_of(lowering->facts, expr),
                            .result = result,
                            .constant = type_array_length_is_known(base)
-                                           ? constant_int(int_type(lowering), type_array_length(base))
+                                           ? constant_int(i32_type(lowering), type_array_length(base))
                                            : constant_int(base, 0),
                            .span = expr->span});
 
@@ -527,7 +527,7 @@ static MIRValueId lower_call(Lowering *lowering, ASTExpr *expr) {
             return lower_expr(lowering, operand);
         }
 
-        return lower_unary(lowering, type_kind(to) == TYPE_FLOAT ? MIR_ITOF : MIR_FTOI, expr, operand);
+        return lower_unary(lowering, type_kind(to) == TYPE_F32 ? MIR_ITOF : MIR_FTOI, expr, operand);
     }
 
     size_t count = expr->call.args.size;
@@ -597,10 +597,10 @@ static MIRValueId lower_array_lit(Lowering *lowering, ASTExpr *expr) {
     for (size_t i = 0; i < expr->array_lit.elements.size; i++) {
         ASTExpr *element = expr->array_lit.elements.data[i];
 
-        MIRValueId index = lower_temp(lowering, int_type(lowering), element->span);
+        MIRValueId index = lower_temp(lowering, i32_type(lowering), element->span);
 
         emit(lowering, (MIRInst){.op = MIR_CONST_INT,
-                                 .type = int_type(lowering),
+                                 .type = i32_type(lowering),
                                  .result = index,
                                  .constant = {.as_int = (int32_t)i},
                                  .span = element->span});
@@ -736,10 +736,10 @@ static MIRValueId lower_expr(Lowering *lowering, ASTExpr *expr) {
                                  .place = lower_adjusted_place(lowering, expr, &adjustment),
                                  .span = expr->span});
 
-        operands[1] = lower_temp(lowering, int_type(lowering), expr->span);
+        operands[1] = lower_temp(lowering, i32_type(lowering), expr->span);
 
         emit(lowering, (MIRInst){.op = MIR_CONST_INT,
-                                 .type = int_type(lowering),
+                                 .type = i32_type(lowering),
                                  .result = operands[1],
                                  .constant = {.as_int = adjustment.length},
                                  .span = expr->span});

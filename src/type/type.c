@@ -217,10 +217,10 @@ size_t type_arg_count(const Type *type) { return type->arg_count; }
 
 bool type_is_primitive(const Type *type) {
     switch (type->kind) {
-    case TYPE_INT:
-    case TYPE_FLOAT:
+    case TYPE_I32:
+    case TYPE_F32:
     case TYPE_BOOL:
-    case TYPE_BYTE:
+    case TYPE_U8:
     case TYPE_STR:
     case TYPE_SLICE:
     case TYPE_ARRAY:
@@ -232,10 +232,10 @@ bool type_is_primitive(const Type *type) {
 
 bool type_names_itself(const Type *type) {
     switch (type->kind) {
-    case TYPE_INT:
-    case TYPE_FLOAT:
+    case TYPE_I32:
+    case TYPE_F32:
     case TYPE_BOOL:
-    case TYPE_BYTE:
+    case TYPE_U8:
     case TYPE_STR:
     case TYPE_ERROR:
 

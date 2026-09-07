@@ -235,14 +235,14 @@ static void test_builtin_widths() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
     TypeRegistry *registry = global_scope.type_registry;
 
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
-    const Type *float_type = type_registry_get_primitive(registry, TYPE_FLOAT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
+    const Type *f32_type = type_registry_get_primitive(registry, TYPE_F32);
     const Type *bool_type = type_registry_get_primitive(registry, TYPE_BOOL);
 
-    assert(type_registry_size_of(registry, int_type) == sizeof(int32_t));
-    assert(type_registry_align_of(registry, int_type) == _Alignof(int32_t));
-    assert(type_registry_size_of(registry, float_type) == sizeof(float));
-    assert(type_registry_align_of(registry, float_type) == _Alignof(float));
+    assert(type_registry_size_of(registry, i32_type) == sizeof(int32_t));
+    assert(type_registry_align_of(registry, i32_type) == _Alignof(int32_t));
+    assert(type_registry_size_of(registry, f32_type) == sizeof(float));
+    assert(type_registry_align_of(registry, f32_type) == _Alignof(float));
     assert(type_registry_size_of(registry, bool_type) == sizeof(_Bool));
     assert(type_registry_align_of(registry, bool_type) == _Alignof(_Bool));
 
@@ -257,21 +257,21 @@ static void test_raw_pointer_owns_nothing() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
     TypeRegistry *registry = global_scope.type_registry;
 
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
-    const Type *ptr = type_registry_ptr_to(registry, int_type);
+    const Type *ptr = type_registry_ptr_to(registry, i32_type);
 
     assert(type_kind(ptr) == TYPE_PTR);
-    assert(type_pointee(ptr) == int_type);
+    assert(type_pointee(ptr) == i32_type);
 
-    assert(type_registry_ptr_to(registry, int_type) == ptr);
+    assert(type_registry_ptr_to(registry, i32_type) == ptr);
 
     assert(!type_registry_owns(registry, ptr));
     assert(type_registry_copies(registry, ptr));
     assert(type_registry_drop_of(registry, ptr) == NULL);
 
-    assert(ptr != type_registry_box_to(registry, int_type));
-    assert(ptr != type_registry_ref_to(registry, int_type));
+    assert(ptr != type_registry_box_to(registry, i32_type));
+    assert(ptr != type_registry_ref_to(registry, i32_type));
 
     assert(type_registry_size_of(registry, ptr) == sizeof(void *));
     assert(type_registry_align_of(registry, ptr) == _Alignof(void *));
@@ -289,7 +289,7 @@ static void test_an_array_is_interned_under_its_length() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
     TypeRegistry *registry = global_scope.type_registry;
 
-    const Type *element = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *element = type_registry_get_primitive(registry, TYPE_I32);
 
     const Type *three = type_registry_array_of(registry, element, 3);
     const Type *four = type_registry_array_of(registry, element, 4);
@@ -312,22 +312,22 @@ static void test_a_borrow_and_a_box_are_distinct_constructors() {
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
     TypeRegistry *registry = global_scope.type_registry;
 
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
-    const Type *box = type_registry_box_to(registry, int_type);
-    const Type *ref = type_registry_ref_to(registry, int_type);
+    const Type *box = type_registry_box_to(registry, i32_type);
+    const Type *ref = type_registry_ref_to(registry, i32_type);
 
     assert(type_kind(box) == TYPE_BOX);
     assert(type_kind(ref) == TYPE_REF);
 
-    assert(type_pointee(box) == int_type);
-    assert(type_pointee(ref) == int_type);
+    assert(type_pointee(box) == i32_type);
+    assert(type_pointee(ref) == i32_type);
 
-    assert(type_registry_box_to(registry, int_type) == box);
-    assert(type_registry_ref_to(registry, int_type) == ref);
+    assert(type_registry_box_to(registry, i32_type) == box);
+    assert(type_registry_ref_to(registry, i32_type) == ref);
 
     assert(box != ref);
-    assert(box != int_type && ref != int_type);
+    assert(box != i32_type && ref != i32_type);
 
     assert(type_registry_owns(registry, box));
     assert(!type_registry_owns(registry, ref));

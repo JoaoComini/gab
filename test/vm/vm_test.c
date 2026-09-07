@@ -54,8 +54,8 @@ static void test_two_vms_are_independent() {
 
     assert(&first->env.strings != &second->env.strings);
 
-    const Type *first_int = type_registry_get_primitive(first->env.global_scope.type_registry, TYPE_INT);
-    const Type *second_int = type_registry_get_primitive(second->env.global_scope.type_registry, TYPE_INT);
+    const Type *first_int = type_registry_get_primitive(first->env.global_scope.type_registry, TYPE_I32);
+    const Type *second_int = type_registry_get_primitive(second->env.global_scope.type_registry, TYPE_I32);
 
     assert(type_name_of(first_int) != type_name_of(second_int));
 

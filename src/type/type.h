@@ -13,11 +13,11 @@
 #include <stdint.h>
 
 typedef enum {
-    TYPE_INT,
-    TYPE_FLOAT,
+    TYPE_I32,
+    TYPE_F32,
     TYPE_BOOL,
 
-    TYPE_BYTE,
+    TYPE_U8,
 
     TYPE_PTR,
 

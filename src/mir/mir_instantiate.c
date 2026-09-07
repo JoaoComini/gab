@@ -21,7 +21,7 @@ static Constant subst_constant(Instantiation *in, Constant constant) {
     /* A count the declaration could not take is one its instance can, since the type now states it. */
     if (constant.type && type_kind(constant.type) == TYPE_ARRAY) {
         constant.as_int = type_array_length(constant.type);
-        constant.type = type_registry_get_primitive(in->registry, TYPE_INT);
+        constant.type = type_registry_get_primitive(in->registry, TYPE_I32);
     }
 
     return constant;

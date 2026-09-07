@@ -614,8 +614,8 @@ static bool infer_call_args(ResolverState *state, ASTExpr *expr, Function *funct
 /* Type arguments a call names itself; only a plain call can, a method call's target having nowhere for them.
  */
 /* The type a value parameter and an array length both have, which is the only one they can have. */
-static const Type *int_type(ResolverState *state) {
-    return type_registry_get_primitive(state->current_scope->type_registry, TYPE_INT);
+static const Type *i32_type(ResolverState *state) {
+    return type_registry_get_primitive(state->current_scope->type_registry, TYPE_I32);
 }
 
 static bool take_written_type_args(ResolverState *state, ASTExpr *expr, Function *generic,
@@ -630,7 +630,7 @@ static bool take_written_type_args(ResolverState *state, ASTExpr *expr, Function
 
     for (size_t i = 0; i < owed; i++) {
         if (supplied->apply.args.data[i]->kind == TYPE_EXPR_CONST) {
-            Constant given = constant_int(int_type(state), supplied->apply.args.data[i]->constant);
+            Constant given = constant_int(i32_type(state), supplied->apply.args.data[i]->constant);
 
             args[i] = (TypeArg){.kind = TYPE_ARG_CONST, .constant = {.kind = CONST_VALUE, .value = given}};
             continue;
@@ -1158,9 +1158,9 @@ static bool borrow_into(ResolverState *state, ASTExpr *expr, const Type *destina
     return true;
 }
 
-bool is_numeric_type(const Type *t) { return type_kind(t) == TYPE_INT || type_kind(t) == TYPE_FLOAT; }
+bool is_numeric_type(const Type *t) { return type_kind(t) == TYPE_I32 || type_kind(t) == TYPE_F32; }
 
-bool is_integer_type(const Type *t) { return type_kind(t) == TYPE_INT; }
+bool is_integer_type(const Type *t) { return type_kind(t) == TYPE_I32; }
 
 bool is_boolean_type(const Type *t) { return type_kind(t) == TYPE_BOOL; }
 
@@ -1466,7 +1466,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         }
 
         if (fact_type_of(state->facts, expr->index.index) !=
-            type_registry_get_primitive(state->current_scope->type_registry, TYPE_INT)) {
+            type_registry_get_primitive(state->current_scope->type_registry, TYPE_I32)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "an index must be an i32, not %s",
                        type_name(state, fact_type_of(state->facts, expr->index.index)));
             fact_set_type(state->facts, expr, resolver_error_type(state));
@@ -1888,7 +1888,7 @@ static bool bind_type_param(Scope *params, String *name, size_t index, const Typ
 /* A length is written as a literal, or named as the value parameter a generic declaration takes. */
 static bool resolve_array_length(ResolverState *state, TypeExpr *expr, Span span, TypeArg *out) {
     if (expr->kind == TYPE_EXPR_CONST) {
-        Constant length = constant_int(int_type(state), expr->constant);
+        Constant length = constant_int(i32_type(state), expr->constant);
 
         *out = (TypeArg){.kind = TYPE_ARG_CONST, .constant = {.kind = CONST_VALUE, .value = length}};
         return true;

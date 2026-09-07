@@ -52,15 +52,15 @@ static void test_a_type_that_owns_nothing_has_no_drop() {
 
     const TypePrimitiveNames primitive_names = type_primitive_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &primitive_names);
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
     const char *names[] = {"x", "y"};
-    const Type *types[] = {int_type, int_type};
+    const Type *types[] = {i32_type, i32_type};
 
     assert(type_registry_drop_of(registry, make_struct(&ctx, registry, "Point", names, types, 2)) == NULL);
 
-    const Type *owning = type_registry_box_to(registry, int_type);
-    const Type *borrowing = type_registry_ref_to(registry, int_type);
+    const Type *owning = type_registry_box_to(registry, i32_type);
+    const Type *borrowing = type_registry_ref_to(registry, i32_type);
 
     assert(type_registry_drop_of(registry, owning) != NULL);
     assert(type_registry_drop_of(registry, borrowing) == NULL);
@@ -86,10 +86,10 @@ static void test_a_raw_pointer_carries_a_stride_and_drops_nothing() {
 
     TypeRegistry *registry = scope.type_registry;
 
-    const Type *characters = type_registry_ptr_to(registry, type_registry_get_primitive(registry, TYPE_BYTE));
+    const Type *characters = type_registry_ptr_to(registry, type_registry_get_primitive(registry, TYPE_U8));
 
     assert(type_kind(characters) == TYPE_PTR);
-    assert(type_pointee(characters) == type_registry_get_primitive(registry, TYPE_BYTE));
+    assert(type_pointee(characters) == type_registry_get_primitive(registry, TYPE_U8));
     assert(type_registry_drop_of(registry, characters) == NULL);
 
     assert(type_registry_size_of(registry, type_pointee(characters)) == 1 &&
@@ -106,10 +106,10 @@ static void test_alloc_and_free_are_one_allocation() {
 
     const TypePrimitiveNames primitive_names = type_primitive_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &primitive_names);
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
     const char *names[] = {"health"};
-    const Type *types[] = {int_type};
+    const Type *types[] = {i32_type};
     const Type *player = make_struct(&ctx, registry, "Player", names, types, 1);
 
     AllocCounts counts = {0};
@@ -135,10 +135,10 @@ static void test_the_payload_follows_the_header() {
 
     const TypePrimitiveNames primitive_names = type_primitive_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &primitive_names);
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
     const char *names[] = {"a", "b"};
-    const Type *types[] = {int_type, int_type};
+    const Type *types[] = {i32_type, i32_type};
     const Type *pair = make_struct(&ctx, registry, "Pair", names, types, 2);
 
     AllocCounts counts = {0};
@@ -160,10 +160,10 @@ static void test_a_fresh_payload_is_zeroed() {
 
     const TypePrimitiveNames primitive_names = type_primitive_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &primitive_names);
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
     const char *names[] = {"a", "b"};
-    const Type *types[] = {int_type, int_type};
+    const Type *types[] = {i32_type, i32_type};
     const Type *pair = make_struct(&ctx, registry, "Pair", names, types, 2);
 
     AllocCounts counts = {0};
@@ -187,10 +187,10 @@ static void test_freeing_an_object_frees_what_it_owns() {
 
     const TypePrimitiveNames primitive_names = type_primitive_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &primitive_names);
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
     const char *inner_names[] = {"n"};
-    const Type *inner_types[] = {int_type};
+    const Type *inner_types[] = {i32_type};
     const Type *inner = make_struct(&ctx, registry, "Inner", inner_names, inner_types, 1);
 
     const char *outer_names[] = {"child"};
@@ -222,14 +222,14 @@ static void test_freeing_reaches_an_owning_field_at_its_offset() {
 
     const TypePrimitiveNames primitive_names = type_primitive_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &primitive_names);
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
     const char *inner_names[] = {"n"};
-    const Type *inner_types[] = {int_type};
+    const Type *inner_types[] = {i32_type};
     const Type *inner = make_struct(&ctx, registry, "Inner", inner_names, inner_types, 1);
 
     const char *outer_names[] = {"a", "b", "child"};
-    const Type *outer_types[] = {int_type, int_type, type_registry_box_to(registry, inner)};
+    const Type *outer_types[] = {i32_type, i32_type, type_registry_box_to(registry, inner)};
     const Type *outer = make_struct(&ctx, registry, "Outer", outer_names, outer_types, 3);
 
     const TypeField *child_field =
@@ -264,10 +264,10 @@ static void test_freeing_does_not_follow_a_ref_field() {
 
     const TypePrimitiveNames primitive_names = type_primitive_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &primitive_names);
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
     const char *inner_names[] = {"n"};
-    const Type *inner_types[] = {int_type};
+    const Type *inner_types[] = {i32_type};
     const Type *inner = make_struct(&ctx, registry, "Inner", inner_names, inner_types, 1);
 
     const char *outer_names[] = {"borrowed"};
@@ -314,18 +314,18 @@ static void test_an_array_is_its_elements_laid_end_to_end() {
     TypeRegistry *registry = scope.type_registry;
 
     const Type *floats =
-        type_registry_array_of(registry, type_registry_get_primitive(registry, TYPE_FLOAT), 3);
+        type_registry_array_of(registry, type_registry_get_primitive(registry, TYPE_F32), 3);
 
-    assert(type_array_element(floats) == type_registry_get_primitive(registry, TYPE_FLOAT));
+    assert(type_array_element(floats) == type_registry_get_primitive(registry, TYPE_F32));
     assert(type_array_length(floats) == 3);
 
     assert(type_registry_size_of(registry, floats) ==
-           type_registry_size_of(registry, type_registry_get_primitive(registry, TYPE_FLOAT)) * 3);
+           type_registry_size_of(registry, type_registry_get_primitive(registry, TYPE_F32)) * 3);
     assert(type_registry_align_of(registry, floats) ==
-           type_registry_align_of(registry, type_registry_get_primitive(registry, TYPE_FLOAT)));
+           type_registry_align_of(registry, type_registry_get_primitive(registry, TYPE_F32)));
 
-    assert(type_registry_array_of(registry, type_registry_get_primitive(registry, TYPE_FLOAT), 3) == floats);
-    assert(type_registry_array_of(registry, type_registry_get_primitive(registry, TYPE_FLOAT), 4) != floats);
+    assert(type_registry_array_of(registry, type_registry_get_primitive(registry, TYPE_F32), 3) == floats);
+    assert(type_registry_array_of(registry, type_registry_get_primitive(registry, TYPE_F32), 4) != floats);
 
     test_context_free(&ctx);
 }
@@ -339,7 +339,7 @@ static void test_an_array_owns_exactly_when_its_element_does() {
 
     TypeRegistry *registry = scope.type_registry;
 
-    const Type *ints = type_registry_array_of(registry, type_registry_get_primitive(registry, TYPE_INT), 4);
+    const Type *ints = type_registry_array_of(registry, type_registry_get_primitive(registry, TYPE_I32), 4);
 
     assert(!type_registry_owns(registry, ints));
     assert(type_registry_copies(registry, ints));
@@ -366,15 +366,15 @@ static void test_a_type_carries_only_what_its_kind_has() {
     scope_init(&scope, ctx.arena, &ctx.strings, NULL);
 
     TypeRegistry *registry = scope.type_registry;
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
-    const Type *box = type_registry_box_to(registry, int_type);
+    const Type *box = type_registry_box_to(registry, i32_type);
 
-    assert(type_pointee(box) == int_type);
+    assert(type_pointee(box) == i32_type);
     assert(type_registry_fields_of(registry, box)->count == 0);
     assert(type_registry_fields_of(registry, box)->fields == NULL);
 
-    const TypeFieldSpec health = {.name = string_from_cstr(&ctx.strings, "health"), .type = int_type};
+    const TypeFieldSpec health = {.name = string_from_cstr(&ctx.strings, "health"), .type = i32_type};
 
     const Type *player =
         type_registry_declare_struct(registry, string_from_cstr(&ctx.strings, "Player"), &health, 1);
@@ -382,15 +382,15 @@ static void test_a_type_carries_only_what_its_kind_has() {
     assert(type_registry_fields_of(registry, player)->count == 1);
     assert(type_pointee(player) == NULL);
 
-    const Type *ints = type_registry_array_of(registry, int_type, 3);
+    const Type *ints = type_registry_array_of(registry, i32_type, 3);
 
-    assert(type_array_element(ints) == int_type);
+    assert(type_array_element(ints) == i32_type);
     assert(type_array_length(ints) == 3);
     assert(type_pointee(ints) == NULL);
     assert(type_registry_fields_of(registry, ints)->count == 0);
 
-    assert(type_pointee(int_type) == NULL);
-    assert(type_registry_fields_of(registry, int_type)->count == 0);
+    assert(type_pointee(i32_type) == NULL);
+    assert(type_registry_fields_of(registry, i32_type)->count == 0);
 
     test_context_free(&ctx);
 }
@@ -403,22 +403,22 @@ static void test_methods_live_beside_the_type_not_in_it() {
     scope_init(&scope, ctx.arena, &ctx.strings, NULL);
 
     TypeRegistry *registry = scope.type_registry;
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
     String *name = string_from_cstr(&ctx.strings, "twice");
 
-    assert(type_registry_find_owned(registry, int_type, name) == NULL);
+    assert(type_registry_find_owned(registry, i32_type, name) == NULL);
 
     FuncDecl decl = {.name = name};
     Function method = {.decl = &decl};
 
-    assert(type_registry_declare_owned(registry, int_type, &method));
+    assert(type_registry_declare_owned(registry, i32_type, &method));
 
-    Function *found = type_registry_find_owned(registry, int_type, name);
+    Function *found = type_registry_find_owned(registry, i32_type, name);
 
     assert(found && found->decl->name == name);
 
-    assert(!type_registry_declare_owned(registry, int_type, &method));
+    assert(!type_registry_declare_owned(registry, i32_type, &method));
 
     assert(type_registry_find_owned(registry, type_registry_get_primitive(registry, TYPE_BOOL), name) ==
            NULL);
@@ -435,16 +435,16 @@ static void test_a_builtin_is_interned_and_found_by_its_kind() {
 
     TypeRegistry *registry = scope.type_registry;
 
-    assert(type_registry_get_primitive(registry, TYPE_INT) ==
-           type_registry_get_primitive(registry, TYPE_INT));
+    assert(type_registry_get_primitive(registry, TYPE_I32) ==
+           type_registry_get_primitive(registry, TYPE_I32));
     assert(type_registry_get_primitive(registry, TYPE_BOOL) ==
            type_registry_get_primitive(registry, TYPE_BOOL));
 
-    assert(type_registry_get_primitive(registry, TYPE_BYTE) ==
-           type_registry_get_primitive(registry, TYPE_BYTE));
-    assert(type_registry_get_primitive(registry, TYPE_BYTE) !=
-           type_registry_get_primitive(registry, TYPE_INT));
-    assert(type_kind(type_registry_get_primitive(registry, TYPE_BYTE)) == TYPE_BYTE);
+    assert(type_registry_get_primitive(registry, TYPE_U8) ==
+           type_registry_get_primitive(registry, TYPE_U8));
+    assert(type_registry_get_primitive(registry, TYPE_U8) !=
+           type_registry_get_primitive(registry, TYPE_I32));
+    assert(type_kind(type_registry_get_primitive(registry, TYPE_U8)) == TYPE_U8);
 
     test_context_free(&ctx);
 }

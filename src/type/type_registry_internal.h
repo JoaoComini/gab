@@ -38,10 +38,10 @@ GAB_HASH_MAP(DropTable, drop_key, const Type *, const DropPlan *)
 GAB_HASH_MAP(LayoutTable, layout_key, const Type *, const TypeLayout *)
 
 typedef struct {
-    const Type *int_type;
+    const Type *i32_type;
 
-    const Type *byte_type;
-    const Type *float_type;
+    const Type *u8_type;
+    const Type *f32_type;
     const Type *bool_type;
 
     const Type *str_type;

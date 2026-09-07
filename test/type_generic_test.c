@@ -27,7 +27,7 @@ static void test_a_declared_field_nests_constructors() {
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
 
     const Type *param = type_registry_param(registry, 0);
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
     const Type *field_type = type_registry_ptr_to(registry, type_registry_box_to(registry, param));
 
@@ -40,7 +40,7 @@ static void test_a_declared_field_nests_constructors() {
         .field_count = 1,
     };
 
-    const Type *instance = type_registry_apply(registry, &decl, &int_type, 1);
+    const Type *instance = type_registry_apply(registry, &decl, &i32_type, 1);
 
     assert(type_registry_fields_of(registry, instance)->count == 1);
 
@@ -51,7 +51,7 @@ static void test_a_declared_field_nests_constructors() {
     const Type *element = type_pointee(data);
 
     assert(type_kind(element) == TYPE_BOX);
-    assert(type_pointee(element) == int_type);
+    assert(type_pointee(element) == i32_type);
 
     type_registry_destroy(registry);
     string_pool_free(&ctx.strings);
@@ -65,9 +65,9 @@ static void test_a_declaration_taking_no_parameters_is_its_own_instantiation() {
     const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
 
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
-    TypeField field = {.name = string_from_cstr(&ctx.strings, "value"), .type = int_type};
+    TypeField field = {.name = string_from_cstr(&ctx.strings, "value"), .type = i32_type};
 
     TypeDecl decl = {
         .name = string_from_cstr(&ctx.strings, "Plain"),
@@ -80,7 +80,7 @@ static void test_a_declaration_taking_no_parameters_is_its_own_instantiation() {
 
     assert(type_kind(type) == TYPE_STRUCT);
     assert(type_registry_fields_of(registry, type)->count == 1);
-    assert(type_registry_fields_of(registry, type)->fields[0].type == int_type);
+    assert(type_registry_fields_of(registry, type)->fields[0].type == i32_type);
 
     assert(type_registry_apply(registry, &decl, NULL, 0) == type);
 
@@ -96,9 +96,9 @@ static void test_two_declarations_alike_are_two_types() {
     const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
 
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
-    TypeField field = {.name = string_from_cstr(&ctx.strings, "value"), .type = int_type};
+    TypeField field = {.name = string_from_cstr(&ctx.strings, "value"), .type = i32_type};
 
     TypeDecl first = {
         .name = string_from_cstr(&ctx.strings, "First"),
@@ -134,7 +134,7 @@ static void test_an_instantiation_reads_fields_declared_after_it() {
 
     TypeField field = {
         .name = string_from_cstr(&ctx.strings, "width"),
-        .type = type_registry_get_primitive(registry, TYPE_INT),
+        .type = type_registry_get_primitive(registry, TYPE_I32),
     };
 
     decl.fields = &field;
@@ -142,7 +142,7 @@ static void test_an_instantiation_reads_fields_declared_after_it() {
 
     assert(type_registry_fields_of(registry, type)->count == 1);
     assert(type_registry_fields_of(registry, type)->fields[0].type ==
-           type_registry_get_primitive(registry, TYPE_INT));
+           type_registry_get_primitive(registry, TYPE_I32));
 
     assert(type_registry_apply(registry, &decl, NULL, 0) == type);
 
@@ -158,7 +158,7 @@ static void test_an_instantiation_does_not_share_the_declarations_fields() {
     const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
 
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
     const Type *bool_type = type_registry_get_primitive(registry, TYPE_BOOL);
 
     TypeField field = {
@@ -173,11 +173,11 @@ static void test_an_instantiation_does_not_share_the_declarations_fields() {
         .field_count = 1,
     };
 
-    const Type *of_int = type_registry_apply(registry, &decl, &int_type, 1);
+    const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
     const Type *of_bool = type_registry_apply(registry, &decl, &bool_type, 1);
 
     assert(type_registry_fields_of(registry, of_int)->fields[0].type ==
-           type_registry_ptr_to(registry, int_type));
+           type_registry_ptr_to(registry, i32_type));
     assert(type_registry_fields_of(registry, of_bool)->fields[0].type ==
            type_registry_ptr_to(registry, bool_type));
 
@@ -195,15 +195,15 @@ static void test_an_instantiation_carries_its_arguments() {
     const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
 
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
     TypeDecl decl = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
 
-    const Type *of_int = type_registry_apply(registry, &decl, &int_type, 1);
+    const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
 
     assert(type_arg_count(of_int) == 1);
     assert(type_args(of_int)[0].kind == TYPE_ARG_TYPE);
-    assert(type_args(of_int)[0].type == int_type);
+    assert(type_args(of_int)[0].type == i32_type);
 
     TypeDecl plain = {.name = string_from_cstr(&ctx.strings, "Point")};
 
@@ -223,7 +223,7 @@ static void test_a_declared_method_is_substituted_per_instantiation() {
     FunctionRegistry *functions = function_registry_create(ctx.arena, registry);
 
     const Type *param = type_registry_param(registry, 0);
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
     const Type *bool_type = type_registry_get_primitive(registry, TYPE_BOOL);
 
     String *at = string_from_cstr(&ctx.strings, "at");
@@ -243,7 +243,7 @@ static void test_a_declared_method_is_substituted_per_instantiation() {
 
     type_registry_declare_owned(registry, type_registry_apply(registry, &decl, &param, 1), &method);
 
-    const Type *of_int = type_registry_apply(registry, &decl, &int_type, 1);
+    const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
     const Type *of_bool = type_registry_apply(registry, &decl, &bool_type, 1);
 
     const Function *from_int = owned_for(registry, functions, of_int, at);
@@ -251,7 +251,7 @@ static void test_a_declared_method_is_substituted_per_instantiation() {
 
     assert(from_int && from_bool);
 
-    assert(from_int->return_type == int_type);
+    assert(from_int->return_type == i32_type);
     assert(from_bool->return_type == bool_type);
 
     assert(from_int->params[0] == of_int);
@@ -271,13 +271,13 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
     FunctionRegistry *functions = function_registry_create(ctx.arena, registry);
 
     const Type *param = type_registry_param(registry, 0);
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
     String *at = string_from_cstr(&ctx.strings, "at");
 
     TypeDecl decl = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
 
-    const Type *of_int = type_registry_apply(registry, &decl, &int_type, 1);
+    const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
 
     assert(type_registry_find_owned(registry, of_int, at) == NULL);
 
@@ -297,7 +297,7 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
     const Function *found = owned_for(registry, functions, of_int, at);
 
     assert(found);
-    assert(found->return_type == int_type);
+    assert(found->return_type == i32_type);
 
     type_registry_destroy(registry);
     string_pool_free(&ctx.strings);
@@ -313,7 +313,7 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
     FunctionRegistry *functions = function_registry_create(ctx.arena, registry);
 
     const Type *param = type_registry_param(registry, 0);
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
     String *at = string_from_cstr(&ctx.strings, "at");
 
@@ -332,14 +332,14 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
 
     type_registry_declare_owned(registry, type_registry_apply(registry, &decl, &param, 1), &method);
 
-    const Type *of_int = type_registry_apply(registry, &decl, &int_type, 1);
+    const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
 
     FuncDecl other_decl = {.name = at};
     Function other = {.decl = &other_decl};
 
     assert(!type_registry_declare_owned(registry, of_int, &other));
 
-    assert(owned_for(registry, functions, of_int, at)->return_type == int_type);
+    assert(owned_for(registry, functions, of_int, at)->return_type == i32_type);
 
     type_registry_destroy(registry);
     string_pool_free(&ctx.strings);
@@ -353,14 +353,14 @@ static void test_a_method_declared_on_one_instantiation_answers_on_every_one() {
     const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
 
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
     const Type *bool_type = type_registry_get_primitive(registry, TYPE_BOOL);
 
     String *name = string_from_cstr(&ctx.strings, "spill");
 
     TypeDecl decl = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
 
-    const Type *of_int = type_registry_apply(registry, &decl, &int_type, 1);
+    const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
     const Type *of_bool = type_registry_apply(registry, &decl, &bool_type, 1);
 
     FuncDecl method_decl = {.name = name};
@@ -374,7 +374,7 @@ static void test_a_method_declared_on_one_instantiation_answers_on_every_one() {
 
     TypeDecl other = {.name = string_from_cstr(&ctx.strings, "Other"), .param_count = 1};
 
-    assert(type_registry_find_owned(registry, type_registry_apply(registry, &other, &int_type, 1), name) ==
+    assert(type_registry_find_owned(registry, type_registry_apply(registry, &other, &i32_type, 1), name) ==
            NULL);
 
     type_registry_destroy(registry);
@@ -391,7 +391,7 @@ static void test_a_substituted_signature_is_read_once_per_type() {
     FunctionRegistry *functions = function_registry_create(ctx.arena, registry);
 
     const Type *param = type_registry_param(registry, 0);
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
     const Type *bool_type = type_registry_get_primitive(registry, TYPE_BOOL);
 
     String *at = string_from_cstr(&ctx.strings, "at");
@@ -411,7 +411,7 @@ static void test_a_substituted_signature_is_read_once_per_type() {
 
     type_registry_declare_owned(registry, type_registry_apply(registry, &decl, &param, 1), &method);
 
-    const Type *of_int = type_registry_apply(registry, &decl, &int_type, 1);
+    const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
 
     assert(owned_for(registry, functions, of_int, at) == owned_for(registry, functions, of_int, at));
 
@@ -431,13 +431,13 @@ static void test_two_instantiations_share_one_generic_form(void) {
     const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
 
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
     const Type *bool_type = type_registry_get_primitive(registry, TYPE_BOOL);
     const Type *param = type_registry_param(registry, 0);
 
     TypeDecl decl = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
 
-    const Type *of_int = type_registry_apply(registry, &decl, &int_type, 1);
+    const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
     const Type *of_bool = type_registry_apply(registry, &decl, &bool_type, 1);
     const Type *generic = type_registry_apply(registry, &decl, &param, 1);
 
@@ -458,18 +458,18 @@ static void test_an_instantiation_reads_fields_declared_after_it_is_applied(void
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
 
     const Type *param = type_registry_param(registry, 0);
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
     TypeDecl decl = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
 
-    const Type *of_int = type_registry_apply(registry, &decl, &int_type, 1);
+    const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
 
     const TypeField fields[] = {{.name = string_from_cstr(&ctx.strings, "value"), .type = param}};
     decl.fields = fields;
     decl.field_count = 1;
 
     assert(type_registry_fields_of(registry, of_int)->count == 1);
-    assert(type_registry_fields_of(registry, of_int)->fields[0].type == int_type);
+    assert(type_registry_fields_of(registry, of_int)->fields[0].type == i32_type);
 
     type_registry_destroy(registry);
     string_pool_free(&ctx.strings);
@@ -485,7 +485,7 @@ static void test_a_specialization_does_not_inherit_a_summary() {
     FunctionRegistry *functions = function_registry_create(ctx.arena, registry);
 
     const Type *param = type_registry_param(registry, 0);
-    const Type *int_type = type_registry_get_primitive(registry, TYPE_INT);
+    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
     const Type *params[] = {type_registry_ref_to(registry, param)};
 
@@ -504,7 +504,7 @@ static void test_a_specialization_does_not_inherit_a_summary() {
     generic->borrowed_params = 1;
     generic->borrowed_params_known = true;
 
-    TypeArg argument = {.kind = TYPE_ARG_TYPE, .type = int_type};
+    TypeArg argument = {.kind = TYPE_ARG_TYPE, .type = i32_type};
 
     Function *specialized = function_registry_specialize(functions, generic, &argument, 1);
 

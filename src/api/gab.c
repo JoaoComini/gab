@@ -584,7 +584,7 @@ static uint8_t *gab_arg_slot(GabCall *call, int index, TypeKind expected) {
 }
 
 bool gab_call_int(GabCall *call, int index, int32_t value) {
-    uint8_t *slot = gab_arg_slot(call, index, TYPE_INT);
+    uint8_t *slot = gab_arg_slot(call, index, TYPE_I32);
     if (!slot) {
         return false;
     }
@@ -595,7 +595,7 @@ bool gab_call_int(GabCall *call, int index, int32_t value) {
 }
 
 bool gab_call_float(GabCall *call, int index, float value) {
-    uint8_t *slot = gab_arg_slot(call, index, TYPE_FLOAT);
+    uint8_t *slot = gab_arg_slot(call, index, TYPE_F32);
     if (!slot) {
         return false;
     }

@@ -25,7 +25,7 @@ static void test_nested_scopes() {
 static void test_var_declaration() {
     Scope *scope = scope_create(arena, &ctx.strings, NULL);
     String *name = string_from_cstr(&ctx.strings, "x");
-    const Type *type = type_registry_get_primitive(scope->type_registry, TYPE_INT);
+    const Type *type = type_registry_get_primitive(scope->type_registry, TYPE_I32);
 
     Binding *sym = scope_decl_var(scope, name, type);
     assert(sym != NULL);
@@ -38,14 +38,14 @@ static void test_shadowing() {
     Scope *parent = scope_create(arena, &ctx.strings, NULL);
 
     String *name = string_from_cstr(&ctx.strings, "x");
-    const Type *int_type = type_registry_get_primitive(parent->type_registry, TYPE_INT);
-    const Type *float_type = type_registry_get_primitive(parent->type_registry, TYPE_FLOAT);
+    const Type *i32_type = type_registry_get_primitive(parent->type_registry, TYPE_I32);
+    const Type *f32_type = type_registry_get_primitive(parent->type_registry, TYPE_F32);
 
-    Binding *parent_sym = scope_decl_var(parent, name, int_type);
+    Binding *parent_sym = scope_decl_var(parent, name, i32_type);
 
     Scope *child = scope_create(arena, &ctx.strings, parent);
 
-    Binding *child_sym = scope_decl_var(child, name, float_type);
+    Binding *child_sym = scope_decl_var(child, name, f32_type);
 
     assert(scope_binding_lookup(child, name) == child_sym);
 

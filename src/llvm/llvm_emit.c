@@ -25,11 +25,11 @@ static LLVMTypeRef llvm_type_of(LLVMEmitter *emitter, const Type *type) {
     }
 
     switch (type_kind(type)) {
-    case TYPE_FLOAT:
+    case TYPE_F32:
         return LLVMFloatTypeInContext(emitter->context);
     case TYPE_BOOL:
         return LLVMInt1TypeInContext(emitter->context);
-    case TYPE_BYTE:
+    case TYPE_U8:
         return LLVMInt8TypeInContext(emitter->context);
     default:
         return LLVMInt32TypeInContext(emitter->context);
@@ -40,7 +40,7 @@ static LLVMValueRef operand_value(LLVMEmitter *emitter, MIROperand operand) {
     if (operand.kind == OPERAND_CONST) {
         LLVMTypeRef type = llvm_type_of(emitter, operand.constant.type);
 
-        if (operand.constant.type && type_kind(operand.constant.type) == TYPE_FLOAT) {
+        if (operand.constant.type && type_kind(operand.constant.type) == TYPE_F32) {
             return LLVMConstReal(type, (double)operand.constant.as_float);
         }
 
@@ -57,12 +57,12 @@ static bool operands_are_float(LLVMEmitter *emitter, const MIRInst *inst) {
     }
 
     if (inst->args[0].kind == OPERAND_CONST) {
-        return inst->args[0].constant.type && type_kind(inst->args[0].constant.type) == TYPE_FLOAT;
+        return inst->args[0].constant.type && type_kind(inst->args[0].constant.type) == TYPE_F32;
     }
 
     const MIRValueInfo *info = mir_value_info(emitter->ir, inst->args[0].value);
 
-    return info && info->type && type_kind(info->type) == TYPE_FLOAT;
+    return info && info->type && type_kind(info->type) == TYPE_F32;
 }
 
 static LLVMIntPredicate int_predicate(CmpPredicate predicate) {

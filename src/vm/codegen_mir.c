@@ -274,7 +274,7 @@ static void emit_constant(MIREmitter *emitter, const MIRInst *inst) {
                           VM_ENCODE_I(OP_LOAD_CONST, slot_of(emitter, inst->result), (uint32_t)index));
 }
 
-static bool is_float(const MIRInst *inst) { return inst->type && type_kind(inst->type) == TYPE_FLOAT; }
+static bool is_float(const MIRInst *inst) { return inst->type && type_kind(inst->type) == TYPE_F32; }
 
 static OpCode binary_opcode(const MIRInst *inst, bool *ok) {
     *ok = true;
@@ -402,7 +402,7 @@ static void emit_binary(MIREmitter *emitter, const MIRInst *inst) {
 
     unsigned int immediate;
 
-    if (type && type_kind(type) == TYPE_INT && int_immediate_of(inst->args[1], &immediate)) {
+    if (type && type_kind(type) == TYPE_I32 && int_immediate_of(inst->args[1], &immediate)) {
         chunk_add_instruction(emitter->chunk,
                               VM_ENCODE_RK(op, slot_of(emitter, inst->result),
                                            operand_slot(emitter, inst->args[0]), immediate, 1));
@@ -414,7 +414,7 @@ static void emit_binary(MIREmitter *emitter, const MIRInst *inst) {
     OpCode constant_op;
     SlotWord constant;
 
-    if (type && type_kind(type) == TYPE_FLOAT && binary_constant_opcode(inst->op, &constant_op) &&
+    if (type && type_kind(type) == TYPE_F32 && binary_constant_opcode(inst->op, &constant_op) &&
         float_constant_of(inst->args[1], &constant)) {
         size_t index = constpool_add(emitter->chunk->const_pool, constant);
 
@@ -469,7 +469,7 @@ static OpCode compare_opcode(const Type *type, CmpPredicate predicate, bool *ok)
         }
     }
 
-    bool floating = type && type_kind(type) == TYPE_FLOAT;
+    bool floating = type && type_kind(type) == TYPE_F32;
 
     switch (predicate) {
     case MIR_CMP_LT:
@@ -509,7 +509,7 @@ static void emit_compare(MIREmitter *emitter, const MIRInst *inst) {
     /* A float compared to a literal names it in the instruction rather than loading it first. */
     SlotWord constant;
 
-    if (type && type_kind(type) == TYPE_FLOAT && float_constant_of(inst->args[1], &constant)) {
+    if (type && type_kind(type) == TYPE_F32 && float_constant_of(inst->args[1], &constant)) {
         size_t index = constpool_add(emitter->chunk->const_pool, constant);
 
         if (index <= VM_MAX_IMMEDIATE) {

@@ -29,6 +29,7 @@ set(
     vm/interface_generic_test.c
     vm/index_test.c
     llvm/emit_test.c
+    readme_test.c
     vm/borrow_return_test.c
     vm/generic_struct_test.c
     vm/owned_func_test.c

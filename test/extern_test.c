@@ -663,7 +663,7 @@ static void test_an_extern_does_not_claim_a_type_from_another_module(void) {
 }
 
 static void body_tells_specializations_apart(GabCtx *ctx) {
-    gab_ctx_return_int(ctx, gab_ctx_type_kind(ctx, 0) == GAB_TYPE_FLOAT ? 1 : 0);
+    gab_ctx_return_int(ctx, gab_ctx_type_kind(ctx, 0) == GAB_TYPE_F32 ? 1 : 0);
 }
 
 static void test_a_body_reads_what_its_specialization_chose(void) {

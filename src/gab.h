@@ -27,10 +27,10 @@ typedef struct {
 
 /* The values match the VM's own type kinds and are stable. */
 typedef enum {
-    GAB_TYPE_INT,
-    GAB_TYPE_FLOAT,
+    GAB_TYPE_I32,
+    GAB_TYPE_F32,
     GAB_TYPE_BOOL,
-    GAB_TYPE_BYTE,
+    GAB_TYPE_U8,
     GAB_TYPE_PTR,
     GAB_TYPE_STR,
     GAB_TYPE_ARRAY,

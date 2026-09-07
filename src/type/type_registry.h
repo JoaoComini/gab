@@ -14,10 +14,10 @@
 typedef struct TypeRegistry TypeRegistry;
 
 typedef struct TypePrimitiveNames {
-    String *int_name;
-    String *float_name;
+    String *i32_name;
+    String *f32_name;
     String *bool_name;
-    String *byte_name;
+    String *u8_name;
     String *str_name;
     String *slice_name;
     String *array_name;
