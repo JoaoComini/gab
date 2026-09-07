@@ -5,13 +5,13 @@
 #include "compile.h"
 #include "mir/mir_build.h"
 #include "object.h"
-#include "syntax/parser.h"
 #include "scope.h"
-#include "vm/slot.h"
 #include "support/test_context.h"
+#include "syntax/parser.h"
 #include "vm/chunk.h"
 #include "vm/interp.h"
 #include "vm/opcode.h"
+#include "vm/slot.h"
 #include "vm/vm.h"
 
 #include <assert.h>
@@ -287,17 +287,36 @@ static inline void test_program_free(TestProgram *program) {
 
 static inline Chunk *test_top_chunk(TestProgram *program) { return program->script.chunk; }
 
-static inline Chunk *test_func_chunk(TestProgram *program, size_t index) {
-    assert(index < program->vm->program.prototypes.size);
+/* The prelude compiles bodies of its own, so a unit's first function sits past what it left. */
+static inline size_t test_prelude_funcs(void) {
+    static size_t counted = 0;
 
-    return program->vm->program.prototypes.data[index]->chunk;
+    if (!counted) {
+        VM *vm = vm_create();
+
+        counted = vm->program.prototypes.size + 1;
+
+        vm_free(vm);
+    }
+
+    return counted - 1;
+}
+
+static inline Chunk *test_func_chunk(TestProgram *program, size_t index) {
+    size_t at = test_prelude_funcs() + index;
+
+    assert(at < program->vm->program.prototypes.size);
+
+    return program->vm->program.prototypes.data[at]->chunk;
 }
 
 static inline FuncPrototype *test_func_proto(TestProgram *program, size_t index) {
-    return program->vm->program.prototypes.data[index];
+    return program->vm->program.prototypes.data[test_prelude_funcs() + index];
 }
 
-static inline size_t test_func_count(TestProgram *program) { return program->vm->program.prototypes.size; }
+static inline size_t test_func_count(TestProgram *program) {
+    return program->vm->program.prototypes.size - test_prelude_funcs();
+}
 
 static inline size_t test_count_opcode(const Chunk *chunk, OpCode op) {
     size_t count = 0;

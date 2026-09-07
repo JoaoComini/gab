@@ -146,6 +146,9 @@ typedef struct {
     Function *functions[64];
     size_t count;
 
+    /* Where this unit's prototypes land, since the prelude installed its own ahead of them. */
+    size_t base;
+
     /* The shapes a boxed type needs at run time, which the program reads a box's index out of. */
     TypeRegistry *registry;
     HeapShapeList *shapes;
@@ -187,7 +190,7 @@ static inline bool test_callee_index(void *context, Function *callee, bool nativ
 
     for (size_t i = 0; i < callees->count; i++) {
         if (callees->functions[i] == callee) {
-            *index = (unsigned int)i;
+            *index = (unsigned int)(callees->base + i);
 
             return true;
         }
@@ -223,7 +226,9 @@ static inline int32_t test_run_emitted_unit(const char *source, VmRunStatus *out
     MIRModule *mir_unit;
     mir_build(vm->env.compile_arena, resolved, &mir_unit, &diagnostics);
 
-    TestCallees callees = {.registry = scope->type_registry, .shapes = &vm->program.heap_shapes};
+    TestCallees callees = {.registry = scope->type_registry,
+                           .shapes = &vm->program.heap_shapes,
+                           .base = vm->program.prototypes.size};
 
     for (size_t i = 0; i < unit->statements.size; i++) {
         ASTStmt *stmt = unit->statements.data[i];

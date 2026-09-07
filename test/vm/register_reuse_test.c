@@ -9,9 +9,11 @@
 #include <string.h>
 
 static int func_max_registers(VM *vm, size_t index) {
-    assert(index < vm->program.prototypes.size);
+    size_t at = test_prelude_funcs() + index;
 
-    return vm->program.prototypes.data[index]->max_registers;
+    assert(at < vm->program.prototypes.size);
+
+    return vm->program.prototypes.data[at]->max_registers;
 }
 
 static int compile_max_registers(const char *source, size_t index) {

@@ -7,17 +7,19 @@
 
 #include "ast/resolve.h"
 #include "binding.h"
-#include "syntax/parser.h"
 #include "string/string.h"
+#include "syntax/parser.h"
 #include "type/type_registry.h"
 #include "vm/opcode.h"
 
 #include <assert.h>
 #include <string.h>
 
-static size_t loaded_protos(const VM *vm) { return vm->program.prototypes.size; }
+static size_t loaded_protos(const VM *vm) { return vm->program.prototypes.size - test_prelude_funcs(); }
 
-static FuncPrototype *loaded_proto(const VM *vm, size_t index) { return vm->program.prototypes.data[index]; }
+static FuncPrototype *loaded_proto(const VM *vm, size_t index) {
+    return vm->program.prototypes.data[test_prelude_funcs() + index];
+}
 
 static void test_vm_execute() {
     VM *vm = vm_create();

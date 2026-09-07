@@ -916,10 +916,7 @@ static void rewrite_index_as_call(ResolverState *state, ASTExpr *expr) {
 
 /* A declaration is an intrinsic only where this names one of these, so the two cannot drift. */
 static const IntrinsicLowering INTRINSICS[] = {
-    {"array", "index"},
-    {"array", "len"},
-    {"slice", "index"},
-    {"slice", "len"},
+    {"array", "index"}, {"array", "len"}, {"slice", "index"}, {"slice", "len"}, {"str", "as_bytes"},
 };
 
 static const IntrinsicLowering *intrinsic_for(const String *owner, const String *name) {
@@ -2422,10 +2419,9 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
 
     bool owner_is_primitive = type_is_primitive(owner);
 
-    if (owner_is_primitive && !is_host) {
+    if (owner_is_primitive && !is_host && !state->allow_primitive_impls) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
-                   "a function on %s is defined by the host or the compiler, so it must be 'extern' or "
-                   "'intrinsic'",
+                   "a function on %s is declared by its core library, which is where its body belongs",
                    type_name(state, owner));
         return;
     }

@@ -1,8 +1,8 @@
 #include "scope.h"
 
-#include "memory/arena.h"
 #include "binding.h"
 #include "function_registry.h"
+#include "memory/arena.h"
 #include "string/string.h"
 #include "type/type_registry.h"
 #include <assert.h>
@@ -20,7 +20,7 @@ void scope_init(Scope *scope, Arena *arena, StringPool *strings, Scope *parent) 
 static void scope_declare_primitives(Scope *scope) {
     TypeRegistry *registry = scope->type_registry;
 
-    static const TypeKind PRIMITIVES[] = {TYPE_INT, TYPE_FLOAT, TYPE_BOOL, TYPE_STR};
+    static const TypeKind PRIMITIVES[] = {TYPE_INT, TYPE_FLOAT, TYPE_BOOL, TYPE_BYTE, TYPE_STR};
 
     for (size_t i = 0; i < sizeof(PRIMITIVES) / sizeof(PRIMITIVES[0]); i++) {
         const Type *type = type_registry_get_primitive(registry, PRIMITIVES[i]);

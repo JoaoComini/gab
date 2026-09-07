@@ -102,7 +102,17 @@ static void test_a_literal_borrows() {
     assert(test_compiles("func f(): int { let s: &str = \"hi\"; return 0; }\n"));
 }
 
+static void test_characters_are_read_as_bytes() {
+    assert(test_run_int("func f(): int {\n"
+                        "    let s: &str = \"abc\";\n"
+                        "    let b: &slice<byte> = s.as_bytes();\n"
+                        "    return b.len();\n"
+                        "}\n"
+                        "let r: int = f();") == 3);
+}
+
 int main(void) {
+    test_characters_are_read_as_bytes();
     test_characters_are_reached_through_a_reference();
     test_nothing_holds_the_characters_themselves();
     test_a_literal_is_a_string();

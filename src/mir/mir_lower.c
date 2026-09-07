@@ -419,6 +419,26 @@ static bool lower_intrinsic_call(Lowering *lowering, ASTExpr *expr, MIRValueId *
 
     ASTExpr *receiver = expr->call.args.data[0];
 
+    /* Characters and the bytes naming them are the same address and count, so the view is the value. */
+    if (type_is_str_ref(fact_type_of(lowering->facts, receiver))) {
+        MIRValueId source = lower_expr(lowering, receiver);
+        MIRValueId result = lower_temp(lowering, fact_type_of(lowering->facts, expr), expr->span);
+
+        MIROperand *args = mir_args_alloc(lowering->ir, 1);
+        args[0] = mir_operand_value(source);
+
+        emit(lowering, (MIRInst){.op = MIR_COPY,
+                                 .type = fact_type_of(lowering->facts, expr),
+                                 .result = result,
+                                 .args = args,
+                                 .arg_count = 1,
+                                 .span = expr->span});
+
+        *out = result;
+
+        return true;
+    }
+
     if (expr->call.args.size == 1) {
         const Type *base = fact_type_of(lowering->facts, receiver);
 
