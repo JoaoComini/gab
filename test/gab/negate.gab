@@ -1,0 +1,15 @@
+func negated(a: i32): i32 { return -a; }
+
+func run(): i32 {
+    assert(negated(3) == -3);
+    assert(negated(-3) == 3);
+    assert(-0 == 0);
+
+    let f: f32 = 2.5;
+    assert(-f == -2.5);
+
+    assert(!false);
+    assert(!!true);
+
+    return 0;
+}

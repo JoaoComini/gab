@@ -1,0 +1,31 @@
+func zero(): i32 { return 0; }
+
+func identity(n: i32): i32 { return n; }
+
+func sum(a: i32, b: i32): i32 { return a + b; }
+
+func nested(n: i32): i32 { return identity(sum(n, 1)); }
+
+func countdown(n: i32): i32 {
+    if n < 1 { return 0; }
+    return n + countdown(n - 1);
+}
+
+func later(): i32 { return declared_after(); }
+
+func declared_after(): i32 { return 9; }
+
+func run(): i32 {
+    assert(zero() == 0);
+    assert(identity(7) == 7);
+    assert(sum(2, 3) == 5);
+    assert(nested(4) == 5);
+    assert(countdown(4) == 10);
+    assert(later() == 9);
+
+    let live: i32 = 7;
+    let doubled: i32 = sum(3, 3);
+    assert(live + doubled == 13);
+
+    return 0;
+}

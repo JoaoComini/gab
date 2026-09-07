@@ -1,0 +1,28 @@
+func widened(a: i32): f32 { return f32(a); }
+
+func truncated(a: f32): i32 { return i32(a); }
+
+func run(): i32 {
+    assert(widened(3) == 3.0);
+    assert(truncated(2.7) == 2);
+    assert(truncated(-2.7) == -2);
+
+    assert(i32(2.7) == 2);
+    assert(f32(3) == 3.0);
+
+    let a: f32 = 1.5;
+    let b: f32 = 2.0;
+    assert(i32(a + b) == 3);
+
+    let n: i32 = 1;
+    let half: f32 = 2.5;
+    assert(f32(n) + half == 3.5);
+    assert(n + i32(half) == 3);
+
+    assert(i32(5) == 5);
+
+    assert(truncated(1073741824.0) == 1073741824);
+    assert(truncated(-2147483520.0) == -2147483520);
+
+    return 0;
+}

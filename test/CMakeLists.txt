@@ -101,5 +101,6 @@ target_include_directories(gab_runner PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_test(
     NAME gab_behaviour
-    COMMAND gab_runner ${CMAKE_CURRENT_SOURCE_DIR}/gab arithmetic branch loop
+    COMMAND gab_runner ${CMAKE_CURRENT_SOURCE_DIR}/gab
+            arithmetic branch loop cast compare negate modulo compound_assign call
 )
