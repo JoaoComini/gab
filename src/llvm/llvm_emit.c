@@ -1,266 +1,277 @@
 #include "llvm/llvm_emit.h"
 
-#include <stdarg.h>
-#include <stdio.h>
+#include <llvm-c/Analysis.h>
+#include <llvm-c/Core.h>
+
+#include <assert.h>
 #include <string.h>
 
 typedef struct {
-    Arena *arena;
-
-    char *text;
-    size_t length;
-    size_t capacity;
-
-    TypeRegistry *registry;
+    LLVMContextRef context;
+    LLVMModuleRef module;
+    LLVMBuilderRef builder;
 
     const MIRFunction *ir;
+
+    /* What each virtual register holds, indexed by its id. */
+    LLVMValueRef *values;
+
+    LLVMBasicBlockRef *blocks;
 } LLVMEmitter;
 
-static void emit_text(LLVMEmitter *emitter, const char *format, ...) {
-    va_list args;
-    va_start(args, format);
-
-    va_list measure;
-    va_copy(measure, args);
-    int needed = vsnprintf(NULL, 0, format, measure);
-    va_end(measure);
-
-    if (needed < 0) {
-        va_end(args);
-        return;
-    }
-
-    if (emitter->length + (size_t)needed + 1 > emitter->capacity) {
-        size_t capacity = emitter->capacity ? emitter->capacity * 2 : 256;
-
-        while (capacity < emitter->length + (size_t)needed + 1) {
-            capacity *= 2;
-        }
-
-        char *grown = arena_alloc(emitter->arena, capacity);
-
-        if (emitter->length) {
-            memcpy(grown, emitter->text, emitter->length);
-        }
-
-        emitter->text = grown;
-        emitter->capacity = capacity;
-    }
-
-    vsnprintf(emitter->text + emitter->length, emitter->capacity - emitter->length, format, args);
-    emitter->length += (size_t)needed;
-
-    va_end(args);
-}
-
-/* A scalar's LLVM type, which its width and whether it is floating decide. */
-static const char *llvm_type_of(const Type *type) {
+static LLVMTypeRef llvm_type_of(LLVMEmitter *emitter, const Type *type) {
     if (!type) {
-        return "i32";
+        return LLVMInt32TypeInContext(emitter->context);
     }
 
     switch (type_kind(type)) {
-    case TYPE_INT:
-        return "i32";
     case TYPE_FLOAT:
-        return "float";
+        return LLVMFloatTypeInContext(emitter->context);
     case TYPE_BOOL:
-        return "i1";
+        return LLVMInt1TypeInContext(emitter->context);
     case TYPE_BYTE:
-        return "i8";
+        return LLVMInt8TypeInContext(emitter->context);
     default:
-        return "i32";
+        return LLVMInt32TypeInContext(emitter->context);
     }
 }
 
-/* A value is named by its virtual register, which SSA lets LLVM take verbatim. */
-static void emit_operand(LLVMEmitter *emitter, MIROperand operand) {
+static LLVMValueRef operand_value(LLVMEmitter *emitter, MIROperand operand) {
     if (operand.kind == OPERAND_CONST) {
-        if (type_kind(operand.constant.type) == TYPE_FLOAT) {
-            emit_text(emitter, "%f", (double)operand.constant.as_float);
-        } else {
-            emit_text(emitter, "%d", operand.constant.as_int);
+        LLVMTypeRef type = llvm_type_of(emitter, operand.constant.type);
+
+        if (operand.constant.type && type_kind(operand.constant.type) == TYPE_FLOAT) {
+            return LLVMConstReal(type, (double)operand.constant.as_float);
         }
 
-        return;
+        return LLVMConstInt(type, (unsigned long long)operand.constant.as_int, true);
     }
 
-    emit_text(emitter, "%%%u", operand.value.id);
+    return emitter->values[operand.value.id];
 }
 
-static const char *binary_mnemonic(MIROp op, bool floating) {
-    switch (op) {
-    case MIR_ADD:
-        return floating ? "fadd" : "add";
-    case MIR_SUB:
-        return floating ? "fsub" : "sub";
-    case MIR_MUL:
-        return floating ? "fmul" : "mul";
-    case MIR_DIV:
-        return floating ? "fdiv" : "sdiv";
-    case MIR_MOD:
-        return floating ? "frem" : "srem";
-    default:
-        return NULL;
+/* Whether an instruction's operands are floating, which the opcode alone does not say. */
+static bool operands_are_float(LLVMEmitter *emitter, const MIRInst *inst) {
+    if (inst->arg_count == 0) {
+        return false;
     }
+
+    if (inst->args[0].kind == OPERAND_CONST) {
+        return inst->args[0].constant.type && type_kind(inst->args[0].constant.type) == TYPE_FLOAT;
+    }
+
+    const MIRValueInfo *info = mir_value_info(emitter->ir, inst->args[0].value);
+
+    return info && info->type && type_kind(info->type) == TYPE_FLOAT;
 }
 
-/* An integer predicate is signed, since every integer this emits is. */
-static const char *predicate_mnemonic(CmpPredicate predicate, bool floating) {
+static LLVMIntPredicate int_predicate(CmpPredicate predicate) {
     switch (predicate) {
     case MIR_CMP_LT:
-        return floating ? "olt" : "slt";
+        return LLVMIntSLT;
     case MIR_CMP_GT:
-        return floating ? "ogt" : "sgt";
+        return LLVMIntSGT;
     case MIR_CMP_EQ:
-        return floating ? "oeq" : "eq";
+        return LLVMIntEQ;
     case MIR_CMP_NE:
-        return floating ? "one" : "ne";
+        return LLVMIntNE;
     case MIR_CMP_LE:
-        return floating ? "ole" : "sle";
+        return LLVMIntSLE;
     case MIR_CMP_GE:
-        return floating ? "oge" : "sge";
+        return LLVMIntSGE;
     }
 
-    return "eq";
+    return LLVMIntEQ;
+}
+
+static LLVMRealPredicate real_predicate(CmpPredicate predicate) {
+    switch (predicate) {
+    case MIR_CMP_LT:
+        return LLVMRealOLT;
+    case MIR_CMP_GT:
+        return LLVMRealOGT;
+    case MIR_CMP_EQ:
+        return LLVMRealOEQ;
+    case MIR_CMP_NE:
+        return LLVMRealONE;
+    case MIR_CMP_LE:
+        return LLVMRealOLE;
+    case MIR_CMP_GE:
+        return LLVMRealOGE;
+    }
+
+    return LLVMRealOEQ;
 }
 
 static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
-    const char *type = llvm_type_of(inst->type);
+    LLVMBuilderRef builder = emitter->builder;
+    LLVMValueRef *values = emitter->values;
 
-    bool floating = inst->type && type_kind(inst->type) == TYPE_FLOAT;
+    bool floating = operands_are_float(emitter, inst);
 
     switch (inst->op) {
     case MIR_CONST_INT:
     case MIR_CONST_BOOL:
-        /* LLVM names no constant, so one is materialised by an operation that yields it. */
-        emit_text(emitter, "  %%%u = add %s 0, %d\n", inst->result.id, type, inst->constant.as_int);
+        values[inst->result.id] =
+            LLVMConstInt(llvm_type_of(emitter, inst->type), (unsigned long long)inst->constant.as_int, true);
         break;
 
     case MIR_CONST_FLOAT:
-        emit_text(emitter, "  %%%u = fadd %s 0.0, %f\n", inst->result.id, type,
-                  (double)inst->constant.as_float);
+        values[inst->result.id] =
+            LLVMConstReal(llvm_type_of(emitter, inst->type), (double)inst->constant.as_float);
         break;
 
     case MIR_ADD:
+        values[inst->result.id] = floating ? LLVMBuildFAdd(builder, operand_value(emitter, inst->args[0]),
+                                                           operand_value(emitter, inst->args[1]), "")
+                                           : LLVMBuildAdd(builder, operand_value(emitter, inst->args[0]),
+                                                          operand_value(emitter, inst->args[1]), "");
+        break;
+
     case MIR_SUB:
+        values[inst->result.id] = floating ? LLVMBuildFSub(builder, operand_value(emitter, inst->args[0]),
+                                                           operand_value(emitter, inst->args[1]), "")
+                                           : LLVMBuildSub(builder, operand_value(emitter, inst->args[0]),
+                                                          operand_value(emitter, inst->args[1]), "");
+        break;
+
     case MIR_MUL:
+        values[inst->result.id] = floating ? LLVMBuildFMul(builder, operand_value(emitter, inst->args[0]),
+                                                           operand_value(emitter, inst->args[1]), "")
+                                           : LLVMBuildMul(builder, operand_value(emitter, inst->args[0]),
+                                                          operand_value(emitter, inst->args[1]), "");
+        break;
+
     case MIR_DIV:
+        values[inst->result.id] = floating ? LLVMBuildFDiv(builder, operand_value(emitter, inst->args[0]),
+                                                           operand_value(emitter, inst->args[1]), "")
+                                           : LLVMBuildSDiv(builder, operand_value(emitter, inst->args[0]),
+                                                           operand_value(emitter, inst->args[1]), "");
+        break;
+
     case MIR_MOD:
-        emit_text(emitter, "  %%%u = %s %s ", inst->result.id, binary_mnemonic(inst->op, floating), type);
-        emit_operand(emitter, inst->args[0]);
-        emit_text(emitter, ", ");
-        emit_operand(emitter, inst->args[1]);
-        emit_text(emitter, "\n");
+        values[inst->result.id] = floating ? LLVMBuildFRem(builder, operand_value(emitter, inst->args[0]),
+                                                           operand_value(emitter, inst->args[1]), "")
+                                           : LLVMBuildSRem(builder, operand_value(emitter, inst->args[0]),
+                                                           operand_value(emitter, inst->args[1]), "");
         break;
 
     case MIR_NEG:
-        emit_text(emitter, "  %%%u = %s %s ", inst->result.id, floating ? "fneg" : "sub", type);
-
-        if (!floating) {
-            emit_text(emitter, "0, ");
-        }
-
-        emit_operand(emitter, inst->args[0]);
-        emit_text(emitter, "\n");
+        values[inst->result.id] = floating ? LLVMBuildFNeg(builder, operand_value(emitter, inst->args[0]), "")
+                                           : LLVMBuildNeg(builder, operand_value(emitter, inst->args[0]), "");
         break;
 
     case MIR_NOT:
-        emit_text(emitter, "  %%%u = xor i1 ", inst->result.id);
-        emit_operand(emitter, inst->args[0]);
-        emit_text(emitter, ", true\n");
+        values[inst->result.id] = LLVMBuildNot(builder, operand_value(emitter, inst->args[0]), "");
         break;
 
-    case MIR_CMP: {
-        const MIRValueInfo *left = mir_value_info(emitter->ir, mir_operand_as_value(inst->args[0]));
-
-        bool compares_floats = left && type_kind(left->type) == TYPE_FLOAT;
-
-        emit_text(emitter, "  %%%u = %s %s %s ", inst->result.id, compares_floats ? "fcmp" : "icmp",
-                  predicate_mnemonic(inst->predicate, compares_floats),
-                  left ? llvm_type_of(left->type) : "i32");
-        emit_operand(emitter, inst->args[0]);
-        emit_text(emitter, ", ");
-        emit_operand(emitter, inst->args[1]);
-        emit_text(emitter, "\n");
+    case MIR_CMP:
+        values[inst->result.id] = floating ? LLVMBuildFCmp(builder, real_predicate(inst->predicate),
+                                                           operand_value(emitter, inst->args[0]),
+                                                           operand_value(emitter, inst->args[1]), "")
+                                           : LLVMBuildICmp(builder, int_predicate(inst->predicate),
+                                                           operand_value(emitter, inst->args[0]),
+                                                           operand_value(emitter, inst->args[1]), "");
         break;
-    }
 
     case MIR_ITOF:
-        emit_text(emitter, "  %%%u = sitofp i32 ", inst->result.id);
-        emit_operand(emitter, inst->args[0]);
-        emit_text(emitter, " to float\n");
+        values[inst->result.id] = LLVMBuildSIToFP(builder, operand_value(emitter, inst->args[0]),
+                                                  LLVMFloatTypeInContext(emitter->context), "");
         break;
 
     case MIR_FTOI:
-        emit_text(emitter, "  %%%u = fptosi float ", inst->result.id);
-        emit_operand(emitter, inst->args[0]);
-        emit_text(emitter, " to i32\n");
+        values[inst->result.id] = LLVMBuildFPToSI(builder, operand_value(emitter, inst->args[0]),
+                                                  LLVMInt32TypeInContext(emitter->context), "");
         break;
 
     case MIR_COPY:
-        emit_text(emitter, "  %%%u = add %s 0, ", inst->result.id, type);
-        emit_operand(emitter, inst->args[0]);
-        emit_text(emitter, "\n");
+        values[inst->result.id] = operand_value(emitter, inst->args[0]);
         break;
 
     case MIR_JMP:
-        emit_text(emitter, "  br label %%b%u\n", inst->targets[0].id);
+        LLVMBuildBr(builder, emitter->blocks[inst->targets[0].id]);
         break;
 
     case MIR_BRANCH:
-        emit_text(emitter, "  br i1 ");
-        emit_operand(emitter, inst->args[0]);
-        emit_text(emitter, ", label %%b%u, label %%b%u\n", inst->targets[0].id, inst->targets[1].id);
+        LLVMBuildCondBr(builder, operand_value(emitter, inst->args[0]), emitter->blocks[inst->targets[0].id],
+                        emitter->blocks[inst->targets[1].id]);
         break;
 
     case MIR_RETURN:
         if (inst->arg_count == 0) {
-            emit_text(emitter, "  ret void\n");
+            LLVMBuildRetVoid(builder);
             break;
         }
 
-        emit_text(emitter, "  ret %s ", llvm_type_of(inst->type));
-        emit_operand(emitter, inst->args[0]);
-        emit_text(emitter, "\n");
+        LLVMBuildRet(builder, operand_value(emitter, inst->args[0]));
         break;
 
     case MIR_UNREACHABLE:
-        emit_text(emitter, "  unreachable\n");
+        LLVMBuildUnreachable(builder);
         break;
 
     default:
-        emit_text(emitter, "  ; unhandled %s\n", mir_op_name(inst->op));
         break;
     }
 }
 
 char *llvm_emit_function(Arena *arena, const MIRFunction *ir) {
-    LLVMEmitter emitter = {.arena = arena, .registry = ir->registry, .ir = ir};
+    LLVMEmitter emitter = {.ir = ir};
 
-    const char *name = ir->function->decl->name->data;
+    emitter.context = LLVMContextCreate();
+    emitter.module = LLVMModuleCreateWithNameInContext("gab", emitter.context);
+    emitter.builder = LLVMCreateBuilderInContext(emitter.context);
 
-    emit_text(&emitter, "define %s @%s(", llvm_type_of(ir->function->return_type), name);
+    emitter.values = arena_alloc(arena, (ir->value_count + 1) * sizeof(LLVMValueRef));
+    emitter.blocks = arena_alloc(arena, (ir->block_count + 1) * sizeof(LLVMBasicBlockRef));
+
+    LLVMTypeRef *params = arena_alloc(arena, (ir->param_count + 1) * sizeof(LLVMTypeRef));
 
     for (size_t i = 0; i < ir->param_count; i++) {
-        const MIRValueInfo *info = mir_value_info(ir, ir->params[i]);
-
-        emit_text(&emitter, "%s%s %%%u", i ? ", " : "", llvm_type_of(info->type), ir->params[i].id);
+        params[i] = llvm_type_of(&emitter, mir_value_info(ir, ir->params[i])->type);
     }
 
-    emit_text(&emitter, ") {\n");
+    LLVMTypeRef signature = LLVMFunctionType(llvm_type_of(&emitter, ir->function->return_type), params,
+                                             (unsigned)ir->param_count, false);
+
+    LLVMValueRef function = LLVMAddFunction(emitter.module, ir->function->decl->name->data, signature);
+
+    for (size_t i = 0; i < ir->param_count; i++) {
+        emitter.values[ir->params[i].id] = LLVMGetParam(function, (unsigned)i);
+    }
+
+    for (size_t b = 0; b < ir->block_count; b++) {
+        char label[32];
+        snprintf(label, sizeof(label), "b%u", ir->blocks[b]->id.id);
+
+        emitter.blocks[ir->blocks[b]->id.id] =
+            LLVMAppendBasicBlockInContext(emitter.context, function, label);
+    }
 
     for (size_t b = 0; b < ir->block_count; b++) {
         const MIRBlock *block = ir->blocks[b];
 
-        emit_text(&emitter, "b%u:\n", block->id.id);
+        LLVMPositionBuilderAtEnd(emitter.builder, emitter.blocks[block->id.id]);
 
         for (size_t i = 0; i < block->inst_count; i++) {
             emit_inst(&emitter, &block->insts[i]);
         }
     }
 
-    emit_text(&emitter, "}\n");
+    /* A malformed body is a compiler bug, and the verifier names it here rather than at link time. */
+    assert(LLVMVerifyModule(emitter.module, LLVMReturnStatusAction, NULL) == 0 &&
+           "an emitted module verifies");
 
-    return emitter.text ? emitter.text : (char *)"";
+    char *printed = LLVMPrintModuleToString(emitter.module);
+
+    size_t length = strlen(printed);
+    char *text = arena_alloc(arena, length + 1);
+    memcpy(text, printed, length + 1);
+
+    LLVMDisposeMessage(printed);
+    LLVMDisposeBuilder(emitter.builder);
+    LLVMDisposeModule(emitter.module);
+    LLVMContextDispose(emitter.context);
+
+    return text;
 }

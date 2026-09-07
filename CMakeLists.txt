@@ -89,6 +89,13 @@ if(MATH_LIBRARY)
     target_link_libraries(gab PRIVATE ${MATH_LIBRARY})
 endif()
 
+# The backend builds a module through the C API, which verifies what it is given
+# rather than leaving a malformed instruction for a later tool to reject.
+find_package(LLVM REQUIRED CONFIG)
+
+target_include_directories(gab SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
+target_link_libraries(gab PRIVATE LLVM)
+
 target_include_directories(gab PUBLIC src/)
 
 enable_testing()

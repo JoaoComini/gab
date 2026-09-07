@@ -629,7 +629,7 @@ Not yet implemented:
 
 ## Building
 
-Requires CMake 3.16+ and clang.
+Requires CMake 3.16+, clang, and LLVM, which the backend builds its module through.
 
 ```sh
 cmake -S . -B build
