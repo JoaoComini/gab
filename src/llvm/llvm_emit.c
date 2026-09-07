@@ -422,8 +422,10 @@ void llvm_unit_add(LLVMUnit *unit, const MIRFunction *ir) {
         params[i] = llvm_type_of(&emitter, mir_value_info(ir, ir->params[i])->type);
     }
 
-    LLVMTypeRef signature = LLVMFunctionType(llvm_type_of(&emitter, ir->function->return_type), params,
-                                             (unsigned)ir->param_count, false);
+    LLVMTypeRef returns = ir->function->return_type ? llvm_type_of(&emitter, ir->function->return_type)
+                                                    : LLVMVoidTypeInContext(unit->context);
+
+    LLVMTypeRef signature = LLVMFunctionType(returns, params, (unsigned)ir->param_count, false);
 
     const char *symbol = llvm_symbol_of(arena, ir->function);
 

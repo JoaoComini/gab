@@ -88,3 +88,18 @@ foreach(TEST_SOURCE ${TEST_SOURCES})
     get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
     add_gab_test(${TEST_NAME} ${TEST_SOURCE})
 endforeach()
+
+# A test written in Gab is compiled, linked and run as a native binary, so what
+# it checks is what the backend actually emitted rather than what a VM read.
+add_executable(gab_runner gab_runner.c)
+
+target_compile_options(gab_runner PRIVATE -UNDEBUG
+    -DGAB_TEST_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}")
+
+target_link_libraries(gab_runner PRIVATE gab)
+target_include_directories(gab_runner PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_test(
+    NAME gab_arithmetic
+    COMMAND gab_runner ${CMAKE_CURRENT_SOURCE_DIR}/gab arithmetic
+)
