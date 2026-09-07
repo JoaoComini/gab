@@ -97,9 +97,13 @@ static LLVMValueRef place_address(LLVMEmitter *emitter, const Place *place, LLVM
             address = LLVMBuildStructGEP2(emitter->builder, type, address, projection->field.id, "");
             break;
 
+        /* A base that is storage holds the pointer, so it is read; one that is already the pointer is
+         * the address this projection names. */
         case PROJ_DEREF:
-            address =
-                LLVMBuildLoad2(emitter->builder, LLVMPointerTypeInContext(emitter->context, 0), address, "");
+            if (type) {
+                address = LLVMBuildLoad2(emitter->builder, LLVMPointerTypeInContext(emitter->context, 0),
+                                         address, "");
+            }
             break;
 
         case PROJ_INDEX: {
@@ -477,6 +481,24 @@ void llvm_unit_add(LLVMUnit *unit, const MIRFunction *ir) {
 
     emitter.entry = LLVMCreateBuilderInContext(unit->context);
     LLVMPositionBuilderAtEnd(emitter.entry, slots);
+
+    /* A parameter reached through a projection needs an address, which an argument passed by value has
+     * none of, so one that is projected is spilled to a slot of its own. */
+    for (size_t i = 0; i < ir->param_count; i++) {
+        const MIRValueInfo *info = mir_value_info(ir, ir->params[i]);
+
+        if (!info || !info->type || type_kind(info->type) != TYPE_STRUCT) {
+            continue;
+        }
+
+        LLVMTypeRef held = llvm_type_of(&emitter, info->type);
+        LLVMValueRef slot = LLVMBuildAlloca(emitter.entry, held, "");
+
+        LLVMBuildStore(emitter.entry, LLVMGetParam(function, (unsigned)i), slot);
+
+        emitter.values[ir->params[i].id] = slot;
+        emitter.value_types[ir->params[i].id] = held;
+    }
 
     for (size_t b = 0; b < ir->block_count; b++) {
         const MIRBlock *block = ir->blocks[b];

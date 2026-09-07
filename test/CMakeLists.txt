@@ -103,4 +103,5 @@ add_test(
     NAME gab_behaviour
     COMMAND gab_runner ${CMAKE_CURRENT_SOURCE_DIR}/gab
             arithmetic branch loop cast compare negate modulo compound_assign call
+            struct method pointer
 )

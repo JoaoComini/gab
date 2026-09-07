@@ -1,0 +1,36 @@
+struct Counter { n: i32 }
+
+impl Counter {
+    func value(self: &Self): i32 { return self.n; }
+
+    func bumped(self: &Self): i32 { return self.n + 1; }
+
+    func step(self: &Self) { self.n = self.n + 1; }
+
+    func of(start: i32): Counter { return Counter { n: start }; }
+}
+
+struct Pair { a: i32, b: i32 }
+
+impl Pair {
+    func total(self: &Self): i32 { return self.a + self.b; }
+}
+
+func run(): i32 {
+    let c = Counter { n: 4 };
+    assert(c.value() == 4);
+    assert(c.bumped() == 5);
+
+    c.step();
+    assert(c.value() == 5);
+
+    assert(Counter::value(c) == 5);
+
+    let made = Counter::of(9);
+    assert(made.value() == 9);
+
+    let p = Pair { a: 3, b: 4 };
+    assert(p.total() == 7);
+
+    return 0;
+}

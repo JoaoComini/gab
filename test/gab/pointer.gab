@@ -1,0 +1,21 @@
+struct Box { n: i32 }
+
+func through(b: &Box): i32 { return b.n; }
+
+func run(): i32 {
+    let v = Box { n: 7 };
+    let r: &Box = v;
+
+    assert(r.n == 7);
+    assert(through(r) == 7);
+    assert((*r).n == 7);
+
+    r.n = 9;
+    assert(v.n == 9);
+
+    let n: i32 = 3;
+    let p: &i32 = n;
+    assert(*p == 3);
+
+    return 0;
+}

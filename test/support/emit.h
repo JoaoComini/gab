@@ -80,14 +80,10 @@ static inline TestEmission test_lower_unit(const char *source, MIRFunction **out
 
     *count = 0;
 
-    for (size_t i = 0; i < emission.unit->statements.size; i++) {
-        ASTStmt *stmt = emission.unit->statements.data[i];
-
-        if (!stmt || stmt->kind != STMT_FUNC_DECL || !stmt->func_decl.body || *count == capacity) {
-            continue;
-        }
-
-        MIRFunction *ir = mir_module_lookup(emission.mir_unit, stmt->func_decl.function);
+    /* Every lowered body, rather than every top-level statement, so a method an 'impl' block declares
+     * is emitted alongside the functions that call it. */
+    for (size_t i = 0; i < emission.mir_unit->entries.size && *count < capacity; i++) {
+        MIRFunction *ir = emission.mir_unit->entries.data[i].ir;
 
         if (!ir) {
             continue;
