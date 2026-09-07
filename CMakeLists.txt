@@ -135,6 +135,12 @@ install(TARGETS core gab_runtime ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}/gab
 
 install(FILES ${GAB_LIB_DIR}/core.gabi DESTINATION ${CMAKE_INSTALL_LIBDIR}/gab)
 
-enable_testing()
+# The suite builds by default, since a working copy is where it is wanted; a distribution turns it off
+# with -DBUILD_TESTING=OFF rather than building 25 binaries it will not run.
+option(BUILD_TESTING "Build the test suite" ON)
 
-add_subdirectory(test)
+if(BUILD_TESTING)
+    enable_testing()
+
+    add_subdirectory(test)
+endif()
