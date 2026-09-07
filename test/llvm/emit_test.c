@@ -11,6 +11,12 @@ static char *emitted(TestEmission *emission, const char *source) {
     return llvm_emit_function(emission->ctx.arena, emission->ir);
 }
 
+static char *emitted_named(TestEmission *emission, const char *source, const char *name) {
+    *emission = test_lower_ir_named(source, name);
+
+    return llvm_emit_function(emission->ctx.arena, emission->ir);
+}
+
 static void a_body_becomes_a_function_of_its_signature(void) {
     TestEmission emission;
     char *text = emitted(&emission, "func add(a: i32, b: i32): i32 { return a + b; }\n");
@@ -129,9 +135,64 @@ static void a_struct_names_its_fields_in_order(void) {
     test_emission_free(&emission);
 }
 
+static void a_call_names_the_function_it_reaches(void) {
+    TestEmission emission;
+    char *text = emitted_named(&emission,
+                               "func other(): i32 { return 3; }\n"
+                               "func f(): i32 { return other(); }\n",
+                               "f");
+    assert(strstr(text, "call i32 @other()"));
+
+    test_emission_free(&emission);
+}
+
+static void a_call_passes_its_arguments_in_order(void) {
+    TestEmission emission;
+    char *text = emitted_named(&emission,
+                               "func sub(a: i32, b: i32): i32 { return a - b; }\n"
+                               "func f(): i32 { return sub(9, 4); }\n",
+                               "f");
+
+    assert(strstr(text, "call i32 @sub(i32 9, i32 4)"));
+
+    test_emission_free(&emission);
+}
+
+static void a_body_elsewhere_is_declared_rather_than_defined(void) {
+    TestEmission emission;
+    char *text = emitted_named(&emission,
+                               "extern func host(a: i32): i32;\n"
+                               "func f(): i32 { return host(7); }\n",
+                               "f");
+
+    assert(strstr(text, "declare i32 @host(i32)"));
+    assert(strstr(text, "call i32 @host(i32 7)"));
+
+    test_emission_free(&emission);
+}
+
+static void a_method_body_elsewhere_is_declared_too(void) {
+    TestEmission emission;
+    char *text = emitted_named(&emission,
+                               "struct Grid { n: i32 }\n"
+                               "impl Grid {\n"
+                               "    extern func width(self: &Self): i32;\n"
+                               "}\n"
+                               "func f(g: &Grid): i32 { return g.width(); }\n",
+                               "f");
+
+    assert(strstr(text, "declare i32 @width(ptr)"));
+
+    test_emission_free(&emission);
+}
+
 int main(void) {
     a_body_becomes_a_function_of_its_signature();
     a_local_is_a_stack_slot();
+    a_call_names_the_function_it_reaches();
+    a_call_passes_its_arguments_in_order();
+    a_body_elsewhere_is_declared_rather_than_defined();
+    a_method_body_elsewhere_is_declared_too();
     a_field_is_reached_by_its_index();
     a_struct_names_its_fields_in_order();
     a_float_body_names_the_float_type();

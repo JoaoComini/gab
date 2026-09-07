@@ -7,6 +7,7 @@
 #include <string.h>
 
 #define GAB_MAX_STRUCT_FIELDS 64
+#define GAB_MAX_CALL_ARGS 64
 
 typedef struct {
     LLVMContextRef context;
@@ -175,6 +176,33 @@ static LLVMRealPredicate real_predicate(CmpPredicate predicate) {
     return LLVMRealOEQ;
 }
 
+/* The signature a callee is reached through, which its declaration states whether or not a body is here. */
+static LLVMTypeRef callee_signature(LLVMEmitter *emitter, const Function *callee) {
+    LLVMTypeRef params[GAB_MAX_CALL_ARGS];
+
+    size_t count = callee->param_count < GAB_MAX_CALL_ARGS ? callee->param_count : GAB_MAX_CALL_ARGS;
+
+    for (size_t i = 0; i < count; i++) {
+        params[i] = llvm_type_of(emitter, callee->params[i]);
+    }
+
+    LLVMTypeRef returns = callee->return_type ? llvm_type_of(emitter, callee->return_type)
+                                              : LLVMVoidTypeInContext(emitter->context);
+
+    return LLVMFunctionType(returns, params, (unsigned)count, false);
+}
+
+/* A callee is declared once per module, and the linker is what resolves one with no body here. */
+static LLVMValueRef callee_value(LLVMEmitter *emitter, const Function *callee, LLVMTypeRef *out_signature) {
+    const char *name = callee->decl->name->data;
+
+    *out_signature = callee_signature(emitter, callee);
+
+    LLVMValueRef declared = LLVMGetNamedFunction(emitter->module, name);
+
+    return declared ? declared : LLVMAddFunction(emitter->module, name, *out_signature);
+}
+
 static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
     LLVMBuilderRef builder = emitter->builder;
     LLVMValueRef *values = emitter->values;
@@ -295,6 +323,28 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         LLVMTypeRef held;
 
         values[inst->result.id] = place_address(emitter, &inst->place, &held);
+        break;
+    }
+
+    case MIR_CALL:
+    case MIR_CALL_EXTERN: {
+        LLVMValueRef args[GAB_MAX_CALL_ARGS];
+
+        size_t count = inst->arg_count < GAB_MAX_CALL_ARGS ? inst->arg_count : GAB_MAX_CALL_ARGS;
+
+        for (size_t i = 0; i < count; i++) {
+            args[i] = operand_value(emitter, inst->args[i]);
+        }
+
+        LLVMTypeRef signature;
+        LLVMValueRef callee = callee_value(emitter, inst->callee, &signature);
+
+        LLVMValueRef call = LLVMBuildCall2(builder, signature, callee, args, (unsigned)count, "");
+
+        if (inst->type) {
+            values[inst->result.id] = call;
+        }
+
         break;
     }
 
