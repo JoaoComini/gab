@@ -1,0 +1,8 @@
+func f(): i32 {
+    let x: i32 = 1;
+    for x { }
+    return 0;
+}
+
+// error
+// :3:9: type error: 'for' requires a boolean condition, found i32

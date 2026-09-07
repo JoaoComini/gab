@@ -1,0 +1,7 @@
+struct Counter { n: i32 }
+
+func f(): i32 { return Counter::missing(); }
+
+// error
+// :3:24: name error: 'Counter' has no function 'missing'
+// :3:24: name error: undeclared variable 'Counter::missing'

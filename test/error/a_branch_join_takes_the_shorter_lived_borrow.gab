@@ -1,0 +1,17 @@
+struct Box { n: i32 }
+
+func f(): i32 {
+    let heap: *Box = box Box { n: 0 };
+    let out: &Box = heap;
+    {
+        let inner = Box { n: 0 };
+        let a: &Box = heap;
+        if 1 < 2 { a = inner; } else { a = heap; }
+        out = a;
+    }
+    return out.n;
+}
+
+// error
+// :10:9: lifetime error: this borrow outlives what it names, so it cannot be stored here
+// :12:15: lifetime error: this names memory that has been freed

@@ -1,0 +1,16 @@
+func size(s: &str): i32 { return s.len(); }
+
+func bytes(s: &str): i32 { return s.as_bytes().len(); }
+
+func run(): i32 {
+    let s: &str = "abc";
+
+    assert(size(s) == 3);
+    assert(bytes(s) == 3);
+
+    let empty: &str = "";
+
+    assert(size(empty) == 0);
+
+    return 0;
+}

@@ -1,0 +1,14 @@
+func a_bool(): bool {
+    let b: bool = true;
+    return -b;
+}
+
+func a_borrow(): i32 {
+    let x: i32 = 1;
+    let p: &i32 = x;
+    return -p;
+}
+
+// error
+// :3:12: type error: unary '-' requires a numeric type, found bool
+// :9:12: type error: unary '-' requires a numeric type, found &i32

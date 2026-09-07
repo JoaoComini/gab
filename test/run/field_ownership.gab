@@ -1,0 +1,65 @@
+struct Box { n: i32 }
+
+struct Holder { b: *Box }
+
+struct Inner { b: *Box }
+
+struct Outer { inner: Inner }
+
+struct Watcher { b: &Box }
+
+func a_fresh_field_keeps_what_is_stored(): i32 {
+    let h = Holder { b: box Box { n: 0 } };
+    h.b.n = 4;
+    return h.b.n;
+}
+
+func a_move_into_a_field_keeps_the_object(): i32 {
+    let h = Holder { b: box Box { n: 0 } };
+    let a: *Box = box Box { n: 7 };
+    h.b = a;
+    return h.b.n;
+}
+
+func storing_over_a_field_keeps_the_new_object(): i32 {
+    let h = Holder { b: box Box { n: 1 } };
+    h.b = box Box { n: 9 };
+    return h.b.n;
+}
+
+func a_whole_struct_still_moves(): i32 {
+    let h = Holder { b: box Box { n: 3 } };
+    let g: Holder = h;
+    return g.b.n;
+}
+
+func a_field_assigned_in_an_inner_scope_outlives_it(): i32 {
+    let h = Holder { b: box Box { n: 0 } };
+    if true {
+        h.b = box Box { n: 7 };
+    }
+    return h.b.n;
+}
+
+func a_nested_struct_frees_through_its_inner_fields(): i32 {
+    let o = Outer { inner: Inner { b: box Box { n: 5 } } };
+    return o.inner.b.n;
+}
+
+func a_ref_field_is_not_freed(): i32 {
+    let b = Box { n: 2 };
+    let w = Watcher { b: b };
+    return w.b.n;
+}
+
+func run(): i32 {
+    assert(a_fresh_field_keeps_what_is_stored() == 4);
+    assert(a_move_into_a_field_keeps_the_object() == 7);
+    assert(storing_over_a_field_keeps_the_new_object() == 9);
+    assert(a_whole_struct_still_moves() == 3);
+    assert(a_field_assigned_in_an_inner_scope_outlives_it() == 7);
+    assert(a_nested_struct_frees_through_its_inner_fields() == 5);
+    assert(a_ref_field_is_not_freed() == 2);
+
+    return 0;
+}

@@ -1,0 +1,14 @@
+struct Holder { n: i32 }
+
+impl Holder {
+    func take(self: *Holder): i32 { return self.n; }
+}
+
+func f(): i32 {
+    let h: *Holder = box Holder { n: 0 };
+    h.take();
+    return h.n;
+}
+
+// error
+// :10:13: lifetime error: this was moved out of and no longer holds a value

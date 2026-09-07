@@ -1,0 +1,10 @@
+struct Box { n: i32 }
+
+func f(): i32 {
+    let b: &Box;
+    { let o: *Box = box Box { n: 7 }; b = o; }
+    return b.n;
+}
+
+// error
+// :6:13: lifetime error: this names memory that has been freed

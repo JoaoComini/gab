@@ -1,0 +1,10 @@
+func count<T, N: i32>(xs: &array<T, N>): i32 { return xs.len(); }
+
+func f(): i32 {
+    let xs: array<bool, 2>;
+
+    return count(xs) + count(true);
+}
+
+// error
+// :6:29: type error: no argument names every type parameter of 'count', so each is written

@@ -1,0 +1,17 @@
+struct Holder<T> { value: T }
+
+struct Pair<A, B> { first: A, second: B }
+
+func bare(): i32 {
+    let h: Holder;
+    return 1;
+}
+
+func too_few(): i32 {
+    let p: Pair<i32>;
+    return 1;
+}
+
+// error
+// :6:5: type error: 'Holder' takes 1 type argument(s), not 0
+// :11:5: type error: 'Pair' takes 2 type argument(s), not 1

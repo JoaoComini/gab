@@ -1,0 +1,6 @@
+struct Node { n: i32 }
+
+let n: *Node = box Node { n: 0 };
+
+// error
+// :3:1: type error: a top-level variable may not own, since no scope closes to free it; *Node belongs in a function body

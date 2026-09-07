@@ -1,0 +1,54 @@
+struct Node { n: i32 }
+
+struct Holder { b: *Node }
+
+struct Inner { b: *Node }
+
+struct Outer { i: Inner, tag: i32 }
+
+struct Two { a: *Node, b: *Node }
+
+func a_box_ends_with_its_scope(): i32 {
+    let a: *Node = box Node { n: 1 };
+    return a.n;
+}
+
+func a_field_ends_with_the_struct_holding_it(): i32 {
+    let h = Holder { b: box Node { n: 2 } };
+    return h.b.n;
+}
+
+func a_nested_field_ends_with_the_struct_holding_it(): i32 {
+    let o = Outer { i: Inner { b: box Node { n: 5 } }, tag: 1 };
+    return o.i.b.n;
+}
+
+func every_owning_field_ends(): i32 {
+    let t = Two { a: box Node { n: 6 }, b: box Node { n: 7 } };
+    return t.a.n + t.b.n;
+}
+
+func takes(p: *Node): i32 { return p.n; }
+
+func a_moved_box_ends_with_whoever_took_it(): i32 {
+    let given: *Node = box Node { n: 3 };
+    return takes(given);
+}
+
+func a_box_moved_on_one_path_ends_once(c: bool): i32 {
+    let a: *Node = box Node { n: 4 };
+    if c { return takes(a); }
+    return a.n;
+}
+
+func run(): i32 {
+    assert(a_box_ends_with_its_scope() == 1);
+    assert(a_field_ends_with_the_struct_holding_it() == 2);
+    assert(a_moved_box_ends_with_whoever_took_it() == 3);
+    assert(a_nested_field_ends_with_the_struct_holding_it() == 5);
+    assert(every_owning_field_ends() == 13);
+    assert(a_box_moved_on_one_path_ends_once(true) == 4);
+    assert(a_box_moved_on_one_path_ends_once(false) == 4);
+
+    return 0;
+}

@@ -61,7 +61,6 @@ add_library(gab
     src/mir/mir_borrowck.c
     src/mir/mir_drop.c
     src/constant.c
-    src/vm/regalloc.c
     src/mir/mir_module.c
     src/mir/mir_fold.c
     src/ast/expr.c
@@ -69,20 +68,14 @@ add_library(gab
     src/ast/stmt.c
     src/string/string_ref.c
     src/string/string.c
-    src/api/library.c
-    src/core/core.c
-    src/core/str.c
-    src/core/slice.c
-    src/vm/constant_pool.c
-    src/vm/chunk.c
-    src/vm/vm.c
-    src/vm/link.c
-    src/vm/interp.c
-    src/vm/codegen.c
-    src/vm/codegen_mir.c
-    src/compile.c
-    src/api/gab.c
+    src/core/core_source.c
 )
+
+# What a compiled program links against: the runtime a native object calls into, built apart from the
+# compiler so a binary carries neither the parser nor the emitter that produced it.
+add_library(gab_runtime STATIC src/runtime/runtime.c)
+
+target_include_directories(gab_runtime PUBLIC src)
 
 find_library(MATH_LIBRARY m)
 if(MATH_LIBRARY)

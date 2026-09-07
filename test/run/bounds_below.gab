@@ -1,0 +1,12 @@
+func at(xs: &array<i32, 3>, i: i32): i32 { return xs[i]; }
+
+func run(): i32 {
+    let xs: array<i32, 3> = [1, 2, 3];
+
+    let before: i32 = -1;
+    at(xs, before);
+
+    return 0;
+}
+
+// traps

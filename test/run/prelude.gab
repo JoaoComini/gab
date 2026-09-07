@@ -1,0 +1,6 @@
+extern "C" func gab_check_failed(line: i32);
+extern "C" func gab_check_passed();
+
+func assert_at(condition: bool, line: i32) {
+    if condition { gab_check_passed(); } else { gab_check_failed(line); }
+}

@@ -1,0 +1,8 @@
+struct Holder<T> { value: T }
+
+impl<T> Holder<T> {
+    func pick<T>(self: &Holder<T>, other: T): T { return other; }
+}
+
+// error
+// :4:5: name error: duplicate type parameter 'T' on 'T'

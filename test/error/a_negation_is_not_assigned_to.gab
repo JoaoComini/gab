@@ -1,0 +1,8 @@
+func assigned(): bool {
+    let b: bool = true;
+    !b = false;
+    return b;
+}
+
+// error
+// :3:8: syntax error: expression is not assignable

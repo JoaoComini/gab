@@ -1,0 +1,17 @@
+func breaking(): i32 {
+    break;
+}
+
+func continuing(): i32 {
+    continue;
+}
+
+func inside_an_if(): i32 {
+    if true { break; }
+    return 0;
+}
+
+// error
+// :2:5: type error: 'break' is only valid inside a loop
+// :6:5: type error: 'continue' is only valid inside a loop
+// :10:15: type error: 'break' is only valid inside a loop

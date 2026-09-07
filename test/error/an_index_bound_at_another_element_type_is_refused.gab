@@ -1,0 +1,10 @@
+func first<C: Index<bool>>(c: &C): bool { return *c.index(0); }
+
+func f(): bool {
+    let xs: array<i32, 2> = [1, 2];
+
+    return first(xs);
+}
+
+// error
+// :6:17: type error: array<i32, 2> implements 'Index' at another type

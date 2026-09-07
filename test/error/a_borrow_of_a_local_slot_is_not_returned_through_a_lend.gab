@@ -1,0 +1,10 @@
+struct Node { n: i32 }
+
+func f(): &Node {
+    let local: *Node = box Node { n: 0 };
+    let s: &*Node = local;
+    return s;
+}
+
+// error
+// :6:5: lifetime error: this names memory that has been freed

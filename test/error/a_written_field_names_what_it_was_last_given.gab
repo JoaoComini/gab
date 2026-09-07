@@ -1,0 +1,13 @@
+struct Node { n: i32 }
+
+struct Pair { a: &Node, b: &Node }
+
+func f(p: &Node, q: &Node): &Node {
+    let l = Node { n: 1 };
+    let x = Pair { a: p, b: q };
+    x.b = l;
+    return x.b;
+}
+
+// error
+// :9:5: lifetime error: this borrow outlives what it names, so it cannot be returned

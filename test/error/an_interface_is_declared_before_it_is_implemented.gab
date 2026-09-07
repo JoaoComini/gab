@@ -1,0 +1,8 @@
+struct Bag { n: i32 }
+
+impl Bag as Countable {
+    func count(self: &Bag): i32 { return self.n; }
+}
+
+// error
+// :3:13: name error: unknown interface 'Countable'

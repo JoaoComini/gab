@@ -1,5 +1,0 @@
-extern "C" func abort();
-
-func assert(condition: bool) {
-    if !condition { abort(); }
-}

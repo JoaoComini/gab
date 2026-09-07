@@ -1,0 +1,25 @@
+struct Node { n: i32 }
+
+struct Pair { a: &Node, b: &Node }
+
+func g(v: Pair): i32 { return 0; }
+
+func read_the_field(): i32 {
+    let p: *Node = box Node { n: 1 };
+    let q: *Node = box Node { n: 2 };
+    let x = Pair { a: p, b: q };
+    p = box Node { n: 3 };
+    return x.a.n;
+}
+
+func pass_the_struct(): i32 {
+    let p: *Node = box Node { n: 1 };
+    let q: *Node = box Node { n: 2 };
+    let x = Pair { a: p, b: q };
+    p = box Node { n: 3 };
+    return g(x);
+}
+
+// error
+// :12:15: lifetime error: this names memory that has been freed
+// :20:13: lifetime error: this names memory that has been freed

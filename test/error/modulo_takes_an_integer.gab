@@ -1,0 +1,15 @@
+func a_float(): f32 {
+    let a: f32 = 7.0;
+    let b: f32 = 3.0;
+    return a % b;
+}
+
+func a_bool(): bool {
+    let a: bool = true;
+    let b: bool = false;
+    return a % b;
+}
+
+// error
+// :4:14: type error: '%' requires an integer type, found f32
+// :10:14: type error: '%' requires an integer type, found bool

@@ -1,0 +1,10 @@
+func run(): i32 {
+    let a: i32 = -2147483647 - 1;
+    let b: i32 = -1;
+
+    assert(b == -1);
+
+    return a / b;
+}
+
+// traps

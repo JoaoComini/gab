@@ -1,0 +1,6 @@
+struct Box { n: i32 }
+
+func launder(b: &Box): *Box { return b; }
+
+// error
+// :3:31: type error: returns &Box, but *Box was declared

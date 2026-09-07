@@ -1,0 +1,11 @@
+interface Countable {
+    func count(self: &Self): i32;
+}
+
+struct Bag { n: i32 }
+
+impl Bag as Countable {
+}
+
+// error
+// :7:13: type error: 'Bag' implements 'Countable', which declares 'count', but supplies no 'count'

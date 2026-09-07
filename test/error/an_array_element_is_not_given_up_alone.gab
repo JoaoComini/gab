@@ -1,0 +1,10 @@
+struct Box { n: i32 }
+
+func f(): i32 {
+    let xs: array<*Box, 2>;
+    let b: *Box = xs[0];
+    return 0;
+}
+
+// error
+// :5:5: lifetime error: an element cannot be given up on its own; bind the whole array instead

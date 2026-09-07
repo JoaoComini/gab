@@ -1,0 +1,14 @@
+func zero(): i32 {
+    let xs: array<i32, 0>;
+    return 0;
+}
+
+func not_a_literal(): i32 {
+    let n: i32 = 3;
+    let xs: array<i32, n>;
+    return 0;
+}
+
+// error
+// :2:5: type error: an array's length must be positive, not 0
+// :8:5: type error: an array's length is a literal or a value parameter, as 'array<i32, 3>'

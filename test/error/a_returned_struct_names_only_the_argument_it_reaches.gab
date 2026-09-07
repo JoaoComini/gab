@@ -1,0 +1,13 @@
+struct Node { n: i32 }
+
+struct View { r: &Node }
+
+func make(p: &Node, q: &Node): View { return View { r: p }; }
+
+func f(q: &Node): View {
+    let local = Node { n: 1 };
+    return make(local, q);
+}
+
+// error
+// :9:5: lifetime error: this borrow outlives what it names, so it cannot be returned

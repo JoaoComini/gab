@@ -1,0 +1,13 @@
+struct Node { n: i32 }
+
+struct View { r: &Node }
+
+func make(p: &Node): View { return View { r: p }; }
+
+func f(): View {
+    let owned = Node { n: 1 };
+    return make(owned);
+}
+
+// error
+// :9:5: lifetime error: this borrow outlives what it names, so it cannot be returned

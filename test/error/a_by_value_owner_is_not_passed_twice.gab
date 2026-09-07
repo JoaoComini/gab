@@ -1,0 +1,14 @@
+struct Inner { n: i32 }
+
+struct Owner { i: *Inner }
+
+func take(o: Owner): i32 { return 0; }
+
+func f(): i32 {
+    let o = Owner { i: box Inner { n: 1 } };
+    take(o);
+    return take(o);
+}
+
+// error
+// :10:17: lifetime error: this was moved out of and no longer holds a value

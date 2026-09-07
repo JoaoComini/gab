@@ -1,0 +1,14 @@
+struct Row { n: i32 }
+
+impl Row {
+    func index(self: &Self, at: i32): i32 { return self.n; }
+}
+
+func f(): i32 {
+    let r = Row { n: 1 };
+
+    return r[0];
+}
+
+// error
+// :10:13: type error: 'index' of Row returns i32 rather than lending an element

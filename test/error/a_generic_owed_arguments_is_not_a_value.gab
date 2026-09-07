@@ -1,0 +1,10 @@
+struct Holder<T> { value: T }
+
+func as_a_function(): i32 { return Holder::get(); }
+
+func as_a_conversion(): i32 { return Holder(1); }
+
+// error
+// :3:36: type error: 'Holder' takes 1 type argument(s), not 0
+// :3:36: name error: undeclared variable 'Holder::get'
+// :5:38: name error: undeclared variable 'Holder'

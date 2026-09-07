@@ -1,0 +1,42 @@
+struct Node { n: i32 }
+
+struct View { r: &Node }
+
+struct Pair { a: &Node, b: &Node }
+
+func read(v: View): i32 { return v.r.n; }
+
+func viewed(p: &Node): View { return View { r: p }; }
+
+func first_of(p: &Node, q: &Node): View { return View { r: p }; }
+
+func retargeted(p: &Node, q: &Node): View {
+    let v = View { r: p };
+    v.r = q;
+    return v;
+}
+
+func the_untouched_field(p: &Node): i32 {
+    let l = Node { n: 1 };
+    let x = Pair { a: p, b: p };
+    x.b = l;
+    return x.a.n;
+}
+
+func run(): i32 {
+    let owned = Node { n: 6 };
+    assert(read(View { r: owned }) == 6);
+    assert(viewed(owned).r.n == 6);
+
+    let other = Node { n: 7 };
+    assert(first_of(owned, other).r.n == 6);
+    assert(retargeted(owned, other).r.n == 7);
+
+    assert(the_untouched_field(owned) == 6);
+
+    let t = Pair { a: owned, b: other };
+    assert(t.a.n == 6);
+    assert(t.b.n == 7);
+
+    return 0;
+}

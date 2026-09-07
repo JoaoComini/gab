@@ -1,0 +1,13 @@
+struct Inner { n: i32 }
+
+struct Outer { child: *Inner }
+
+func f(): i32 {
+    let o: *Outer = box Outer { child: box Inner { n: 0 } };
+    let i: *Inner = box Inner { n: 0 };
+    o.child = i;
+    return i.n;
+}
+
+// error
+// :9:13: lifetime error: this was moved out of and no longer holds a value

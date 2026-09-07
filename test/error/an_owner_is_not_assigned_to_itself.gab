@@ -1,0 +1,10 @@
+struct Inner { n: i32 }
+
+func f(): i32 {
+    let p: *Inner = box Inner { n: 3 };
+    p = p;
+    return p.n;
+}
+
+// error
+// :5:5: lifetime error: 'a value' owns what it holds, so it cannot be assigned to itself

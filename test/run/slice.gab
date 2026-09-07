@@ -1,0 +1,23 @@
+func at(xs: &slice<i32>, i: i32): i32 { return xs[i]; }
+
+func count(xs: &slice<i32>): i32 { return xs.len(); }
+
+func total(xs: &slice<i32>): i32 {
+    let sum: i32 = 0;
+
+    for let i: i32 = 0; i < xs.len(); i = i + 1 { sum = sum + xs[i]; }
+
+    return sum;
+}
+
+func run(): i32 {
+    let a: array<i32, 3> = [1, 2, 4];
+
+    assert(at(a, 0) == 1);
+    assert(at(a, 2) == 4);
+
+    assert(count(a) == 3);
+    assert(total(a) == 7);
+
+    return 0;
+}

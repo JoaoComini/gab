@@ -130,6 +130,13 @@ size_t mir_bounds_operands(Place indexed, const Type *container, MIRValueId inde
     return type_kind(mir_indexed_container(container)) == TYPE_SLICE ? 2 : 1;
 }
 
+bool mir_function_is_template(const MIRFunction *ir) {
+    const Function *function = ir ? ir->function : NULL;
+
+    return function && function->decl && function->decl->type_param_count > 0 &&
+           function->type_arg_count == 0;
+}
+
 bool mir_type_needs_drop(TypeRegistry *registry, const Type *type) {
     return type && type_registry_owns(registry, type);
 }

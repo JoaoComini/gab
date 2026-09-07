@@ -1,0 +1,15 @@
+struct Node { n: i32 }
+
+struct View { r: &Node }
+
+func f(p: &Node): i32 {
+    if true {
+        let inner = Node { n: 1 };
+        let h = box View { r: p };
+        h.r = inner;
+    }
+    return 0;
+}
+
+// error
+// :9:9: lifetime error: this borrow outlives what it names, so it cannot be stored here

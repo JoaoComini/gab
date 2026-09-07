@@ -177,6 +177,25 @@ static void test_a_move_of_a_value_owning_nothing_needs_no_null(void) {
     elaborated_free(&out);
 }
 
+/* A store over an owning field reads the old value out first, so the release still names it. */
+static void a_call_result_stored_into_a_field_releases_what_it_replaced(void) {
+    Elaborated out;
+    MIRFunction *ir = elaborate(&out,
+                                "struct Inner { n: i32 }\n"
+                                "struct Outer { child: *Inner }\n"
+                                "func made(): *Inner { return box Inner { n: 6 }; }\n"
+                                "func f(): i32 {\n"
+                                "    let o: *Outer = box Outer { child: box Inner { n: 1 } };\n"
+                                "    o.child = made();\n"
+                                "    return 0;\n"
+                                "}\n",
+                                "f");
+
+    assert(count_op(ir, MIR_DROP) == 2);
+
+    elaborated_free(&out);
+}
+
 int main(void) {
     test_a_value_owning_nothing_is_never_marked_for_dropping();
     test_a_drop_of_an_owning_value_survives();
@@ -185,6 +204,7 @@ int main(void) {
     test_a_null_follows_the_move_it_answers_for();
     test_a_value_moved_on_one_path_still_reaches_one_drop();
     test_a_move_of_a_value_owning_nothing_needs_no_null();
+    a_call_result_stored_into_a_field_releases_what_it_replaced();
 
     printf("mir_drop_test passed\n");
 

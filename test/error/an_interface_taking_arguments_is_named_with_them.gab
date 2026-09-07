@@ -1,0 +1,23 @@
+interface Holder<T> {
+    func get(self: &Self): T;
+}
+
+interface Countable {
+    func count(self: &Self): i32;
+}
+
+struct IntBox { n: i32 }
+
+struct Bag { n: i32 }
+
+impl IntBox as Holder {
+    func get(self: &IntBox): i32 { return self.n; }
+}
+
+impl Bag as Countable<i32> {
+    func count(self: &Bag): i32 { return self.n; }
+}
+
+// error
+// :13:16: type error: 'Holder' takes 1 type argument(s), but 0 were given
+// :17:13: type error: 'Countable' takes 0 type argument(s), but 1 were given

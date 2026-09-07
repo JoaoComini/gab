@@ -1,0 +1,46 @@
+struct Holder<T> { value: T }
+
+struct Pair<A, B> { a: A, b: B }
+
+struct Node { n: i32 }
+
+impl<T> Holder<T> {
+    func get(self: &Self): T { return self.value; }
+}
+
+func identity<T>(value: T): T { return value; }
+
+func sum<N: i32>(xs: &array<i32, N>): i32 {
+    let total: i32 = 0;
+
+    for let i: i32 = 0; i < xs.len(); i = i + 1 { total = total + xs[i]; }
+
+    return total;
+}
+
+func run(): i32 {
+    let h = Holder<i32> { value: 7 };
+
+    assert(h.value == 7);
+    assert(h.get() == 7);
+
+    let p = Pair<i32, bool> { a: 3, b: true };
+
+    assert(p.a == 3);
+    assert(p.b);
+
+    assert(identity<i32>(5) == 5);
+    assert(identity(6) == 6);
+
+    let nested = Holder<Holder<i32>> { value: Holder<i32> { value: 9 } };
+
+    assert(nested.value.value == 9);
+
+    let two: array<i32, 2> = [1, 2];
+    let three: array<i32, 3> = [1, 2, 3];
+
+    assert(sum(two) == 3);
+    assert(sum(three) == 6);
+
+    return 0;
+}

@@ -1,0 +1,4 @@
+struct Self { n: i32 }
+
+// error
+// :1:1: name error: 'Self' names the type an 'impl' block is for, so it cannot be declared

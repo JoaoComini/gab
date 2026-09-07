@@ -1,0 +1,13 @@
+func not_a_container(): i32 {
+    let n: i32 = 1;
+    return n[0];
+}
+
+func not_an_integer(): i32 {
+    let xs: array<i32, 1>;
+    return xs[true];
+}
+
+// error
+// :3:13: type error: i32 is indexed with '[]' by implementing 'Index'
+// :8:14: type error: an index must be an i32, not bool

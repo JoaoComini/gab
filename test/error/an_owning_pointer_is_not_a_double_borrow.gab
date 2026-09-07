@@ -1,0 +1,11 @@
+struct Box { n: i32 }
+
+func replace(slot: &&Box): i32 { return 0; }
+
+func f(): i32 {
+    let o: *Box = box Box { n: 0 };
+    return replace(o);
+}
+
+// error
+// :7:20: type error: argument 1 is *Box, but &&Box was declared

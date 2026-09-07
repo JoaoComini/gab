@@ -1,0 +1,4 @@
+struct Node { self: Node }
+
+// error
+// :1:15: type error: struct 'Node' cannot contain itself: 'Node' contains 'Node'

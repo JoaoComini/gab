@@ -1,0 +1,65 @@
+struct Player { health: i32, mana: i32 }
+
+struct Inner { n: i32 }
+
+struct Outer { child: *Inner }
+
+impl Player {
+    func hurt(self: &Player, n: i32): i32 { self.health = self.health - n; return self.health; }
+}
+
+func returned(): *Inner { return box Inner { n: 7 }; }
+
+func made(): *Inner { return box Inner { n: 6 }; }
+
+func borrows(b: &Inner): i32 { return b.n; }
+
+func in_a_block(): i32 {
+    let t: i32 = 0;
+    { let a: *Inner = box Inner { n: 3 }; t = a.n; }
+    return t;
+}
+
+func unread(): i32 {
+    box Inner { n: 0 };
+    return 4;
+}
+
+func run(): i32 {
+    let n: *i32 = box 7;
+    assert(*n == 7);
+
+    let flag: *bool = box true;
+    assert(*flag);
+
+    let p: *Player = box Player { health: 3, mana: 4 };
+    assert(p.health + p.mana == 7);
+
+    p.health = 50;
+    assert(p.hurt(8) == 42);
+
+    let a: *Inner = box Inner { n: 1 };
+    let b: *Inner = box Inner { n: 2 };
+    assert(a.n * 10 + b.n == 12);
+
+    let held = returned();
+    assert(held.n == 7);
+
+    let o: *Outer = box Outer { child: box Inner { n: 1 } };
+    o.child = box Inner { n: 9 };
+    assert(o.child.n == 9);
+
+    o.child = made();
+    assert(o.child.n == 6);
+
+    let aliased: &Inner = a;
+    assert(aliased.n == 1);
+
+    assert(borrows(a) == 1);
+    assert(a.n == 1);
+
+    assert(in_a_block() == 3);
+    assert(unread() == 4);
+
+    return 0;
+}

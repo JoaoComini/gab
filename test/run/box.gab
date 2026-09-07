@@ -1,0 +1,31 @@
+struct Node { n: i32 }
+
+struct Pair { a: i32, b: i32 }
+
+func escaping(): *Node { return box Node { n: 7 }; }
+
+func through_a_ref(p: &Node): i32 { return p.n; }
+
+func run(): i32 {
+    let p: *Node = box Node { n: 3 };
+    assert(p.n == 3);
+
+    p.n = 42;
+    assert(p.n == 42);
+
+    let escaped = escaping();
+    assert(escaped.n == 7);
+
+    let one: *Node = box Node { n: 1 };
+    let two: *Node = box Node { n: 2 };
+    assert(one.n == 1);
+    assert(two.n == 2);
+
+    assert(through_a_ref(one) == 1);
+
+    let wide: *Pair = box Pair { a: 8, b: 9 };
+    assert(wide.a == 8);
+    assert(wide.b == 9);
+
+    return 0;
+}

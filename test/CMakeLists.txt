@@ -1,68 +1,37 @@
 set(
     TEST_SOURCES
-    arena_test.c
-    diagnostics_test.c
-    lexer_test.c
-    parser_test.c
-    scope_test.c
-    string/string_pool_test.c
-    object_test.c
-    type_layout_test.c
-    type_generic_test.c
+
+    # Data structures and the arena everything allocates from.
+    util/arena_test.c
     util/hash_map_test.c
     util/list_test.c
-    failed_compile_test.c
-    vm/constant_pool_test.c
-    vm/register_reuse_test.c
-    vm/codegen_test.c
-    vm/loop_shape_test.c
-    vm/chunk_test.c
-    vm/encoding_test.c
-    vm/pointer_test.c
-    vm/method_test.c
-    vm/impl_test.c
-    vm/interface_test.c
-    vm/generic_method_test.c
-    vm/interface_bound_test.c
-    vm/interface_generic_test.c
-    vm/index_test.c
-    llvm/emit_test.c
-    readme_test.c
-    vm/borrow_return_test.c
-    vm/generic_struct_test.c
-    vm/owned_func_test.c
-    vm/heap_test.c
-    vm/ownership_test.c
-    vm/struct_lifetime_test.c
-    vm/move_test.c
-    vm/owning_param_test.c
-    vm/field_ownership_test.c
-    vm/uninitialized_test.c
-    mir/mir_print_test.c
-    mir/mir_lower_test.c
-    mir/mir_liveness_test.c
+    util/string_pool_test.c
+
+    # Text to tokens to a tree, and what a malformed one reports.
+    syntax/diagnostics_test.c
+    syntax/lexer_test.c
+    syntax/parser_test.c
+
+    # What the type registry holds: layout, interning, and generic instantiation.
+    types/object_test.c
+    types/pointer_test.c
+    types/scope_test.c
+    types/type_generic_test.c
+    types/type_layout_test.c
+
+    # The IR the resolver lowers to, and the passes that rewrite it.
     mir/mir_drop_test.c
-    vm/regalloc_test.c
-    mir/mir_module_test.c
     mir/mir_fold_test.c
-    vm/codegen_mir_test.c
-    vm/str_test.c
-    vm/array_test.c
-    vm/slice_test.c
-    vm/const_generic_test.c
-    vm/intrinsic_test.c
-    vm/neg_test.c
-    vm/not_test.c
-    vm/modulo_test.c
-    vm/compound_assign_test.c
-    vm/cast_test.c
-    vm/struct_lit_test.c
-    vm/if_test.c
-    vm/loop_test.c
-    vm/arithmetic_test.c
-    vm/stack_test.c
-    vm/vm_test.c
-    gab_api_test.c
+    mir/mir_liveness_test.c
+    mir/mir_lower_test.c
+    mir/mir_module_test.c
+    mir/mir_print_test.c
+
+    # The names and linkage a lowered body emits, which running one cannot show.
+    llvm/symbols_test.c
+
+    # The samples the README shows must still compile.
+    readme_test.c
 )
 
 function(add_gab_test TEST_NAME TEST_SOURCE)
@@ -86,19 +55,53 @@ foreach(TEST_SOURCE ${TEST_SOURCES})
     add_gab_test(${TEST_NAME} ${TEST_SOURCE})
 endforeach()
 
-# A test written in Gab is compiled, linked and run as a native binary, so what
-# it checks is what the backend actually emitted rather than what a VM read.
-add_executable(gab_runner gab_runner.c)
+# A case in test/run is compiled, linked and run as a native binary, so what it checks is what the
+# backend actually emitted rather than what a VM read.
+add_executable(run_test run_test.c)
 
-target_compile_options(gab_runner PRIVATE -UNDEBUG
-    -DGAB_TEST_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}")
+target_compile_options(run_test PRIVATE -UNDEBUG
+    -DGAB_TEST_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}"
+    -DGAB_TEST_RUNTIME="$<TARGET_FILE:gab_runtime>")
 
-target_link_libraries(gab_runner PRIVATE gab)
-target_include_directories(gab_runner PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# The runtime a case links against carries the sanitizers this build was compiled with.
+if(GAB_SANITIZE)
+    target_compile_options(run_test PRIVATE -DGAB_TEST_LINK_FLAGS="-fsanitize=${GAB_SANITIZE}")
+endif()
 
-add_test(
-    NAME gab_behaviour
-    COMMAND gab_runner ${CMAKE_CURRENT_SOURCE_DIR}/gab
-            arithmetic branch loop cast compare negate modulo compound_assign call
-            struct method pointer
-)
+target_link_libraries(run_test PRIVATE gab)
+target_include_directories(run_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Globbed with CONFIGURE_DEPENDS so a new .gab file runs without being named here, which is
+# what a forgotten registration would otherwise cost: a test that silently never runs.
+file(GLOB RUN_CASES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/run/*.gab)
+
+foreach(CASE ${RUN_CASES})
+    get_filename_component(CASE_STEM ${CASE} NAME_WE)
+
+    # The prelude is included by every case rather than being one.
+    if(NOT CASE_STEM STREQUAL "prelude")
+        add_test(
+            NAME run_${CASE_STEM}
+            COMMAND run_test ${CMAKE_CURRENT_SOURCE_DIR}/run ${CASE_STEM}
+        )
+    endif()
+endforeach()
+
+# A rejection is stated by the program that provokes it: the case is source, and a trailing
+# '// error' block names every diagnostic it must raise, at the position the compiler reports.
+add_executable(error_test error_test.c)
+
+target_compile_options(error_test PRIVATE -UNDEBUG)
+target_link_libraries(error_test PRIVATE gab)
+target_include_directories(error_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+file(GLOB ERROR_CASES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/error/*.gab)
+
+foreach(CASE ${ERROR_CASES})
+    get_filename_component(CASE_STEM ${CASE} NAME_WE)
+
+    add_test(
+        NAME error_${CASE_STEM}
+        COMMAND error_test ${CMAKE_CURRENT_SOURCE_DIR}/error ${CASE_STEM}
+    )
+endforeach()

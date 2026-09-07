@@ -1,0 +1,9 @@
+func g(xs: &slice<i32>): i32 { return 0; }
+
+func f(): i32 {
+    let xs: array<bool, 2>;
+    return g(xs);
+}
+
+// error
+// :5:14: type error: argument 1 is array<bool, 2>, but &slice<i32> was declared

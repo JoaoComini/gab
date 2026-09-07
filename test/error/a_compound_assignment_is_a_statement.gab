@@ -1,0 +1,8 @@
+func f(): i32 {
+    let a: i32 = 1;
+    let b: i32 = (a += 1);
+    return b;
+}
+
+// error
+// :3:21: syntax error: expected ')', found '+='

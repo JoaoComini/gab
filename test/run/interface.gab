@@ -1,0 +1,38 @@
+interface Countable { func count(self: &Self): i32; }
+
+struct Bag { n: i32 }
+
+struct Cup { n: i32 }
+
+impl Bag as Countable {
+    func count(self: &Bag): i32 { return self.n; }
+}
+
+impl Cup as Countable {
+    func count(self: &Self): i32 { return self.n * 2; }
+}
+
+struct Holder<T> { value: T }
+
+impl<T> Holder<T> as Countable {
+    func count(self: &Holder<T>): i32 { return 1; }
+}
+
+func tally<C: Countable>(c: &C): i32 { return c.count(); }
+
+func run(): i32 {
+    let b = Bag { n: 7 };
+    let c = Cup { n: 4 };
+
+    assert(b.count() == 7);
+    assert(c.count() == 8);
+
+    assert(tally(b) == 7);
+    assert(tally(c) == 8);
+
+    let h = Holder<i32> { value: 3 };
+
+    assert(tally(h) == 1);
+
+    return 0;
+}

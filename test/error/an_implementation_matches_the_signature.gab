@@ -1,0 +1,19 @@
+interface Countable {
+    func count(self: &Self): i32;
+}
+
+struct Bag { n: i32 }
+
+struct Cup { n: i32 }
+
+impl Bag as Countable {
+    func count(self: &Bag): bool { return true; }
+}
+
+impl Cup as Countable {
+    func count(self: &Cup, extra: i32): i32 { return extra; }
+}
+
+// error
+// :9:13: type error: 'count' of 'Bag' returns bool, but 'Countable' declares it returns i32
+// :13:13: type error: 'count' of 'Cup' takes 2 parameters, but 'Countable' declares 1

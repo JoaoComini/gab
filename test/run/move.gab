@@ -1,0 +1,40 @@
+struct Point { x: i32, y: i32 }
+
+struct Box { n: i32 }
+
+struct Watcher { b: &Box }
+
+func a_type_owning_nothing_copies(): i32 {
+    let a = Point { x: 3, y: 0 };
+    let b = a;
+    return b.x + a.x;
+}
+
+func a_type_holding_a_borrow_copies(): i32 {
+    let b = Box { n: 1 };
+    let w = Watcher { b: b };
+    let other = w;
+    return other.b.n + w.b.n;
+}
+
+func binding_an_owner_transfers_it(): i32 {
+    let a: *Box = box Box { n: 7 };
+    let b = a;
+    return b.n;
+}
+
+func assigning_to_a_moved_slot_revives_it(): i32 {
+    let a: *Box = box Box { n: 1 };
+    let b = a;
+    a = box Box { n: 5 };
+    return a.n;
+}
+
+func run(): i32 {
+    assert(a_type_owning_nothing_copies() == 6);
+    assert(a_type_holding_a_borrow_copies() == 2);
+    assert(binding_an_owner_transfers_it() == 7);
+    assert(assigning_to_a_moved_slot_revives_it() == 5);
+
+    return 0;
+}

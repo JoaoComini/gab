@@ -8,9 +8,9 @@ of its scope, a `&T` borrows and frees nothing, and a plain `T` copies. Nothing
 marks a transfer at the site, because the destination's type already says
 whether it takes ownership.
 
-Gab is early. A resolved body lowers to MIR, and MIR is what both backends read:
-a register VM that runs a unit as it loads, and an LLVM emitter that is growing
-toward replacing it.
+Gab is early. A resolved body lowers to MIR, and the LLVM emitter reads MIR to
+produce an object file, which links against a small runtime and against the core
+library the compiler emits alongside it.
 
 ## The language
 
@@ -137,40 +137,17 @@ Not yet implemented:
 | Integers | Only `i32` and `f32` do arithmetic. The rest of the width matrix — `i8`, `i64`, `u32`, `f64` — is named but not built |
 | Strings | `as_bytes` and `len` only: no searching, no interpolation, no indexing |
 | Collections | Nothing grows. `array<T, N>` is fixed and `&slice<T>` reads it; there is no vector and no map |
-| Backends | The LLVM emitter covers arithmetic, comparison, conversion and branches. Places, calls, and drops still run on the VM alone |
+| Uninitialized locals | A local with no initialiser holds whatever its storage held; nothing zeroes it |
 | Operators | Bitwise |
 
-## Embedding
+## Running a unit
 
-A host loads a unit, resolves a function once, and calls it with no lookup per
-call. `src/gab.h` is the only header a host includes, and it is the reference
-documentation.
+A unit compiles to an object file, which links against `gab_runtime` and the
+core library. There is no host API and nothing loads a unit at runtime: a Gab
+program is an ordinary object that a linker places beside C.
 
-```c
-GabVM *vm = gab_vm_new();
-GabError err;
-
-gab_vm_load(vm, "game.gab", src, &err);
-
-GabFunc *fn = gab_vm_lookup(vm, "game", "damage", &err);
-GabCall *call = gab_call_init(fn, &err);
-
-gab_call_int(call, 0, 100);
-gab_call_int(call, 1, 30);
-
-int32_t left = 0;
-gab_call(vm, call, &left, &err);
-```
-
-A script struct has the same layout as the equivalent C struct, and
-`gab_type_size`, `gab_type_align` and `gab_type_field_offset` exist so a host can
-assert that against its own `sizeof` and `offsetof` rather than trust it. A
-script declares `extern func f(x: i32): i32;` and the host supplies the body with
-`gab_extern`, bound by name while the unit loads.
-
-This is the part that a native backend changes: a compiled unit links against
-the host rather than being loaded into a VM, so the embedding API above is what
-exists today rather than where it is going.
+A script declares `extern "C" func f(x: i32): i32;` to call a C function, and
+what it declares is resolved by the linker like any other symbol.
 
 ## Building
 
@@ -193,6 +170,21 @@ ctest --test-dir build-asan
 ```
 
 The suite passes clean under both, so any sanitizer report is a regression.
+
+A test written in the language is a `.gab` file, and where it lives says what it
+claims. A case in `test/run` must compile, link and produce the right answers,
+which `assert` states and a failure reports by line. A case in `test/error` must
+be rejected, and a trailing `// error` block names every diagnostic it raises:
+
+```
+struct Node { self: Node }
+
+// error
+// :1:15: type error: struct 'Node' cannot contain itself: 'Node' contains 'Node'
+```
+
+The block is the whole expectation, so an error a case does not name fails it.
+Both directories are globbed, so a new file runs without being registered.
 
 ## Contributing
 

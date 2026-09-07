@@ -1,0 +1,14 @@
+struct Box { n: i32 }
+
+extern func pick(a: &Box, b: &Box): &Box;
+
+func f(): i32 {
+    let owner: *Box = box Box { n: 0 };
+    let got: &Box = owner;
+    { let inner = Box { n: 1 }; got = pick(owner, inner); }
+    return got.n;
+}
+
+// error
+// :8:33: lifetime error: this borrow outlives what it names, so it cannot be stored here
+// :9:15: lifetime error: this names memory that has been freed

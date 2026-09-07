@@ -38,8 +38,6 @@ typedef enum {
 
 #include "constant.h"
 
-#define GAB_MAX_TYPE_BYTES 255
-
 #define GAB_MAX_TYPE_PARAMS 4
 
 #define GAB_MAX_DROP_STEPS 16

@@ -1,0 +1,32 @@
+struct Counter { n: i32 }
+
+struct Holder { n: i32 }
+
+impl Counter {
+    func start(): i32 { return 7; }
+
+    func of(a: i32, b: i32): i32 { return a + b; }
+
+    func read(self: &Counter): i32 { return self.n; }
+}
+
+impl Holder {
+    func take(self: *Holder): i32 { return self.n; }
+}
+
+func run(): i32 {
+    assert(Counter::start() == 7);
+    assert(Counter::of(3, 4) == 7);
+
+    let c = Counter { n: 5 };
+    assert(c.read() == 5);
+    assert(Counter::read(c) == 5);
+
+    let named: *Holder = box Holder { n: 6 };
+    assert(Holder::take(named) == 6);
+
+    let sugared: *Holder = box Holder { n: 4 };
+    assert(sugared.take() == 4);
+
+    return 0;
+}

@@ -1,0 +1,16 @@
+struct Node { n: i32 }
+
+struct View { r: &Node }
+
+func f(p: &Node): i32 {
+    let v = View { r: p };
+    if true {
+        let inner = Node { n: 1 };
+        v.r = inner;
+    }
+    return v.r.n;
+}
+
+// error
+// :9:9: lifetime error: this borrow outlives what it names, so it cannot be stored here
+// :11:15: lifetime error: this names memory that has been freed

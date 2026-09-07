@@ -1,0 +1,21 @@
+struct V { x: i32, y: i32 }
+
+func missing(): i32 {
+    let v = V { x: 1 };
+    return v.x;
+}
+
+func twice(): i32 {
+    let v = V { x: 1, y: 2, x: 3 };
+    return v.x;
+}
+
+func wrong_type(): i32 {
+    let v = V { x: true, y: 2 };
+    return v.x;
+}
+
+// error
+// :4:13: type error: field 'y' is missing
+// :9:29: type error: field 'x' is given twice
+// :14:20: type error: field 'x' is i32, but bool was given

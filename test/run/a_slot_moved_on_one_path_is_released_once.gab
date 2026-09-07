@@ -1,0 +1,20 @@
+struct Node { n: i32 }
+
+func moved_on_one_path(take: bool): i32 {
+    let a: *Node = box Node { n: 7 };
+    let total: i32 = 0;
+
+    if take {
+        let b = a;
+        total = b.n;
+    }
+
+    return total;
+}
+
+func run(): i32 {
+    assert(moved_on_one_path(true) == 7);
+    assert(moved_on_one_path(false) == 0);
+
+    return 0;
+}

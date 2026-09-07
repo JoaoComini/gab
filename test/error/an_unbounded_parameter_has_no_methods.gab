@@ -1,0 +1,4 @@
+func total<T>(x: &T): i32 { return x.count(); }
+
+// error
+// :1:37: name error: *none has no method 'count'

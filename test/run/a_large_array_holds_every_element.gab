@@ -1,0 +1,22 @@
+func sum(xs: &array<i32, 1000>): i32 {
+    let total: i32 = 0;
+
+    for let i: i32 = 0; i < xs.len(); i = i + 1 { total = total + xs[i]; }
+
+    return total;
+}
+
+func run(): i32 {
+    let xs: array<i32, 1000>;
+
+    for let i: i32 = 0; i < xs.len(); i = i + 1 { xs[i] = 0; }
+
+    xs[0] = 3;
+    xs[999] = 4;
+
+    assert(xs[0] == 3);
+    assert(xs[999] == 4);
+    assert(sum(xs) == 7);
+
+    return 0;
+}

@@ -1,0 +1,19 @@
+struct Node { n: i32 }
+
+struct View { r: &Node }
+
+struct Outer { v: View }
+
+func directly(): View {
+    let owned = Node { n: 1 };
+    return View { r: owned };
+}
+
+func nested(): Outer {
+    let owned = Node { n: 1 };
+    return Outer { v: View { r: owned } };
+}
+
+// error
+// :9:5: lifetime error: this borrow outlives what it names, so it cannot be returned
+// :14:5: lifetime error: this borrow outlives what it names, so it cannot be returned

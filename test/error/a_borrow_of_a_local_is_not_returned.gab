@@ -1,0 +1,18 @@
+struct Box { n: i32 }
+
+func borrow(b: &Box): &Box { return b; }
+
+func directly(): &Box {
+    let local = Box { n: 0 };
+    return local;
+}
+
+func through_a_call(): &Box {
+    let local = Box { n: 0 };
+    let got: &Box = borrow(local);
+    return got;
+}
+
+// error
+// :7:5: lifetime error: this borrow outlives what it names, so it cannot be returned
+// :13:5: lifetime error: this borrow outlives what it names, so it cannot be returned

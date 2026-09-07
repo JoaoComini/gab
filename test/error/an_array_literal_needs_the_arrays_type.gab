@@ -1,0 +1,7 @@
+func f(): i32 {
+    let xs = [1, 2, 3];
+    return 0;
+}
+
+// error
+// :2:14: type error: an array's elements need the array's type to be written, as 'let xs: [i32; 3] = [1, 2, 3];'

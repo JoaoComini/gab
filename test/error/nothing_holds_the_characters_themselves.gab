@@ -1,0 +1,16 @@
+func a_parameter(s: str): i32 { return 0; }
+
+struct Person { name: str }
+
+func a_local(): i32 {
+    let s: str = "hi";
+    return 0;
+}
+
+func a_return(): str { return "hi"; }
+
+// error
+// :3:17: type error: nothing holds a 'str', so it cannot be a field; write '&str'
+// :1:18: type error: nothing holds a 'str', so it cannot be a parameter; write '&str'
+// :6:5: type error: nothing holds a 'str', so it cannot be a variable; write '&str'
+// :10:24: type error: returns &str, but str was declared

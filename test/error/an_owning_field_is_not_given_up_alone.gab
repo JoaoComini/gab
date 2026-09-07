@@ -1,0 +1,20 @@
+struct Inner { n: i32 }
+
+struct Outer { child: *Inner }
+
+func to_itself(): i32 {
+    let o: *Outer = box Outer { child: box Inner { n: 5 } };
+    o.child = o.child;
+    return o.child.n;
+}
+
+func to_another_struct(): i32 {
+    let g = Outer { child: box Inner { n: 1 } };
+    let h = Outer { child: box Inner { n: 2 } };
+    g.child = h.child;
+    return 0;
+}
+
+// error
+// :7:5: lifetime error: a field cannot be given up on its own; bind the whole struct instead
+// :14:5: lifetime error: a field cannot be given up on its own; bind the whole struct instead

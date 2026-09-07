@@ -1,0 +1,4 @@
+struct Holder { xs: array<i32> }
+
+// error
+// :1:17: type error: 'array' takes an element and a length, as 'array<i32, 3>'

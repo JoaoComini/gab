@@ -1085,7 +1085,13 @@ static void lower_stmt(Lowering *lowering, ASTStmt *stmt) {
                                      .span = stmt->span});
         }
 
-        lower_jump(lowering, stmt->jump.is_break ? lowering->break_target : lowering->continue_target);
+        MIRBlockId target = stmt->jump.is_break ? lowering->break_target : lowering->continue_target;
+
+        /* A jump outside a loop names no block; the resolver rejects it, and lowering emits nothing. */
+        if (!mir_block_is_none(target)) {
+            lower_jump(lowering, target);
+        }
+
         break;
     }
 

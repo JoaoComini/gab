@@ -1,0 +1,21 @@
+struct Node { n: i32 }
+
+struct View { r: &Node }
+
+func the_field(p: &Node): &Node {
+    let v = View { r: p };
+    let l = Node { n: 1 };
+    v.r = l;
+    return v.r;
+}
+
+func the_whole_struct(p: &Node): View {
+    let v = View { r: p };
+    let l = Node { n: 1 };
+    v.r = l;
+    return v;
+}
+
+// error
+// :9:5: lifetime error: this borrow outlives what it names, so it cannot be returned
+// :16:5: lifetime error: this borrow outlives what it names, so it cannot be returned

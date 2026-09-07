@@ -1,0 +1,21 @@
+struct Box { n: i32 }
+
+struct Watcher { b: &Box }
+
+func a_variable(): i32 {
+    let o: *Box = box Box { n: 7 };
+    let b: &Box = o;
+    o = box Box { n: 9 };
+    return b.n;
+}
+
+func a_field(): i32 {
+    let o: *Box = box Box { n: 7 };
+    let w = Watcher { b: o };
+    o = box Box { n: 9 };
+    return w.b.n;
+}
+
+// error
+// :9:13: lifetime error: this names memory that has been freed
+// :16:15: lifetime error: this names memory that has been freed

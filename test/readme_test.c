@@ -20,16 +20,6 @@ static void the_interface_sample_compiles(void) {
                          "func total<T: Countable>(x: &T): i32 { return x.count(); }\n"));
 }
 
-static void the_slice_sample_runs(void) {
-    assert(test_run_int("func total(xs: &slice<i32>): i32 {\n"
-                        "    let sum: i32 = 0;\n"
-                        "    for let i: i32 = 0; i < xs.len(); i = i + 1 { sum = sum + xs[i]; }\n"
-                        "    return sum;\n"
-                        "}\n"
-                        "func f(): i32 { let a: array<i32, 2> = [1, 2]; return total(a); }\n"
-                        "let r: i32 = f();") == 3);
-}
-
 static void the_ownership_sample_compiles(void) {
     assert(test_compiles("struct Box { n: i32 }\n"
                          "func consume(b: *Box): i32 { return b.n; }\n"
@@ -51,18 +41,11 @@ static void the_loop_shapes_compile(void) {
                          "}\n"));
 }
 
-static void the_string_sample_runs(void) {
-    assert(test_run_int("func f(): i32 { let s: &str = \"abc\"; return s.len(); }\n"
-                        "let r: i32 = f();") == 3);
-}
-
 int main(void) {
     the_language_sample_compiles();
     the_interface_sample_compiles();
-    the_slice_sample_runs();
     the_ownership_sample_compiles();
     the_loop_shapes_compile();
-    the_string_sample_runs();
 
     return 0;
 }

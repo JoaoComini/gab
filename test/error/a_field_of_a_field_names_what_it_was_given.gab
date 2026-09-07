@@ -1,0 +1,14 @@
+struct Node { n: i32 }
+
+struct View { r: &Node }
+
+struct Two { u: View, v: View }
+
+func f(p: &Node): &Node {
+    let l = Node { n: 1 };
+    let t = Two { u: View { r: l }, v: View { r: p } };
+    return t.u.r;
+}
+
+// error
+// :10:5: lifetime error: this borrow outlives what it names, so it cannot be returned

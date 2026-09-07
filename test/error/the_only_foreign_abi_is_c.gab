@@ -1,0 +1,5 @@
+extern "fortran" func host(a: i32): i32;
+
+// error
+// :1:8: syntax error: the only foreign ABI is "C"
+// :1:40: syntax error: expected '{', found ';'

@@ -1,0 +1,15 @@
+struct Point { x: i32 }
+
+func to_bool(): bool {
+    let a: i32 = 1;
+    return bool(a);
+}
+
+func to_a_struct(): i32 {
+    let a: i32 = 1;
+    return Point(a).x;
+}
+
+// error
+// :5:16: type error: cannot convert i32 to bool
+// :10:17: type error: cannot convert i32 to Point

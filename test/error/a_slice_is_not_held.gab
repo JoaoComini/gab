@@ -1,0 +1,10 @@
+func a_local(): i32 {
+    let xs: slice<i32>;
+    return 0;
+}
+
+struct Holder { xs: slice<i32> }
+
+// error
+// :6:17: type error: nothing holds a 'slice<i32>', so it cannot be a field; write '&slice<i32>'
+// :2:5: type error: nothing holds a 'slice<i32>', so it cannot be a variable; write '&slice<i32>'

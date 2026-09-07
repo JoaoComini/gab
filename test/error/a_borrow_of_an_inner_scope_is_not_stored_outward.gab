@@ -1,0 +1,13 @@
+struct Box { n: i32 }
+
+func borrow(b: &Box): &Box { return b; }
+
+func f(): i32 {
+    let escaped: &Box;
+    { let inner = Box { n: 0 }; escaped = borrow(inner); }
+    return escaped.n;
+}
+
+// error
+// :7:33: lifetime error: this borrow outlives what it names, so it cannot be stored here
+// :8:19: lifetime error: this names memory that has been freed

@@ -1,0 +1,46 @@
+struct Box { n: i32 }
+
+struct Inner { n: i32 }
+
+struct Owner { i: *Inner }
+
+impl Box {
+    func take(self: *Box): i32 { return self.n; }
+
+    func adopt(self: &Box, other: *Box): i32 { return other.n; }
+}
+
+func consume(b: *Box): i32 { return b.n; }
+
+func peek(b: &Box): i32 { return b.n; }
+
+func through(b: *Box): *Box { return b; }
+
+func take_owner(o: Owner): i32 { return o.i.n; }
+
+func run(): i32 {
+    let moved: *Box = box Box { n: 6 };
+    assert(consume(moved) == 6);
+
+    let borrowed: *Box = box Box { n: 4 };
+    assert(peek(borrowed) + borrowed.n == 8);
+
+    let value = Box { n: 6 };
+    assert(peek(value) == 6);
+
+    let returned: *Box = box Box { n: 9 };
+    let back: *Box = through(returned);
+    assert(back.n == 9);
+
+    let named: *Box = box Box { n: 4 };
+    assert(Box::take(named) == 4);
+
+    let host: *Box = box Box { n: 0 };
+    let gift: *Box = box Box { n: 3 };
+    assert(host.adopt(gift) == 3);
+
+    let owner = Owner { i: box Inner { n: 1 } };
+    assert(take_owner(owner) == 1);
+
+    return 0;
+}

@@ -1,0 +1,7 @@
+func f(): bool {
+    let a: &str = "a";
+    return a < a;
+}
+
+// error
+// :3:14: type error: '<' requires an ordered type, found &str

@@ -1,0 +1,18 @@
+struct Flag { on: bool }
+
+func yes(): bool { return true; }
+
+func run(): i32 {
+    let t: bool = true;
+    let f = Flag { on: false };
+    let p: &Flag = f;
+
+    assert(!false);
+    assert(!!t);
+    assert(!(1 == 2));
+    assert(!yes() == false);
+    assert(!p.on);
+    assert(!t == false);
+
+    return 0;
+}

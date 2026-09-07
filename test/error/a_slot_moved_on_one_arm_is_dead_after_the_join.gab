@@ -1,0 +1,10 @@
+struct Box { n: i32 }
+
+func f(): i32 {
+    let a: *Box = box Box { n: 0 };
+    if 1 < 2 { let b = a; } else { }
+    return a.n;
+}
+
+// error
+// :6:13: lifetime error: this was moved out of and no longer holds a value

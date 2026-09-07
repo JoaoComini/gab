@@ -1,0 +1,16 @@
+struct Box { n: i32 }
+
+func made(): Box { let b = Box { n: 0 }; return b; }
+
+func peek(b: &Box): i32 { return b.n; }
+
+func a_literal(): i32 {
+    let p: &i32 = 1;
+    return *p;
+}
+
+func a_call_result(): i32 { return peek(made()); }
+
+// error
+// :8:19: type error: cannot borrow a temporary; bind it to a variable first
+// :12:45: type error: cannot borrow a temporary; bind it to a variable first

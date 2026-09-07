@@ -94,6 +94,14 @@ static void append_type_args(SymbolBuffer *buffer, const Function *function) {
     }
 }
 
+const char *llvm_type_symbol(Arena *arena, const Type *type) {
+    SymbolBuffer buffer = {.arena = arena};
+
+    append_type(&buffer, type);
+
+    return buffer.text ? buffer.text : "?";
+}
+
 const char *llvm_symbol_of(Arena *arena, const Function *function) {
     SymbolBuffer buffer = {.arena = arena};
 

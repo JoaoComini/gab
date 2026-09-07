@@ -475,6 +475,50 @@ static void a_cast_between_equal_types_converts_nothing(void) {
     lowered_free(&lowered);
 }
 
+/* Lowering runs on bodies the resolver has not vetted, so a jump with no enclosing loop must leave
+ * the body without a terminator rather than one naming a block that does not exist. */
+static void a_jump_outside_a_loop_emits_no_terminator(void) {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
+    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ResolvedUnit *resolved;
+
+    test_resolve_ir(&ctx, scope, &unit, NULL, &resolved, "func f(): i32 { break; }\n");
+
+    ASTStmt *decl = NULL;
+
+    for (size_t i = 0; i < unit->statements.size; i++) {
+        ASTStmt *stmt = unit->statements.data[i];
+
+        if (stmt && stmt->kind == STMT_FUNC_DECL && stmt->func_decl.body) {
+            decl = stmt;
+            break;
+        }
+    }
+
+    assert(decl);
+
+    MIRFunction *ir =
+        mir_build_function(ctx.arena, scope->type_registry, &resolved->facts, decl->func_decl.function,
+                           &decl->func_decl.params, decl->func_decl.body);
+
+    for (size_t b = 0; b < ir->block_count; b++) {
+        MIRBlock *block = ir->blocks[b];
+
+        for (size_t k = 0; k < block->inst_count; k++) {
+            const MIRInst *inst = &block->insts[k];
+
+            if (inst->op == MIR_JMP || inst->op == MIR_BRANCH) {
+                assert(!mir_block_is_none(inst->targets[0]));
+            }
+        }
+    }
+
+    test_context_free(&ctx);
+}
+
 int main(void) {
     test_a_block_ends_in_exactly_one_terminator();
     test_a_terminator_names_only_blocks_that_exist();
@@ -499,6 +543,7 @@ int main(void) {
     test_a_break_ends_the_locals_the_loop_body_opened();
     test_a_move_reads_through_a_load_that_says_so();
     test_a_copied_read_is_not_marked_as_a_move();
+    a_jump_outside_a_loop_emits_no_terminator();
 
     printf("mir_lower_test passed\n");
 

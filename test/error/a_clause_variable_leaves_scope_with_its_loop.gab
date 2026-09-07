@@ -1,0 +1,7 @@
+func f(): i32 {
+    for let i: i32 = 0; i < 4; i = i + 1 { }
+    return i;
+}
+
+// error
+// :3:12: name error: undeclared variable 'i'

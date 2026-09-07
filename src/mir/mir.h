@@ -13,7 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* A virtual register. Unbounded, unlike the frame slot a register allocator later assigns it. */
+/* A virtual register, of which a body names as many as it needs. */
 typedef struct {
     uint32_t id;
 } MIRValueId;
@@ -235,6 +235,9 @@ typedef struct {
 } MIRFunction;
 
 MIRFunction *mir_function_create(Arena *arena, TypeRegistry *registry, Function *function);
+
+/* Whether the body is a generic's own, which stands for its instances and has no code of its own. */
+bool mir_function_is_template(const MIRFunction *ir);
 
 MIRBlock *mir_block_create(MIRFunction *ir);
 MIRBlock *mir_block_at(const MIRFunction *ir, MIRBlockId id);

@@ -1,0 +1,22 @@
+struct Box { n: i32 }
+
+func an_owner(): i32 {
+    let a: *Box;
+    return a.n;
+}
+
+func a_borrow(): i32 {
+    let b: &Box;
+    return b.n;
+}
+
+func assigned_on_one_arm(): i32 {
+    let a: *Box;
+    if 1 < 2 { a = box Box { n: 0 }; }
+    return a.n;
+}
+
+// error
+// :5:13: lifetime error: this is read before it is given a value
+// :10:13: lifetime error: this is read before it is given a value
+// :16:13: lifetime error: this is read before it is given a value

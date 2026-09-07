@@ -1,0 +1,11 @@
+struct Node { n: i32 }
+
+func f(): i32 {
+    let n = Node { n: 0 };
+    let b: &Node = n;
+    let o: *&Node = box b;
+    return 0;
+}
+
+// error
+// :6:21: type error: cannot allocate &Node; a heap slot cannot hold a borrow

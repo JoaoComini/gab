@@ -1,0 +1,12 @@
+struct Box { n: i32 }
+
+struct Holder { b: *Box }
+
+func f(): i32 {
+    let h = Holder { b: box Box { n: 0 } };
+    let other = h;
+    return h.b.n;
+}
+
+// error
+// :8:15: lifetime error: this was moved out of and no longer holds a value

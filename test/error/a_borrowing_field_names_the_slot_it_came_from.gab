@@ -1,0 +1,14 @@
+struct Box { n: i32 }
+
+struct Pair { a: &Box, b: &Box }
+
+func f(): i32 {
+    let x: *Box = box Box { n: 1 };
+    let y: *Box = box Box { n: 2 };
+    let p = Pair { a: x, b: y };
+    y = box Box { n: 3 };
+    return p.b.n;
+}
+
+// error
+// :10:15: lifetime error: this names memory that has been freed

@@ -1,0 +1,6 @@
+interface Countable {
+    func count(self: &Self): i32 { return 0; }
+}
+
+// error
+// :2:34: syntax error: an interface declares a signature, which has no body

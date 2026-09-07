@@ -1936,19 +1936,6 @@ static const Type *resolve_array_type(ResolverState *state, TypeExpr *expr, Span
         return resolver_error_type(state);
     }
 
-    if (type_has_param(element)) {
-        return type_registry_array_with(registry, element, length);
-    }
-
-    size_t bytes = type_registry_size_of(registry, element) * (size_t)length.constant.value.as_int;
-
-    if (bytes > GAB_MAX_TYPE_BYTES) {
-        diag_error(state->diagnostics, GAB_ERR_TYPE, span,
-                   "an array of %d needs %zu bytes, over the %d a frame addresses",
-                   length.constant.value.as_int, bytes, GAB_MAX_TYPE_BYTES);
-        return resolver_error_type(state);
-    }
-
     return type_registry_array_with(registry, element, length);
 }
 

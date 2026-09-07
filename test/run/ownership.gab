@@ -1,0 +1,94 @@
+struct Box { n: i32 }
+
+struct Leaf { n: i32 }
+
+struct Node { n: i32, parent: &Leaf }
+
+impl Box {
+    func bump(self: &Box): i32 { self.n = self.n + 1; return self.n; }
+}
+
+func peek(b: &Box): i32 { return b.n; }
+
+func borrow(b: &Box): &Box { return b; }
+
+func object(b: &Box): i32 { return b.n; }
+
+func slot(s: &*Box): i32 { return s.n + 3; }
+
+func through_a_borrow(s: &*Box): i32 { return object(s); }
+
+func poke(s: &*Box): i32 { return s.bump(); }
+
+func replace(s: &*Box): i32 { *s = box Box { n: 9 }; return 0; }
+
+func fill(b: &Box): i32 { b.n = 42; return 0; }
+
+func made(seed: &Box): *Box { return box Box { n: seed.n + 1 }; }
+
+func owned_out(): *Box { return box Box { n: 4 }; }
+
+func from_a_temporary(): i32 { return (box Box { n: 3 }).n; }
+
+func into_an_assignment(): i32 {
+    let x: i32 = 0;
+    x = (box Box { n: 5 }).n;
+    return x;
+}
+
+func run(): i32 {
+    let value = Box { n: 4 };
+    let borrowed: &Box = value;
+    assert(borrowed.n == 4);
+
+    borrowed.n = 9;
+    assert(value.n == 9);
+
+    let nested: **Box = box (box Box { n: 4 });
+    assert(nested.n == 4);
+    assert(object(nested) == 4);
+    assert(slot(nested) == 7);
+
+    let owner: *Box = box Box { n: 4 };
+    assert(through_a_borrow(owner) == 4);
+    assert(peek(owner) == 4);
+    assert(slot(owner) == 7);
+
+    let bumped: *Box = box Box { n: 11 };
+    assert(poke(bumped) == 12);
+    assert(bumped.n == 12);
+
+    let repointed: *Box = box Box { n: 1 };
+    replace(repointed);
+    assert(repointed.n == 9);
+
+    let filled: *Box = box Box { n: 0 };
+    fill(filled);
+    assert(filled.n == 42);
+
+    let lent: *Box = box Box { n: 2 };
+    let got: &Box = borrow(lent);
+    assert(got.n + lent.n == 4);
+
+    let leaf = Leaf { n: 7 };
+    let holder: *Node = box Node { n: 0, parent: leaf };
+    assert(holder.parent.n == 7);
+
+    let seed: *Box = box Box { n: 1 };
+    let fresh = made(seed);
+    assert(fresh.n == 2);
+
+    let returned = owned_out();
+    assert(returned.n == 4);
+
+    assert(from_a_temporary() == 3);
+    assert(into_an_assignment() == 5);
+
+    let x: i32 = 5;
+    let p: &i32 = x;
+    let q: &&i32 = p;
+    **q = 11;
+    assert(x == 11);
+
+    return 0;
+}

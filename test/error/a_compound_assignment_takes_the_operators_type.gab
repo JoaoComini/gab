@@ -1,0 +1,8 @@
+func f(): bool {
+    let a: bool = true;
+    a += true;
+    return a;
+}
+
+// error
+// :3:5: type error: '+' requires a numeric type, found bool

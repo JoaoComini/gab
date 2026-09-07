@@ -1,0 +1,23 @@
+func an_int(): i32 {
+    let x: i32 = 1;
+    if x { return 1; }
+    return 0;
+}
+
+func a_float(): i32 {
+    let x: f32 = 1.0;
+    if x { return 1; }
+    return 0;
+}
+
+func a_ref(): i32 {
+    let x: i32 = 1;
+    let p: &i32 = x;
+    if p { return 1; }
+    return 0;
+}
+
+// error
+// :3:8: type error: 'if' requires a boolean condition, found i32
+// :9:8: type error: 'if' requires a boolean condition, found f32
+// :16:8: type error: 'if' requires a boolean condition, found &i32
