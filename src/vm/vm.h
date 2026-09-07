@@ -1,15 +1,15 @@
 #ifndef GAB_VM_H
 #define GAB_VM_H
 
-#include "memory/arena.h"
 #include "diagnostics.h"
+#include "memory/arena.h"
 #include "scope.h"
-#include "vm/slot.h"
 #include "string/string_pool.h"
 #include "util/list.h"
 #include "vm/chunk.h"
 #include "vm/link.h"
 #include "vm/opcode.h"
+#include "vm/slot.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -94,18 +94,6 @@ typedef struct VM {
      */
     size_t frame_floor;
 } VM;
-
-struct GabCtx {
-    VM *vm;
-
-    const struct Function *function;
-
-    size_t base;
-
-    const size_t *param_offsets;
-    const size_t *param_strides;
-    const size_t *type_arg_sizes;
-};
 
 static inline uint8_t *vm_slot_at(const VM *vm, size_t i) { return vm->stack + i * VM_SLOT_SIZE; }
 

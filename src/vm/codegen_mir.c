@@ -144,7 +144,7 @@ bool codegen_mir_supports(const MIRFunction *ir) {
                 break;
 
             case MIR_CALL:
-                if (!block->insts[j].callee) {
+                if (!block->insts[j].callee || function_runs_native(block->insts[j].callee)) {
                     return false;
                 }
                 break;
@@ -864,8 +864,6 @@ static void emit_load(MIREmitter *emitter, const MIRInst *inst) {
 static void emit_call(MIREmitter *emitter, const MIRInst *inst) {
     unsigned int saved = emitter->scratch;
 
-    bool native = inst->callee && function_runs_native(inst->callee);
-
     /* A call yielding nothing still needs its window, but copies no result back out of it. */
     unsigned int returned = inst->type ? slots_of(emitter, inst->type) : 0;
 
@@ -899,7 +897,7 @@ static void emit_call(MIREmitter *emitter, const MIRInst *inst) {
     bool relocates = false;
 
     if (!emitter->numbering ||
-        !emitter->numbering->callee(emitter->numbering->context, inst->callee, native, &index, &relocates)) {
+        !emitter->numbering->callee(emitter->numbering->context, inst->callee, &index, &relocates)) {
         diag_error(emitter->diagnostics, GAB_ERR_CODEGEN, inst->span, "call to a function with no body");
 
         emitter->failed = true;
@@ -909,13 +907,11 @@ static void emit_call(MIREmitter *emitter, const MIRInst *inst) {
         return;
     }
 
-    size_t offset_of_call =
-        chunk_add_instruction(emitter->chunk, VM_ENCODE_I(native ? OP_CALL_EXTERN : OP_CALL, window, index));
+    size_t offset_of_call = chunk_add_instruction(emitter->chunk, VM_ENCODE_I(OP_CALL, window, index));
 
     /* A callee numbered within this unit is only final once linking adds the base it lands at. */
     if (relocates) {
-        emitter->numbering->relocate_callee(emitter->numbering->context, emitter->chunk, offset_of_call,
-                                            native);
+        emitter->numbering->relocate_callee(emitter->numbering->context, emitter->chunk, offset_of_call);
     }
 
     if (returned > 0 && !mir_value_is_none(inst->result)) {

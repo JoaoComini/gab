@@ -8,14 +8,13 @@
 
 #include <stdbool.h>
 
-/* What only the unit can number: a callee's prototype and a boxed type's heap shape. A native callee
- * is numbered in its own table, so 'native' says which one the index belongs to. */
+/* What only the unit can number: a callee's prototype and a boxed type's heap shape. */
 typedef struct {
     void *context;
 
-    bool (*callee)(void *context, struct Function *callee, bool native, unsigned int *index, bool *relocates);
+    bool (*callee)(void *context, struct Function *callee, unsigned int *index, bool *relocates);
 
-    void (*relocate_callee)(void *context, Chunk *chunk, size_t offset, bool native);
+    void (*relocate_callee)(void *context, Chunk *chunk, size_t offset);
 
     /* Interning the shape a box allocates, and recording that its index needs relocating. */
     bool (*heap_shape)(void *context, const Type *type, unsigned int *index);

@@ -1,11 +1,11 @@
 #include "compile.h"
 
-#include "memory/arena.h"
 #include "ast/resolve.h"
+#include "memory/arena.h"
 #include "mir/mir_build.h"
-#include "syntax/parser.h"
 #include "scope.h"
 #include "string/string.h"
+#include "syntax/parser.h"
 #include "vm/codegen.h"
 #include "vm/interp.h"
 #include "vm/link.h"
@@ -105,7 +105,7 @@ static bool compile_unit_with(VM *vm, const char *source, FuncPrototype *out, bo
         return false;
     }
 
-    if (!link_check(&vm->program, unit, vm->env.global_scope.type_registry, diagnostics)) {
+    if (!link_check(&vm->program, unit, diagnostics)) {
         object_file_free(unit);
         arena_destroy(staging_arena);
         return false;

@@ -1,9 +1,7 @@
 #include "vm/link.h"
 
-#include "vm/args.h"
-
-#include "memory/arena.h"
 #include "binding.h"
+#include "memory/arena.h"
 #include "scope.h"
 #include "string/string.h"
 #include "vm/chunk.h"
@@ -41,16 +39,13 @@ void object_file_free(ObjectFile *unit) {
         func_proto_free(unit->prototypes.data[i]);
     }
     func_proto_list_free(&unit->prototypes);
-    extern_proto_list_free(&unit->extern_protos);
     type_list_free(&unit->types);
     heap_shape_list_free(&unit->type_shapes);
     string_list_free(&unit->strings);
     relocation_list_free(&unit->proto_relocations);
-    relocation_list_free(&unit->extern_relocations);
     relocation_list_free(&unit->type_relocations);
     relocation_list_free(&unit->string_relocations);
     proto_binding_list_free(&unit->bindings);
-    extern_request_list_free(&unit->externs);
 
     free(unit);
 }
@@ -77,27 +72,9 @@ static void remap_indices(const RelocationList *relocations, const size_t *index
     }
 }
 
-static GabExternFn find_extern(const Program *program, const Function *function) {
-    for (size_t i = 0; i < program->extern_bindings.size; i++) {
-        const ExternBinding *binding = &program->extern_bindings.data[i];
-
-        if (binding->name == function->decl->name && binding->module == function->decl->module &&
-            binding->owner == function->decl->owner) {
-            return binding->fn;
-        }
-    }
-
-    return NULL;
-}
-
-bool link_check(Program *program, ObjectFile *unit, TypeRegistry *registry, Diagnostics *diagnostics) {
+bool link_check(Program *program, ObjectFile *unit, Diagnostics *diagnostics) {
     if (program->prototypes.size + unit->prototypes.size > VM_MAX_PROTOTYPES) {
         diag_error(diagnostics, GAB_ERR_CODEGEN, (Span){0}, "too many functions in one program");
-        return false;
-    }
-
-    if (program->extern_protos.size + unit->extern_protos.size > VM_MAX_EXTERN_PROTOS) {
-        diag_error(diagnostics, GAB_ERR_CODEGEN, (Span){0}, "too many extern functions in one program");
         return false;
     }
 
@@ -127,77 +104,14 @@ bool link_check(Program *program, ObjectFile *unit, TypeRegistry *registry, Diag
         }
     }
 
-    for (size_t i = 0; i < unit->externs.size; i++) {
-        const ExternRequest *request = &unit->externs.data[i];
-        GabExternFn body = find_extern(program, request->function);
-
-        if (!body) {
-            diag_error(diagnostics, GAB_ERR_CODEGEN, request->span,
-                       "extern function '%s' was never registered", request->function->decl->name->data);
-            return false;
-        }
-
-        const Function *function = request->function;
-
-        size_t *offsets = arena_alloc(unit->arena, function->param_count * sizeof(size_t));
-
-        if (function->param_count && !offsets) {
-            return false;
-        }
-
-        size_t *strides = arena_alloc(unit->arena, function->param_count * sizeof(size_t));
-
-        if (function->param_count && !strides) {
-            return false;
-        }
-
-        unsigned int slot = 1;
-
-        for (size_t p = 0; p < function->param_count; p++) {
-            const Type *param = function->params[p];
-
-            offsets[p] = (size_t)slot * VM_SLOT_SIZE;
-            strides[p] = type_kind(param) == TYPE_ARRAY
-                             ? type_registry_size_of(registry, type_array_element(param))
-                             : 0;
-
-            slot += args_type_slots(registry, param);
-        }
-
-        size_t *type_arg_sizes = arena_alloc(unit->arena, function->type_arg_count * sizeof(size_t));
-
-        if (function->type_arg_count && !type_arg_sizes) {
-            return false;
-        }
-
-        /* A value argument has no width of its own; only a type argument sizes what a body allocates. */
-        for (size_t t = 0; t < function->type_arg_count; t++) {
-            type_arg_sizes[t] = function->type_args[t].kind == TYPE_ARG_TYPE
-                                    ? type_registry_size_of(registry, function->type_args[t].type)
-                                    : 0;
-        }
-
-        ExternProto *proto = &unit->extern_protos.data[request->local_index];
-
-        proto->body = body;
-        proto->param_offsets = offsets;
-        proto->param_strides = strides;
-        proto->type_arg_sizes = type_arg_sizes;
-    }
-
     return true;
 }
 
 void link_install(Program *program, ObjectFile *unit) {
     size_t proto_base = program->prototypes.size;
-    size_t extern_base = program->extern_protos.size;
 
     for (size_t i = 0; i < unit->prototypes.size; i++) {
         func_proto_list_add(&program->prototypes, unit->prototypes.data[i]);
-    }
-
-    for (size_t i = 0; i < unit->extern_protos.size; i++) {
-        extern_proto_list_add(&program->extern_protos, unit->extern_protos.data[i]);
     }
 
     for (size_t i = 0; i < unit->types.size; i++) {
@@ -238,15 +152,12 @@ void link_install(Program *program, ObjectFile *unit) {
     }
 
     relocate(&unit->proto_relocations, proto_base);
-    relocate(&unit->extern_relocations, extern_base);
     remap_indices(&unit->type_relocations, unit->type_map);
     remap_indices(&unit->string_relocations, unit->string_map);
 
     for (size_t i = 0; i < unit->bindings.size; i++) {
         const ProtoBinding *binding = &unit->bindings.data[i];
-        size_t base = function_runs_native(binding->function) ? extern_base : proto_base;
-
-        binding->function->func_index = base + binding->local_index;
+        binding->function->func_index = proto_base + binding->local_index;
     }
 
     /* The program owns the prototypes now, so freeing the unit must not walk them. */

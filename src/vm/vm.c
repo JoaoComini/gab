@@ -67,8 +67,6 @@ static void program_init(Program *program) {
     program->shape_types = type_list_create(DEFAULT_ALLOCATOR);
     program->strings = string_list_create(DEFAULT_ALLOCATOR);
     program->top_levels = top_level_list_create(DEFAULT_ALLOCATOR);
-    program->extern_bindings = extern_binding_list_create(DEFAULT_ALLOCATOR);
-    program->extern_protos = extern_proto_list_create(DEFAULT_ALLOCATOR);
 }
 
 static void program_free(Program *program) {
@@ -79,8 +77,6 @@ static void program_free(Program *program) {
     heap_shape_list_free(&program->heap_shapes);
     type_list_free(&program->shape_types);
     string_list_free(&program->strings);
-    extern_binding_list_free(&program->extern_bindings);
-    extern_proto_list_free(&program->extern_protos);
 
     for (size_t i = 0; i < program->top_levels.size; i++) {
         func_proto_free(&program->top_levels.data[i]);

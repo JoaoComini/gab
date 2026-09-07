@@ -73,7 +73,6 @@ add_library(gab
     src/core/core.c
     src/core/str.c
     src/core/slice.c
-    src/vm/args.c
     src/vm/constant_pool.c
     src/vm/chunk.c
     src/vm/vm.c

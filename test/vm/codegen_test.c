@@ -216,7 +216,7 @@ static void test_a_slice_length_costs_no_call() {
 
     Chunk *body = test_func_chunk(&program, 0);
 
-    assert(test_count_opcode(body, OP_CALL_EXTERN) == 0);
+    assert(test_count_opcode(body, OP_CALL) == 0);
 
     test_program_free(&program);
 }
@@ -662,7 +662,7 @@ static void test_an_array_indexes_without_a_call() {
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
-    assert(test_count_opcode(chunk, OP_CALL_EXTERN) == 0);
+    assert(test_count_opcode(chunk, OP_CALL) == 0);
     assert(test_count_opcode(chunk, OP_BOUNDS_CHECK) == 1);
 
     test_program_free(&program);
@@ -673,7 +673,7 @@ static void test_a_slice_indexes_without_a_call() {
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
-    assert(test_count_opcode(chunk, OP_CALL_EXTERN) == 0);
+    assert(test_count_opcode(chunk, OP_CALL) == 0);
     assert(test_count_opcode(chunk, OP_BOUNDS_CHECK_REG) == 1);
 
     test_program_free(&program);
@@ -684,7 +684,7 @@ static void test_an_array_length_folds_to_a_constant() {
 
     Chunk *chunk = test_func_chunk(&program, 0);
 
-    assert(test_count_opcode(chunk, OP_CALL_EXTERN) == 0);
+    assert(test_count_opcode(chunk, OP_CALL) == 0);
     assert(test_count_opcode(chunk, OP_MOVE) == 0);
 
     assert(chunk->const_pool->count == 1);

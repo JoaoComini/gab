@@ -308,24 +308,6 @@ void vm_fail(VM *vm, VmRunStatus status, const char *message) {
     snprintf(vm->error.message, sizeof(vm->error.message), "%s", message);
 }
 
-bool vm_call_extern(VM *vm, const ExternProto *proto, size_t base) {
-    Args args = {.vm = vm,
-                 .function = proto->function,
-                 .base = base,
-                 .param_offsets = proto->param_offsets,
-                 .param_strides = proto->param_strides,
-                 .type_arg_sizes = proto->type_arg_sizes};
-
-    /* A host body may run the VM again, which moves the pointer its caller is still stepping through. */
-    const Instruction *resume = vm->instruction_pointer;
-
-    proto->body(&args);
-
-    vm->instruction_pointer = resume;
-
-    return vm->error.status == VM_RUN_OK;
-}
-
 static inline bool vm_check_divisor(const uint8_t *regs, VM *vm, Instruction instruction,
                                     const char *zero_message, const char *overflow_message) {
     int32_t divisor = vm_operand2i(regs, instruction);
@@ -632,21 +614,6 @@ static void vm_run_loop(VM *vm) {
 
                 VM_RETRY();
             }
-            VM_CASE(OP_CALL_EXTERN) {
-                unsigned int dest = VM_DECODE_I_RD(instruction);
-                size_t extern_index = VM_DECODE_I_KX(instruction);
-
-                const ExternProto *proto = &vm->program.extern_protos.data[extern_index];
-
-                if (VM_UNLIKELY(!vm_call_extern(
-                        vm, proto, vm->frames[vm->frame_count - 1].base + dest * VM_SLOT_SIZE))) {
-                    vm_unwind(vm);
-
-                    VM_RETRY();
-                }
-
-                VM_NEXT();
-            }
             VM_CASE(OP_RETURN) VM_CASE(OP_RETURN_N) {
                 size_t r1 = VM_DECODE_R_R1(instruction);
                 size_t slots = op == OP_RETURN ? 1 : VM_DECODE_R_R2(instruction);
@@ -917,14 +884,6 @@ VmRunStatus interp_run_frame(VM *vm, const FuncPrototype *proto, size_t base, un
     vm_run_loop(vm);
 
     vm->frame_floor = floor;
-
-    return vm->error.status;
-}
-
-VmRunStatus interp_run_extern(VM *vm, const ExternProto *proto, size_t base) {
-    vm->error = (VmError){.status = VM_RUN_OK};
-
-    vm_call_extern(vm, proto, base);
 
     return vm->error.status;
 }

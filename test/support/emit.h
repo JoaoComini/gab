@@ -64,14 +64,12 @@ static inline TestEmission test_lower_ir_named(const char *source, const char *n
 static inline TestEmission test_lower_ir(const char *source) { return test_lower_ir_named(source, NULL); }
 
 /* Numbers whatever a body names, so an emission test needs no unit to have assigned indices. */
-static inline bool test_any_callee_index(void *context, Function *callee, bool native, unsigned int *index,
+static inline bool test_any_callee_index(void *context, Function *callee, unsigned int *index,
                                          bool *relocates) {
     *relocates = false;
 
     (void)context;
     (void)callee;
-    (void)native;
-
     *index = 0;
 
     return true;
@@ -180,13 +178,10 @@ static inline bool test_unit_heap_shape(void *context, const Type *type, unsigne
     return true;
 }
 
-static inline bool test_callee_index(void *context, Function *callee, bool native, unsigned int *index,
-                                     bool *relocates) {
+static inline bool test_callee_index(void *context, Function *callee, unsigned int *index, bool *relocates) {
     *relocates = false;
 
     TestCallees *callees = (TestCallees *)context;
-
-    (void)native;
 
     for (size_t i = 0; i < callees->count; i++) {
         if (callees->functions[i] == callee) {

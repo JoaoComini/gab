@@ -10,8 +10,8 @@
 #include "type/type.h"
 #include "type/type_layout.h"
 #include "type/type_registry.h"
-#include "vm/args.h"
 #include "vm/interp.h"
+#include "vm/slot.h"
 #include "vm/vm.h"
 
 #include <assert.h>
@@ -551,14 +551,11 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
         }
     }
 
-    bool runs_native = function_runs_native(fn->function);
     size_t func_index = fn->function->func_index;
 
     assert(func_index != FUNCTION_NO_BODY && "a loaded function has a body");
-    assert(func_index < (runs_native ? vm->program.extern_protos.size : vm->program.prototypes.size) &&
-           "an installed index names a body in its own table");
+    assert(func_index < vm->program.prototypes.size && "an installed index names a body in its own table");
 
-    /* A host body may call back in, so this call nests above the frames already running. */
     VmRunStatus saved_status = vm->error.status;
 
     size_t base = vm_live_stack_end(vm);
@@ -570,9 +567,7 @@ GabStatus gab_call(GabVM *handle, GabCall *call, void *ret, GabError *err) {
 
     memcpy(vm->stack + base + VM_SLOT_SIZE, call->args + VM_SLOT_SIZE, fn->arg_slots * VM_SLOT_SIZE);
 
-    VmRunStatus status = runs_native
-                             ? interp_run_extern(vm, &vm->program.extern_protos.data[func_index], base)
-                             : interp_run_frame(vm, vm->program.prototypes.data[func_index], base, 0);
+    VmRunStatus status = interp_run_frame(vm, vm->program.prototypes.data[func_index], base, 0);
 
     /* The nested run reports its failure through 'err', so the caller it returns into keeps running. */
     if (status != VM_RUN_OK) {

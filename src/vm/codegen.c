@@ -93,16 +93,13 @@ bool codegen_generate(ASTUnit *ast, Arena *arena, StringPool *strings, TypeRegis
     }
 
     unit->prototypes = func_proto_list_create(arena_allocator(arena));
-    unit->extern_protos = extern_proto_list_create(arena_allocator(arena));
     unit->types = type_list_create(arena_allocator(arena));
     unit->type_shapes = heap_shape_list_create(arena_allocator(arena));
     unit->strings = string_list_create(arena_allocator(arena));
     unit->proto_relocations = relocation_list_create(arena_allocator(arena));
-    unit->extern_relocations = relocation_list_create(arena_allocator(arena));
     unit->type_relocations = relocation_list_create(arena_allocator(arena));
     unit->string_relocations = relocation_list_create(arena_allocator(arena));
     unit->bindings = proto_binding_list_create(arena_allocator(arena));
-    unit->externs = extern_request_list_create(arena_allocator(arena));
     unit->arena = arena;
 
     CodegenState state = {
@@ -225,18 +222,12 @@ static size_t codegen_reserve_function(CodegenState *state, Function *function) 
 
     assert(function->decl->body_kind != BODY_INTRINSIC && "an intrinsic is lowered, never called");
 
-    if (function_runs_native(function)) {
-        extern_proto_list_add(&state->unit->extern_protos, (ExternProto){0});
+    FuncPrototype *proto = arena_alloc(state->arena, sizeof(FuncPrototype));
+    *proto = (FuncPrototype){0};
 
-        local = state->unit->extern_protos.size - 1;
-    } else {
-        FuncPrototype *proto = arena_alloc(state->arena, sizeof(FuncPrototype));
-        *proto = (FuncPrototype){0};
+    func_proto_list_add(&state->unit->prototypes, proto);
 
-        func_proto_list_add(&state->unit->prototypes, proto);
-
-        local = state->unit->prototypes.size - 1;
-    }
+    local = state->unit->prototypes.size - 1;
 
     proto_map_insert(state->local_protos, function, local);
     proto_binding_list_add(&state->unit->bindings,
@@ -265,19 +256,6 @@ static void codegen_reserve_proto(CodegenState *state, ASTFuncDecl *ast) {
     codegen_reserve_function(state, ast->function);
 }
 
-static const size_t *codegen_reserve_instantiated(CodegenState *state, Function *function, Span span) {
-    size_t local = codegen_reserve_function(state, function);
-
-    assert(function->decl->body_kind == BODY_HOST && "only a host body is reserved as an instance");
-
-    state->unit->extern_protos.data[local] = (ExternProto){.function = function};
-
-    extern_request_list_add(&state->unit->externs,
-                            (ExternRequest){.local_index = local, .function = function, .span = span});
-
-    return proto_map_lookup(state->local_protos, function);
-}
-
 static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
     ASTFuncDecl *ast = &stmt->func_decl;
 
@@ -299,13 +277,8 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
 
     size_t func_index = *local;
 
+    /* A body the linker supplies has no chunk here, so nothing is emitted into its slot. */
     if (ast->function->decl->body_kind == BODY_HOST) {
-        state->unit->extern_protos.data[func_index] = (ExternProto){.function = ast->function};
-
-        extern_request_list_add(
-            &state->unit->externs,
-            (ExternRequest){.local_index = func_index, .function = ast->function, .span = stmt->span});
-
         return;
     }
 
@@ -313,16 +286,10 @@ static void codegen_func_decl_stmt(CodegenState *state, ASTStmt *stmt) {
 }
 
 /* The unit numbers what a lowered body names, which only codegen has assigned an index to. */
-static bool codegen_mir_callee(void *context, Function *callee, bool native, unsigned int *index,
-                               bool *relocates) {
+static bool codegen_mir_callee(void *context, Function *callee, unsigned int *index, bool *relocates) {
     CodegenState *state = (CodegenState *)context;
 
     const size_t *local = proto_map_lookup(state->local_protos, callee);
-
-    /* A gab instance was reserved from what was lowered; only a native one is reserved on demand. */
-    if (!local && callee->func_index == FUNCTION_NO_BODY && function_runs_native(callee)) {
-        local = codegen_reserve_instantiated(state, callee, (Span){0});
-    }
 
     size_t at = local ? *local : callee->func_index;
 
@@ -330,7 +297,7 @@ static bool codegen_mir_callee(void *context, Function *callee, bool native, uns
         return false;
     }
 
-    if (!local && at > (native ? VM_MAX_EXTERN_PROTOS : VM_MAX_PROTOTYPES)) {
+    if (!local && at > VM_MAX_PROTOTYPES) {
         return false;
     }
 
@@ -340,11 +307,10 @@ static bool codegen_mir_callee(void *context, Function *callee, bool native, uns
     return true;
 }
 
-static void codegen_mir_relocate_callee(void *context, Chunk *chunk, size_t offset, bool native) {
+static void codegen_mir_relocate_callee(void *context, Chunk *chunk, size_t offset) {
     CodegenState *state = (CodegenState *)context;
 
-    relocation_list_add(native ? &state->unit->extern_relocations : &state->unit->proto_relocations,
-                        (Relocation){.chunk = chunk, .offset = offset});
+    relocation_list_add(&state->unit->proto_relocations, (Relocation){.chunk = chunk, .offset = offset});
 }
 
 static bool codegen_mir_heap_shape(void *context, const Type *type, unsigned int *index) {

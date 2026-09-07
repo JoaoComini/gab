@@ -64,8 +64,6 @@ typedef enum {
     OP_JMP_IF_TRUE,
     OP_CALL,
 
-    OP_CALL_EXTERN,
-
     OP_BOX,
 
     OP_NULL,
@@ -148,8 +146,6 @@ typedef enum {
 #define VM_MAX_REGISTERS ((1 << 8) - 1)
 
 #define VM_MAX_PROTOTYPES VM_MAX_CONSTANTS
-
-#define VM_MAX_EXTERN_PROTOS VM_MAX_CONSTANTS
 
 #define VM_MAX_HEAP_TYPES VM_MAX_CONSTANTS
 #define VM_MAX_STRINGS VM_MAX_CONSTANTS

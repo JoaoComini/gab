@@ -246,7 +246,7 @@ static void test_checking_a_unit_installs_nothing() {
     assert(codegen_generate(ast, vm->env.arena, &vm->env.strings, staging.type_registry, mir_unit, &unit,
                             &diagnostics));
 
-    assert(link_check(&vm->program, unit, staging.type_registry, &diagnostics));
+    assert(link_check(&vm->program, unit, &diagnostics));
 
     assert(loaded_protos(vm) == protos);
     assert(vm->program.heap_shapes.size == types);
