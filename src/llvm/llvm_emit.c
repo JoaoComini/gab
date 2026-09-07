@@ -743,6 +743,37 @@ struct LLVMUnit {
     Arena *arena;
 };
 
+void llvm_unit_declares(LLVMUnit *unit, const char *symbol) {
+    LLVMTypeRef byte = LLVMInt8TypeInContext(unit->context);
+    LLVMValueRef global = LLVMAddGlobal(unit->module, byte, symbol);
+
+    LLVMSetInitializer(global, LLVMConstInt(byte, 0, false));
+    LLVMSetLinkage(global, LLVMExternalLinkage);
+}
+
+void llvm_unit_requires(LLVMUnit *unit, const char *symbol) {
+    LLVMTypeRef byte = LLVMInt8TypeInContext(unit->context);
+
+    /* Referenced from a global rather than a body, so nothing needs to run for the link to check it. */
+    LLVMValueRef required = LLVMAddGlobal(unit->module, byte, symbol);
+
+    LLVMSetLinkage(required, LLVMExternalLinkage);
+
+    LLVMTypeRef pointer = LLVMPointerTypeInContext(unit->context, 0);
+
+    char name[512];
+    snprintf(name, sizeof(name), "%s.needed", symbol);
+
+    LLVMValueRef anchor = LLVMAddGlobal(unit->module, pointer, name);
+
+    LLVMSetInitializer(anchor, required);
+    LLVMSetLinkage(anchor, LLVMInternalLinkage);
+    LLVMSetGlobalConstant(anchor, true);
+
+    /* Kept though nothing reads it, so the reference survives to the link. */
+    LLVMSetSection(anchor, ".gab.imports");
+}
+
 LLVMUnit *llvm_unit_open(Arena *arena) {
     LLVMUnit *unit = arena_alloc(arena, sizeof(LLVMUnit));
 

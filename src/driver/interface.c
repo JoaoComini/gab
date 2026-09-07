@@ -216,6 +216,31 @@ static void print_stmt(FILE *out, const ASTStmt *stmt) {
     }
 }
 
+/* The declarations hashed, and never the digest line itself: what a reader compiles is what is hashed. */
+uint64_t gab_interface_digest(const char *text) {
+    uint64_t hash = 1469598103934665603u;
+
+    for (const char *at = text; *at; at++) {
+        if (*at == '/' && at[1] == '/') {
+            while (*at && *at != '\n') {
+                at++;
+            }
+
+            if (!*at) {
+                break;
+            }
+        }
+
+        hash = (hash ^ (unsigned char)*at) * 1099511628211u;
+    }
+
+    return hash;
+}
+
+void gab_interface_symbol(char *out, size_t capacity, const char *module, uint64_t digest) {
+    snprintf(out, capacity, "gab.iface.%s.%016llx", module, (unsigned long long)digest);
+}
+
 bool gab_interface_write(const ASTUnit *unit, const char *path) {
     FILE *out = fopen(path, "w");
 

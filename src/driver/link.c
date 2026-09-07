@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 const char *gab_libdir(void) {
@@ -57,6 +58,51 @@ static bool write_entry(const char *path, const char *module) {
     return true;
 }
 
+static bool readable(const char *path) {
+    FILE *file = fopen(path, "rb");
+
+    if (!file) {
+        return false;
+    }
+
+    fclose(file);
+
+    return true;
+}
+
+bool gab_find_interface(const GabSearchPath *path, const char *module, char *out, size_t capacity) {
+    for (size_t i = 0; i < path->count; i++) {
+        snprintf(out, capacity, "%s/%s.gabi", path->directories[i], module);
+
+        if (readable(out)) {
+            return true;
+        }
+    }
+
+    if (path->source_directory) {
+        snprintf(out, capacity, "%s/%s.gabi", path->source_directory, module);
+
+        if (readable(out)) {
+            return true;
+        }
+    }
+
+    snprintf(out, capacity, "%s/%s.gabi", gab_libdir(), module);
+
+    return readable(out);
+}
+
+void gab_object_beside(const char *interface, char *out, size_t capacity) {
+    size_t length = strlen(interface);
+
+    /* '.gabi' is what the interface ends with, and '.o' is what the object beside it ends with. */
+    if (length > 5 && strcmp(interface + length - 5, ".gabi") == 0) {
+        length -= 5;
+    }
+
+    snprintf(out, capacity, "%.*s.o", (int)length, interface);
+}
+
 bool gab_link(const char *object, const char *module, const char *const *extra, size_t extra_count,
               const char *binary) {
     const char *cc = getenv("GABC_CC");
@@ -99,5 +145,46 @@ bool gab_link(const char *object, const char *module, const char *const *extra, 
     snprintf(command + length, sizeof(command) - length, " %s/libcore.a %s/libgab_runtime.a %s -o %s", libdir,
              libdir, flags ? flags : "", binary);
 
-    return system(command) == 0;
+    /* The linker's report of a missing interface symbol names a digest, which says nothing on its own. */
+    char captured[512];
+    snprintf(captured, sizeof(captured), "%s/gab.link.%d", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp",
+             (int)getpid());
+
+    size_t at = strlen(command);
+    snprintf(command + at, sizeof(command) - at, " 2>%s", captured);
+
+    bool linked = system(command) == 0;
+
+    FILE *report = fopen(captured, "r");
+
+    if (report) {
+        char line[1024];
+        bool stale = false;
+
+        while (fgets(line, sizeof(line), report)) {
+            char *marker = strstr(line, "gab.iface.");
+
+            if (!marker) {
+                fputs(line, stderr);
+                continue;
+            }
+
+            char module[128];
+
+            if (sscanf(marker, "gab.iface.%127[^.]", module) == 1) {
+                fprintf(stderr,
+                        "the interface for '%s' is not the one its object was compiled from: "
+                        "recompile them together\n",
+                        module);
+                stale = true;
+            }
+        }
+
+        fclose(report);
+        remove(captured);
+
+        (void)stale;
+    }
+
+    return linked;
 }

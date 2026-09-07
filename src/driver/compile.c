@@ -116,37 +116,59 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
 
     /* Each import is its own compilation: its declarations land in a scope of their own, which the
      * unit then names, so a symbol keeps the module that defines it rather than taking this one's. */
-    for (size_t i = 0; ok && i < request->import_count; i++) {
-        const char *spec = request->imports[i];
-        const char *equals = strchr(spec, '=');
+    ASTUnit *declaring = NULL;
 
-        if (!equals) {
-            diag_error(diagnostics, GAB_ERR_NAME, (Span){0, 0},
-                       "an import is written '<module>=<path.gabi>', not '%s'", spec);
-            ok = false;
-            break;
-        }
+    if (ok && !request->is_core && parse_unit(request->source, arena, &strings, &declaring, diagnostics)) {
+        GabSearchPath path = {.directories = request->search,
+                              .count = request->search_count,
+                              .source_directory = request->source_directory};
 
-        char *text = gab_interface_read(equals + 1);
+        for (size_t i = 0; ok && i < declaring->imports.size; i++) {
+            StringRef named = declaring->imports.data[i].name;
 
-        if (!text) {
-            diag_error(diagnostics, GAB_ERR_NAME, (Span){0, 0}, "no interface at %s", equals + 1);
-            ok = false;
-            break;
-        }
+            char module[128];
+            snprintf(module, sizeof(module), "%.*s", (int)named.length, named.data);
 
-        /* A module of its own, sharing the type registry so its 'i32' is this compilation's 'i32'. */
-        Scope *imported = arena_alloc(arena, sizeof(Scope));
-        scope_init_module(imported, arena, &strings, scope);
+            char found[512];
 
-        ok = compile_unit(arena, &strings, imported, NULL, text, true, NULL, diagnostics, NULL, 0, NULL);
+            if (!gab_find_interface(&path, module, found, sizeof(found))) {
+                diag_error(diagnostics, GAB_ERR_NAME, declaring->imports.data[i].span,
+                           "no interface for '%s' on the search path", module);
+                ok = false;
+                break;
+            }
 
-        free(text);
+            char *text = gab_interface_read(found);
 
-        if (ok) {
-            StringRef name = {.data = spec, .length = (size_t)(equals - spec)};
+            if (!text) {
+                diag_error(diagnostics, GAB_ERR_NAME, declaring->imports.data[i].span,
+                           "the interface for '%s' could not be read", module);
+                ok = false;
+                break;
+            }
 
-            module_scope_map_insert(modules, string_from_ref(&strings, name), imported);
+            Scope *imported = arena_alloc(arena, sizeof(Scope));
+            scope_init_module(imported, arena, &strings, scope);
+
+            ok = compile_unit(arena, &strings, imported, NULL, text, true, NULL, diagnostics, NULL, 0, NULL);
+
+            if (ok) {
+                module_scope_map_insert(modules, string_from_cstr(&strings, module), imported);
+
+                char symbol[512];
+                gab_interface_symbol(symbol, sizeof(symbol), module, gab_interface_digest(text));
+
+                llvm_unit_requires(unit, symbol);
+
+                /* The object beside it is what the link needs, which the caller could not have known. */
+                if (request->resolved_count < 8) {
+                    gab_object_beside(found, request->resolved[request->resolved_count],
+                                      sizeof(request->resolved[0]));
+                    request->resolved_count++;
+                }
+            }
+
+            free(text);
         }
     }
 
@@ -160,6 +182,23 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
 
         if (!ok) {
             diag_error(diagnostics, GAB_ERR_CODEGEN, (Span){0, 0}, "could not write %s", request->interface);
+        }
+
+        /* The object states the interface just written, which its importers require by the same name. */
+        char *written = ok ? gab_interface_read(request->interface) : NULL;
+
+        if (written) {
+            const ASTUnit *ast = request->is_core ? core_ast : unit_ast;
+
+            char module[128];
+            snprintf(module, sizeof(module), "%.*s", (int)ast->module_name.length, ast->module_name.data);
+
+            char symbol[512];
+            gab_interface_symbol(symbol, sizeof(symbol), module, gab_interface_digest(written));
+
+            llvm_unit_declares(unit, symbol);
+
+            free(written);
         }
     }
 

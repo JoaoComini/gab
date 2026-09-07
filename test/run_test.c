@@ -56,8 +56,8 @@ static int run_file(const char *directory, const char *name) {
     snprintf(binary, sizeof(binary), "%s/%s.run", GAB_TEST_SCRATCH, name);
 
     char command[2048];
-    snprintf(command, sizeof(command), "%s -o %s %s --import check=%s/prelude.gabi %s/prelude.o %s",
-             GAB_TEST_COMPILER, binary, path, GAB_TEST_SCRATCH, GAB_TEST_SCRATCH, GAB_TEST_HARNESS);
+    snprintf(command, sizeof(command), "%s -o %s %s -L %s %s", GAB_TEST_COMPILER, binary, path,
+             GAB_TEST_SCRATCH, GAB_TEST_HARNESS);
 
     int failed = system(command) != 0;
 
@@ -92,7 +92,7 @@ static int run_file(const char *directory, const char *name) {
 /* The checks every case calls, compiled once into a module each case imports. */
 static int write_prelude(const char *directory) {
     char command[2048];
-    snprintf(command, sizeof(command), "%s -c -o %s/prelude.o %s/prelude.gab", GAB_TEST_COMPILER,
+    snprintf(command, sizeof(command), "%s -c -o %s/check.o %s/prelude.gab", GAB_TEST_COMPILER,
              GAB_TEST_SCRATCH, directory);
 
     return system(command) != 0;

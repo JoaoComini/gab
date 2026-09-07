@@ -3,6 +3,8 @@
 
 #include "diagnostics.h"
 
+#include <stddef.h>
+
 #include <stdbool.h>
 
 /* One compilation: source text in, a native object out. The core is compiled by the same call that
@@ -23,9 +25,16 @@ typedef struct {
     /* The module the source named, which the entry point a link writes must call into. */
     char module_name[64];
 
-    /* Each '<module>=<path.gabi>' this compilation may import, whose declarations it resolves against. */
-    const char *const *imports;
-    size_t import_count;
+    /* The directory holding the source, which an interface is looked for in before the compiler's own. */
+    const char *source_directory;
+
+    /* Where an interface the source imports is looked for, before the source's own directory. */
+    const char *const *search;
+    size_t search_count;
+
+    /* Filled with the object beside each interface an import resolved to, which the link then needs. */
+    char resolved[8][512];
+    size_t resolved_count;
 } GabCompile;
 
 /* False where the source does not compile, having reported why to 'diagnostics'. */

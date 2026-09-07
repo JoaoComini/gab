@@ -11,6 +11,12 @@ LLVMUnit *llvm_unit_open(Arena *arena);
 
 void llvm_unit_add(LLVMUnit *unit, const MIRFunction *ir);
 
+/* States that this unit is the named interface: a byte the linker resolves against its importers. */
+void llvm_unit_declares(LLVMUnit *unit, const char *symbol);
+
+/* States that this unit was compiled against one, which links only where that interface defined it. */
+void llvm_unit_requires(LLVMUnit *unit, const char *symbol);
+
 /* The module as IR text, arena-allocated and NUL-terminated. */
 char *llvm_unit_text(LLVMUnit *unit);
 

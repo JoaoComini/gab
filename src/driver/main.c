@@ -27,8 +27,7 @@ static char *read_file(const char *path) {
 }
 
 static int usage(void) {
-    fprintf(stderr, "usage: gabc [--core] [-c] [--import <module>=<path.gabi>] -o <output> "
-                    "[<source.gab>]\n");
+    fprintf(stderr, "usage: gabc [--core] [-c] [-L <dir>] -o <output> [<source.gab>]\n");
     return 2;
 }
 
@@ -37,8 +36,8 @@ int main(int argc, char **argv) {
     const char *path = NULL;
     const char *extra[16];
     size_t extra_count = 0;
-    const char *imports[16];
-    size_t import_count = 0;
+    const char *search[16];
+    size_t search_count = 0;
     bool is_core = false;
     bool compile_only = false;
 
@@ -47,8 +46,8 @@ int main(int argc, char **argv) {
             is_core = true;
         } else if (strcmp(argv[i], "-c") == 0) {
             compile_only = true;
-        } else if (strcmp(argv[i], "--import") == 0 && i + 1 < argc && import_count < 16) {
-            imports[import_count++] = argv[++i];
+        } else if (strcmp(argv[i], "-L") == 0 && i + 1 < argc && search_count < 16) {
+            search[search_count++] = argv[++i];
         } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             output = argv[++i];
         } else if (argv[i][0] == '-') {
@@ -80,6 +79,16 @@ int main(int argc, char **argv) {
         }
     }
 
+    char directory[512] = ".";
+
+    if (path) {
+        const char *slash = strrchr(path, '/');
+
+        if (slash) {
+            snprintf(directory, sizeof(directory), "%.*s", (int)(slash - path), path);
+        }
+    }
+
     Arena *arena = arena_create(4096);
 
     Diagnostics diagnostics;
@@ -108,8 +117,9 @@ int main(int argc, char **argv) {
         .object = compile_only ? output : scratch,
         .interface = interface[0] ? interface : NULL,
         .is_core = is_core,
-        .imports = imports,
-        .import_count = import_count,
+        .search = search,
+        .search_count = search_count,
+        .source_directory = directory,
     };
 
     bool ok = gab_compile(&request, &diagnostics);
@@ -119,6 +129,10 @@ int main(int argc, char **argv) {
     }
 
     if (ok && !compile_only) {
+        for (size_t i = 0; i < request.resolved_count && extra_count < 16; i++) {
+            extra[extra_count++] = request.resolved[i];
+        }
+
         ok = gab_link(request.object, request.module_name, extra, extra_count, output);
 
         if (!ok) {
