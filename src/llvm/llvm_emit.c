@@ -6,15 +6,21 @@
 #include <assert.h>
 #include <string.h>
 
+#define GAB_MAX_STRUCT_FIELDS 64
+
 typedef struct {
     LLVMContextRef context;
     LLVMModuleRef module;
     LLVMBuilderRef builder;
 
     const MIRFunction *ir;
+    TypeRegistry *registry;
 
     /* What each virtual register holds, indexed by its id. */
     LLVMValueRef *values;
+
+    /* What a slot's storage holds, which a GEP must be given rather than infer from a pointer. */
+    LLVMTypeRef *value_types;
 
     LLVMBasicBlockRef *blocks;
 } LLVMEmitter;
@@ -31,11 +37,71 @@ static LLVMTypeRef llvm_type_of(LLVMEmitter *emitter, const Type *type) {
         return LLVMInt1TypeInContext(emitter->context);
     case TYPE_U8:
         return LLVMInt8TypeInContext(emitter->context);
+
+    case TYPE_BOX:
+    case TYPE_PTR:
+    case TYPE_REF:
+        return LLVMPointerTypeInContext(emitter->context, 0);
+
+    case TYPE_ARRAY:
+        return LLVMArrayType(llvm_type_of(emitter, type_array_element(type)),
+                             (unsigned)type_array_length(type));
+
+    case TYPE_STRUCT: {
+        const TypeFields *fields = type_registry_fields_of(emitter->registry, type);
+
+        LLVMTypeRef members[GAB_MAX_STRUCT_FIELDS];
+
+        for (size_t i = 0; i < fields->count && i < GAB_MAX_STRUCT_FIELDS; i++) {
+            members[i] = llvm_type_of(emitter, fields->fields[i].type);
+        }
+
+        return LLVMStructTypeInContext(emitter->context, members, (unsigned)fields->count, false);
+    }
+
     default:
         return LLVMInt32TypeInContext(emitter->context);
     }
 }
 
+/* The address a place names, walked from its base through each projection. */
+static LLVMValueRef place_address(LLVMEmitter *emitter, const Place *place, LLVMTypeRef *out_type) {
+    LLVMValueRef address = emitter->values[place->base.id];
+    LLVMTypeRef type = emitter->value_types[place->base.id];
+
+    for (size_t i = 0; i < place->projection_count; i++) {
+        const Projection *projection = &place->projections[i];
+
+        switch (projection->kind) {
+        case PROJ_FIELD:
+            address = LLVMBuildStructGEP2(emitter->builder, type, address, projection->field.id, "");
+            break;
+
+        case PROJ_DEREF:
+            address =
+                LLVMBuildLoad2(emitter->builder, LLVMPointerTypeInContext(emitter->context, 0), address, "");
+            break;
+
+        case PROJ_INDEX: {
+            LLVMValueRef indices[2] = {
+                LLVMConstInt(LLVMInt32TypeInContext(emitter->context), 0, false),
+                emitter->values[projection->index.id],
+            };
+
+            address = LLVMBuildGEP2(emitter->builder, type, address, indices, 2, "");
+            break;
+        }
+        }
+
+        type = llvm_type_of(emitter, projection->type);
+    }
+
+    *out_type = type;
+
+    return address;
+}
+
+/* A local is storage, so reading one as a value loads through it; every other register is the value. */
 static LLVMValueRef operand_value(LLVMEmitter *emitter, MIROperand operand) {
     if (operand.kind == OPERAND_CONST) {
         LLVMTypeRef type = llvm_type_of(emitter, operand.constant.type);
@@ -45,6 +111,12 @@ static LLVMValueRef operand_value(LLVMEmitter *emitter, MIROperand operand) {
         }
 
         return LLVMConstInt(type, (unsigned long long)operand.constant.as_int, true);
+    }
+
+    LLVMTypeRef held = emitter->value_types[operand.value.id];
+
+    if (held) {
+        return LLVMBuildLoad2(emitter->builder, held, emitter->values[operand.value.id], "");
     }
 
     return emitter->values[operand.value.id];
@@ -188,6 +260,44 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         values[inst->result.id] = operand_value(emitter, inst->args[0]);
         break;
 
+    case MIR_STORAGE_LIVE: {
+        const MIRValueInfo *info = mir_value_info(emitter->ir, inst->place.base);
+
+        LLVMTypeRef held = llvm_type_of(emitter, info ? info->type : NULL);
+
+        emitter->value_types[inst->place.base.id] = held;
+        values[inst->place.base.id] = LLVMBuildAlloca(builder, held, "");
+        break;
+    }
+
+    /* A slot's storage ends with its frame, so nothing is emitted for it here. */
+    case MIR_STORAGE_DEAD:
+    case MIR_STORAGE_INIT:
+        break;
+
+    case MIR_STORE: {
+        LLVMTypeRef held;
+        LLVMValueRef address = place_address(emitter, &inst->place, &held);
+
+        LLVMBuildStore(builder, operand_value(emitter, inst->args[0]), address);
+        break;
+    }
+
+    case MIR_LOAD: {
+        LLVMTypeRef held;
+        LLVMValueRef address = place_address(emitter, &inst->place, &held);
+
+        values[inst->result.id] = LLVMBuildLoad2(builder, llvm_type_of(emitter, inst->type), address, "");
+        break;
+    }
+
+    case MIR_REF: {
+        LLVMTypeRef held;
+
+        values[inst->result.id] = place_address(emitter, &inst->place, &held);
+        break;
+    }
+
     case MIR_JMP:
         LLVMBuildBr(builder, emitter->blocks[inst->targets[0].id]);
         break;
@@ -216,13 +326,17 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
 }
 
 char *llvm_emit_function(Arena *arena, const MIRFunction *ir) {
-    LLVMEmitter emitter = {.ir = ir};
+    LLVMEmitter emitter = {.ir = ir, .registry = ir->registry};
 
     emitter.context = LLVMContextCreate();
     emitter.module = LLVMModuleCreateWithNameInContext("gab", emitter.context);
     emitter.builder = LLVMCreateBuilderInContext(emitter.context);
 
     emitter.values = arena_alloc(arena, (ir->value_count + 1) * sizeof(LLVMValueRef));
+    emitter.value_types = arena_alloc(arena, (ir->value_count + 1) * sizeof(LLVMTypeRef));
+
+    /* A null entry is what says a register holds its value rather than storage for one. */
+    memset(emitter.value_types, 0, (ir->value_count + 1) * sizeof(LLVMTypeRef));
     emitter.blocks = arena_alloc(arena, (ir->block_count + 1) * sizeof(LLVMBasicBlockRef));
 
     LLVMTypeRef *params = arena_alloc(arena, (ir->param_count + 1) * sizeof(LLVMTypeRef));

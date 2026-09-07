@@ -96,8 +96,44 @@ static void a_branch_names_both_of_its_blocks(void) {
     test_emission_free(&emission);
 }
 
+static void a_local_is_a_stack_slot(void) {
+    TestEmission emission;
+    char *text = emitted(&emission, "func f(): i32 { let a: i32 = 1; return a; }\n");
+
+    assert(strstr(text, "alloca i32"));
+    assert(strstr(text, "store i32"));
+    assert(strstr(text, "load i32"));
+
+    test_emission_free(&emission);
+}
+
+static void a_field_is_reached_by_its_index(void) {
+    TestEmission emission;
+    char *text = emitted(&emission, "struct P { x: i32, y: i32 }\n"
+                                    "func f(): i32 { let p = P { x: 1, y: 2 }; return p.y; }\n");
+
+    assert(strstr(text, "alloca"));
+    assert(strstr(text, "getelementptr"));
+    assert(strstr(text, "i32 0, i32 1"));
+
+    test_emission_free(&emission);
+}
+
+static void a_struct_names_its_fields_in_order(void) {
+    TestEmission emission;
+    char *text = emitted(&emission, "struct P { x: i32, y: f32 }\n"
+                                    "func f(): f32 { let p = P { x: 1, y: 2.0 }; return p.y; }\n");
+
+    assert(strstr(text, "{ i32, float }"));
+
+    test_emission_free(&emission);
+}
+
 int main(void) {
     a_body_becomes_a_function_of_its_signature();
+    a_local_is_a_stack_slot();
+    a_field_is_reached_by_its_index();
+    a_struct_names_its_fields_in_order();
     a_float_body_names_the_float_type();
     each_arithmetic_operator_names_its_instruction();
     a_comparison_names_its_predicate();
