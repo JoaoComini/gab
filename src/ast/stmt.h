@@ -1,10 +1,10 @@
 #ifndef GAB_AST_STMT_H
 #define GAB_AST_STMT_H
 
-#include "memory/arena.h"
 #include "ast/expr.h"
 #include "ast/type_expr.h"
 #include "binding.h"
+#include "memory/arena.h"
 #include "string/string_ref.h"
 #include "type/type.h"
 #include "util/list.h"
@@ -73,6 +73,9 @@ typedef struct {
 
     /* Set when the declaration is 'intrinsic', so no body is written and none is bound. */
     bool is_intrinsic;
+
+    /* Declared 'extern "C"', so its symbol is spelled as written rather than mangled. */
+    bool is_foreign;
 
     bool declared;
 } ASTFuncDecl;

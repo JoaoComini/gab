@@ -47,6 +47,9 @@ typedef struct FuncDecl {
 
     BodyKind body_kind;
 
+    /* Declared 'extern "C"': its symbol is what the declaration spells, so a C body links to it. */
+    bool is_foreign;
+
     /* The declaration an instance substitutes, whose lowered body the unit holds; null for a host body. */
     struct Function *generic;
 

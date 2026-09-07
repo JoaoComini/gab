@@ -8,6 +8,7 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -844,7 +845,27 @@ static ASTStmt *parse_func_decl_stmt_inner(Parser *parser, bool signature_only) 
     bool is_intrinsic = parser->current.type == TOKEN_INTRINSIC;
     bool is_extern = signature_only || is_intrinsic || parser->current.type == TOKEN_EXTERN;
 
-    if (is_extern && !signature_only) {
+    bool is_foreign = false;
+
+    /* 'extern "C"' names a symbol spelled exactly as written, which is what links against C. */
+    if (parser->current.type == TOKEN_EXTERN) {
+        parser_next_token(parser);
+
+        if (parser->current.type == TOKEN_STRING) {
+            if (strcmp(parser->current.value.as_string->data, "C") != 0) {
+                parser_error(parser, "the only foreign ABI is \"C\"");
+                return NULL;
+            }
+
+            is_foreign = true;
+
+            parser_next_token(parser);
+        }
+
+        if (!parser_expect(parser, TOKEN_FUNC, "expected 'func' after 'extern'")) {
+            return NULL;
+        }
+    } else if (is_extern && !signature_only) {
         const char *after =
             is_intrinsic ? "expected 'func' after 'intrinsic'" : "expected 'func' after 'extern'";
 
@@ -935,6 +956,7 @@ static ASTStmt *parse_func_decl_stmt_inner(Parser *parser, bool signature_only) 
             ast_func_decl_stmt_create(parser->arena, span, func_name, func_type, func_params, NULL);
 
         decl->func_decl.is_intrinsic = is_intrinsic;
+        decl->func_decl.is_foreign = is_foreign;
 
         func_decl_take_type_params(decl, &type_params, bounds);
 

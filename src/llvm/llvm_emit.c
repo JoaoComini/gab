@@ -1,5 +1,7 @@
 #include "llvm/llvm_emit.h"
 
+#include "llvm/llvm_symbol.h"
+
 #include <llvm-c/Analysis.h>
 #include <llvm-c/Core.h>
 
@@ -16,6 +18,7 @@ typedef struct {
 
     const MIRFunction *ir;
     TypeRegistry *registry;
+    Arena *arena;
 
     /* What each virtual register holds, indexed by its id. */
     LLVMValueRef *values;
@@ -194,7 +197,7 @@ static LLVMTypeRef callee_signature(LLVMEmitter *emitter, const Function *callee
 
 /* A callee is declared once per module, and the linker is what resolves one with no body here. */
 static LLVMValueRef callee_value(LLVMEmitter *emitter, const Function *callee, LLVMTypeRef *out_signature) {
-    const char *name = callee->decl->name->data;
+    const char *name = llvm_symbol_of(emitter->arena, callee);
 
     *out_signature = callee_signature(emitter, callee);
 
@@ -376,7 +379,7 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
 }
 
 char *llvm_emit_function(Arena *arena, const MIRFunction *ir) {
-    LLVMEmitter emitter = {.ir = ir, .registry = ir->registry};
+    LLVMEmitter emitter = {.ir = ir, .registry = ir->registry, .arena = arena};
 
     emitter.context = LLVMContextCreate();
     emitter.module = LLVMModuleCreateWithNameInContext("gab", emitter.context);
@@ -398,7 +401,7 @@ char *llvm_emit_function(Arena *arena, const MIRFunction *ir) {
     LLVMTypeRef signature = LLVMFunctionType(llvm_type_of(&emitter, ir->function->return_type), params,
                                              (unsigned)ir->param_count, false);
 
-    LLVMValueRef function = LLVMAddFunction(emitter.module, ir->function->decl->name->data, signature);
+    LLVMValueRef function = LLVMAddFunction(emitter.module, llvm_symbol_of(arena, ir->function), signature);
 
     for (size_t i = 0; i < ir->param_count; i++) {
         emitter.values[ir->params[i].id] = LLVMGetParam(function, (unsigned)i);

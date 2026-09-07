@@ -2484,8 +2484,9 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
     FuncDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(FuncDecl));
     *decl = (FuncDecl){
         .name = name,
-        .module = is_host && !stmt->func_decl.is_intrinsic ? state->module_name : NULL,
-        .owner = is_host && !stmt->func_decl.is_intrinsic ? type_name_of(owner) : NULL,
+        .module = stmt->func_decl.is_intrinsic ? NULL : state->module_name,
+        .owner = stmt->func_decl.is_intrinsic ? NULL : type_name_of(owner),
+        .is_foreign = stmt->func_decl.is_foreign,
         .body_kind = stmt->func_decl.is_intrinsic ? BODY_INTRINSIC
                      : is_host                    ? BODY_HOST
                                                   : BODY_GAB,
@@ -2977,9 +2978,11 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
                           : stmt->func_decl.body == NULL ? BODY_HOST
                                                          : BODY_GAB;
 
+        decl->module = state->module_name;
+        decl->is_foreign = stmt->func_decl.is_foreign;
+
         if (decl->body_kind == BODY_HOST) {
             decl->name = resolver_intern(state, func_name);
-            decl->module = state->module_name;
         }
     }
 

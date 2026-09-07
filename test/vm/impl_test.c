@@ -166,7 +166,13 @@ static void test_an_impl_binds_its_type_parameters_for_every_member() {
                         "let r: i32 = main();") == 7);
 }
 
+static void test_the_only_foreign_abi_is_c() {
+    assert(test_compiles("extern \"C\" func host(a: i32): i32;\n"));
+    assert(!test_compiles("extern \"fortran\" func host(a: i32): i32;\n"));
+}
+
 int main(void) {
+    test_the_only_foreign_abi_is_c();
     test_an_impl_block_owns_its_members();
     test_an_impl_member_is_not_a_module_level_name();
     test_an_impl_block_holds_more_than_one_member();

@@ -21,7 +21,7 @@ static void a_body_becomes_a_function_of_its_signature(void) {
     TestEmission emission;
     char *text = emitted(&emission, "func add(a: i32, b: i32): i32 { return a + b; }\n");
 
-    assert(strstr(text, "define i32 @add(i32 %0, i32 %1)"));
+    assert(strstr(text, "define i32 @test.add(i32 %0, i32 %1)"));
     assert(strstr(text, "add i32"));
     assert(strstr(text, "ret i32"));
 
@@ -32,7 +32,7 @@ static void a_float_body_names_the_float_type(void) {
     TestEmission emission;
     char *text = emitted(&emission, "func scale(a: f32): f32 { return a * 2.0; }\n");
 
-    assert(strstr(text, "define float @scale(float %0)"));
+    assert(strstr(text, "define float @test.scale(float %0)"));
     assert(strstr(text, "fmul float"));
 
     test_emission_free(&emission);
@@ -141,7 +141,7 @@ static void a_call_names_the_function_it_reaches(void) {
                                "func other(): i32 { return 3; }\n"
                                "func f(): i32 { return other(); }\n",
                                "f");
-    assert(strstr(text, "call i32 @other()"));
+    assert(strstr(text, "call i32 @test.other()"));
 
     test_emission_free(&emission);
 }
@@ -153,7 +153,7 @@ static void a_call_passes_its_arguments_in_order(void) {
                                "func f(): i32 { return sub(9, 4); }\n",
                                "f");
 
-    assert(strstr(text, "call i32 @sub(i32 9, i32 4)"));
+    assert(strstr(text, "call i32 @test.sub(i32 9, i32 4)"));
 
     test_emission_free(&emission);
 }
@@ -161,7 +161,7 @@ static void a_call_passes_its_arguments_in_order(void) {
 static void a_body_elsewhere_is_declared_rather_than_defined(void) {
     TestEmission emission;
     char *text = emitted_named(&emission,
-                               "extern func host(a: i32): i32;\n"
+                               "extern \"C\" func host(a: i32): i32;\n"
                                "func f(): i32 { return host(7); }\n",
                                "f");
 
@@ -176,12 +176,27 @@ static void a_method_body_elsewhere_is_declared_too(void) {
     char *text = emitted_named(&emission,
                                "struct Grid { n: i32 }\n"
                                "impl Grid {\n"
-                               "    extern func width(self: &Self): i32;\n"
+                               "    extern \"C\" func width(self: &Self): i32;\n"
                                "}\n"
                                "func f(g: &Grid): i32 { return g.width(); }\n",
                                "f");
 
     assert(strstr(text, "declare i32 @width(ptr)"));
+
+    test_emission_free(&emission);
+}
+
+static void a_generic_instance_names_what_it_was_given(void) {
+    TestEmission emission;
+    char *text = emitted_named(&emission,
+                               "struct Holder<T> { value: T }\n"
+                               "impl<T> Holder<T> {\n"
+                               "    func get(self: &Self): T { return self.value; }\n"
+                               "}\n"
+                               "func f(h: &Holder<i32>): i32 { return h.get(); }\n",
+                               "f");
+
+    assert(strstr(text, "@\"test.Holder$i32.get\""));
 
     test_emission_free(&emission);
 }
@@ -193,6 +208,7 @@ int main(void) {
     a_call_passes_its_arguments_in_order();
     a_body_elsewhere_is_declared_rather_than_defined();
     a_method_body_elsewhere_is_declared_too();
+    a_generic_instance_names_what_it_was_given();
     a_field_is_reached_by_its_index();
     a_struct_names_its_fields_in_order();
     a_float_body_names_the_float_type();

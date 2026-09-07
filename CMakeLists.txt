@@ -50,6 +50,7 @@ add_library(gab
     src/ast/pending.c
     src/ast/resolve.c
     src/llvm/llvm_emit.c
+    src/llvm/llvm_symbol.c
     src/mir/mir.c
     src/mir/mir_print.c
     src/mir/mir_build.c
