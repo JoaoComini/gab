@@ -1,3 +1,6 @@
+module test;
+import check;
+
 struct Cell { n: i32 }
 
 func written_out(): i32 {

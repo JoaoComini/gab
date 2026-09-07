@@ -1,3 +1,6 @@
+module test;
+import check;
+
 interface Countable { func count(self: &Self): i32; }
 
 struct Bag { n: i32 }

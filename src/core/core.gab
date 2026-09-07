@@ -1,0 +1,34 @@
+module core;
+
+/* Where a call was written, which '@caller()' in a 'caller' function answers with. */
+struct Location {
+    line: i32,
+    column: i32,
+}
+
+/* 'str' reads as a slice of bytes, so what a slice declares precedes it. */
+interface Index<T> {
+    func index(self: &Self, at: i32): &T;
+}
+
+impl<T> slice<T> {
+    intrinsic func len(self: &slice<T>): i32;
+}
+
+impl<T> slice<T> as Index<T> {
+    intrinsic func index(self: &slice<T>, at: i32): &T;
+}
+
+impl<T, N: i32> array<T, N> {
+    intrinsic func len(self: &Self): i32;
+}
+
+impl<T, N: i32> array<T, N> as Index<T> {
+    intrinsic func index(self: &Self, at: i32): &T;
+}
+
+impl str {
+    intrinsic func as_bytes(self: &str): &slice<u8>;
+
+    func len(self: &str): i32 { return self.as_bytes().len(); }
+}

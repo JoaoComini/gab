@@ -13,4 +13,4 @@ func a_call_result(): i32 { return peek(made()); }
 
 // error
 // :8:19: type error: cannot borrow a temporary; bind it to a variable first
-// :12:45: type error: cannot borrow a temporary; bind it to a variable first
+// :12:41: type error: cannot borrow a temporary; bind it to a variable first

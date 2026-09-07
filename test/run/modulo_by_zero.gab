@@ -1,3 +1,6 @@
+module test;
+import check;
+
 func run(): i32 {
     let a: i32 = 1;
     let b: i32 = 0;

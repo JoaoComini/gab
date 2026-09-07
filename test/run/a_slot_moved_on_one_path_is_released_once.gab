@@ -1,3 +1,6 @@
+module test;
+import check;
+
 struct Node { n: i32 }
 
 func moved_on_one_path(take: bool): i32 {

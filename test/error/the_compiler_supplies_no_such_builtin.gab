@@ -1,0 +1,6 @@
+func f(): i32 {
+    return @nope;
+}
+
+// error
+// :2:12: name error: the compiler supplies no '@nope'

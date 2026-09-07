@@ -1,3 +1,6 @@
+module test;
+import check;
+
 struct Box { n: i32 }
 
 struct Leaf { n: i32 }

@@ -1,7 +1,6 @@
 #ifndef GAB_TEST_EMIT_H
 #define GAB_TEST_EMIT_H
 
-#include "core/core_source.h"
 #include "mir/mir_drop.h"
 #include "mir/mir_fold.h"
 #include "string/string_ref.h"
@@ -82,66 +81,6 @@ static inline TestEmission test_lower_unit(const char *source, MIRFunction **out
     for (size_t i = 0; i < emission.mir_unit->entries.size && *count < capacity; i++) {
         MIRFunction *ir = emission.mir_unit->entries.data[i].ir;
 
-        if (!ir || mir_function_is_template(ir)) {
-            continue;
-        }
-
-        mir_fold(emission.ctx.arena, ir);
-        mir_drop_elaborate(emission.ctx.arena, emission.scope->type_registry, ir);
-
-        out[(*count)++] = ir;
-    }
-
-    return emission;
-}
-
-/* The core is its own compilation, so what it declares is resolved into a module scope the unit under
- * test then names, and its bodies are emitted once into a library rather than into every caller. */
-static inline TestEmission test_lower_with_core(const char *source, MIRFunction **out, size_t capacity,
-                                                size_t *count, bool want_core) {
-    TestEmission emission = {0};
-
-    test_context_init(&emission.ctx);
-
-    emission.scope = scope_create(emission.ctx.arena, &emission.ctx.strings, NULL);
-
-    ASTUnit *core_unit = ast_unit_create(emission.ctx.arena);
-    MIRModule *core_bodies = NULL;
-    ResolvedUnit *core_resolved = NULL;
-
-    char core[1 << 14];
-    snprintf(core, sizeof(core), "module %s;\n%s", GAB_CORE_MODULE, core_source());
-
-    bool core_ok = test_resolve_ir_with(&emission.ctx, emission.scope, &core_unit, &core_bodies,
-                                        &core_resolved, core, true);
-
-    assert(core_ok && "the core compiles");
-    (void)core_ok;
-
-    emission.module_scopes = module_scope_map_create_alloc(arena_allocator(emission.ctx.arena), 8);
-    module_scope_map_insert(emission.module_scopes, string_from_cstr(&emission.ctx.strings, GAB_CORE_MODULE),
-                            emission.scope);
-
-    *count = 0;
-
-    MIRModule *bodies = core_bodies;
-
-    if (!want_core) {
-        emission.unit = ast_unit_create(emission.ctx.arena);
-
-        bool resolved = test_resolve_ir_with(&emission.ctx, emission.scope, &emission.unit,
-                                             &emission.mir_unit, &emission.resolved, source, false);
-
-        assert(resolved);
-        (void)resolved;
-
-        bodies = emission.mir_unit;
-    }
-
-    for (size_t i = 0; i < bodies->entries.size && *count < capacity; i++) {
-        MIRFunction *ir = bodies->entries.data[i].ir;
-
-        /* A generic's own body stands for its instances, which are emitted in its place. */
         if (!ir || mir_function_is_template(ir)) {
             continue;
         }

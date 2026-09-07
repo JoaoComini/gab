@@ -1,3 +1,6 @@
+module test;
+import check;
+
 func lt(a: i32, b: i32): bool { return a < b; }
 func gt(a: i32, b: i32): bool { return a > b; }
 func le(a: i32, b: i32): bool { return a <= b; }

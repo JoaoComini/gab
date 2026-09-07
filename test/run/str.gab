@@ -1,3 +1,6 @@
+module test;
+import check;
+
 func size(s: &str): i32 { return s.len(); }
 
 func bytes(s: &str): i32 { return s.as_bytes().len(); }

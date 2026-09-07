@@ -1,10 +1,10 @@
 #ifndef GAB_AST_EXPR_H
 #define GAB_AST_EXPR_H
 
-#include "memory/arena.h"
 #include "ast/type_expr.h"
 #include "binding.h"
 #include "diagnostics.h"
+#include "memory/arena.h"
 #include "string/string.h"
 #include "type/type.h"
 #include "util/list.h"
@@ -48,7 +48,8 @@ typedef enum {
     EXPR_NOT,
     EXPR_BOX,
 
-    /* The length of an array whose length is still a parameter, fixed when that parameter is. */
+    /* A value the compiler supplies, named by the lexeme past '@'. */
+    EXPR_BUILTIN,
 
     EXPR_INDEX,
 
@@ -106,6 +107,10 @@ typedef struct ASTExpr {
         } var;
 
         struct {
+            StringRef name;
+        } builtin;
+
+        struct {
             ASTExpr *target;
             ASTExprList args;
         } call;
@@ -146,6 +151,7 @@ typedef struct ASTExpr {
 ASTExpr *ast_literal_expr_create(Arena *arena, Span span, Literal value);
 ASTExpr *ast_bin_op_expr_create(Arena *arena, Span span, ASTExpr *left, BinOp op, ASTExpr *right);
 ASTExpr *ast_variable_expr_create(Arena *arena, Span span, StringRef name);
+ASTExpr *ast_builtin_expr_create(Arena *arena, Span span, StringRef name);
 ASTExpr *ast_call_expr_create(Arena *arena, Span span, ASTExpr *target, ASTExprList args);
 ASTExpr *ast_field_expr_create(Arena *arena, Span span, ASTExpr *target, StringRef name);
 ASTExpr *ast_addr_of_expr_create(Arena *arena, Span span, ASTExpr *target);

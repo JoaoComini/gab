@@ -11,5 +11,5 @@ func to_a_struct(): i32 {
 }
 
 // error
-// :5:16: type error: cannot convert i32 to bool
-// :10:17: type error: cannot convert i32 to Point
+// :5:12: type error: cannot convert i32 to bool
+// :10:12: type error: cannot convert i32 to Point

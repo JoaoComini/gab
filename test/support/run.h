@@ -2,7 +2,7 @@
 #define GAB_TEST_RUN_H
 
 #include "ast/resolve.h"
-#include "core/core_source.h"
+#include "driver/interface.h"
 #include "mir/mir_build.h"
 #include "object.h"
 #include "scope.h"
@@ -13,6 +13,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* The prelude declares methods on the primitives, which only a compilation given permission may do. */
@@ -51,12 +52,15 @@ static inline bool test_resolve(TestContext *ctx, Scope *scope, ASTUnit **unit, 
     return test_resolve_ir(ctx, scope, unit, NULL, NULL, source);
 }
 
-/* A scope holding the core, which declares what 'len', 'as_bytes' and '[]' resolve through. */
+/* A scope holding the core, which declares what 'len', 'as_bytes' and '[]' resolve through. It is read
+ * from the interface a compilation reads, so what a test resolves against is what 'gabc' hands a
+ * program rather than a second reading of the core's source. */
 static inline Scope *test_scope_with_core(TestContext *ctx, ModuleScopeMap **out_modules) {
     Scope *scope = scope_create(ctx->arena, &ctx->strings, NULL);
 
-    char core[1 << 14];
-    snprintf(core, sizeof(core), "module %s;\n%s", GAB_CORE_MODULE, core_source());
+    char *core = gab_interface_read(GAB_TEST_CORE_INTERFACE);
+
+    assert(core && "the core is compiled before a test resolves against it");
 
     ASTUnit *unit = ast_unit_create(ctx->arena);
     MIRModule *bodies = NULL;
@@ -66,6 +70,8 @@ static inline Scope *test_scope_with_core(TestContext *ctx, ModuleScopeMap **out
 
     assert(ok && "the core compiles");
     (void)ok;
+
+    free(core);
 
     ModuleScopeMap *modules = module_scope_map_create_alloc(arena_allocator(ctx->arena), 8);
     module_scope_map_insert(modules, string_from_cstr(&ctx->strings, GAB_CORE_MODULE), scope);

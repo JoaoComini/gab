@@ -7,4 +7,4 @@ func f(): bool {
 }
 
 // error
-// :6:17: type error: array<i32, 2> implements 'Index' at another type
+// :6:12: type error: array<i32, 2> implements 'Index' at another type

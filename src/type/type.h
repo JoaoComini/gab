@@ -96,15 +96,27 @@ typedef struct TypeFields {
     size_t count;
 } TypeFields;
 
+/* Where a function's definition is, which is what its symbol must name. */
 typedef enum {
-    BODY_GAB,
+    LINKAGE_INTERNAL,
 
-    BODY_HOST,
+    /* Another Gab unit, whose module the symbol keeps rather than taking the referring one's. */
+    LINKAGE_GAB,
+
+    /* A C body, whose symbol is what the declaration spells. */
+    LINKAGE_C,
+} Linkage;
+
+/* What qualifies a function beyond where it is defined. These compose, and none excludes another. */
+typedef enum {
+    FUNC_MOD_NONE = 0,
 
     /* The compiler lowers the call itself, so nothing is bound and no body is written. */
-    BODY_INTRINSIC,
+    FUNC_MOD_INTRINSIC = 1 << 0,
 
-} BodyKind;
+    /* '__line__' in the body is the line of the call that reached it. */
+    FUNC_MOD_CALLER = 1 << 1,
+} FuncModifier;
 
 typedef struct TypeDecl {
     String *name;

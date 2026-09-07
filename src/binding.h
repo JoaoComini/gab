@@ -45,10 +45,13 @@ typedef struct FuncDecl {
     String *module;
     String *owner;
 
-    BodyKind body_kind;
+    Linkage linkage;
 
-    /* Declared 'extern "C"': its symbol is what the declaration spells, so a C body links to it. */
-    bool is_foreign;
+    /* A set of FuncModifier. */
+    unsigned modifiers;
+
+    /* The type a 'caller' function's hidden parameter has, which only the core can name. */
+    const Type *location_type;
 
     /* The declaration an instance substitutes, whose lowered body the unit holds; null for a host body. */
     struct Function *generic;
@@ -96,8 +99,10 @@ typedef struct Function {
     bool borrowed_params_known;
 } Function;
 
+/* True where no Gab body is lowered here: the definition is elsewhere, or the compiler expands it. */
 static inline bool function_runs_native(const Function *function) {
-    return function->decl->body_kind != BODY_GAB;
+    return function->decl->linkage != LINKAGE_INTERNAL ||
+           (function->decl->modifiers & FUNC_MOD_INTRINSIC) != 0;
 }
 
 typedef struct Binding {

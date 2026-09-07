@@ -53,6 +53,11 @@ typedef enum {
     TOKEN_FUNC,
     TOKEN_EXTERN,
     TOKEN_INTRINSIC,
+
+    TOKEN_CALLER,
+
+    /* '@name': a value the compiler supplies, whose name is the lexeme past the sigil. */
+    TOKEN_BUILTIN,
     TOKEN_STRUCT,
     TOKEN_IMPL,
     TOKEN_INTERFACE,

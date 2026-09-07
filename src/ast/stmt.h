@@ -54,6 +54,17 @@ typedef struct {
     Binding *binding;
 } ASTVarDecl;
 
+/* What was written before 'func'. Syntax, not a conclusion: what these mean for a symbol is decided
+ * once the resolver can also see whether a body follows. */
+typedef enum {
+    FUNC_SYN_NONE = 0,
+
+    FUNC_SYN_INTRINSIC = 1 << 0,
+    FUNC_SYN_EXTERN = 1 << 1,
+    FUNC_SYN_FOREIGN = 1 << 2,
+    FUNC_SYN_CALLER = 1 << 3,
+} FuncSyntax;
+
 typedef struct {
     StringRef name;
 
@@ -71,11 +82,8 @@ typedef struct {
 
     Function *function;
 
-    /* Set when the declaration is 'intrinsic', so no body is written and none is bound. */
-    bool is_intrinsic;
-
-    /* Declared 'extern "C"', so its symbol is spelled as written rather than mangled. */
-    bool is_foreign;
+    /* A set of FuncSyntax. */
+    unsigned syntax;
 
     bool declared;
 } ASTFuncDecl;
@@ -110,6 +118,9 @@ typedef struct {
 
     /* The bound written on each parameter the block declares, which says whether it takes a value. */
     TypeExpr *param_bounds[GAB_MAX_TYPE_PARAMS];
+
+    StringRef param_names[GAB_MAX_TYPE_PARAMS];
+    size_t param_count;
 } ASTImplStmt;
 
 typedef struct {

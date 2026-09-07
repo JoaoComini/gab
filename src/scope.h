@@ -59,6 +59,9 @@ typedef struct Scope {
 
 #define GAB_CORE_MODULE "core"
 
+/* The struct the core declares for a source position, which '@caller()' answers with. */
+#define GAB_LOCATION_TYPE "Location"
+
 #define GAB_STD_MODULE "std"
 
 Scope *scope_create(Arena *arena, StringPool *strings, Scope *parent);

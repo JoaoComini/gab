@@ -1,3 +1,6 @@
+module test;
+import check;
+
 struct Point { x: i32, y: i32 }
 
 struct Box { n: i32 }

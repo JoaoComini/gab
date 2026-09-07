@@ -1,3 +1,6 @@
+module test;
+import check;
+
 func zero(): i32 { return 0; }
 
 func identity(n: i32): i32 { return n; }

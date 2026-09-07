@@ -36,8 +36,7 @@ ASTStmt *ast_func_decl_stmt_create(Arena *arena, Span span, StringRef name, Type
     stmt->func_decl.body = body;
     stmt->func_decl.type_param_count = 0;
     stmt->func_decl.function = NULL;
-    stmt->func_decl.is_intrinsic = false;
-    stmt->func_decl.is_foreign = false;
+    stmt->func_decl.syntax = FUNC_SYN_NONE;
     stmt->func_decl.declared = false;
     return stmt;
 }

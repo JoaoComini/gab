@@ -1,0 +1,21 @@
+module test;
+import check;
+
+caller func where(): Location {
+    return @caller();
+}
+
+caller func forwarded(): Location {
+    return where();
+}
+
+func run(): i32 {
+    let here = where();
+    let next = where();
+
+    assert(next.line - here.line == 1);
+    assert(here.column == next.column);
+    assert(forwarded().line == 18);
+
+    return 0;
+}

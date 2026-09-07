@@ -111,7 +111,7 @@ static MIROperand *clone_args(Instantiation *in, const MIROperand *args, size_t 
 
 /* A bound resolving to an intrinsic names instructions, not a body, so the call becomes them here. */
 static bool expand_intrinsic(MIRFunction *out, MIRBlock *block, const MIRInst *inst) {
-    if (inst->op != MIR_CALL || !inst->callee || inst->callee->decl->body_kind != BODY_INTRINSIC ||
+    if (inst->op != MIR_CALL || !inst->callee || !(inst->callee->decl->modifiers & FUNC_MOD_INTRINSIC) ||
         inst->arg_count != 2) {
         return false;
     }

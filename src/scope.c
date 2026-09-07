@@ -255,7 +255,7 @@ Binding *scope_decl_func(Scope *scope, String *name, const Type *return_type) {
 
     FuncDecl *func_decl = arena_alloc(scope->arena, sizeof(FuncDecl));
 
-    *func_decl = (FuncDecl){.name = name, .body_kind = BODY_GAB};
+    *func_decl = (FuncDecl){.name = name, .linkage = LINKAGE_INTERNAL};
 
     binding->func = arena_alloc(scope->arena, sizeof(Function));
 

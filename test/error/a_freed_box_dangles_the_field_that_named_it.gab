@@ -22,4 +22,4 @@ func pass_the_struct(): i32 {
 
 // error
 // :12:15: lifetime error: this names memory that has been freed
-// :20:13: lifetime error: this names memory that has been freed
+// :20:12: lifetime error: this names memory that has been freed

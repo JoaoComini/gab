@@ -31,6 +31,13 @@ ASTExpr *ast_variable_expr_create(Arena *arena, Span span, StringRef name) {
     return node;
 }
 
+ASTExpr *ast_builtin_expr_create(Arena *arena, Span span, StringRef name) {
+    ASTExpr *node = ast_expr_create(arena, span);
+    node->kind = EXPR_BUILTIN;
+    node->builtin.name = name;
+    return node;
+}
+
 ASTExpr *ast_call_expr_create(Arena *arena, Span span, ASTExpr *target, ASTExprList args) {
     ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_CALL;

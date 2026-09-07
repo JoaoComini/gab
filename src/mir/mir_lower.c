@@ -29,12 +29,16 @@ typedef struct {
     MIROperand *constants;
     size_t constant_capacity;
 
+    /* Where the call that reached this body was written, in a 'caller' one; none otherwise. */
+    MIRValueId caller_location;
+
     /* Where the body's own locals begin; a parameter's object is the caller's and is never ended. */
 } Lowering;
 
 static MIRValueId lower_expr(Lowering *lowering, ASTExpr *expr);
 static void lower_stmt(Lowering *lowering, ASTStmt *stmt);
 static void lower_struct_lit_into(Lowering *lowering, ASTExpr *expr, Place base);
+static MIRValueId lower_location_of(Lowering *lowering, const Type *type, Span span);
 
 /* An index and a length are counted values, which the allocator sizes only when they say so. */
 static const Type *i32_type(Lowering *lowering) {
@@ -413,7 +417,7 @@ static MIRValueId lower_bin_op(Lowering *lowering, ASTExpr *expr) {
 static bool lower_intrinsic_call(Lowering *lowering, ASTExpr *expr, MIRValueId *out) {
     Function *callee = fact_callee_of(lowering->facts, expr);
 
-    if (!callee || callee->decl->body_kind != BODY_INTRINSIC || expr->call.args.size == 0) {
+    if (!callee || !(callee->decl->modifiers & FUNC_MOD_INTRINSIC) || expr->call.args.size == 0) {
         return false;
     }
 
@@ -511,6 +515,11 @@ static bool lower_intrinsic_call(Lowering *lowering, ASTExpr *expr, MIRValueId *
 }
 
 static MIRValueId lower_call(Lowering *lowering, ASTExpr *expr) {
+    /* A builtin's call is the builtin: it names no function and emits no call. */
+    if (expr->call.target && expr->call.target->kind == EXPR_BUILTIN) {
+        return lower_expr(lowering, expr->call.target);
+    }
+
     MIRValueId intrinsic;
 
     if (lower_intrinsic_call(lowering, expr, &intrinsic)) {
@@ -530,17 +539,30 @@ static MIRValueId lower_call(Lowering *lowering, ASTExpr *expr) {
         return lower_unary(lowering, type_kind(to) == TYPE_F32 ? MIR_ITOF : MIR_FTOI, expr, operand);
     }
 
+    Function *callee = fact_callee_of(lowering->facts, expr);
+
+    /* A 'caller' callee is handed where the call is, which forwards where the caller is itself one. */
+    bool passes_line = callee && (callee->decl->modifiers & FUNC_MOD_CALLER);
+
     size_t count = expr->call.args.size;
 
-    MIROperand *args = mir_args_alloc(lowering->ir, count);
+    MIROperand *args = mir_args_alloc(lowering->ir, count + (passes_line ? 1 : 0));
 
     for (size_t i = 0; i < count; i++) {
         args[i] = mir_operand_value(lower_expr(lowering, expr->call.args.data[i]));
     }
 
-    MIRValueId result = lower_temp(lowering, fact_type_of(lowering->facts, expr), expr->span);
+    if (passes_line) {
+        MIRValueId location = lowering->caller_location;
 
-    Function *callee = fact_callee_of(lowering->facts, expr);
+        if (mir_value_is_none(location)) {
+            location = lower_location_of(lowering, callee->decl->location_type, expr->span);
+        }
+
+        args[count++] = mir_operand_value(location);
+    }
+
+    MIRValueId result = lower_temp(lowering, fact_type_of(lowering->facts, expr), expr->span);
 
     emit(lowering, (MIRInst){.op = MIR_CALL,
                              .type = fact_type_of(lowering->facts, expr),
@@ -579,6 +601,38 @@ static void lower_struct_lit_into(Lowering *lowering, ASTExpr *expr, Place base)
                                  .arg_count = 1,
                                  .span = init->span});
     }
+}
+
+/* The location a call passes: a 'Location' whose fields are where the call was written. */
+static MIRValueId lower_location_of(Lowering *lowering, const Type *type, Span span) {
+    MIRValueId result = lower_temp(lowering, type, span);
+
+    Place base = mir_place_of(result, NULL);
+
+    const int32_t at[] = {span.line, span.column};
+
+    for (uint32_t i = 0; i < 2; i++) {
+        MIRValueId value = lower_temp(lowering, i32_type(lowering), span);
+
+        emit(lowering, (MIRInst){.op = MIR_CONST_INT,
+                                 .type = i32_type(lowering),
+                                 .result = value,
+                                 .constant = constant_int(i32_type(lowering), at[i]),
+                                 .span = span});
+
+        Place field = mir_place_project(
+            lowering->ir, base, (Projection){.kind = PROJ_FIELD, .field = {i}, .type = i32_type(lowering)});
+
+        emit(lowering, (MIRInst){.op = MIR_STORE,
+                                 .type = i32_type(lowering),
+                                 .result = MIR_NO_VALUE,
+                                 .place = field,
+                                 .args = lower_args(lowering, &value, 1),
+                                 .arg_count = 1,
+                                 .span = span});
+    }
+
+    return result;
 }
 
 static MIRValueId lower_struct_lit(Lowering *lowering, ASTExpr *expr) {
@@ -661,6 +715,9 @@ static MIRValueId lower_unadjusted(Lowering *lowering, ASTExpr *expr) {
 
         return result;
     }
+
+    case EXPR_BUILTIN:
+        return lowering->caller_location;
 
     case EXPR_VARIABLE: {
         MIRValueId value = local_value(lowering, fact_use_of(lowering->facts, expr));
@@ -1113,13 +1170,20 @@ MIRFunction *mir_build_function(Arena *arena, TypeRegistry *registry, const Fact
                          .registry = registry,
                          .facts = facts,
                          .arena = arena,
+                         .caller_location = MIR_NO_VALUE,
                          .break_target = MIR_NO_BLOCK,
                          .continue_target = MIR_NO_BLOCK};
 
-    ir->param_count = params ? params->size : 0;
+    size_t declared = params ? params->size : 0;
+
+    /* A 'caller' function takes the line of its call as a parameter no declaration writes, which is
+     * what '@caller()' in its body answers with. */
+    bool takes_caller_line = function && (function->decl->modifiers & FUNC_MOD_CALLER) != 0;
+
+    ir->param_count = declared + (takes_caller_line ? 1 : 0);
     ir->params = arena_alloc(arena, (ir->param_count + 1) * sizeof(MIRValueId));
 
-    for (size_t i = 0; i < ir->param_count; i++) {
+    for (size_t i = 0; i < declared; i++) {
         Binding *binding = params->data[i]->binding;
 
         MIRValueId value =
@@ -1128,6 +1192,14 @@ MIRFunction *mir_build_function(Arena *arena, TypeRegistry *registry, const Fact
         ir->params[i] = value;
 
         bind_local(&lowering, binding, value);
+    }
+
+    if (takes_caller_line) {
+        Span span = body ? body->span : (Span){0, 0};
+
+        lowering.caller_location = mir_value_create(ir, function->decl->location_type, NULL, span);
+
+        ir->params[declared] = lowering.caller_location;
     }
 
     lowering.loop_local_floor = lowering.local_count;

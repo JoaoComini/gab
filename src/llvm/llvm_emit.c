@@ -397,6 +397,12 @@ static LLVMTypeRef callee_signature(LLVMEmitter *emitter, const Function *callee
         params[i] = llvm_type_of(emitter, callee->params[i]);
     }
 
+    /* A 'caller' function is reached through the location its call passes, which no declaration writes. */
+    if ((callee->decl->modifiers & FUNC_MOD_CALLER) && callee->decl->location_type &&
+        count < GAB_MAX_CALL_ARGS) {
+        params[count++] = llvm_type_of(emitter, callee->decl->location_type);
+    }
+
     LLVMTypeRef returns = callee->return_type ? llvm_type_of(emitter, callee->return_type)
                                               : LLVMVoidTypeInContext(emitter->context);
 

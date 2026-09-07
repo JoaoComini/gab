@@ -1,3 +1,6 @@
+module test;
+import check;
+
 struct Holder<T> { value: T }
 
 struct Pair<A, B> { a: A, b: B }

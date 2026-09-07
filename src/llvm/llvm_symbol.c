@@ -108,7 +108,7 @@ const char *llvm_symbol_of(Arena *arena, const Function *function) {
     const FuncDecl *decl = function->decl;
 
     /* A foreign declaration names the symbol itself, which is the whole point of spelling an ABI. */
-    if (decl->is_foreign) {
+    if (decl->linkage == LINKAGE_C) {
         return decl->name->data;
     }
 

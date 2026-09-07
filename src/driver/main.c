@@ -1,0 +1,135 @@
+#include "driver/compile.h"
+#include "driver/link.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static char *read_file(const char *path) {
+    FILE *file = fopen(path, "rb");
+
+    if (!file) {
+        return NULL;
+    }
+
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    char *text = malloc((size_t)size + 1);
+
+    size_t read = fread(text, 1, (size_t)size, file);
+    text[read] = '\0';
+
+    fclose(file);
+
+    return text;
+}
+
+static int usage(void) {
+    fprintf(stderr, "usage: gabc [--core] [-c] [--import <module>=<path.gabi>] -o <output> "
+                    "[<source.gab>]\n");
+    return 2;
+}
+
+int main(int argc, char **argv) {
+    const char *output = NULL;
+    const char *path = NULL;
+    const char *extra[16];
+    size_t extra_count = 0;
+    const char *imports[16];
+    size_t import_count = 0;
+    bool is_core = false;
+    bool compile_only = false;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--core") == 0) {
+            is_core = true;
+        } else if (strcmp(argv[i], "-c") == 0) {
+            compile_only = true;
+        } else if (strcmp(argv[i], "--import") == 0 && i + 1 < argc && import_count < 16) {
+            imports[import_count++] = argv[++i];
+        } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
+            output = argv[++i];
+        } else if (argv[i][0] == '-') {
+            return usage();
+        } else if (strstr(argv[i], ".gab")) {
+            path = argv[i];
+        } else if (extra_count < 16) {
+            /* Anything not Gab source is handed to the link, which is how a program supplies its own
+             * entry point or calls into C it already has. */
+            extra[extra_count++] = argv[i];
+        }
+    }
+
+    if (!output || !path) {
+        return usage();
+    }
+
+    /* The core is a library, so it is only ever compiled. */
+    compile_only = compile_only || is_core;
+
+    char *source = NULL;
+
+    if (path) {
+        source = read_file(path);
+
+        if (!source) {
+            fprintf(stderr, "gabc: %s: no such file\n", path);
+            return 1;
+        }
+    }
+
+    Arena *arena = arena_create(4096);
+
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, arena, path ? path : "core");
+
+    /* Linking reads an object, so one is written beside the binary even where it was not asked for. */
+    char scratch[512];
+
+    if (!compile_only) {
+        snprintf(scratch, sizeof(scratch), "%s.o", output);
+    }
+
+    /* The core's declarations are written beside its object, which is what a program later reads. */
+    char interface[512] = {0};
+
+    if (is_core) {
+        snprintf(interface, sizeof(interface), "%s/%s.gabi", gab_libdir(), "core");
+    } else if (compile_only) {
+        /* A unit compiled to an object states what importers may name, beside the object itself. */
+        snprintf(interface, sizeof(interface), "%.*s.gabi", (int)strlen(output) - 2, output);
+    }
+
+    GabCompile request = {
+        .module = path,
+        .source = source,
+        .object = compile_only ? output : scratch,
+        .interface = interface[0] ? interface : NULL,
+        .is_core = is_core,
+        .imports = imports,
+        .import_count = import_count,
+    };
+
+    bool ok = gab_compile(&request, &diagnostics);
+
+    if (!ok) {
+        diagnostics_print(&diagnostics, stderr);
+    }
+
+    if (ok && !compile_only) {
+        ok = gab_link(request.object, request.module_name, extra, extra_count, output);
+
+        if (!ok) {
+            fprintf(stderr, "gabc: %s: the object did not link\n", output);
+        }
+    }
+
+    diagnostics_free(&diagnostics);
+    arena_destroy(arena);
+
+    free(source);
+
+    return ok ? 0 : 1;
+}

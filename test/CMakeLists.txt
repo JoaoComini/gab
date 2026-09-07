@@ -30,6 +30,10 @@ set(
     # The names and linkage a lowered body emits, which running one cannot show.
     llvm/symbols_test.c
 
+    # What a compilation states to the next one, which only reading it back can show.
+    driver/interface_test.c
+    driver/module_test.c
+
     # The samples the README shows must still compile.
     readme_test.c
 )
@@ -39,7 +43,13 @@ function(add_gab_test TEST_NAME TEST_SOURCE)
 
     # Every check in this suite is an assert, so a Release build defining NDEBUG
     # would compile the checks away and report a vacuous pass.
-    target_compile_options(${TEST_NAME} PRIVATE -UNDEBUG)
+    target_compile_options(${TEST_NAME} PRIVATE -UNDEBUG
+        -DGAB_TEST_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}"
+        -DGAB_TEST_CORE_INTERFACE="${CMAKE_BINARY_DIR}/core.gabi"
+        -DGAB_TEST_CORE_SOURCE="${CMAKE_SOURCE_DIR}/src/core/core.gab")
+
+    # A test resolving against the core reads the interface the compiler wrote, so it must exist first.
+    add_dependencies(${TEST_NAME} core)
 
     target_link_libraries(${TEST_NAME} PRIVATE gab)
     target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -48,6 +58,9 @@ function(add_gab_test TEST_NAME TEST_SOURCE)
         NAME ${TEST_NAME}
         COMMAND ${TEST_NAME}
     )
+
+    # A test that compiles finds the core beside the compiler, which is the build root rather than here.
+    set_tests_properties(${TEST_NAME} PROPERTIES ENVIRONMENT "GABC_LIBDIR=${CMAKE_BINARY_DIR}")
 endfunction()
 
 foreach(TEST_SOURCE ${TEST_SOURCES})
@@ -61,11 +74,16 @@ add_executable(run_test run_test.c)
 
 target_compile_options(run_test PRIVATE -UNDEBUG
     -DGAB_TEST_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}"
-    -DGAB_TEST_RUNTIME="$<TARGET_FILE:gab_runtime>")
+    -DGAB_TEST_COMPILER="$<TARGET_FILE:gabc>"
+    -DGAB_TEST_HARNESS="${CMAKE_CURRENT_SOURCE_DIR}/support/harness.c")
 
-# The runtime a case links against carries the sanitizers this build was compiled with.
+# The suite drives the compiler as a program, so it must be built before a case runs.
+add_dependencies(run_test gabc core gab_runtime)
+
+# The runtime a case links against carries the sanitizers this build was compiled with, which reaches
+# the link through the compiler rather than around it.
 if(GAB_SANITIZE)
-    target_compile_options(run_test PRIVATE -DGAB_TEST_LINK_FLAGS="-fsanitize=${GAB_SANITIZE}")
+    set(GAB_RUN_ENV "GABC_LINK_FLAGS=-fsanitize=${GAB_SANITIZE}")
 endif()
 
 target_link_libraries(run_test PRIVATE gab)
@@ -84,6 +102,8 @@ foreach(CASE ${RUN_CASES})
             NAME run_${CASE_STEM}
             COMMAND run_test ${CMAKE_CURRENT_SOURCE_DIR}/run ${CASE_STEM}
         )
+
+        set_tests_properties(run_${CASE_STEM} PROPERTIES ENVIRONMENT "${GAB_RUN_ENV}")
     endif()
 endforeach()
 
@@ -91,7 +111,11 @@ endforeach()
 # '// error' block names every diagnostic it must raise, at the position the compiler reports.
 add_executable(error_test error_test.c)
 
-target_compile_options(error_test PRIVATE -UNDEBUG)
+target_compile_options(error_test PRIVATE -UNDEBUG
+    -DGAB_TEST_CORE_INTERFACE="${CMAKE_BINARY_DIR}/core.gabi")
+
+# A rejection about indexing is stated against the core's 'Index', which the compiler must write first.
+add_dependencies(error_test core)
 target_link_libraries(error_test PRIVATE gab)
 target_include_directories(error_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 

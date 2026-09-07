@@ -3,4 +3,4 @@ func pair<A, B>(a: A, b: B): A { return a; }
 func f(): i32 { return pair<i32>(1, 2); }
 
 // error
-// :3:33: type error: 'pair' takes 2 type argument(s)
+// :3:24: type error: 'pair' takes 2 type argument(s)

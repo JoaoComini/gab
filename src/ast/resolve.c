@@ -33,6 +33,9 @@ GAB_LIST(StructDeclList, struct_decl_list, StructDecl *)
 typedef struct {
     const Type *return_type;
 
+    /* Whether the body being resolved was declared 'caller', which is what '@caller()' needs. */
+    bool is_caller;
+
     unsigned int loop_depth;
 } FuncContext;
 
@@ -113,6 +116,35 @@ static bool string_ref_split_colons(StringRef ref, StringRef *module, StringRef 
     return false;
 }
 
+/* What the syntax means for a symbol, which needs the body the syntax does not mention. */
+static Linkage linkage_of(const ASTFuncDecl *decl) {
+    if (decl->syntax & FUNC_SYN_FOREIGN) {
+        return LINKAGE_C;
+    }
+
+    /* An intrinsic is expanded rather than called, so it names no symbol and links to nothing. */
+    if (decl->syntax & FUNC_SYN_INTRINSIC) {
+        return LINKAGE_INTERNAL;
+    }
+
+    return decl->body ? LINKAGE_INTERNAL : LINKAGE_GAB;
+}
+
+/* The syntax that survives resolution, which the rest of the compiler reads instead of the tokens. */
+static const Type *location_type_of(ResolverState *state, const ASTFuncDecl *decl) {
+    if (!(decl->syntax & FUNC_SYN_CALLER)) {
+        return NULL;
+    }
+
+    return scope_type_lookup(state->current_scope,
+                             string_from_cstr(state->current_scope->strings, GAB_LOCATION_TYPE));
+}
+
+static unsigned modifiers_of(const ASTFuncDecl *decl) {
+    return (unsigned)((decl->syntax & FUNC_SYN_INTRINSIC) ? FUNC_MOD_INTRINSIC : FUNC_MOD_NONE) |
+           (unsigned)((decl->syntax & FUNC_SYN_CALLER) ? FUNC_MOD_CALLER : FUNC_MOD_NONE);
+}
+
 static bool resolver_may_name(ResolverState *state, String *module) {
     if (module == state->module_name) {
         return true;
@@ -147,6 +179,31 @@ static Scope *resolver_expr_scope(ResolverState *state, StringRef name) {
     Scope **existing = module_scope_map_lookup(state->module_scopes, module_name);
 
     return existing ? *existing : NULL;
+}
+
+/* A name an import declares, which an unqualified use reaches once this unit declares none itself. */
+static Binding *resolver_imported_binding(ResolverState *state, String *name) {
+    if (!state->module_scopes) {
+        return NULL;
+    }
+
+    for (size_t i = 0; i < state->imports->size; i++) {
+        String *module = string_from_ref(state->current_scope->strings, state->imports->data[i].name);
+
+        Scope **imported = module_scope_map_lookup(state->module_scopes, module);
+
+        if (!imported) {
+            continue;
+        }
+
+        Binding *found = scope_binding_lookup(*imported, name);
+
+        if (found) {
+            return found;
+        }
+    }
+
+    return NULL;
 }
 
 static Resolution resolver_resolve_name(ResolverState *state, Scope *scope, String *name) {
@@ -1007,7 +1064,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     }
 
     /* An intrinsic type-checks as the call it is written as, and lowering expands it. */
-    if (method->decl->body_kind == BODY_INTRINSIC) {
+    if (method->decl->modifiers & FUNC_MOD_INTRINSIC) {
         lower_method_call(state, state->compile_arena, expr, method, adjustment);
 
         check_call_args(state, &expr->call.args, method->params);
@@ -1372,8 +1429,46 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
 
         break;
     }
+    case EXPR_BUILTIN: {
+        if (string_ref_equals_cstr(expr->builtin.name, "caller")) {
+            if (!state->func_context.is_caller) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                           "'@caller()' answers where a call was written, so only a 'caller' function "
+                           "asks it");
+
+                fact_set_type(state->facts, expr, resolver_error_type(state));
+                break;
+            }
+
+            const Type *location = scope_type_lookup(
+                state->current_scope, string_from_cstr(state->current_scope->strings, GAB_LOCATION_TYPE));
+
+            if (!location) {
+                diag_error(state->diagnostics, GAB_ERR_NAME, expr->span,
+                           "the core declares no '%s', which '@caller()' answers with", GAB_LOCATION_TYPE);
+
+                fact_set_type(state->facts, expr, resolver_error_type(state));
+                break;
+            }
+
+            fact_set_type(state->facts, expr, location);
+            break;
+        }
+
+        diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "the compiler supplies no '@%.*s'",
+                   (int)expr->builtin.name.length, expr->builtin.name.data);
+
+        fact_set_type(state->facts, expr, resolver_error_type(state));
+        break;
+    }
     case EXPR_VARIABLE: {
-        Binding *entry = scope_binding_lookup(state->current_scope, resolver_intern(state, expr->var.name));
+        String *sought = resolver_intern(state, expr->var.name);
+
+        Binding *entry = scope_binding_lookup(state->current_scope, sought);
+
+        if (!entry) {
+            entry = resolver_imported_binding(state, sought);
+        }
 
         if (entry) {
             if (entry->kind == BINDING_FUNC) {
@@ -1411,6 +1506,19 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         }
 
         if (expr->call.target && expr->call.target->kind == EXPR_VARIABLE && resolve_cast(state, expr)) {
+            break;
+        }
+
+        /* A builtin names no function, so what it answers with is what the call is. */
+        if (expr->call.target && expr->call.target->kind == EXPR_BUILTIN) {
+            resolve_expr(state, expr->call.target, NULL);
+
+            if (expr->call.args.size) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "'@%.*s()' takes no arguments",
+                           (int)expr->call.target->builtin.name.length, expr->call.target->builtin.name.data);
+            }
+
+            fact_set_type(state->facts, expr, fact_type_of(state->facts, expr->call.target));
             break;
         }
 
@@ -2427,7 +2535,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
     }
 
     /* Only the core library declares one, and only where the compiler has a lowering to match it. */
-    if (stmt->func_decl.is_intrinsic && !state->allow_primitive_impls) {
+    if ((stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) && !state->allow_primitive_impls) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                    "an intrinsic is lowered by the compiler, so only its core library declares one");
         return;
@@ -2435,7 +2543,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
 
     const IntrinsicLowering *intrinsic = NULL;
 
-    if (stmt->func_decl.is_intrinsic) {
+    if (stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) {
         intrinsic = intrinsic_for(type_name_of(owner), resolver_intern(state, stmt->func_decl.name));
 
         if (!intrinsic) {
@@ -2484,12 +2592,11 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
     FuncDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(FuncDecl));
     *decl = (FuncDecl){
         .name = name,
-        .module = stmt->func_decl.is_intrinsic ? NULL : state->module_name,
-        .owner = stmt->func_decl.is_intrinsic ? NULL : type_name_of(owner),
-        .is_foreign = stmt->func_decl.is_foreign,
-        .body_kind = stmt->func_decl.is_intrinsic ? BODY_INTRINSIC
-                     : is_host                    ? BODY_HOST
-                                                  : BODY_GAB,
+        .module = (stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) ? NULL : state->module_name,
+        .owner = (stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) ? NULL : type_name_of(owner),
+        .linkage = linkage_of(&stmt->func_decl),
+        .modifiers = modifiers_of(&stmt->func_decl),
+        .location_type = location_type_of(state, &stmt->func_decl),
         .intrinsic = intrinsic,
         .type_param_count = stmt->func_decl.type_param_count,
     };
@@ -2580,7 +2687,7 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
         FuncDecl *decl = arena_alloc(arena, sizeof(FuncDecl));
         *decl = (FuncDecl){
             .name = resolver_intern(state, signature->func_decl.name),
-            .body_kind = BODY_GAB,
+            .linkage = LINKAGE_INTERNAL,
             .type_param_count = param_count + 1,
         };
 
@@ -2974,14 +3081,14 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
             record_param_bounds(state, decl);
         }
 
-        decl->body_kind = stmt->func_decl.is_intrinsic   ? BODY_INTRINSIC
-                          : stmt->func_decl.body == NULL ? BODY_HOST
-                                                         : BODY_GAB;
+        decl->linkage = linkage_of(&stmt->func_decl);
+        decl->modifiers = modifiers_of(&stmt->func_decl);
+        decl->location_type = location_type_of(state, &stmt->func_decl);
 
         decl->module = state->module_name;
-        decl->is_foreign = stmt->func_decl.is_foreign;
 
-        if (decl->body_kind == BODY_HOST) {
+        /* A C body links to the name as spelled, which no module qualifies. */
+        if (decl->linkage == LINKAGE_C) {
             decl->name = resolver_intern(state, func_name);
         }
     }
@@ -3049,6 +3156,7 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
     FuncContext previous_context = state->func_context;
 
     state->func_context.return_type = fact_return_type_of(state->facts, stmt);
+    state->func_context.is_caller = (stmt->func_decl.syntax & FUNC_SYN_CALLER) != 0;
 
     resolve_stmt(state, stmt->func_decl.body);
 

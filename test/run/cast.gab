@@ -1,3 +1,6 @@
+module test;
+import check;
+
 func widened(a: i32): f32 { return f32(a); }
 
 func truncated(a: f32): i32 { return i32(a); }

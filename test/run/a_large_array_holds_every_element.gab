@@ -1,3 +1,6 @@
+module test;
+import check;
+
 func sum(xs: &array<i32, 1000>): i32 {
     let total: i32 = 0;
 

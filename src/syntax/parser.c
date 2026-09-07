@@ -222,6 +222,8 @@ static void parser_synchronize(Parser *parser) {
         case TOKEN_LET:
         case TOKEN_FUNC:
         case TOKEN_EXTERN:
+        case TOKEN_INTRINSIC:
+        case TOKEN_CALLER:
         case TOKEN_STRUCT:
         case TOKEN_IMPL:
         case TOKEN_MODULE:
@@ -247,7 +249,9 @@ static ASTStmt *parse_decl_statement(Parser *parser) {
         break;
     }
     case TOKEN_FUNC:
-    case TOKEN_EXTERN: {
+    case TOKEN_EXTERN:
+    case TOKEN_INTRINSIC:
+    case TOKEN_CALLER: {
         stmt = parse_func_decl_stmt(parser);
         break;
     }
@@ -839,41 +843,64 @@ static void func_decl_take_type_params(ASTStmt *decl, TypeExprList *params, Type
     }
 }
 
+/* Consumes the modifiers before 'func' and leaves the parser on 'func' itself. */
+static bool parse_func_syntax(Parser *parser, bool signature_only, unsigned *out) {
+    /* An interface states a signature, whose body is elsewhere though no keyword says so. */
+    *out = signature_only ? FUNC_SYN_EXTERN : FUNC_SYN_NONE;
+
+    for (;;) {
+        switch (parser->current.type) {
+        case TOKEN_CALLER:
+            *out |= FUNC_SYN_CALLER;
+            parser_next_token(parser);
+            continue;
+
+        case TOKEN_INTRINSIC:
+            *out |= FUNC_SYN_INTRINSIC;
+            parser_next_token(parser);
+            continue;
+
+        case TOKEN_EXTERN:
+            *out |= FUNC_SYN_EXTERN;
+            parser_next_token(parser);
+
+            /* 'extern "C"' names a symbol spelled exactly as written, which is what links against C. */
+            if (parser->current.type == TOKEN_STRING) {
+                if (strcmp(parser->current.value.as_string->data, "C") != 0) {
+                    parser_error(parser, "the only foreign ABI is \"C\"");
+                    return false;
+                }
+
+                *out |= FUNC_SYN_FOREIGN;
+                parser_next_token(parser);
+            }
+
+            continue;
+
+        default:
+            break;
+        }
+
+        break;
+    }
+
+    return true;
+}
+
 static ASTStmt *parse_func_decl_stmt_inner(Parser *parser, bool signature_only) {
     Span span = parser_span(parser);
 
-    bool is_intrinsic = parser->current.type == TOKEN_INTRINSIC;
-    bool is_extern = signature_only || is_intrinsic || parser->current.type == TOKEN_EXTERN;
+    unsigned syntax;
 
-    bool is_foreign = false;
+    if (!parse_func_syntax(parser, signature_only, &syntax)) {
+        return NULL;
+    }
 
-    /* 'extern "C"' names a symbol spelled exactly as written, which is what links against C. */
-    if (parser->current.type == TOKEN_EXTERN) {
-        parser_next_token(parser);
+    /* An intrinsic has no body either, though it is the compiler and not a linker that supplies it. */
+    bool is_extern = (syntax & (FUNC_SYN_EXTERN | FUNC_SYN_INTRINSIC)) != 0;
 
-        if (parser->current.type == TOKEN_STRING) {
-            if (strcmp(parser->current.value.as_string->data, "C") != 0) {
-                parser_error(parser, "the only foreign ABI is \"C\"");
-                return NULL;
-            }
-
-            is_foreign = true;
-
-            parser_next_token(parser);
-        }
-
-        if (!parser_expect(parser, TOKEN_FUNC, "expected 'func' after 'extern'")) {
-            return NULL;
-        }
-    } else if (is_extern && !signature_only) {
-        const char *after =
-            is_intrinsic ? "expected 'func' after 'intrinsic'" : "expected 'func' after 'extern'";
-
-        parser_next_token(parser);
-
-        if (!parser_expect(parser, TOKEN_FUNC, after)) {
-            return NULL;
-        }
+    if (!parser_expect(parser, TOKEN_FUNC, "expected 'func' after a function's modifiers")) {
+        return NULL;
     }
 
     parser_next_token(parser);
@@ -955,8 +982,7 @@ static ASTStmt *parse_func_decl_stmt_inner(Parser *parser, bool signature_only) 
         ASTStmt *decl =
             ast_func_decl_stmt_create(parser->arena, span, func_name, func_type, func_params, NULL);
 
-        decl->func_decl.is_intrinsic = is_intrinsic;
-        decl->func_decl.is_foreign = is_foreign;
+        decl->func_decl.syntax = syntax;
 
         func_decl_take_type_params(decl, &type_params, bounds);
 
@@ -971,6 +997,8 @@ static ASTStmt *parse_func_decl_stmt_inner(Parser *parser, bool signature_only) 
 
     ASTStmt *decl =
         ast_func_decl_stmt_create(parser->arena, span, func_name, func_type, func_params, func_body);
+
+    decl->func_decl.syntax = syntax;
 
     func_decl_take_type_params(decl, &type_params, bounds);
 
@@ -1039,7 +1067,7 @@ static ASTStmt *parse_impl_stmt(Parser *parser) {
         }
 
         if (parser->current.type != TOKEN_FUNC && parser->current.type != TOKEN_EXTERN &&
-            parser->current.type != TOKEN_INTRINSIC) {
+            parser->current.type != TOKEN_INTRINSIC && parser->current.type != TOKEN_CALLER) {
             parser_error_found(parser, "expected a function in an 'impl' block");
             return NULL;
         }
@@ -1073,8 +1101,11 @@ static ASTStmt *parse_impl_stmt(Parser *parser) {
 
     ASTStmt *stmt = ast_impl_stmt_create(parser->arena, span, type, members);
 
-    for (size_t i = 0; i < declared.count; i++) {
+    stmt->impl.param_count = declared.count < GAB_MAX_TYPE_PARAMS ? declared.count : GAB_MAX_TYPE_PARAMS;
+
+    for (size_t i = 0; i < stmt->impl.param_count; i++) {
         stmt->impl.param_bounds[i] = declared.bounds[i];
+        stmt->impl.param_names[i] = declared.names[i];
     }
 
     stmt->impl.interface_name = interface_name;
@@ -1439,7 +1470,8 @@ static ASTExpr *parse_struct_lit_expr(Parser *parser, ASTExpr *target) {
 }
 
 static ASTExpr *parse_call_expr(Parser *parser, ASTExpr *target) {
-    Span span = parser_span(parser);
+    /* A call is where its target is written, not where its arguments happen to end. */
+    Span span = target->span;
 
     ASTExprList args;
     if (!parse_call_args(parser, &args)) {
@@ -1653,6 +1685,13 @@ static ASTExpr *parse_primary(Parser *parser) {
 
         return ast_literal_expr_create(parser->arena, span,
                                        (Literal){.kind = LITERAL_BOOL, .as_bool = false});
+    }
+    case TOKEN_BUILTIN: {
+        StringRef name = parser->current.lexeme;
+
+        parser_next_token(parser);
+
+        return ast_builtin_expr_create(parser->arena, span, name);
     }
     case TOKEN_IDENT: {
         Token name = parser->current;

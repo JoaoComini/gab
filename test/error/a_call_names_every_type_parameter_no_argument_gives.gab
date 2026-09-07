@@ -7,4 +7,4 @@ func f(): i32 {
 }
 
 // error
-// :6:29: type error: no argument names every type parameter of 'count', so each is written
+// :6:24: type error: no argument names every type parameter of 'count', so each is written

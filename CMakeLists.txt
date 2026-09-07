@@ -68,12 +68,34 @@ add_library(gab
     src/ast/stmt.c
     src/string/string_ref.c
     src/string/string.c
-    src/core/core_source.c
+    src/driver/compile.c
+    src/driver/link.c
+    src/driver/interface.c
 )
+
+# The compiler as a program: one source in, one native object out.
+add_executable(gabc src/driver/main.c)
+
+target_link_libraries(gabc PRIVATE gab)
+
+# The core is compiled by the compiler, into a library beside it: what 'gabc' links a program against
+# is the same archive an installation would ship, rather than something the test suite builds.
+add_custom_command(
+    OUTPUT ${CMAKE_BINARY_DIR}/core.o
+    COMMAND gabc --core -o ${CMAKE_BINARY_DIR}/core.o ${CMAKE_SOURCE_DIR}/src/core/core.gab
+    DEPENDS gabc ${CMAKE_SOURCE_DIR}/src/core/core.gab
+    COMMENT "Compiling the core"
+)
+
+add_library(core STATIC ${CMAKE_BINARY_DIR}/core.o)
+
+set_target_properties(core PROPERTIES LINKER_LANGUAGE C ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # What a compiled program links against: the runtime a native object calls into, built apart from the
 # compiler so a binary carries neither the parser nor the emitter that produced it.
 add_library(gab_runtime STATIC src/runtime/runtime.c)
+
+set_target_properties(gab_runtime PROPERTIES ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 target_include_directories(gab_runtime PUBLIC src)
 

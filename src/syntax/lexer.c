@@ -125,6 +125,10 @@ const char *token_description(TokenType type) {
         return "'extern'";
     case TOKEN_INTRINSIC:
         return "'intrinsic'";
+    case TOKEN_CALLER:
+        return "'caller'";
+    case TOKEN_BUILTIN:
+        return "a builtin";
     case TOKEN_STRUCT:
         return "'struct'";
     case TOKEN_IMPL:
@@ -356,6 +360,10 @@ static Token lexer_identifier(Lexer *lexer) {
         return token_create_ref(lexer, TOKEN_INTRINSIC, ref);
     }
 
+    if (string_ref_equals_cstr(ref, "caller")) {
+        return token_create_ref(lexer, TOKEN_CALLER, ref);
+    }
+
     if (string_ref_equals_cstr(ref, "box")) {
         return token_create_ref(lexer, TOKEN_BOX, ref);
     }
@@ -543,6 +551,21 @@ Token lexer_next(Lexer *lexer) {
         return lexer_handle_op_eq(lexer, TOKEN_AMP, TOKEN_INVALID, '&', TOKEN_AND);
     case '|':
         return lexer_handle_op_eq(lexer, TOKEN_INVALID, TOKEN_INVALID, '|', TOKEN_OR);
+    case '@': {
+        const char *begin = lexer->source + lexer->pos;
+
+        while (is_ident_char(lexer_peek(lexer))) {
+            lexer_eat(lexer);
+        }
+
+        StringRef ref = {.data = begin, .length = (size_t)(lexer->source + lexer->pos - begin)};
+
+        if (!ref.length) {
+            return token_create(lexer, TOKEN_INVALID);
+        }
+
+        return token_create_ref(lexer, TOKEN_BUILTIN, ref);
+    }
     case ';':
         return token_create(lexer, TOKEN_SEMICOLON);
     case ':':

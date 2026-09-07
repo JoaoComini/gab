@@ -26,7 +26,7 @@ PendingBodies pending_bodies_create(Arena *arena) {
 
 void pending_bodies_instantiate(PendingBodies *work, Function *generic, Function *method,
                                 Diagnostics *diagnostics) {
-    if (method->decl->body_kind != BODY_GAB) {
+    if (function_runs_native(method)) {
         return;
     }
 

@@ -1,3 +1,6 @@
+module test;
+import check;
+
 func dirties(): i32 {
     let xs: array<i32, 8>;
 
