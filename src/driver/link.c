@@ -1,11 +1,15 @@
 #include "driver/link.h"
 
+#include "scope.h"
+
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+static bool readable(const char *path);
 
 const char *gab_libdir(void) {
     static char directory[PATH_MAX];
@@ -21,20 +25,34 @@ const char *gab_libdir(void) {
         return directory;
     }
 
-    ssize_t length = readlink("/proc/self/exe", directory, sizeof(directory) - 1);
+    char self[PATH_MAX];
+    ssize_t length = readlink("/proc/self/exe", self, sizeof(self) - 1);
 
     if (length <= 0) {
         snprintf(directory, sizeof(directory), ".");
         return directory;
     }
 
-    directory[length] = '\0';
+    self[length] = '\0';
 
-    char *slash = strrchr(directory, '/');
+    char *slash = strrchr(self, '/');
 
     if (slash) {
         *slash = '\0';
     }
+
+    /* An installation puts the compiler in 'bin' and what it links beside it in 'lib/gab'; a build tree
+     * puts both in one directory. The library is wherever the core is. */
+    snprintf(directory, sizeof(directory), "%s/../lib/gab", self);
+
+    char probe[PATH_MAX];
+    snprintf(probe, sizeof(probe), "%s/%s.gabi", directory, GAB_CORE_MODULE);
+
+    if (readable(probe)) {
+        return directory;
+    }
+
+    snprintf(directory, sizeof(directory), "%s", self);
 
     return directory;
 }

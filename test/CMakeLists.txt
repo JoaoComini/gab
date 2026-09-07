@@ -1,3 +1,32 @@
+# Every test binary is built the same way: it links the compiler as a library, asserts, and knows
+# where the core the compiler wrote is. What differs between suites is what drives them.
+function(gab_test_binary TEST_NAME TEST_SOURCE)
+    add_executable(${TEST_NAME} ${TEST_SOURCE})
+
+    # Every check in this suite is an assert, so a Release build defining NDEBUG
+    # would compile the checks away and report a vacuous pass.
+    target_compile_options(${TEST_NAME} PRIVATE -UNDEBUG
+        -DGAB_TEST_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}"
+        -DGAB_TEST_CORE_INTERFACE="${GAB_LIB_DIR}/core.gabi"
+        -DGAB_TEST_CORE_SOURCE="${CMAKE_SOURCE_DIR}/src/core/core.gab")
+
+    target_link_libraries(${TEST_NAME} PRIVATE gab)
+    target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    # What a test resolves against is the interface the compiler wrote, so the core is built first.
+    add_dependencies(${TEST_NAME} core)
+endfunction()
+
+# A test that compiles finds the core beside the compiler, which is the build root rather than here.
+set(GAB_TEST_ENV "GABC_LIBDIR=${GAB_LIB_DIR}")
+
+# The runtime a case links against carries the sanitizers this build was compiled with, which reaches
+# the link through the compiler rather than around it.
+if(GAB_SANITIZE)
+    list(APPEND GAB_TEST_ENV "GABC_LINK_FLAGS=-fsanitize=${GAB_SANITIZE}")
+endif()
+
+# One binary per file, each run on its own.
 set(
     TEST_SOURCES
 
@@ -38,56 +67,26 @@ set(
     readme_test.c
 )
 
-function(add_gab_test TEST_NAME TEST_SOURCE)
-    add_executable(${TEST_NAME} ${TEST_SOURCE})
-
-    # Every check in this suite is an assert, so a Release build defining NDEBUG
-    # would compile the checks away and report a vacuous pass.
-    target_compile_options(${TEST_NAME} PRIVATE -UNDEBUG
-        -DGAB_TEST_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}"
-        -DGAB_TEST_CORE_INTERFACE="${CMAKE_BINARY_DIR}/core.gabi"
-        -DGAB_TEST_CORE_SOURCE="${CMAKE_SOURCE_DIR}/src/core/core.gab")
-
-    # A test resolving against the core reads the interface the compiler wrote, so it must exist first.
-    add_dependencies(${TEST_NAME} core)
-
-    target_link_libraries(${TEST_NAME} PRIVATE gab)
-    target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-    add_test(
-        NAME ${TEST_NAME}
-        COMMAND ${TEST_NAME}
-    )
-
-    # A test that compiles finds the core beside the compiler, which is the build root rather than here.
-    set_tests_properties(${TEST_NAME} PROPERTIES ENVIRONMENT "GABC_LIBDIR=${CMAKE_BINARY_DIR}")
-endfunction()
-
 foreach(TEST_SOURCE ${TEST_SOURCES})
     get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
-    add_gab_test(${TEST_NAME} ${TEST_SOURCE})
+
+    gab_test_binary(${TEST_NAME} ${TEST_SOURCE})
+
+    add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
+
+    set_tests_properties(${TEST_NAME} PROPERTIES ENVIRONMENT "${GAB_TEST_ENV}")
 endforeach()
 
 # A case in test/run is compiled, linked and run as a native binary, so what it checks is what the
 # backend actually emitted rather than what a VM read.
-add_executable(run_test run_test.c)
+gab_test_binary(run_test run_test.c)
 
-target_compile_options(run_test PRIVATE -UNDEBUG
-    -DGAB_TEST_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}"
+target_compile_options(run_test PRIVATE
     -DGAB_TEST_COMPILER="$<TARGET_FILE:gabc>"
     -DGAB_TEST_HARNESS="${CMAKE_CURRENT_SOURCE_DIR}/support/harness.c")
 
-# The suite drives the compiler as a program, so it must be built before a case runs.
-add_dependencies(run_test gabc core gab_runtime)
-
-# The runtime a case links against carries the sanitizers this build was compiled with, which reaches
-# the link through the compiler rather than around it.
-if(GAB_SANITIZE)
-    set(GAB_RUN_ENV "GABC_LINK_FLAGS=-fsanitize=${GAB_SANITIZE}")
-endif()
-
-target_link_libraries(run_test PRIVATE gab)
-target_include_directories(run_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# The suite drives the compiler as a program, and links a case against what an installation ships.
+add_dependencies(run_test gabc gab_runtime)
 
 # Globbed with CONFIGURE_DEPENDS so a new .gab file runs without being named here, which is
 # what a forgotten registration would otherwise cost: a test that silently never runs.
@@ -96,36 +95,24 @@ file(GLOB RUN_CASES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/run/*.gab)
 foreach(CASE ${RUN_CASES})
     get_filename_component(CASE_STEM ${CASE} NAME_WE)
 
-    # The prelude is included by every case rather than being one.
+    # The prelude is the module every case imports rather than a case of its own.
     if(NOT CASE_STEM STREQUAL "prelude")
-        add_test(
-            NAME run_${CASE_STEM}
-            COMMAND run_test ${CMAKE_CURRENT_SOURCE_DIR}/run ${CASE_STEM}
-        )
+        add_test(NAME run_${CASE_STEM} COMMAND run_test ${CMAKE_CURRENT_SOURCE_DIR}/run ${CASE_STEM})
 
-        set_tests_properties(run_${CASE_STEM} PROPERTIES ENVIRONMENT "${GAB_RUN_ENV}")
+        set_tests_properties(run_${CASE_STEM} PROPERTIES ENVIRONMENT "${GAB_TEST_ENV}")
     endif()
 endforeach()
 
 # A rejection is stated by the program that provokes it: the case is source, and a trailing
 # '// error' block names every diagnostic it must raise, at the position the compiler reports.
-add_executable(error_test error_test.c)
-
-target_compile_options(error_test PRIVATE -UNDEBUG
-    -DGAB_TEST_CORE_INTERFACE="${CMAKE_BINARY_DIR}/core.gabi")
-
-# A rejection about indexing is stated against the core's 'Index', which the compiler must write first.
-add_dependencies(error_test core)
-target_link_libraries(error_test PRIVATE gab)
-target_include_directories(error_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+gab_test_binary(error_test error_test.c)
 
 file(GLOB ERROR_CASES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/error/*.gab)
 
 foreach(CASE ${ERROR_CASES})
     get_filename_component(CASE_STEM ${CASE} NAME_WE)
 
-    add_test(
-        NAME error_${CASE_STEM}
-        COMMAND error_test ${CMAKE_CURRENT_SOURCE_DIR}/error ${CASE_STEM}
-    )
+    add_test(NAME error_${CASE_STEM} COMMAND error_test ${CMAKE_CURRENT_SOURCE_DIR}/error ${CASE_STEM})
+
+    set_tests_properties(error_${CASE_STEM} PROPERTIES ENVIRONMENT "${GAB_TEST_ENV}")
 endforeach()

@@ -34,85 +34,107 @@ if(GAB_SANITIZE)
     add_link_options(-fsanitize=${GAB_SANITIZE})
 endif()
 
+# The backend builds a module through the C API, which verifies what it is given
+# rather than leaving a malformed instruction for a later tool to reject.
+find_package(LLVM REQUIRED CONFIG)
+
+find_library(MATH_LIBRARY m)
+
+include(GNUInstallDirs)
+
+# What a program links against sits beside the compiler in the build tree and in 'lib/gab' once
+# installed, which is the pair of places 'gab_libdir' looks.
+set(GAB_LIB_DIR ${CMAKE_BINARY_DIR})
+
+# The compiler as a library: source text in, a native object out, through the stages in order.
 add_library(gab
     src/memory/allocator.c
     src/memory/arena.c
+    src/string/string.c
+    src/string/string_ref.c
+    src/constant.c
     src/diagnostics.c
+
     src/syntax/lexer.c
     src/syntax/parser.c
-    src/object.c
-    src/type/type.c
-    src/type/type_registry.c
-    src/function_registry.c
-    src/scope.c
+
     src/ast/ast.c
+    src/ast/expr.c
+    src/ast/stmt.c
+    src/ast/type_expr.c
     src/ast/facts.c
     src/ast/pending.c
     src/ast/resolve.c
-    src/llvm/llvm_emit.c
-    src/llvm/llvm_symbol.c
+
+    src/object.c
+    src/scope.c
+    src/function_registry.c
+    src/type/type.c
+    src/type/type_registry.c
+
     src/mir/mir.c
-    src/mir/mir_print.c
     src/mir/mir_build.c
     src/mir/mir_lower.c
+    src/mir/mir_module.c
     src/mir/mir_instantiate.c
     src/mir/mir_liveness.c
     src/mir/mir_state.c
     src/mir/mir_borrowck.c
     src/mir/mir_drop.c
-    src/constant.c
-    src/mir/mir_module.c
     src/mir/mir_fold.c
-    src/ast/expr.c
-    src/ast/type_expr.c
-    src/ast/stmt.c
-    src/string/string_ref.c
-    src/string/string.c
+    src/mir/mir_print.c
+
+    src/llvm/llvm_emit.c
+    src/llvm/llvm_symbol.c
+
     src/driver/compile.c
-    src/driver/link.c
     src/driver/interface.c
+    src/driver/link.c
 )
 
-# The compiler as a program: one source in, one native object out.
+target_include_directories(gab PUBLIC src/)
+target_include_directories(gab SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
+
+target_link_libraries(gab PRIVATE LLVM)
+
+if(MATH_LIBRARY)
+    target_link_libraries(gab PRIVATE ${MATH_LIBRARY})
+endif()
+
+# The compiler as a program, which is what compiles the core below and what a test drives.
 add_executable(gabc src/driver/main.c)
 
 target_link_libraries(gabc PRIVATE gab)
-
-# The core is compiled by the compiler, into a library beside it: what 'gabc' links a program against
-# is the same archive an installation would ship, rather than something the test suite builds.
-add_custom_command(
-    OUTPUT ${CMAKE_BINARY_DIR}/core.o
-    COMMAND gabc --core -o ${CMAKE_BINARY_DIR}/core.o ${CMAKE_SOURCE_DIR}/src/core/core.gab
-    DEPENDS gabc ${CMAKE_SOURCE_DIR}/src/core/core.gab
-    COMMENT "Compiling the core"
-)
-
-add_library(core STATIC ${CMAKE_BINARY_DIR}/core.o)
-
-set_target_properties(core PROPERTIES LINKER_LANGUAGE C ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # What a compiled program links against: the runtime a native object calls into, built apart from the
 # compiler so a binary carries neither the parser nor the emitter that produced it.
 add_library(gab_runtime STATIC src/runtime/runtime.c)
 
-set_target_properties(gab_runtime PROPERTIES ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
-
 target_include_directories(gab_runtime PUBLIC src)
 
-find_library(MATH_LIBRARY m)
-if(MATH_LIBRARY)
-    target_link_libraries(gab PRIVATE ${MATH_LIBRARY})
-endif()
+set_target_properties(gab_runtime PROPERTIES ARCHIVE_OUTPUT_DIRECTORY ${GAB_LIB_DIR})
 
-# The backend builds a module through the C API, which verifies what it is given
-# rather than leaving a malformed instruction for a later tool to reject.
-find_package(LLVM REQUIRED CONFIG)
+# The core is compiled by the compiler, into a library beside it: what 'gabc' links a program against
+# is the same archive an installation would ship, rather than something the test suite builds.
+add_custom_command(
+    OUTPUT ${GAB_LIB_DIR}/core.o
+    COMMAND gabc --core -o ${GAB_LIB_DIR}/core.o ${CMAKE_SOURCE_DIR}/src/core/core.gab
+    DEPENDS gabc ${CMAKE_SOURCE_DIR}/src/core/core.gab
+    COMMENT "Compiling the core"
+)
 
-target_include_directories(gab SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
-target_link_libraries(gab PRIVATE LLVM)
+add_library(core STATIC ${GAB_LIB_DIR}/core.o)
 
-target_include_directories(gab PUBLIC src/)
+set_target_properties(core PROPERTIES LINKER_LANGUAGE C ARCHIVE_OUTPUT_DIRECTORY ${GAB_LIB_DIR})
+
+# 'bin' holds the compiler and 'lib/gab' what it links a program against, which is the layout
+# 'gab_libdir' looks for before falling back to its own directory.
+install(TARGETS gabc RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+install(TARGETS core gab_runtime ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}/gab)
+
+install(FILES ${GAB_LIB_DIR}/core.gabi DESTINATION ${CMAKE_INSTALL_LIBDIR}/gab)
 
 enable_testing()
-add_subdirectory(test)
 
+add_subdirectory(test)
