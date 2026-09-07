@@ -33,19 +33,6 @@ static char *read_file(const char *path) {
     return text;
 }
 
-/* Every body a unit declares, so a call reaches the one it names rather than a declaration. */
-static void emit_unit(LLVMUnit *unit, const char *source, TestEmission *held, size_t *count) {
-    static const char *NAMES[] = {"assert", "run"};
-
-    for (size_t i = 0; i < sizeof(NAMES) / sizeof(*NAMES); i++) {
-        held[*count] = test_lower_ir_named(source, NAMES[i]);
-
-        llvm_unit_add(unit, held[*count].ir);
-
-        (*count)++;
-    }
-}
-
 static int run_file(const char *directory, const char *name) {
     char path[512];
     snprintf(path, sizeof(path), "%s/%s.gab", directory, name);
@@ -68,13 +55,17 @@ static int run_file(const char *directory, const char *name) {
     char *source = malloc(strlen(prelude) + strlen(body) + 2);
     sprintf(source, "%s\n%s", prelude, body);
 
-    TestEmission held[8];
+    MIRFunction *bodies[64];
     size_t count = 0;
+
+    TestEmission emission = test_lower_unit(source, bodies, 64, &count);
 
     Arena *arena = arena_create(1 << 16);
     LLVMUnit *unit = llvm_unit_open(arena);
 
-    emit_unit(unit, source, held, &count);
+    for (size_t i = 0; i < count; i++) {
+        llvm_unit_add(unit, bodies[i]);
+    }
 
     char object[512];
     snprintf(object, sizeof(object), "%s/%s.o", GAB_TEST_SCRATCH, name);
@@ -113,9 +104,7 @@ static int run_file(const char *directory, const char *name) {
 
     llvm_unit_close(unit);
 
-    for (size_t i = 0; i < count; i++) {
-        test_emission_free(&held[i]);
-    }
+    test_emission_free(&emission);
 
     arena_destroy(arena);
 

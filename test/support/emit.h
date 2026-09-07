@@ -63,6 +63,45 @@ static inline TestEmission test_lower_ir_named(const char *source, const char *n
 
 static inline TestEmission test_lower_ir(const char *source) { return test_lower_ir_named(source, NULL); }
 
+/* Every body a source declares, lowered together, so a unit emits what its calls reach. */
+static inline TestEmission test_lower_unit(const char *source, MIRFunction **out, size_t capacity,
+                                           size_t *count) {
+    TestEmission emission = {0};
+
+    test_context_init(&emission.ctx);
+
+    emission.scope = scope_create(emission.ctx.arena, &emission.ctx.strings, NULL);
+    emission.unit = ast_unit_create(emission.ctx.arena);
+
+    bool resolved = test_resolve_ir(&emission.ctx, emission.scope, &emission.unit, &emission.mir_unit,
+                                    &emission.resolved, source);
+
+    assert(resolved);
+
+    *count = 0;
+
+    for (size_t i = 0; i < emission.unit->statements.size; i++) {
+        ASTStmt *stmt = emission.unit->statements.data[i];
+
+        if (!stmt || stmt->kind != STMT_FUNC_DECL || !stmt->func_decl.body || *count == capacity) {
+            continue;
+        }
+
+        MIRFunction *ir = mir_module_lookup(emission.mir_unit, stmt->func_decl.function);
+
+        if (!ir) {
+            continue;
+        }
+
+        mir_fold(emission.ctx.arena, ir);
+        mir_drop_elaborate(emission.ctx.arena, emission.scope->type_registry, ir);
+
+        out[(*count)++] = ir;
+    }
+
+    return emission;
+}
+
 /* Numbers whatever a body names, so an emission test needs no unit to have assigned indices. */
 static inline bool test_any_callee_index(void *context, Function *callee, unsigned int *index,
                                          bool *relocates) {

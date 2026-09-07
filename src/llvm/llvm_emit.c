@@ -8,6 +8,7 @@
 #include <llvm-c/TargetMachine.h>
 
 #include <assert.h>
+#include <stdio.h>
 #include <string.h>
 
 #define GAB_MAX_STRUCT_FIELDS 64
@@ -27,6 +28,9 @@ typedef struct {
 
     /* What a slot's storage holds, which a GEP must be given rather than infer from a pointer. */
     LLVMTypeRef *value_types;
+
+    /* Allocas belong at the head of the entry block, wherever the instruction naming one sits. */
+    LLVMBuilderRef entry;
 
     LLVMBasicBlockRef *blocks;
 } LLVMEmitter;
@@ -70,8 +74,18 @@ static LLVMTypeRef llvm_type_of(LLVMEmitter *emitter, const Type *type) {
     }
 }
 
-/* The address a place names, walked from its base through each projection. */
+/* The address a place names, walked from its base through each projection. A base with no storage of
+ * its own is a temporary the lowering stores into, which is given a slot the first time it is named. */
 static LLVMValueRef place_address(LLVMEmitter *emitter, const Place *place, LLVMTypeRef *out_type) {
+    if (!emitter->value_types[place->base.id] && !emitter->values[place->base.id]) {
+        const MIRValueInfo *info = mir_value_info(emitter->ir, place->base);
+
+        LLVMTypeRef held = llvm_type_of(emitter, info ? info->type : NULL);
+
+        emitter->value_types[place->base.id] = held;
+        emitter->values[place->base.id] = LLVMBuildAlloca(emitter->entry, held, "");
+    }
+
     LLVMValueRef address = emitter->values[place->base.id];
     LLVMTypeRef type = emitter->value_types[place->base.id];
 
@@ -299,7 +313,7 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         LLVMTypeRef held = llvm_type_of(emitter, info ? info->type : NULL);
 
         emitter->value_types[inst->place.base.id] = held;
-        values[inst->place.base.id] = LLVMBuildAlloca(builder, held, "");
+        values[inst->place.base.id] = LLVMBuildAlloca(emitter->entry, held, "");
         break;
     }
 
@@ -363,6 +377,13 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
 
     case MIR_RETURN:
         if (inst->arg_count == 0) {
+            /* A body whose paths all return still ends with a block nothing reaches, which returns no
+             * value however the signature reads. */
+            if (emitter->ir->function->return_type) {
+                LLVMBuildUnreachable(builder);
+                break;
+            }
+
             LLVMBuildRetVoid(builder);
             break;
         }
@@ -411,7 +432,9 @@ void llvm_unit_add(LLVMUnit *unit, const MIRFunction *ir) {
     emitter.values = arena_alloc(arena, (ir->value_count + 1) * sizeof(LLVMValueRef));
     emitter.value_types = arena_alloc(arena, (ir->value_count + 1) * sizeof(LLVMTypeRef));
 
-    /* A null entry is what says a register holds its value rather than storage for one. */
+    /* A null entry is what says a register holds its value rather than storage for one, and what says
+     * a temporary stored into has not been given a slot yet. */
+    memset(emitter.values, 0, (ir->value_count + 1) * sizeof(LLVMValueRef));
     memset(emitter.value_types, 0, (ir->value_count + 1) * sizeof(LLVMTypeRef));
 
     emitter.blocks = arena_alloc(arena, (ir->block_count + 1) * sizeof(LLVMBasicBlockRef));
@@ -448,6 +471,13 @@ void llvm_unit_add(LLVMUnit *unit, const MIRFunction *ir) {
         emitter.blocks[ir->blocks[b]->id.id] = LLVMAppendBasicBlockInContext(unit->context, function, label);
     }
 
+    /* Slots live in a block of their own, so one allocated while a later block is being emitted still
+     * runs before every use rather than after that block's terminator. */
+    LLVMBasicBlockRef slots = LLVMAppendBasicBlockInContext(unit->context, function, "slots");
+
+    emitter.entry = LLVMCreateBuilderInContext(unit->context);
+    LLVMPositionBuilderAtEnd(emitter.entry, slots);
+
     for (size_t b = 0; b < ir->block_count; b++) {
         const MIRBlock *block = ir->blocks[b];
 
@@ -459,6 +489,11 @@ void llvm_unit_add(LLVMUnit *unit, const MIRFunction *ir) {
     }
 
     /* A malformed body is a compiler bug, and the verifier names it here rather than at link time. */
+    LLVMBuildBr(emitter.entry, emitter.blocks[ir->entry.id]);
+    LLVMMoveBasicBlockBefore(slots, emitter.blocks[ir->entry.id]);
+
+    LLVMDisposeBuilder(emitter.entry);
+
     assert(LLVMVerifyModule(unit->module, LLVMReturnStatusAction, NULL) == 0 && "an emitted module verifies");
 }
 

@@ -1,0 +1,24 @@
+func taken(c: bool): i32 {
+    if c { return 1; }
+    return 0;
+}
+
+func with_else(c: bool): i32 {
+    if c { return 1; } else { return 2; }
+}
+
+func run(): i32 {
+    assert(taken(true) == 1);
+    assert(taken(false) == 0);
+
+    assert(with_else(true) == 1);
+    assert(with_else(false) == 2);
+
+    let x: i32 = 1;
+    if x > 0 { assert(true); } else { assert(false); }
+
+    if true && false { assert(false); }
+    if true || false { assert(true); } else { assert(false); }
+
+    return 0;
+}
