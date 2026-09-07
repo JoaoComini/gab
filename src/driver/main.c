@@ -27,13 +27,14 @@ static char *read_file(const char *path) {
 }
 
 static int usage(void) {
-    fprintf(stderr, "usage: gabc [--core] [-c] [-L <dir>] -o <output> [<source.gab>]\n");
+    fprintf(stderr, "usage: gabc [--core] [-c] [-L <dir>] -o <output> [<source.gab>...]\n");
     return 2;
 }
 
 int main(int argc, char **argv) {
     const char *output = NULL;
-    const char *path = NULL;
+    const char *paths[16];
+    size_t path_count = 0;
     const char *extra[16];
     size_t extra_count = 0;
     const char *search[16];
@@ -52,8 +53,8 @@ int main(int argc, char **argv) {
             output = argv[++i];
         } else if (argv[i][0] == '-') {
             return usage();
-        } else if (strstr(argv[i], ".gab")) {
-            path = argv[i];
+        } else if (strstr(argv[i], ".gab") && path_count < 16) {
+            paths[path_count++] = argv[i];
         } else if (extra_count < 16) {
             /* Anything not Gab source is handed to the link, which is how a program supplies its own
              * entry point or calls into C it already has. */
@@ -61,38 +62,38 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (!output || !path) {
+    if (!output || !path_count) {
         return usage();
     }
 
     /* The core is a library, so it is only ever compiled. */
     compile_only = compile_only || is_core;
 
-    char *source = NULL;
+    const char *sources[16];
 
-    if (path) {
-        source = read_file(path);
+    for (size_t i = 0; i < path_count; i++) {
+        sources[i] = read_file(paths[i]);
 
-        if (!source) {
-            fprintf(stderr, "gabc: %s: no such file\n", path);
+        if (!sources[i]) {
+            fprintf(stderr, "gabc: %s: no such file\n", paths[i]);
             return 1;
         }
     }
 
     char directory[512] = ".";
 
-    if (path) {
-        const char *slash = strrchr(path, '/');
+    if (path_count) {
+        const char *slash = strrchr(paths[0], '/');
 
         if (slash) {
-            snprintf(directory, sizeof(directory), "%.*s", (int)(slash - path), path);
+            snprintf(directory, sizeof(directory), "%.*s", (int)(slash - paths[0]), paths[0]);
         }
     }
 
     Arena *arena = arena_create(4096);
 
     Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, arena, path ? path : "core");
+    diagnostics_init(&diagnostics, arena, path_count ? paths[0] : "core");
 
     /* Linking reads an object, so one is written beside the binary even where it was not asked for. */
     char scratch[512];
@@ -112,8 +113,10 @@ int main(int argc, char **argv) {
     }
 
     GabCompile request = {
-        .module = path,
-        .source = source,
+        .module = path_count ? paths[0] : NULL,
+        .sources = sources,
+        .source_count = path_count,
+        .names = paths,
         .object = compile_only ? output : scratch,
         .interface = interface[0] ? interface : NULL,
         .is_core = is_core,
@@ -143,7 +146,9 @@ int main(int argc, char **argv) {
     diagnostics_free(&diagnostics);
     arena_destroy(arena);
 
-    free(source);
+    for (size_t i = 0; i < path_count; i++) {
+        free((char *)sources[i]);
+    }
 
     return ok ? 0 : 1;
 }

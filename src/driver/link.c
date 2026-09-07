@@ -172,10 +172,25 @@ bool gab_link(const char *object, const char *module, const char *const *extra, 
             char module[128];
 
             if (sscanf(marker, "gab.iface.%127[^.]", module) == 1) {
-                fprintf(stderr,
-                        "the interface for '%s' is not the one its object was compiled from: "
-                        "recompile them together\n",
-                        module);
+                /* The object is there and states another interface, or it was never linked at all. */
+                bool present = false;
+
+                for (size_t i = 0; i < extra_count; i++) {
+                    const char *slash = strrchr(extra[i], '/');
+                    const char *base = slash ? slash + 1 : extra[i];
+
+                    present = present || strncmp(base, module, strlen(module)) == 0;
+                }
+
+                if (present) {
+                    fprintf(stderr,
+                            "the interface for '%s' is not the one its object was compiled from: "
+                            "recompile them together\n",
+                            module);
+                } else {
+                    fprintf(stderr, "no object for module '%s' was linked\n", module);
+                }
+
                 stale = true;
             }
         }

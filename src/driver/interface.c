@@ -248,7 +248,15 @@ bool gab_interface_write(const ASTUnit *unit, const char *path) {
         return false;
     }
 
-    fprintf(out, "module %.*s;\n\n", (int)unit->module_name.length, unit->module_name.data);
+    fprintf(out, "module %.*s;\n", (int)unit->module_name.length, unit->module_name.data);
+
+    /* What this module imports, so linking against it reaches the objects its bodies call into. */
+    for (size_t i = 0; i < unit->imports.size; i++) {
+        fprintf(out, "import %.*s;\n", (int)unit->imports.data[i].name.length,
+                unit->imports.data[i].name.data);
+    }
+
+    fputc('\n', out);
 
     for (size_t i = 0; i < unit->statements.size; i++) {
         print_stmt(out, unit->statements.data[i]);

@@ -12,7 +12,12 @@
 typedef struct {
     const char *module;
 
-    const char *source;
+    /* The files this module is written across, resolved together as one unit. */
+    const char *const *sources;
+    size_t source_count;
+
+    /* What each source is called, so a diagnostic about one names the file it came from. */
+    const char *const *names;
 
     const char *object;
 
