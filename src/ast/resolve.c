@@ -2274,11 +2274,6 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
                     report_containment_cycle(state, cycle, span);
                     return resolver_error_type(state);
                 }
-
-                if (type_registry_size_of(registry, args[i]) == 0) {
-                    diag_error(state->diagnostics, GAB_ERR_TYPE, span, "a type argument must have a size");
-                    return resolver_error_type(state);
-                }
             }
 
             return type_registry_apply(registry, base_decl, args, expr->apply.args.size);

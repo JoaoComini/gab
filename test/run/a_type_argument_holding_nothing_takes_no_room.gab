@@ -1,0 +1,15 @@
+module test;
+import testing;
+
+struct Marker {}
+
+struct Tagged<T> { value: i32, tag: T }
+
+func run(): i32 {
+    let tagged: Tagged<Marker> = Tagged<Marker> { value: 4, tag: Marker {} };
+
+    assert(tagged.value == 4);
+    assert(@size_of<Tagged<Marker>>() == @size_of<i32>());
+
+    return 0;
+}
