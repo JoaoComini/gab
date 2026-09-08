@@ -1,0 +1,11 @@
+struct Marker {}
+
+func f(): i32 {
+    let empty: array<Marker, 2> = [Marker {}, Marker {}];
+
+    return 0;
+}
+
+// error
+// :4:5: type error: an array's element must have a size
+// :4:35: type error: an array's elements need the array's type to be written, as 'let xs: [i32; 3] = [1, 2, 3];'
