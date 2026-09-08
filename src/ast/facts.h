@@ -45,6 +45,12 @@ GAB_HASH_MAP(StmtTypeMap, stmt_fact, const ASTStmt *, const Type *)
 typedef enum {
     CALL_FUNCTION,
     CALL_CONVERSION,
+
+    /* Written as 'a.f(x)', which resolution answers with the receiver standing as the first argument. */
+    CALL_METHOD,
+
+    /* Written as 'xs[i]', which resolution answers with the call the element's 'Index' names. */
+    CALL_INDEX,
 } CallKind;
 
 /* How a value reaches the type its destination takes: dereferenced some number of times, then

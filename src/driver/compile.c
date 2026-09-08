@@ -62,7 +62,8 @@ static bool parse_module(Arena *arena, StringPool *strings, const char *const *s
 static bool compile_unit(Arena *arena, StringPool *strings, Scope *scope, ModuleScopeMap *modules,
                          const char *const *sources, size_t source_count, bool allow_primitive_impls,
                          LLVMUnit *out, Diagnostics *diagnostics, char *module_name, size_t module_capacity,
-                         ASTUnit **out_ast, const char *const *names, ASTUnit *parsed, MIRModule *generics) {
+                         ASTUnit **out_ast, const char *const *names, ASTUnit *parsed, MIRModule *generics,
+                         const Facts **out_facts) {
     ASTUnit *ast = parsed;
 
     if (!ast && !parse_module(arena, strings, sources, source_count, names, &ast, diagnostics)) {
@@ -81,6 +82,11 @@ static bool compile_unit(Arena *arena, StringPool *strings, Scope *scope, Module
 
     if (!resolve_unit(arena, ast, scope, modules, allow_primitive_impls, &resolved, diagnostics)) {
         return false;
+    }
+
+    /* What the interface states a body as is what was written, which only resolution's facts recover. */
+    if (out_facts) {
+        *out_facts = &resolved->facts;
     }
 
     MIRModule *bodies = NULL;
@@ -133,6 +139,9 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
 
     char *interface = NULL;
 
+    const Facts *core_facts = NULL;
+    const Facts *unit_facts = NULL;
+
     if (!request->is_core) {
         /* A program reads what the core declares, never the source those declarations came from. */
         char path[PATH_MAX];
@@ -168,7 +177,7 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
 
     bool ok =
         compile_unit(arena, &strings, scope, NULL, core_sources, 1, true, request->is_core ? unit : NULL,
-                     diagnostics, NULL, 0, &core_ast, NULL, NULL, generics);
+                     diagnostics, NULL, 0, &core_ast, NULL, NULL, generics, &core_facts);
 
     module_scope_map_insert(modules, string_from_cstr(&strings, GAB_CORE_MODULE), scope);
 
@@ -256,7 +265,7 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
             const char *one[1] = {text};
 
             ok = compile_unit(arena, &strings, imported, NULL, one, 1, true, NULL, diagnostics, NULL, 0, NULL,
-                              NULL, NULL, generics);
+                              NULL, NULL, generics, NULL);
 
             if (ok) {
                 if (i < declaring->imports.size) {
@@ -284,11 +293,12 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
     if (ok && !request->is_core) {
         ok = compile_unit(arena, &strings, scope, modules, request->sources, request->source_count, false,
                           unit, diagnostics, request->module_name, sizeof(request->module_name), &unit_ast,
-                          request->names, declaring, generics);
+                          request->names, declaring, generics, &unit_facts);
     }
 
     if (ok && request->interface) {
-        ok = gab_interface_write(request->is_core ? core_ast : unit_ast, request->interface);
+        ok = gab_interface_write(request->is_core ? core_ast : unit_ast,
+                                 request->is_core ? core_facts : unit_facts, request->interface);
 
         if (!ok) {
             diag_error(diagnostics, GAB_ERR_CODEGEN, (Span){0, 0}, "could not write %s", request->interface);

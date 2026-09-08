@@ -28,13 +28,17 @@ static char *interface_of(const char *source) {
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
     ASTUnit *unit = ast_unit_create(ctx.arena);
 
-    bool ok = test_resolve_ir_with(&ctx, scope, &unit, NULL, NULL, source, true);
+    ResolvedUnit *resolved = NULL;
+
+    bool ok = test_resolve_ir_with(&ctx, scope, &unit, NULL, &resolved, source, true);
     assert(ok);
+
+    const Facts *facts = &resolved->facts;
 
     char path[512];
     snprintf(path, sizeof(path), "%s/interface_test.gabi", GAB_TEST_SCRATCH);
 
-    assert(gab_interface_write(unit, path));
+    assert(gab_interface_write(unit, facts, path));
 
     char *text = gab_interface_read(path);
     assert(text);
