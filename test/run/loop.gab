@@ -1,5 +1,5 @@
 module test;
-import check;
+import testing;
 
 func counted(n: i32): i32 {
     let acc: i32 = 0;

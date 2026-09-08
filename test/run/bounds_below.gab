@@ -1,5 +1,5 @@
 module test;
-import check;
+import testing;
 
 func at(xs: &array<i32, 3>, i: i32): i32 { return xs[i]; }
 

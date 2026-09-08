@@ -1,5 +1,5 @@
 module test;
-import check;
+import testing;
 
 func dirties(): i32 {
     let xs: array<i32, 8>;

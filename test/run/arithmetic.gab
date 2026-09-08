@@ -1,5 +1,5 @@
 module test;
-import check;
+import testing;
 
 func added(a: i32, b: i32): i32 { return a + b; }
 

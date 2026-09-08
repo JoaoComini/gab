@@ -1,5 +1,5 @@
 module test;
-import check;
+import testing;
 
 func lt(a: i32, b: i32): bool { return a < b; }
 func gt(a: i32, b: i32): bool { return a > b; }

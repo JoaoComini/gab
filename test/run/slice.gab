@@ -1,5 +1,5 @@
 module test;
-import check;
+import testing;
 
 func at(xs: &slice<i32>, i: i32): i32 { return xs[i]; }
 

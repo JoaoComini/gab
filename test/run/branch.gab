@@ -1,5 +1,5 @@
 module test;
-import check;
+import testing;
 
 func taken(c: bool): i32 {
     if c { return 1; }

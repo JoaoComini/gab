@@ -1,5 +1,5 @@
 module test;
-import check;
+import testing;
 
 struct Counter { n: i32 }
 

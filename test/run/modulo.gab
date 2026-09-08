@@ -1,5 +1,5 @@
 module test;
-import check;
+import testing;
 
 func run(): i32 {
     assert(7 % 3 == 1);

@@ -86,7 +86,7 @@ target_compile_options(run_test PRIVATE
     -DGAB_TEST_HARNESS="${CMAKE_CURRENT_SOURCE_DIR}/support/harness.c")
 
 # The suite drives the compiler as a program, which is what links a case against the core.
-add_dependencies(run_test gabc)
+add_dependencies(run_test gabc std)
 
 # Globbed with CONFIGURE_DEPENDS so a new .gab file runs without being named here, which is
 # what a forgotten registration would otherwise cost: a test that silently never runs.
@@ -95,12 +95,9 @@ file(GLOB RUN_CASES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/run/*.gab)
 foreach(CASE ${RUN_CASES})
     get_filename_component(CASE_STEM ${CASE} NAME_WE)
 
-    # The prelude is the module every case imports rather than a case of its own.
-    if(NOT CASE_STEM STREQUAL "prelude")
-        add_test(NAME run_${CASE_STEM} COMMAND run_test ${CMAKE_CURRENT_SOURCE_DIR}/run ${CASE_STEM})
+    add_test(NAME run_${CASE_STEM} COMMAND run_test ${CMAKE_CURRENT_SOURCE_DIR}/run ${CASE_STEM})
 
-        set_tests_properties(run_${CASE_STEM} PROPERTIES ENVIRONMENT "${GAB_TEST_ENV}")
-    endif()
+    set_tests_properties(run_${CASE_STEM} PROPERTIES ENVIRONMENT "${GAB_TEST_ENV}")
 endforeach()
 
 # A rejection is stated by the program that provokes it: the case is source, and a trailing

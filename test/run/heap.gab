@@ -1,5 +1,5 @@
 module test;
-import check;
+import testing;
 
 struct Player { health: i32, mana: i32 }
 

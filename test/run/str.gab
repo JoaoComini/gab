@@ -1,5 +1,5 @@
 module test;
-import check;
+import testing;
 
 func size(s: &str): i32 { return s.len(); }
 

@@ -1,5 +1,5 @@
 module test;
-import check;
+import testing;
 
 func zero(): i32 { return 0; }
 

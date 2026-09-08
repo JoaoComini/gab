@@ -56,8 +56,8 @@ static int run_file(const char *directory, const char *name) {
     snprintf(binary, sizeof(binary), "%s/%s.run", GAB_TEST_SCRATCH, name);
 
     char command[2048];
-    snprintf(command, sizeof(command), "%s -o %s %s -L %s %s", GAB_TEST_COMPILER, binary, path,
-             GAB_TEST_SCRATCH, GAB_TEST_HARNESS);
+    /* 'testing' is found beside the compiler, as any installed module is. */
+    snprintf(command, sizeof(command), "%s -o %s %s %s", GAB_TEST_COMPILER, binary, path, GAB_TEST_HARNESS);
 
     int failed = system(command) != 0;
 
@@ -89,24 +89,10 @@ static int run_file(const char *directory, const char *name) {
     return 0;
 }
 
-/* The checks every case calls, compiled once into a module each case imports. */
-static int write_prelude(const char *directory) {
-    char command[2048];
-    snprintf(command, sizeof(command), "%s -c -o %s/check.o %s/prelude.gab", GAB_TEST_COMPILER,
-             GAB_TEST_SCRATCH, directory);
-
-    return system(command) != 0;
-}
-
 int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "usage: run_test <directory> <name>...\n");
         return 2;
-    }
-
-    if (write_prelude(argv[1])) {
-        fprintf(stderr, "the prelude did not compile\n");
-        return 1;
     }
 
     int failures = 0;

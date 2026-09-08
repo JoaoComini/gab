@@ -1,8 +1,0 @@
-module check;
-
-extern "C" func gab_check_failed(line: i32);
-extern "C" func gab_check_passed();
-
-caller func assert(condition: bool) {
-    if condition { gab_check_passed(); } else { gab_check_failed(@caller().line); }
-}

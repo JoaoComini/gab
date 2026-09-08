@@ -121,6 +121,20 @@ add_library(core STATIC ${GAB_LIB_DIR}/core.o)
 
 set_target_properties(core PROPERTIES LINKER_LANGUAGE C ARCHIVE_OUTPUT_DIRECTORY ${GAB_LIB_DIR})
 
+# The modules a program may import but the compiler does not require, compiled and installed the same
+# way: a user's test file names 'testing' without knowing where it lives.
+add_custom_command(
+    OUTPUT ${GAB_LIB_DIR}/testing.o
+    COMMAND gabc -c -o ${GAB_LIB_DIR}/testing.o ${CMAKE_SOURCE_DIR}/src/std/testing.gab
+    DEPENDS gabc core ${CMAKE_SOURCE_DIR}/src/std/testing.gab
+    COMMENT "Compiling the standard modules"
+)
+
+add_custom_target(std ALL DEPENDS ${GAB_LIB_DIR}/testing.o)
+
+install(FILES ${GAB_LIB_DIR}/testing.o ${GAB_LIB_DIR}/testing.gabi
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/gab)
+
 # 'bin' holds the compiler and 'lib/gab' what it links a program against, which is the layout
 # 'gab_libdir' looks for before falling back to its own directory.
 install(TARGETS gabc RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

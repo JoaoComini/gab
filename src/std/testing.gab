@@ -1,0 +1,15 @@
+module testing;
+
+/* What a check reports to, supplied by whatever runs the tests: a runner counts them and says which
+ * line failed, which is the one thing a module holding no state of its own cannot do. */
+extern "C" func gab_check_passed();
+extern "C" func gab_check_failed(line: i32);
+
+/* Fails the test at the line that wrote the check rather than the line this is declared on. */
+caller func assert(condition: bool) {
+    if condition {
+        gab_check_passed();
+    } else {
+        gab_check_failed(@caller().line);
+    }
+}

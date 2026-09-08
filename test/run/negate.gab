@@ -1,5 +1,5 @@
 module test;
-import check;
+import testing;
 
 func negated(a: i32): i32 { return -a; }
 
