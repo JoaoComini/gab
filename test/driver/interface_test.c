@@ -96,7 +96,61 @@ static void an_interface_states_the_same_thing_when_read_back(void) {
     free(source);
 }
 
+/* A generic is instantiated by whoever names it, so what it declares must carry the body to instantiate. */
+static void an_interface_carries_the_body_of_a_generic(void) {
+    char *text = interface_of("struct Pair<T> { a: T, b: T }\n"
+                              "func first<T>(p: &Pair<T>, take: bool): T {\n"
+                              "    if take { return p.a; }\n"
+                              "    for let i: i32 = 0; i < 2; i = i + 1 { }\n"
+                              "    return p.b;\n"
+                              "}\n"
+                              "func plain(x: i32): i32 { return x + 1; }\n");
+
+    assert(strstr(text, "func first<T>(p: &Pair<T>, take: bool): T {"));
+    assert(strstr(text, "return p.a;"));
+
+    /* One the declaring unit compiled is linked against rather than instantiated again. */
+    assert(strstr(text, "extern func plain(x: i32): i32;"));
+
+    /* What carries a body states the same thing when it is read back, as a signature does. */
+    char *again = interface_of(text);
+
+    assert(strcmp(text, again) == 0);
+
+    free(again);
+
+    free(text);
+}
+
+/* Every shape a body can hold reaches a reader unchanged, since what is read back is what is compiled. */
+static void a_carried_body_states_every_shape_it_holds(void) {
+    char *text =
+        interface_of("struct Holder<T> { value: T, flag: bool }\n"
+                     "func shapes<T>(h: &Holder<T>, xs: &array<i32, 4>, n: i32): i32 {\n"
+                     "    let total: i32 = 0;\n"
+                     "    let pair: array<i32, 2> = [1, 2];\n"
+                     "    let made: Holder<i32> = Holder<i32> { value: 3, flag: !h.flag };\n"
+                     "    let owned: *i32 = box n;\n"
+                     "    let seen: &i32 = total;\n"
+                     "    total = ((-n * 2) + 5) % 7;\n"
+                     "    total = total - xs[0] / 2;\n"
+                     "    if h.flag && n > 0 || n <= -1 { total = *owned; } else { total = made.value; }\n"
+                     "    for { break; }\n"
+                     "    for n != 0 { continue; }\n"
+                     "    return total + pair[1] + *seen;\n"
+                     "}\n");
+
+    char *again = interface_of(text);
+
+    assert(strcmp(text, again) == 0);
+
+    free(again);
+    free(text);
+}
+
 int main(void) {
+    a_carried_body_states_every_shape_it_holds();
+    an_interface_carries_the_body_of_a_generic();
     an_interface_states_the_same_thing_when_read_back();
     a_written_interface_compiles();
     an_interface_states_a_signature_without_its_body();
