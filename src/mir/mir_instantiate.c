@@ -72,7 +72,7 @@ static Function *subst_callee(Instantiation *in, Function *callee) {
         return callee;
     }
 
-    return function_registry_specialize(in->functions, (Function *)callee, args, callee->type_arg_count);
+    return function_registry_instance(in->functions, callee->decl, args, callee->type_arg_count);
 }
 
 static void subst_place(Instantiation *in, Place *place) {

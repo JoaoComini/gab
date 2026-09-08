@@ -1,8 +1,8 @@
 #ifndef GAB_FUNCTION_REGISTRY_H
 #define GAB_FUNCTION_REGISTRY_H
 
-#include "memory/arena.h"
 #include "binding.h"
+#include "memory/arena.h"
 #include "type/type.h"
 #include "type/type_registry.h"
 
@@ -16,8 +16,8 @@ void function_registry_destroy(FunctionRegistry *registry);
 Function *function_registry_owned_for(FunctionRegistry *registry, TypeRegistry *types, const Type *type,
                                       const String *name);
 
-/* The instantiation of 'generic' for these arguments, made once and returned to every later caller. */
-Function *function_registry_specialize(FunctionRegistry *registry, Function *generic, const TypeArg *args,
-                                       size_t arg_count);
+/* The instantiation of 'decl' for these arguments, made once and returned to every later caller. */
+Function *function_registry_instance(FunctionRegistry *registry, const FuncDecl *decl, const TypeArg *args,
+                                     size_t arg_count);
 
 #endif

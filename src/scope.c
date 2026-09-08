@@ -256,16 +256,14 @@ Binding *scope_decl_func(Scope *scope, String *name, const Type *return_type) {
 
     FuncDecl *func_decl = arena_alloc(scope->arena, sizeof(FuncDecl));
 
-    *func_decl = (FuncDecl){.id = {.name = name}, .linkage = LINKAGE_INTERNAL};
+    *func_decl = (FuncDecl){
+        .id = {.name = name}, .linkage = LINKAGE_INTERNAL, .signature = {.return_type = return_type}};
 
     binding->func = arena_alloc(scope->arena, sizeof(Function));
 
     *binding->func = (Function){
         .decl = func_decl,
-        .return_type = return_type,
-        .params = NULL,
-        .param_count = 0,
-        .func_index = FUNCTION_NO_BODY,
+        .signature = func_decl->signature,
     };
 
     Binding **decl = binding_table_insert(scope->bindings, name, binding);

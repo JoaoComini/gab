@@ -18,7 +18,7 @@ static Function *owned_for(TypeRegistry *registry, FunctionRegistry *functions, 
         return declaration;
     }
 
-    return function_registry_specialize(functions, declaration, type_args(type), type_arg_count(type));
+    return function_registry_instance(functions, declaration->decl, type_args(type), type_arg_count(type));
 }
 
 static void test_a_declared_field_nests_constructors() {
@@ -229,14 +229,10 @@ static void test_a_declared_method_is_substituted_per_instantiation() {
 
     const Type *receiver[] = {type_registry_apply(registry, &decl, &param, 1)};
 
-    FuncDecl method_decl = {.id = {.name = at}};
+    FuncDecl method_decl = {.id = {.name = at},
+                            .signature = {.return_type = param, .params = receiver, .param_count = 1}};
 
-    Function method = {
-        .decl = &method_decl,
-        .return_type = param,
-        .params = receiver,
-        .param_count = 1,
-    };
+    Function method = {.decl = &method_decl, .signature = method_decl.signature};
 
     type_registry_declare_owned(registry, type_registry_apply(registry, &decl, &param, 1), &method);
 
@@ -282,14 +278,10 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
 
     const Type *receiver[] = {type_registry_apply(registry, &decl, &param, 1)};
 
-    FuncDecl method_decl = {.id = {.name = at}};
+    FuncDecl method_decl = {.id = {.name = at},
+                            .signature = {.return_type = param, .params = receiver, .param_count = 1}};
 
-    Function method = {
-        .decl = &method_decl,
-        .return_type = param,
-        .params = receiver,
-        .param_count = 1,
-    };
+    Function method = {.decl = &method_decl, .signature = method_decl.signature};
 
     type_registry_declare_owned(registry, type_registry_apply(registry, &decl, &param, 1), &method);
 
@@ -322,14 +314,10 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
 
     const Type *receiver[] = {type_registry_apply(registry, &decl, &param, 1)};
 
-    FuncDecl method_decl = {.id = {.name = at}};
+    FuncDecl method_decl = {.id = {.name = at},
+                            .signature = {.return_type = param, .params = receiver, .param_count = 1}};
 
-    Function method = {
-        .decl = &method_decl,
-        .return_type = param,
-        .params = receiver,
-        .param_count = 1,
-    };
+    Function method = {.decl = &method_decl, .signature = method_decl.signature};
 
     type_registry_declare_owned(registry, type_registry_apply(registry, &decl, &param, 1), &method);
 
@@ -407,14 +395,10 @@ static void test_a_substituted_signature_is_read_once_per_type() {
 
     const Type *receiver[] = {type_registry_apply(registry, &decl, &param, 1)};
 
-    FuncDecl method_decl = {.id = {.name = at}};
+    FuncDecl method_decl = {.id = {.name = at},
+                            .signature = {.return_type = param, .params = receiver, .param_count = 1}};
 
-    Function method = {
-        .decl = &method_decl,
-        .return_type = param,
-        .params = receiver,
-        .param_count = 1,
-    };
+    Function method = {.decl = &method_decl, .signature = method_decl.signature};
 
     type_registry_declare_owned(registry, type_registry_apply(registry, &decl, &param, 1), &method);
 
@@ -500,24 +484,17 @@ static void test_a_specialization_does_not_inherit_a_summary() {
 
     const Type *params[] = {type_registry_ref_to(registry, param)};
 
-    FuncDecl generic_decl = {.id = {.name = string_from_cstr(&ctx.strings, "pick")}, .type_param_count = 1};
-
-    Function *generic = arena_alloc(ctx.arena, sizeof(Function));
-
-    *generic = (Function){
-        .decl = &generic_decl,
-        .return_type = type_registry_ref_to(registry, param),
-        .params = params,
-        .param_count = 1,
-        .func_index = FUNCTION_NO_BODY,
+    FuncDecl generic_decl = {
+        .id = {.name = string_from_cstr(&ctx.strings, "pick")},
+        .signature = {.return_type = type_registry_ref_to(registry, param),
+                      .params = params,
+                      .param_count = 1},
+        .type_param_count = 1,
     };
-
-    generic->borrowed_params = 1;
-    generic->borrowed_params_known = true;
 
     TypeArg argument = {.kind = TYPE_ARG_TYPE, .type = i32_type};
 
-    Function *specialized = function_registry_specialize(functions, generic, &argument, 1);
+    Function *specialized = function_registry_instance(functions, &generic_decl, &argument, 1);
 
     assert(!specialized->borrowed_params_known);
 

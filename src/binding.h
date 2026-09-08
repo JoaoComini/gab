@@ -12,8 +12,6 @@
 
 #define BINDING_TABLE_INITIAL_CAPACITY 8
 
-#define FUNCTION_NO_BODY ((size_t)-1)
-
 typedef enum {
     BINDING_VAR,
     BINDING_FUNC,
@@ -72,8 +70,8 @@ typedef struct FuncDecl {
     /* The type a 'caller' function's hidden parameter has, which only the core can name. */
     const Type *location_type;
 
-    /* The lowering an 'intrinsic' names, resolved where it is declared; NULL for every other body. */
-    const IntrinsicLowering *intrinsic;
+    /* Written with this declaration's type parameters unsubstituted, so an instance substitutes into it. */
+    FuncSignature signature;
 
     /* How many arguments this declaration is generic over, whether they came from an owner or itself. */
     size_t type_param_count;
@@ -89,7 +87,8 @@ typedef struct FuncDecl {
 typedef struct Function {
     const FuncDecl *decl;
 
-    /* Unnamed so 'f->params' and 'f->return_type' still reach the signature they belong to. */
+    /* Its declaration's signature with 'type_args' substituted in, held here since every reader wants
+     * the concrete form and substituting allocates. Unnamed so 'f->params' still reaches it. */
     union {
         FuncSignature signature;
 
@@ -101,9 +100,7 @@ typedef struct Function {
         };
     };
 
-    size_t func_index;
-
-    /* What a specialization was given, one per type parameter; NULL while this is still a declaration. */
+    /* What this instance was given, one per type parameter of its declaration. */
     const TypeArg *type_args;
     size_t type_arg_count;
 

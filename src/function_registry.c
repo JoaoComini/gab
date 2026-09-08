@@ -49,12 +49,12 @@ Function *function_registry_owned_for(FunctionRegistry *registry, TypeRegistry *
         return declaration;
     }
 
-    return function_registry_specialize(registry, declaration, type_args(type), type_arg_count(type));
+    return function_registry_instance(registry, declaration->decl, type_args(type), type_arg_count(type));
 }
 
-Function *function_registry_specialize(FunctionRegistry *registry, Function *generic, const TypeArg *args,
-                                       size_t arg_count) {
-    InstanceId key = instance_id_of(generic->decl->id, args, arg_count);
+Function *function_registry_instance(FunctionRegistry *registry, const FuncDecl *decl, const TypeArg *args,
+                                     size_t arg_count) {
+    InstanceId key = instance_id_of(decl->id, args, arg_count);
 
     Function **cached = instance_key_lookup(registry->instances, key);
 
@@ -71,12 +71,11 @@ Function *function_registry_specialize(FunctionRegistry *registry, Function *gen
     }
 
     *function = (Function){
-        .decl = generic->decl,
-        .signature = func_signature_instantiate(registry->types, registry->arena, &generic->signature, args,
-                                                arg_count),
+        .decl = decl,
+        .signature =
+            func_signature_instantiate(registry->types, registry->arena, &decl->signature, args, arg_count),
         .type_args = owned_args,
         .type_arg_count = arg_count,
-        .func_index = FUNCTION_NO_BODY,
     };
 
     instance_key_insert(registry->instances, key, function);

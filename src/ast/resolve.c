@@ -835,7 +835,7 @@ static Function *specialize(ResolverState *state, ASTExpr *expr, Function *gener
     }
 
     Function *specialized =
-        function_registry_specialize(state->current_scope->functions, generic, args, owed);
+        function_registry_instance(state->current_scope->functions, generic->decl, args, owed);
 
     pending_bodies_instantiate(state->work, specialized, state->diagnostics);
 
@@ -887,7 +887,6 @@ static Function *interface_method_for(ResolverState *state, const Interface *int
         .decl = decl,
         .signature = func_signature_instantiate(state->current_scope->type_registry, arena,
                                                 &signature->signature, substitutions, arg_count + 1),
-        .func_index = FUNCTION_NO_BODY,
         /* The parameter this stands on, so substituting it finds the implementor's own method. */
         .bound_self = implementor,
     };
@@ -2673,10 +2672,9 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         return;
     }
 
-    const IntrinsicLowering *intrinsic = NULL;
-
     if (stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) {
-        intrinsic = intrinsic_for(state, type_name_of(owner), resolver_intern(state, stmt->func_decl.name));
+        const IntrinsicLowering *intrinsic =
+            intrinsic_for(state, type_name_of(owner), resolver_intern(state, stmt->func_decl.name));
 
         if (!intrinsic) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
@@ -2731,30 +2729,27 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         .linkage = linkage_of(&stmt->func_decl),
         .modifiers = modifiers_of(&stmt->func_decl),
         .location_type = location_type_of(state, &stmt->func_decl),
-        .intrinsic = intrinsic,
+        .signature = {.return_type = return_type},
         .type_param_count = stmt->func_decl.type_param_count,
-    };
-
-    Function *func = arena_alloc(resolver_owner_arena(state), sizeof(Function));
-    *func = (Function){
-        .decl = decl,
-        .return_type = return_type,
-        .params = NULL,
-        .param_count = 0,
-        .func_index = FUNCTION_NO_BODY,
     };
 
     size_t param_count = stmt->func_decl.params.size;
 
     if (param_count > 0) {
-        func->params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(const Type *));
-        func->param_count = param_count;
+        decl->signature.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(const Type *));
+        decl->signature.param_count = param_count;
 
         for (size_t i = 0; i < param_count; i++) {
-            func->params[i] = resolve_param_type_in(state, stmt->func_decl.params.data[i],
-                                                    stmt->func_decl.type_param_count > 0);
+            decl->signature.params[i] = resolve_param_type_in(state, stmt->func_decl.params.data[i],
+                                                              stmt->func_decl.type_param_count > 0);
         }
     }
+
+    Function *func = arena_alloc(resolver_owner_arena(state), sizeof(Function));
+    *func = (Function){
+        .decl = decl,
+        .signature = decl->signature,
+    };
 
     if (!type_registry_declare_owned(state->current_scope->type_registry, owner, func)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' already has a function '%s'",
@@ -2827,7 +2822,6 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
         *method = (Function){
             .decl = decl,
             .return_type = resolve_type_expr(state, signature->func_decl.return_type, signature->span),
-            .func_index = FUNCTION_NO_BODY,
         };
 
         size_t signature_params = signature->func_decl.params.size;
@@ -3239,15 +3233,18 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
 
     size_t param_count = stmt->func_decl.params.size;
 
-    if (func && param_count > 0) {
-        func->params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(const Type *));
-        func->param_count = param_count;
+    if (decl && param_count > 0) {
+        decl->signature.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(const Type *));
+        decl->signature.param_count = param_count;
 
         for (size_t i = 0; i < param_count; i++) {
             ASTField *param = stmt->func_decl.params.data[i];
 
-            func->params[i] = resolve_param_type_in(state, param, stmt->func_decl.type_param_count > 0);
+            decl->signature.params[i] =
+                resolve_param_type_in(state, param, stmt->func_decl.type_param_count > 0);
         }
+
+        func->signature = decl->signature;
     }
 
     if (decl && stmt->func_decl.type_param_count > 0) {
