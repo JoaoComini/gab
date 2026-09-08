@@ -119,6 +119,32 @@ static inline bool test_diagnostic_mentions(const char *source, const char *need
     return found;
 }
 
+/* Resolved as the core is, which is the only compilation permitted to declare what the compiler supplies. */
+static inline bool test_core_diagnostic_mentions(const char *source, const char *needle) {
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
+    ASTUnit *unit;
+    MIRModule *bodies;
+    ResolvedUnit *resolved;
+
+    test_resolve_ir_with(&ctx, scope, &unit, &bodies, &resolved, source, true);
+
+    bool found = false;
+
+    for (size_t i = 0; i < diagnostics_count(&ctx.diagnostics); i++) {
+        if (strstr(diagnostics_get(&ctx.diagnostics, i)->message, needle)) {
+            found = true;
+            break;
+        }
+    }
+
+    test_context_free(&ctx);
+
+    return found;
+}
+
 static inline size_t test_diagnostic_count(const char *source) {
     TestContext ctx;
     test_context_init(&ctx);

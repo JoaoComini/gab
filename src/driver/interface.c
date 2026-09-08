@@ -72,7 +72,8 @@ static void print_params(FILE *out, const StringRef *names, TypeExpr *const *bou
 }
 
 /* A signature and never a body: what an interface file states is what a caller must know. */
-static void print_func(FILE *out, const ASTFuncDecl *func, const char *indent, size_t inherited) {
+static void print_func(FILE *out, const ASTFuncDecl *func, const char *indent, size_t inherited,
+                       bool states_only) {
     fprintf(out, "%s", indent);
 
     /* 'caller' is how a call is made and not where the body is, so it precedes and never replaces. */
@@ -84,9 +85,10 @@ static void print_func(FILE *out, const ASTFuncDecl *func, const char *indent, s
         fprintf(out, "extern \"C\" ");
     } else if (func->syntax & FUNC_SYN_INTRINSIC) {
         fprintf(out, "intrinsic ");
-    } else if (func->body) {
+    } else if (!states_only && (func->body || (func->syntax & FUNC_SYN_EXTERN))) {
         /* A body compiled into the library it came from, which a reader links against rather than
-         * compiles again. */
+         * compiles again. What was read as 'extern' is still one, though it arrived without a body.
+         * An interface states signatures alone, where saying so again would not parse. */
         fprintf(out, "extern ");
     }
 
@@ -121,14 +123,14 @@ static void print_func(FILE *out, const ASTFuncDecl *func, const char *indent, s
 
 static void print_stmt(FILE *out, const ASTStmt *stmt);
 
-static void print_members(FILE *out, const ASTStmtList *members, size_t inherited) {
+static void print_members(FILE *out, const ASTStmtList *members, size_t inherited, bool states_only) {
     for (size_t i = 0; i < members->size; i++) {
         const ASTStmt *member = members->data[i];
 
         if (member && member->kind == STMT_FUNC_DECL) {
             size_t own = member->func_decl.type_param_count;
 
-            print_func(out, &member->func_decl, "    ", inherited < own ? inherited : own);
+            print_func(out, &member->func_decl, "    ", inherited < own ? inherited : own, states_only);
         }
     }
 }
@@ -140,13 +142,14 @@ static void print_stmt(FILE *out, const ASTStmt *stmt) {
 
     switch (stmt->kind) {
     case STMT_FUNC_DECL:
-        print_func(out, &stmt->func_decl, "", 0);
+        print_func(out, &stmt->func_decl, "", 0, false);
         return;
 
     case STMT_STRUCT_DECL: {
         const ASTStructDecl *decl = &stmt->struct_decl;
 
-        fprintf(out, "struct %.*s", (int)decl->name.length, decl->name.data);
+        fprintf(out, "%sstruct %.*s", decl->intrinsic ? "intrinsic " : "", (int)decl->name.length,
+                decl->name.data);
         print_params(out, decl->params, NULL, decl->param_count);
         fprintf(out, " {\n");
 
@@ -169,7 +172,7 @@ static void print_stmt(FILE *out, const ASTStmt *stmt) {
         print_params(out, decl->params, NULL, decl->param_count);
         fprintf(out, " {\n");
 
-        print_members(out, &decl->members, 0);
+        print_members(out, &decl->members, 0, true);
 
         fprintf(out, "}\n");
         return;
@@ -205,7 +208,7 @@ static void print_stmt(FILE *out, const ASTStmt *stmt) {
 
         fprintf(out, " {\n");
 
-        print_members(out, &impl->members, impl->param_count);
+        print_members(out, &impl->members, impl->param_count, false);
 
         fprintf(out, "}\n");
         return;
@@ -241,13 +244,7 @@ void gab_interface_symbol(char *out, size_t capacity, const char *module, uint64
     snprintf(out, capacity, "gab.iface.%s.%016llx", module, (unsigned long long)digest);
 }
 
-bool gab_interface_write(const ASTUnit *unit, const char *path) {
-    FILE *out = fopen(path, "w");
-
-    if (!out) {
-        return false;
-    }
-
+void gab_interface_print(const ASTUnit *unit, FILE *out) {
     fprintf(out, "module %.*s;\n", (int)unit->module_name.length, unit->module_name.data);
 
     /* What this module imports, so linking against it reaches the objects its bodies call into. */
@@ -261,6 +258,16 @@ bool gab_interface_write(const ASTUnit *unit, const char *path) {
     for (size_t i = 0; i < unit->statements.size; i++) {
         print_stmt(out, unit->statements.data[i]);
     }
+}
+
+bool gab_interface_write(const ASTUnit *unit, const char *path) {
+    FILE *out = fopen(path, "w");
+
+    if (!out) {
+        return false;
+    }
+
+    gab_interface_print(unit, out);
 
     fclose(out);
 

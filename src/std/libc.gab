@@ -1,7 +1,0 @@
-module libc;
-
-/* The host's own allocator, bound as C declares it rather than wrapped: it deals in bytes, and what
- * takes memory from here reads it as a run of its own elements and gives it back the same way. */
-extern "C" func malloc(size: usize): raw<u8>;
-extern "C" func realloc(bytes: raw<u8>, size: usize): raw<u8>;
-extern "C" func free(bytes: raw<u8>);

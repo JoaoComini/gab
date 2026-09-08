@@ -84,13 +84,17 @@ static String *resolver_intern(ResolverState *state, StringRef ref) {
     return string_from_ref(state->current_scope->strings, ref);
 }
 
-static String *resolver_intern_cstr(ResolverState *state, const char *name) {
-    return string_from_cstr(state->current_scope->strings, name);
+static const KnownNames *resolver_names(ResolverState *state) {
+    return type_registry_names(state->current_scope->type_registry);
+}
+
+static bool names_the_same(ResolverState *state, StringRef ref, const String *known) {
+    return resolver_intern(state, ref) == known;
 }
 
 /* 'Self' names the type an impl block is for, so nothing else may take the name. */
 static bool reject_self_as_name(ResolverState *state, String *name, Span span) {
-    if (name != resolver_intern_cstr(state, "Self")) {
+    if (name != resolver_names(state)->self) {
         return false;
     }
 
@@ -986,19 +990,8 @@ static void rewrite_index_as_call(ResolverState *state, ASTExpr *expr) {
 }
 
 /* A declaration is an intrinsic only where this names one of these, so the two cannot drift. */
-static const IntrinsicLowering INTRINSICS[] = {
-    {"array", "index"}, {"array", "len"}, {"slice", "index"},
-    {"slice", "len"},   {"raw", "index"}, {"str", "as_bytes"},
-};
-
-static const IntrinsicLowering *intrinsic_for(const String *owner, const String *name) {
-    for (size_t i = 0; i < sizeof(INTRINSICS) / sizeof(*INTRINSICS); i++) {
-        if (strcmp(owner->data, INTRINSICS[i].owner) == 0 && strcmp(name->data, INTRINSICS[i].name) == 0) {
-            return &INTRINSICS[i];
-        }
-    }
-
-    return NULL;
+static const IntrinsicLowering *intrinsic_for(ResolverState *state, const String *owner, const String *name) {
+    return type_registry_intrinsic(state->current_scope->type_registry, owner, name);
 }
 
 static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
@@ -1388,7 +1381,7 @@ static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
     if (expr->call.target->var.owner_type_expr) {
         /* The runs and the arrays name no binding of their own, so what they resolve to is asked for. */
         bool names_a_type = resolution.kind == RESOLUTION_TYPE || resolution.kind == RESOLUTION_TYPE_DECL ||
-                            string_ref_equals_cstr(expr->call.target->var.name, "raw");
+                            names_the_same(state, expr->call.target->var.name, resolver_names(state)->raw);
 
         if (!names_a_type) {
             return false;
@@ -1492,7 +1485,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         break;
     }
     case EXPR_BUILTIN: {
-        if (string_ref_equals_cstr(expr->builtin.name, "caller")) {
+        if (names_the_same(state, expr->builtin.name, resolver_names(state)->caller)) {
             if (!state->func_context.is_caller) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                            "'@caller()' answers where a call was written, so only a 'caller' function "
@@ -1517,7 +1510,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             break;
         }
 
-        if (string_ref_equals_cstr(expr->builtin.name, "size_of")) {
+        if (names_the_same(state, expr->builtin.name, resolver_names(state)->size_of)) {
             if (!expr->builtin.type_expr || expr->builtin.type_expr->apply.args.size != 1) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                            "'@size_of<T>()' measures one type, as '@size_of<i32>()'");
@@ -2097,13 +2090,14 @@ static const Type *resolve_element_type(ResolverState *state, TypeExpr *expr, Sp
 
 /* 'N: i32' declares a value parameter, as Rust spells 'const N: usize'; any other bound names an interface.
  */
-static bool param_is_a_value(const TypeExpr *bound) {
-    return bound && bound->kind == TYPE_EXPR_NAME && string_ref_equals_cstr(bound->name, "i32");
+static bool param_is_a_value(const TypeRegistry *registry, StringPool *strings, const TypeExpr *bound) {
+    return bound && bound->kind == TYPE_EXPR_NAME &&
+           string_from_ref(strings, bound->name) == type_registry_names(registry)->i32;
 }
 
 static bool bind_type_param(Scope *params, String *name, size_t index, const TypeExpr *bound) {
     TypeArg arg =
-        param_is_a_value(bound)
+        param_is_a_value(params->type_registry, params->strings, bound)
             ? (TypeArg){.kind = TYPE_ARG_CONST, .constant = {.kind = CONST_PARAM, .param = index}}
             : (TypeArg){.kind = TYPE_ARG_TYPE, .type = type_registry_param(params->type_registry, index)};
 
@@ -2216,15 +2210,15 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
     }
 
     case TYPE_EXPR_APPLY: {
-        if (string_ref_equals_cstr(expr->apply.base->name, "array")) {
+        if (names_the_same(state, expr->apply.base->name, resolver_names(state)->array)) {
             return resolve_array_type(state, expr, span);
         }
 
-        if (string_ref_equals_cstr(expr->apply.base->name, "slice")) {
+        if (names_the_same(state, expr->apply.base->name, resolver_names(state)->slice)) {
             return resolve_slice_type(state, expr, span);
         }
 
-        if (string_ref_equals_cstr(expr->apply.base->name, "raw")) {
+        if (names_the_same(state, expr->apply.base->name, resolver_names(state)->raw)) {
             return resolve_raw_type(state, expr, span);
         }
 
@@ -2318,7 +2312,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
         return resolver_error_type(state);
     }
 
-    if (resolver_intern(state, expr->name) == resolver_intern_cstr(state, "Self")) {
+    if (resolver_intern(state, expr->name) == resolver_names(state)->self) {
         diag_error(state->diagnostics, GAB_ERR_NAME, span,
                    "'Self' names the type an 'impl' block is for, and there is none here");
 
@@ -2352,6 +2346,21 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
     stmt->struct_decl.declared = true;
 
     String *struct_name = resolver_intern(state, stmt->struct_decl.name);
+
+    if (stmt->struct_decl.intrinsic) {
+        if (!state->allow_primitive_impls) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
+                       "an intrinsic struct is given its meaning by the compiler, so only its core "
+                       "library declares one");
+            return NULL;
+        }
+
+        if (struct_name != resolver_names(state)->unique) {
+            diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
+                       "the compiler gives no intrinsic struct '%s' its meaning", struct_name->data);
+            return NULL;
+        }
+    }
 
     if (reject_self_as_name(state, struct_name, stmt->span)) {
         return NULL;
@@ -2609,7 +2618,7 @@ static void enter_owner_scope(ResolverState *state, TypeExpr *owner, TypeExpr *c
     const Type *self = resolve_type_expr(state, owner, (Span){0});
 
     if (!is_error_type(self)) {
-        scope_bind_argument(params, resolver_intern_cstr(state, "Self"),
+        scope_bind_argument(params, resolver_names(state)->self,
                             (TypeArg){.kind = TYPE_ARG_TYPE, .type = self});
     }
 }
@@ -2668,7 +2677,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
     const IntrinsicLowering *intrinsic = NULL;
 
     if (stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) {
-        intrinsic = intrinsic_for(type_name_of(owner), resolver_intern(state, stmt->func_decl.name));
+        intrinsic = intrinsic_for(state, type_name_of(owner), resolver_intern(state, stmt->func_decl.name));
 
         if (!intrinsic) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
@@ -2794,7 +2803,7 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
 
     TypeRegistry *registry = enclosing->type_registry;
 
-    scope_bind_type(params, resolver_intern_cstr(state, "Self"), type_registry_param(registry, 0));
+    scope_bind_type(params, resolver_names(state)->self, type_registry_param(registry, 0));
 
     for (size_t i = 0; i < param_count; i++) {
         scope_bind_type(params, resolver_intern(state, stmt->interface_decl.params[i]),
@@ -3083,7 +3092,8 @@ static void enter_param_bounds(ResolverState *state, ASTStmt *stmt) {
         const TypeExpr *bound = stmt->func_decl.type_param_bounds[i];
 
         /* A value parameter's bound names its type rather than an interface, so it declares no methods. */
-        if (!bound || param_is_a_value(bound)) {
+        if (!bound ||
+            param_is_a_value(state->current_scope->type_registry, state->current_scope->strings, bound)) {
             continue;
         }
 

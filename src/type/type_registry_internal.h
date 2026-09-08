@@ -1,6 +1,7 @@
 #ifndef GAB_TYPE_REGISTRY_INTERNAL_H
 #define GAB_TYPE_REGISTRY_INTERNAL_H
 
+#include "binding.h"
 #include "type_internal.h"
 #include "type_registry.h"
 
@@ -51,9 +52,6 @@ typedef struct {
     /* Every raw run shares one declaration, which is what carries the indexing all of them have. */
     const TypeDecl *raw_decl;
 
-    String *destroy_name;
-    String *destroy_method;
-
     const Type *error_type;
 } TypePrimitives;
 
@@ -71,6 +69,10 @@ typedef struct TypeRegistry {
     const Type *params[GAB_MAX_TYPE_PARAMS];
 
     TypePrimitives primitives;
+
+    KnownNames names;
+
+    IntrinsicLowering intrinsics[GAB_INTRINSIC_COUNT];
 } TypeRegistry;
 
 #endif

@@ -155,6 +155,30 @@ static LLVMValueRef slice_length(LLVMEmitter *emitter, MIROperand operand) {
 static LLVMValueRef drop_glue_of(LLVMEmitter *emitter, const Type *type);
 static LLVMValueRef callee_value(LLVMEmitter *emitter, const Function *callee, LLVMTypeRef *out_signature);
 
+/* The ending a drop in this body resolved for the type, which names an instance where a generic declares
+ * one. Glue is written per type and reached recursively, so it is found by type rather than passed down. */
+static Function *ending_of(LLVMEmitter *emitter, const Type *type) {
+    for (size_t b = 0; b < emitter->ir->block_count; b++) {
+        const MIRBlock *block = emitter->ir->blocks[b];
+
+        for (size_t i = 0; i < block->inst_count; i++) {
+            const MIRInst *inst = &block->insts[i];
+
+            if (inst->op == MIR_DROP && inst->type == type && inst->ending) {
+                return inst->ending;
+            }
+        }
+    }
+
+    return type_registry_destructor(emitter->registry, type);
+}
+
+/* What a 'Unique' points at, which is the argument it was instantiated with. */
+static const Type *unique_pointee(const Type *type) {
+    return type_arg_count(type) == 1 && type_args(type)[0].kind == TYPE_ARG_TYPE ? type_args(type)[0].type
+                                                                                 : NULL;
+}
+
 /* Drops whatever a value of this type owns, reached from its address. */
 static void emit_drop_body(LLVMEmitter *emitter, const Type *type, LLVMValueRef self) {
     LLVMTypeRef pointer = LLVMPointerTypeInContext(emitter->context, 0);
@@ -178,6 +202,24 @@ static void emit_drop_body(LLVMEmitter *emitter, const Type *type, LLVMValueRef 
         LLVMBuildCall2(emitter->builder, signature, release, &owned, 1, "");
 
         return;
+    }
+
+    /* What a 'Unique' points at ends before the ending it declares runs, which is what gives that ending
+     * the memory to free. Nothing written in the language reaches a value through a run, so this is the
+     * compiler's to emit rather than the core's to say. */
+    if (type_registry_is_unique(emitter->registry, type)) {
+        const Type *pointee = unique_pointee(type);
+
+        if (pointee && type_registry_owns(emitter->registry, pointee)) {
+            LLVMValueRef held =
+                LLVMBuildStructGEP2(emitter->builder, llvm_type_of(emitter, type), self, 0, "");
+            LLVMValueRef owned = LLVMBuildLoad2(emitter->builder, pointer, held, "");
+
+            LLVMTypeRef glue_signature =
+                LLVMFunctionType(LLVMVoidTypeInContext(emitter->context), &pointer, 1, false);
+
+            LLVMBuildCall2(emitter->builder, glue_signature, drop_glue_of(emitter, pointee), &owned, 1, "");
+        }
     }
 
     /* Every element of a run is live, so the walk is the whole length rather than a tracked part of it. */
@@ -210,8 +252,9 @@ static void emit_drop_body(LLVMEmitter *emitter, const Type *type, LLVMValueRef 
         return;
     }
 
-    /* What the type does as it ends runs before its fields go, so it still reaches what it holds. */
-    Function *destroy = type_registry_destructor(emitter->registry, type);
+    /* What the type does as it ends runs before its fields go, so it still reaches what it holds. The
+     * ending is the one the drop resolved, which names an instance where the declaration is generic. */
+    Function *destroy = ending_of(emitter, type);
 
     if (destroy) {
         LLVMTypeRef signature;

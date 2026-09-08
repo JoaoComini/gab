@@ -45,7 +45,7 @@ void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope 
         return;
     }
 
-    const TypePrimitiveNames names = type_primitive_names(strings);
+    const KnownNames names = known_names(strings);
 
     scope->type_registry = type_registry_create(arena, &names);
     scope->functions = function_registry_create(arena, scope->type_registry);

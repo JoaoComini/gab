@@ -3,6 +3,12 @@ module core;
 extern "C" func write(fd: i32, message: &u8, length: i32): i32;
 extern "C" func abort();
 
+/* The host's own allocator, bound as C declares it: it deals in bytes, and what takes memory from here
+ * reads it as a run of its own elements and gives it back the same way. */
+extern "C" func malloc(size: usize): raw<u8>;
+extern "C" func realloc(bytes: raw<u8>, size: usize): raw<u8>;
+extern "C" func free(bytes: raw<u8>);
+
 /* Where a check the compiler emitted has failed, such as an index out of range. Written to fd 2 rather
  * than printed, since 'abort' flushes nothing and a buffered message is never seen. */
 func trap(message: &u8, length: i32) {
@@ -51,4 +57,24 @@ impl str {
     intrinsic func as_bytes(self: &str): &slice<u8>;
 
     func len(self: &str): i32 { return self.as_bytes().len(); }
+}
+
+/* Where memory comes from and goes back to, so what allocates says which rather than assuming the host's. */
+interface Allocator {
+    func allocate(self: &Self, size: usize): raw<u8>;
+    func release(self: &Self, bytes: raw<u8>);
+}
+
+/* The host's allocator, which is what a program takes memory from unless it says otherwise. */
+struct Global {}
+
+impl Global as Allocator {
+    func allocate(self: &Self, size: usize): raw<u8> { return malloc(size); }
+
+    func release(self: &Self, bytes: raw<u8>) { free(bytes); }
+}
+
+/* A run of one element the compiler both takes and gives back, which is what an owner is written over. */
+intrinsic struct Unique<T> {
+    ptr: raw<T>,
 }

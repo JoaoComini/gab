@@ -102,7 +102,7 @@ static bool compile_unit(Arena *arena, StringPool *strings, Scope *scope, Module
         }
 
         mir_fold(arena, ir);
-        mir_drop_elaborate(arena, scope->type_registry, ir);
+        mir_drop_elaborate(arena, scope->type_registry, scope->functions, ir);
 
         llvm_unit_add(out, ir);
     }

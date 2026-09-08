@@ -24,35 +24,46 @@ static Type *register_builtin(TypeRegistry *registry, TypeKind kind, String *nam
     return type;
 }
 
-static void register_primitives(TypeRegistry *registry, const TypePrimitiveNames *names) {
-    registry->primitives.i32_type = register_builtin(registry, TYPE_I32, names->i32_name);
-    registry->primitives.f32_type = register_builtin(registry, TYPE_F32, names->f32_name);
-    registry->primitives.bool_type = register_builtin(registry, TYPE_BOOL, names->bool_name);
+static void register_primitives(TypeRegistry *registry, const KnownNames *names) {
+    registry->primitives.i32_type = register_builtin(registry, TYPE_I32, names->i32);
+    registry->primitives.f32_type = register_builtin(registry, TYPE_F32, names->f32);
+    registry->primitives.bool_type = register_builtin(registry, TYPE_BOOL, names->boolean);
 
-    registry->primitives.u8_type = register_builtin(registry, TYPE_U8, names->u8_name);
-    registry->primitives.usize_type = register_builtin(registry, TYPE_USIZE, names->usize_name);
+    registry->primitives.u8_type = register_builtin(registry, TYPE_U8, names->u8);
+    registry->primitives.usize_type = register_builtin(registry, TYPE_USIZE, names->usize);
 
-    registry->primitives.str_type = register_builtin(registry, TYPE_STR, names->str_name);
+    registry->primitives.str_type = register_builtin(registry, TYPE_STR, names->str);
 
-    registry->primitives.error_type = register_builtin(registry, TYPE_ERROR, names->error_name);
+    registry->primitives.error_type = register_builtin(registry, TYPE_ERROR, names->error);
 
     TypeDecl *slice = arena_alloc(registry->arena, sizeof(TypeDecl));
-    *slice = (TypeDecl){.name = names->slice_name, .param_count = 1};
+    *slice = (TypeDecl){.name = names->slice, .param_count = 1};
 
     registry->primitives.slice_decl = slice;
 
     TypeDecl *array = arena_alloc(registry->arena, sizeof(TypeDecl));
-    *array = (TypeDecl){.name = names->array_name, .param_count = 2};
+    *array = (TypeDecl){.name = names->array, .param_count = 2};
 
     registry->primitives.array_decl = array;
 
     TypeDecl *raw = arena_alloc(registry->arena, sizeof(TypeDecl));
-    *raw = (TypeDecl){.name = names->raw_name, .param_count = 1};
+    *raw = (TypeDecl){.name = names->raw, .param_count = 1};
 
     registry->primitives.raw_decl = raw;
 
-    registry->primitives.destroy_name = names->destroy_name;
-    registry->primitives.destroy_method = names->destroy_method;
+    registry->names = *names;
+
+    const IntrinsicLowering intrinsics[GAB_INTRINSIC_COUNT] = {
+        {names->array, names->index}, {names->array, names->len}, {names->slice, names->index},
+        {names->slice, names->len},   {names->raw, names->index}, {names->str, names->as_bytes},
+    };
+
+    for (size_t i = 0; i < GAB_INTRINSIC_COUNT; i++) {
+        assert(intrinsics[i].owner && intrinsics[i].name &&
+               "every intrinsic row names an owner and a method");
+
+        registry->intrinsics[i] = intrinsics[i];
+    }
 }
 
 static bool layout_of_scalar(TypeKind kind, size_t *size, size_t *alignment) {
@@ -196,7 +207,7 @@ const Type *type_registry_deref_of(TypeRegistry *registry, const Type *type) {
     return NULL;
 }
 
-TypeRegistry *type_registry_create(Arena *arena, const TypePrimitiveNames *names) {
+TypeRegistry *type_registry_create(Arena *arena, const KnownNames *names) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
     registry->layouts = layout_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->owned = owned_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
@@ -289,11 +300,11 @@ bool type_registry_conforms(TypeRegistry *registry, const Type *type, const Stri
 }
 
 Function *type_registry_destructor(TypeRegistry *registry, const Type *type) {
-    if (!type_registry_conforms(registry, type, registry->primitives.destroy_name)) {
+    if (!type_registry_conforms(registry, type, registry->names.destroy)) {
         return NULL;
     }
 
-    return type_registry_find_owned(registry, type, registry->primitives.destroy_method);
+    return type_registry_find_owned(registry, type, registry->names.destroy_method);
 }
 
 /* A signature mentioning no type parameter is one function for every instantiation of its owner. */
@@ -562,8 +573,13 @@ bool type_registry_owns(TypeRegistry *registry, const Type *type) {
         break;
     }
 
+    /* The compiler writes its drop, so it owns what it points at though the run it holds does not. */
+    if (type_registry_is_unique(registry, type)) {
+        return true;
+    }
+
     /* An ending of its own is something to run, so the type is one that ends even holding nothing. */
-    if (type_registry_conforms(registry, type, registry->primitives.destroy_name)) {
+    if (type_registry_conforms(registry, type, registry->names.destroy)) {
         return true;
     }
 
@@ -634,6 +650,11 @@ bool type_registry_copies(TypeRegistry *registry, const Type *type) {
 
     default:
         break;
+    }
+
+    /* Exactly one slot owns what it points at, so a second naming the same run would free it twice. */
+    if (type_registry_is_unique(registry, type)) {
+        return false;
     }
 
     const TypeFields *fields = type_registry_fields_of(registry, type);
@@ -731,21 +752,47 @@ const Type *type_registry_get_primitive(TypeRegistry *registry, TypeKind kind) {
     abort();
 }
 
-TypePrimitiveNames type_primitive_names(StringPool *strings) {
-    return (TypePrimitiveNames){
-        .i32_name = string_from_cstr(strings, "i32"),
-        .f32_name = string_from_cstr(strings, "f32"),
-        .bool_name = string_from_cstr(strings, "bool"),
+KnownNames known_names(StringPool *strings) {
+    return (KnownNames){
+        .i32 = string_from_cstr(strings, "i32"),
+        .f32 = string_from_cstr(strings, "f32"),
+        .boolean = string_from_cstr(strings, "bool"),
+        .u8 = string_from_cstr(strings, "u8"),
+        .usize = string_from_cstr(strings, "usize"),
+        .str = string_from_cstr(strings, "str"),
+        .slice = string_from_cstr(strings, "slice"),
+        .raw = string_from_cstr(strings, "raw"),
+        .array = string_from_cstr(strings, "array"),
+        .self = string_from_cstr(strings, "Self"),
+        .error = string_from_cstr(strings, "<error>"),
 
-        .u8_name = string_from_cstr(strings, "u8"),
-        .usize_name = string_from_cstr(strings, "usize"),
-        .str_name = string_from_cstr(strings, "str"),
-        .slice_name = string_from_cstr(strings, "slice"),
-        .raw_name = string_from_cstr(strings, "raw"),
-        .destroy_name = string_from_cstr(strings, "Destroy"),
+        .destroy = string_from_cstr(strings, "Destroy"),
         .destroy_method = string_from_cstr(strings, "destroy"),
-        .array_name = string_from_cstr(strings, "array"),
+        .unique = string_from_cstr(strings, "Unique"),
+        .index = string_from_cstr(strings, "index"),
+        .len = string_from_cstr(strings, "len"),
+        .as_bytes = string_from_cstr(strings, "as_bytes"),
 
-        .error_name = string_from_cstr(strings, "<error>"),
+        .caller = string_from_cstr(strings, "caller"),
+        .size_of = string_from_cstr(strings, "size_of"),
     };
+}
+
+const KnownNames *type_registry_names(const TypeRegistry *registry) { return &registry->names; }
+
+bool type_registry_is_unique(const TypeRegistry *registry, const Type *type) {
+    const TypeDecl *decl = type_decl(type);
+
+    return decl && decl->name == registry->names.unique;
+}
+
+const IntrinsicLowering *type_registry_intrinsic(const TypeRegistry *registry, const String *owner,
+                                                 const String *name) {
+    for (size_t i = 0; i < GAB_INTRINSIC_COUNT; i++) {
+        if (registry->intrinsics[i].owner == owner && registry->intrinsics[i].name == name) {
+            return &registry->intrinsics[i];
+        }
+    }
+
+    return NULL;
 }

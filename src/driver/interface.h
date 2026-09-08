@@ -11,6 +11,9 @@
 /* A compiled unit's declarations as Gab source with no bodies: what a later compilation reads in place
  * of the source it was built from. Reading one back is parsing, so the format cannot drift from the
  * language it describes. */
+/* The interface text for a unit, which is the source a reader parses to know what this module declares. */
+void gab_interface_print(const ASTUnit *unit, FILE *out);
+
 bool gab_interface_write(const ASTUnit *unit, const char *path);
 
 /* One written earlier, as text to compile; null where none is there. The caller frees it. */

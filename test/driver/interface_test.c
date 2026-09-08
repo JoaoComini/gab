@@ -83,7 +83,21 @@ static void a_method_does_not_restate_the_parameters_of_its_block(void) {
     free(source);
 }
 
+/* What a reader parses states exactly what was written, so a body carried across is carried unchanged. */
+static void an_interface_states_the_same_thing_when_read_back(void) {
+    char *source = core_source();
+    char *once = interface_of(source);
+    char *twice = interface_of(once);
+
+    assert(strcmp(once, twice) == 0);
+
+    free(twice);
+    free(once);
+    free(source);
+}
+
 int main(void) {
+    an_interface_states_the_same_thing_when_read_back();
     a_written_interface_compiles();
     an_interface_states_a_signature_without_its_body();
     a_method_does_not_restate_the_parameters_of_its_block();
