@@ -327,8 +327,10 @@ static LLVMValueRef place_address(LLVMEmitter *emitter, const Place *place, LLVM
                                          address, "");
             }
 
-            /* What a view names is a run with no length in its type, so nothing is stepped over here. */
-            viewed = type_metadata_of(projection->type) == TYPE_META_LENGTH;
+            /* What a view names is a run with no length in its type, so nothing is stepped over here;
+             * a raw run is that same bare run, stated by the type rather than carried beside it. */
+            viewed = type_metadata_of(projection->type) == TYPE_META_LENGTH ||
+                     type_kind(projection->type) == TYPE_RAW;
             break;
 
         case PROJ_INDEX: {

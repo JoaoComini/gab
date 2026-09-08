@@ -129,9 +129,17 @@ add_custom_command(
     COMMENT "Compiling the standard modules"
 )
 
-add_custom_target(std ALL DEPENDS ${GAB_LIB_DIR}/testing.o)
+add_custom_command(
+    OUTPUT ${GAB_LIB_DIR}/libc.o
+    COMMAND gabc -c -o ${GAB_LIB_DIR}/libc.o ${CMAKE_SOURCE_DIR}/src/std/libc.gab
+    DEPENDS gabc core ${CMAKE_SOURCE_DIR}/src/std/libc.gab
+    COMMENT "Compiling the host's allocator bindings"
+)
+
+add_custom_target(std ALL DEPENDS ${GAB_LIB_DIR}/testing.o ${GAB_LIB_DIR}/libc.o)
 
 install(FILES ${GAB_LIB_DIR}/testing.o ${GAB_LIB_DIR}/testing.gabi
+              ${GAB_LIB_DIR}/libc.o ${GAB_LIB_DIR}/libc.gabi
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/gab)
 
 # 'bin' holds the compiler and 'lib/gab' what it links a program against, which is the layout

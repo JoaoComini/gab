@@ -1,0 +1,6 @@
+func f(bytes: raw<u8>): i32 {
+    return i32(bytes);
+}
+
+// error
+// :2:12: type error: cannot convert raw<u8> to i32
