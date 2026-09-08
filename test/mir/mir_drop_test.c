@@ -163,7 +163,6 @@ static void test_a_value_moved_on_one_path_still_reaches_one_drop(void) {
                                 "f");
 
     assert(count_op(ir, MIR_DROP) == 1);
-    assert(count_op(ir, MIR_NULL) == 1);
 
     elaborated_free(&out);
 }
@@ -196,6 +195,42 @@ static void a_call_result_stored_into_a_field_releases_what_it_replaced(void) {
     elaborated_free(&out);
 }
 
+static void a_value_moved_on_every_path_reaches_no_drop(void) {
+    Elaborated out;
+    MIRFunction *ir = elaborate(&out,
+                                "struct Node { n: i32 }\n"
+                                "func take(p: *Node): i32 { return p.n; }\n"
+                                "func f(c: bool): i32 {\n"
+                                "    let a: *Node = box Node { n: 1 };\n"
+                                "    if c { let x: i32 = take(a); } else { let y: i32 = take(a); }\n"
+                                "    return 0;\n"
+                                "}\n",
+                                "f");
+
+    assert(count_op(ir, MIR_DROP) == 0);
+
+    elaborated_free(&out);
+}
+
+/* Paths that disagree are told apart by a flag, not by what the slot itself was left holding. */
+static void a_value_moved_on_one_path_is_dropped_behind_a_flag(void) {
+    Elaborated out;
+    MIRFunction *ir = elaborate(&out,
+                                "struct Node { n: i32 }\n"
+                                "func take(p: *Node): i32 { return p.n; }\n"
+                                "func f(c: bool): i32 {\n"
+                                "    let a: *Node = box Node { n: 1 };\n"
+                                "    if c { let x: i32 = take(a); }\n"
+                                "    return 0;\n"
+                                "}\n",
+                                "f");
+
+    assert(count_op(ir, MIR_DROP) == 1);
+    assert(count_op(ir, MIR_DROP_FLAG) > 0);
+
+    elaborated_free(&out);
+}
+
 int main(void) {
     test_a_value_owning_nothing_is_never_marked_for_dropping();
     test_a_drop_of_an_owning_value_survives();
@@ -207,6 +242,10 @@ int main(void) {
     a_call_result_stored_into_a_field_releases_what_it_replaced();
 
     printf("mir_drop_test passed\n");
+
+    a_value_moved_on_every_path_reaches_no_drop();
+
+    a_value_moved_on_one_path_is_dropped_behind_a_flag();
 
     return 0;
 }

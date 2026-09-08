@@ -147,6 +147,7 @@ bool mir_op_has_place(MIROp op) {
     case MIR_STORE:
     case MIR_REF:
     case MIR_DROP:
+    case MIR_DROP_FLAG:
     case MIR_NULL:
     case MIR_STORAGE_LIVE:
     case MIR_STORAGE_DEAD:
@@ -217,6 +218,7 @@ static const char *const mir_op_names[MIR__COUNT] = {
     [MIR_SLICE_LEN] = "slice_len",
     [MIR_CALL] = "call",
     [MIR_NULL] = "null",
+    [MIR_DROP_FLAG] = "drop_flag",
     [MIR_BOX] = "box",
     [MIR_DROP] = "drop",
     [MIR_STORAGE_LIVE] = "storage_live",

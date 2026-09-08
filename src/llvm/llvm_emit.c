@@ -34,6 +34,9 @@ typedef struct {
     /* Allocas belong at the head of the entry block, wherever the instruction naming one sits. */
     LLVMBuilderRef entry;
 
+    /* One bit of frame per slot whose drop is conditional, kept apart from the registers. */
+    LLVMValueRef *flags;
+
     LLVMBasicBlockRef *blocks;
 } LLVMEmitter;
 
@@ -620,7 +623,6 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         break;
 
     /* Giving a value away empties the slot, so releasing it later frees nothing. */
-    /* Giving a value away empties the slot, so releasing it later frees nothing. */
     case MIR_NULL: {
         LLVMTypeRef held;
         LLVMValueRef address = place_address(emitter, &inst->place, &held);
@@ -711,6 +713,19 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         break;
     }
 
+    /* A flag is one bit of the frame, written where what a slot holds changes. */
+    case MIR_DROP_FLAG: {
+        LLVMTypeRef held = LLVMInt1TypeInContext(emitter->context);
+
+        if (!emitter->flags[inst->flag.id]) {
+            emitter->flags[inst->flag.id] = LLVMBuildAlloca(emitter->entry, held, "");
+            LLVMBuildStore(emitter->entry, LLVMConstInt(held, 0, false), emitter->flags[inst->flag.id]);
+        }
+
+        LLVMBuildStore(builder, operand_value(emitter, inst->args[0]), emitter->flags[inst->flag.id]);
+        break;
+    }
+
     /* Dropping calls the glue for the type, which reaches whatever that type owns. */
     case MIR_DROP: {
         if (!inst->type || !type_registry_owns(emitter->registry, inst->type)) {
@@ -723,6 +738,26 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         LLVMTypeRef pointer = LLVMPointerTypeInContext(emitter->context, 0);
         LLVMTypeRef signature = LLVMFunctionType(LLVMVoidTypeInContext(emitter->context), &pointer, 1, false);
 
+        /* A slot whose paths disagree is released only where the flag those paths wrote says it holds. */
+        if (!mir_value_is_none(inst->flag) && emitter->flags[inst->flag.id]) {
+            LLVMValueRef function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(builder));
+
+            LLVMBasicBlockRef release = LLVMAppendBasicBlockInContext(emitter->context, function, "release");
+            LLVMBasicBlockRef after = LLVMAppendBasicBlockInContext(emitter->context, function, "released");
+
+            LLVMValueRef holds = LLVMBuildLoad2(builder, LLVMInt1TypeInContext(emitter->context),
+                                                emitter->flags[inst->flag.id], "");
+
+            LLVMBuildCondBr(builder, holds, release, after);
+
+            LLVMPositionBuilderAtEnd(builder, release);
+            LLVMBuildCall2(builder, signature, drop_glue_of(emitter, inst->type), &address, 1, "");
+            LLVMBuildBr(builder, after);
+
+            LLVMPositionBuilderAtEnd(builder, after);
+            break;
+        }
+
         LLVMBuildCall2(builder, signature, drop_glue_of(emitter, inst->type), &address, 1, "");
         break;
     }
@@ -734,21 +769,19 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         LLVMTypeRef size_type = LLVMInt64TypeInContext(emitter->context);
         LLVMTypeRef pointer = LLVMPointerTypeInContext(emitter->context, 0);
 
-        /* 'calloc' rather than 'malloc': a box starts zeroed, which is what a moved-from slot reads as. */
-        LLVMTypeRef arguments[2] = {size_type, size_type};
-        LLVMTypeRef signature = LLVMFunctionType(pointer, arguments, 2, false);
+        /* What a box holds is written before it is read, so the memory it starts in is never seen. */
+        LLVMTypeRef signature = LLVMFunctionType(pointer, &size_type, 1, false);
 
-        LLVMValueRef box = LLVMGetNamedFunction(emitter->module, "calloc");
+        LLVMValueRef box = LLVMGetNamedFunction(emitter->module, "malloc");
 
         if (!box) {
-            box = LLVMAddFunction(emitter->module, "calloc", signature);
+            box = LLVMAddFunction(emitter->module, "malloc", signature);
         }
 
-        LLVMValueRef size[2] = {
-            LLVMConstInt(size_type, 1, false),
-            LLVMConstInt(size_type, type_registry_size_of(emitter->ir->registry, boxed), false)};
+        LLVMValueRef size =
+            LLVMConstInt(size_type, type_registry_size_of(emitter->ir->registry, boxed), false);
 
-        LLVMValueRef object = LLVMBuildCall2(builder, signature, box, size, 2, "");
+        LLVMValueRef object = LLVMBuildCall2(builder, signature, box, &size, 1, "");
 
         LLVMBuildStore(builder, operand_value(emitter, inst->args[0]), object);
 
@@ -878,6 +911,9 @@ void llvm_unit_add(LLVMUnit *unit, const MIRFunction *ir) {
      * a temporary stored into has not been given a slot yet. */
     memset(emitter.values, 0, (ir->value_count + 1) * sizeof(LLVMValueRef));
     memset(emitter.value_types, 0, (ir->value_count + 1) * sizeof(LLVMTypeRef));
+
+    emitter.flags = arena_alloc(arena, (ir->value_count + 1) * sizeof(LLVMValueRef));
+    memset(emitter.flags, 0, (ir->value_count + 1) * sizeof(LLVMValueRef));
 
     emitter.blocks = arena_alloc(arena, (ir->block_count + 1) * sizeof(LLVMBasicBlockRef));
 
