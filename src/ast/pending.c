@@ -24,18 +24,18 @@ PendingBodies pending_bodies_create(Arena *arena) {
     };
 }
 
-void pending_bodies_instantiate(PendingBodies *work, Function *generic, Function *method,
-                                Diagnostics *diagnostics) {
+void pending_bodies_instantiate(PendingBodies *work, Function *method, Diagnostics *diagnostics) {
     if (function_runs_native(method)) {
         return;
     }
 
-    if (method->decl->type_param_count == 0 || method == generic || instantiated_abstractly(method)) {
+    if (method->decl->type_param_count == 0 || method->type_arg_count == 0 ||
+        instantiated_abstractly(method)) {
         return;
     }
 
     for (size_t i = 0; i < work->instances.size; i++) {
-        if (work->instances.data[i].instance == method) {
+        if (work->instances.data[i] == method) {
             return;
         }
     }
@@ -45,11 +45,11 @@ void pending_bodies_instantiate(PendingBodies *work, Function *generic, Function
             work->instantiation_overflowed = true;
 
             diag_error(diagnostics, GAB_ERR_TYPE, (Span){0}, "'%s' instantiates itself without end",
-                       method->decl->name->data);
+                       method->decl->id.name->data);
         }
 
         return;
     }
 
-    instantiation_list_add(&work->instances, (Instantiation){.generic = generic, .instance = method});
+    instantiation_list_add(&work->instances, method);
 }

@@ -71,6 +71,9 @@ typedef struct ResolverState {
 
     ASTUnit *unit;
 
+    /* Which impl block is being declared, which a method's id carries so two blocks stay distinct. */
+    size_t impl_block;
+
     Diagnostics *diagnostics;
 } ResolverState;
 
@@ -679,7 +682,7 @@ static bool infer_call_args(ResolverState *state, ASTExpr *expr, Function *funct
         if (!type_arg_is_set(args[i])) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "no argument names every type parameter of '%s', so each is written",
-                       function->decl->name->data);
+                       function->decl->id.name->data);
             return false;
         }
     }
@@ -700,7 +703,7 @@ static bool take_written_type_args(ResolverState *state, ASTExpr *expr, Function
 
     if (supplied->kind != TYPE_EXPR_APPLY || supplied->apply.args.size != owed) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "'%s' takes %zu type argument(s)",
-                   generic->decl->name->data, owed);
+                   generic->decl->id.name->data, owed);
         return false;
     }
 
@@ -754,7 +757,7 @@ static bool bound_arguments_match(ResolverState *state, const Function *generic,
         const Function *declared = bound->methods[m];
 
         Function *actual =
-            function_registry_owned_for(functions, registry, implementor, declared->decl->name);
+            function_registry_owned_for(functions, registry, implementor, declared->decl->id.name);
 
         if (!actual) {
             return false;
@@ -818,9 +821,7 @@ static Function *specialize(ResolverState *state, ASTExpr *expr, Function *gener
 
     /* An owner's parameters were fixed before the call, so this already is the instance. */
     if (owed <= fixed) {
-        if (generic->decl->generic) {
-            pending_bodies_instantiate(state->work, generic->decl->generic, generic, state->diagnostics);
-        }
+        pending_bodies_instantiate(state->work, generic, state->diagnostics);
 
         return generic;
     }
@@ -836,7 +837,7 @@ static Function *specialize(ResolverState *state, ASTExpr *expr, Function *gener
     Function *specialized =
         function_registry_specialize(state->current_scope->functions, generic, args, owed);
 
-    pending_bodies_instantiate(state->work, generic, specialized, state->diagnostics);
+    pending_bodies_instantiate(state->work, specialized, state->diagnostics);
 
     return specialized;
 }
@@ -911,7 +912,7 @@ static Function *bound_method(ResolverState *state, const Type *base, String *na
     }
 
     for (size_t i = 0; i < interface->method_count; i++) {
-        if (interface->methods[i]->decl->name != name) {
+        if (interface->methods[i]->decl->id.name != name) {
             continue;
         }
 
@@ -2247,7 +2248,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
         if (base_decl) {
             if (expr->apply.args.size != base_decl->param_count) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' takes %zu type argument(s), not %zu",
-                           base_decl->name->data, base_decl->param_count, expr->apply.args.size);
+                           base_decl->id.name->data, base_decl->param_count, expr->apply.args.size);
                 return resolver_error_type(state);
             }
 
@@ -2305,7 +2306,7 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
 
     if (resolution.kind == RESOLUTION_TYPE_DECL) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' takes %zu type argument(s), not 0",
-                   resolution.decl->name->data, resolution.decl->param_count);
+                   resolution.decl->id.name->data, resolution.decl->param_count);
 
         return resolver_error_type(state);
     }
@@ -2375,7 +2376,7 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
     TypeDecl *declared = arena_alloc(resolver_owner_arena(state), sizeof(TypeDecl));
 
     *declared = (TypeDecl){
-        .name = struct_name,
+        .id = {.module = state->module_name, .name = struct_name},
         .param_count = param_count,
     };
 
@@ -2699,8 +2700,9 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
             return;
         }
 
+        /* A scope keys its bindings on a mutable name, though a lookup only ever hashes one. */
         TypeBinding *bound =
-            type_name_of(owner) ? scope_binding_lookup_local(declaring, type_name_of(owner)) : NULL;
+            type_name_of(owner) ? scope_binding_lookup_local(declaring, (String *)type_name_of(owner)) : NULL;
 
         if (!bound || bound->decl != type_decl(owner)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
@@ -2721,10 +2723,11 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
     String *name = resolver_intern(state, stmt->func_decl.name);
 
     FuncDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(FuncDecl));
+    const String *decl_module = (stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) ? NULL : state->module_name;
+    const String *decl_owner = (stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) ? NULL : type_name_of(owner);
+
     *decl = (FuncDecl){
-        .name = name,
-        .module = (stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) ? NULL : state->module_name,
-        .owner = (stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) ? NULL : type_name_of(owner),
+        .id = {.module = decl_module, .owner = decl_owner, .name = name, .block = state->impl_block},
         .linkage = linkage_of(&stmt->func_decl),
         .modifiers = modifiers_of(&stmt->func_decl),
         .location_type = location_type_of(state, &stmt->func_decl),
@@ -2762,8 +2765,6 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
     stmt->func_decl.function = func;
 
     if (stmt->func_decl.type_param_count > 0) {
-        decl->generic = func;
-
         enter_param_bounds(state, stmt);
         record_param_bounds(state, decl);
 
@@ -2817,7 +2818,7 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
 
         FuncDecl *decl = arena_alloc(arena, sizeof(FuncDecl));
         *decl = (FuncDecl){
-            .name = resolver_intern(state, signature->func_decl.name),
+            .id = {.name = resolver_intern(state, signature->func_decl.name)},
             .linkage = LINKAGE_INTERNAL,
             .type_param_count = param_count + 1,
         };
@@ -2917,7 +2918,7 @@ static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *i
     TypeRegistry *registry = state->current_scope->type_registry;
 
     for (size_t i = 0; i < interface->method_count; i++) {
-        String *name = interface->methods[i]->decl->name;
+        const String *name = interface->methods[i]->decl->id.name;
 
         Function *supplied =
             block_declares(state, stmt, name) ? type_registry_find_owned(registry, implementor, name) : NULL;
@@ -2965,8 +2966,10 @@ static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *i
     }
 }
 
-static void declare_impl(ResolverState *state, ASTStmt *stmt) {
+static void declare_impl(ResolverState *state, ASTStmt *stmt, size_t block) {
     Scope *enclosing = state->current_scope;
+
+    state->impl_block = block;
 
     enter_impl_scope(state, stmt);
 
@@ -2988,6 +2991,7 @@ static void declare_impl(ResolverState *state, ASTStmt *stmt) {
         }
     }
 
+    state->impl_block = 0;
     state->current_scope = enclosing;
 }
 
@@ -3044,7 +3048,7 @@ static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
 
         if (resolution.kind == RESOLUTION_TYPE_DECL && resolution.decl->param_count > 0) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "'%s' takes %zu type argument(s), not 0",
-                       resolution.decl->name->data, resolution.decl->param_count);
+                       resolution.decl->id.name->data, resolution.decl->param_count);
             return NULL;
         }
 
@@ -3224,11 +3228,12 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
         decl->modifiers = modifiers_of(&stmt->func_decl);
         decl->location_type = location_type_of(state, &stmt->func_decl);
 
-        decl->module = state->module_name;
+        decl->id.module = state->module_name;
 
-        /* A C body links to the name as spelled, which no module qualifies. */
+        /* A C body links to the name as spelled, which is the name its id carries; the module still
+         * qualifies the id, since two modules may each declare the same foreign function. */
         if (decl->linkage == LINKAGE_C) {
-            decl->name = resolver_intern(state, func_name);
+            decl->id.name = resolver_intern(state, func_name);
         }
     }
 
@@ -3247,9 +3252,6 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
 
     if (decl && stmt->func_decl.type_param_count > 0) {
         decl->type_param_count = stmt->func_decl.type_param_count;
-        decl->name = resolver_intern(state, func_name);
-
-        decl->generic = stmt->func_decl.function;
 
         if (stmt->func_decl.body) {
             check_abstract_body(state, stmt);
@@ -3663,7 +3665,7 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
         }
 
         if (stmt && stmt->kind == STMT_IMPL) {
-            declare_impl(&state, stmt);
+            declare_impl(&state, stmt, i);
         }
     }
 

@@ -78,7 +78,7 @@ static void append_type(SymbolBuffer *buffer, const Type *type) {
         break;
     }
 
-    String *name = type_name_of(type);
+    const String *name = type_name_of(type);
 
     symbol_append(buffer, name ? name->data : "?");
 }
@@ -114,25 +114,27 @@ const char *llvm_symbol_of(Arena *arena, const Function *function) {
 
     /* A foreign declaration names the symbol itself, which is the whole point of spelling an ABI. */
     if (decl->linkage == LINKAGE_C) {
-        return decl->name->data;
+        return decl->id.name->data;
     }
 
-    if (decl->module) {
-        symbol_append(&buffer, decl->module->data);
+    const DeclId id = decl->id;
+
+    if (id.module) {
+        symbol_append(&buffer, id.module->data);
         symbol_append(&buffer, ".");
     }
 
-    if (decl->owner) {
-        symbol_append(&buffer, decl->owner->data);
+    if (id.owner) {
+        symbol_append(&buffer, id.owner->data);
         append_type_args(&buffer, function);
         symbol_append(&buffer, ".");
 
-        symbol_append(&buffer, decl->name->data);
+        symbol_append(&buffer, id.name->data);
 
         return buffer.text;
     }
 
-    symbol_append(&buffer, decl->name->data);
+    symbol_append(&buffer, id.name->data);
     append_type_args(&buffer, function);
 
     return buffer.text;

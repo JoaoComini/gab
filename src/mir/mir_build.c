@@ -8,8 +8,8 @@
 
 /* A substituted body names instances of its own, which are wanted the same way a source call's are. */
 static void instantiate_needed(PendingBodies *work, Function *callee, Diagnostics *diagnostics) {
-    if (callee && callee->type_arg_count > 0 && callee->decl->generic) {
-        pending_bodies_instantiate(work, callee->decl->generic, callee, diagnostics);
+    if (callee && callee->type_arg_count > 0) {
+        pending_bodies_instantiate(work, callee, diagnostics);
     }
 }
 
@@ -85,14 +85,15 @@ bool mir_build(Arena *arena, ResolvedUnit *resolved, MIRModule *imported, MIRMod
     /* An instance substitutes the body its declaration lowered, and its calls name further instances,
      * so the list is walked by index while it grows rather than iterated once. */
     for (size_t i = 0; i < work->instances.size; i++) {
-        Function *generic = work->instances.data[i].generic;
-        Function *instance = work->instances.data[i].instance;
+        Function *instance = work->instances.data[i];
+
+        InstanceId generic = {.decl = instance->decl->id};
 
         /* A generic this unit declared is lowered here; one an import declared came with its body. */
-        MIRFunction *from = mir_module_lookup(bodies, generic);
+        MIRFunction *from = mir_module_lookup_id(bodies, generic);
 
         if (!from && imported) {
-            from = mir_module_lookup(imported, generic);
+            from = mir_module_lookup_id(imported, generic);
         }
 
         if (!from || mir_module_lookup(bodies, instance)) {

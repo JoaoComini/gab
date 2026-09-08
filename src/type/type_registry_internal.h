@@ -12,13 +12,14 @@ GAB_HASH_MAP(TypeInternTable, type_intern, const Type *, Type *)
 
 /* Keyed on the declaration rather than the type, so every instantiation of an owner finds the one entry. */
 typedef struct OwnedKey {
-    const TypeDecl *owner;
+    DeclId owner;
 
     const String *name;
 } OwnedKey;
 
-#define owned_key_hash(key) (((size_t)(key).owner * 31) ^ (size_t)(key).name)
-#define owned_key_key_equals(key, other) ((key).owner == (other).owner && (key).name == (other).name)
+#define owned_key_hash(key) ((decl_id_hash((key).owner) * 31) ^ (size_t)(key).name)
+#define owned_key_key_equals(key, other)                                                                     \
+    (decl_id_equals((key).owner, (other).owner) && (key).name == (other).name)
 
 GAB_HASH_MAP(OwnedTable, owned_key, OwnedKey, Function *)
 

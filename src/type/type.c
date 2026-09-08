@@ -8,7 +8,7 @@
 _Static_assert(sizeof(int32_t) == 4, "gab int must be 4 bytes");
 _Static_assert(sizeof(float) == 4, "gab float must be 4 bytes");
 
-Type type_init(TypeKind kind, String *name) {
+Type type_init(TypeKind kind, const String *name) {
     Type type;
 
     type.kind = kind;
@@ -24,7 +24,7 @@ Type type_init(TypeKind kind, String *name) {
     return type;
 }
 
-Type *type_create(Arena *arena, TypeKind kind, String *name) {
+Type *type_create(Arena *arena, TypeKind kind, const String *name) {
     Type *type = arena_alloc(arena, sizeof(Type));
 
     *type = type_init(kind, name);
@@ -116,7 +116,7 @@ bool type_array_length_is_known(const Type *type) {
 
 TypeKind type_kind(const Type *type) { return type->kind; }
 
-String *type_name_of(const Type *type) { return type->name; }
+const String *type_name_of(const Type *type) { return type->name; }
 
 const TypeDecl *type_decl(const Type *type) { return type->decl; }
 
@@ -161,7 +161,7 @@ size_t type_structural_hash(const Type *type) {
     case TYPE_ARRAY:
     case TYPE_SLICE:
     case TYPE_STRUCT:
-        hash = ((hash << 5) + hash) + (size_t)(uintptr_t)type->decl;
+        hash = ((hash << 5) + hash) + decl_id_hash(type->decl->id);
 
         for (size_t i = 0; i < type->arg_count; i++) {
             const TypeArg *arg = &type->args[i];
@@ -194,7 +194,7 @@ bool type_structurally_equals(const Type *type, const Type *other) {
     case TYPE_ARRAY:
     case TYPE_SLICE:
     case TYPE_STRUCT:
-        if (type->decl != other->decl || type->arg_count != other->arg_count) {
+        if (!decl_id_equals(type->decl->id, other->decl->id) || type->arg_count != other->arg_count) {
             return false;
         }
 

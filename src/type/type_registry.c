@@ -17,7 +17,7 @@ static Type *register_builtin(TypeRegistry *registry, TypeKind kind, String *nam
     Type *type = type_create(registry->arena, kind, name);
 
     TypeDecl *decl = arena_alloc(registry->arena, sizeof(TypeDecl));
-    *decl = (TypeDecl){.name = name};
+    *decl = (TypeDecl){.id = {.name = name}};
 
     type->decl = decl;
 
@@ -37,17 +37,17 @@ static void register_primitives(TypeRegistry *registry, const KnownNames *names)
     registry->primitives.error_type = register_builtin(registry, TYPE_ERROR, names->error);
 
     TypeDecl *slice = arena_alloc(registry->arena, sizeof(TypeDecl));
-    *slice = (TypeDecl){.name = names->slice, .param_count = 1};
+    *slice = (TypeDecl){.id = {.name = names->slice}, .param_count = 1};
 
     registry->primitives.slice_decl = slice;
 
     TypeDecl *array = arena_alloc(registry->arena, sizeof(TypeDecl));
-    *array = (TypeDecl){.name = names->array, .param_count = 2};
+    *array = (TypeDecl){.id = {.name = names->array}, .param_count = 2};
 
     registry->primitives.array_decl = array;
 
     TypeDecl *raw = arena_alloc(registry->arena, sizeof(TypeDecl));
-    *raw = (TypeDecl){.name = names->raw, .param_count = 1};
+    *raw = (TypeDecl){.id = {.name = names->raw}, .param_count = 1};
 
     registry->primitives.raw_decl = raw;
 
@@ -233,7 +233,7 @@ void type_registry_complete(TypeRegistry *registry, const Type *type) {
 }
 
 const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl) {
-    assert(decl && decl->name && "a declared type is found by name");
+    assert(decl && decl->id.name && "a declared type is found by name");
 
     const Type *type = decl->param_count == 0 ? type_registry_apply(registry, decl, NULL, 0) : NULL;
 
@@ -257,13 +257,16 @@ const Type *type_registry_declare_struct(TypeRegistry *registry, String *name, c
 
     TypeDecl *decl = arena_alloc(registry->arena, sizeof(TypeDecl));
 
-    *decl = (TypeDecl){.name = name, .fields = owned, .field_count = field_count};
+    *decl = (TypeDecl){.id = {.name = name}, .fields = owned, .field_count = field_count};
 
     return type_registry_declare(registry, decl);
 }
 
 static OwnedKey owned_key_of(const Type *type, const String *name) {
-    return (OwnedKey){.owner = type_decl(type), .name = name};
+    const TypeDecl *decl = type_decl(type);
+
+    /* A box, a reference and a parameter declare nothing, so they key on the id no declaration has. */
+    return (OwnedKey){.owner = decl ? decl->id : (DeclId){0}, .name = name};
 }
 
 static bool declare_owned(TypeRegistry *registry, OwnedKey key, Function *function) {
@@ -277,10 +280,10 @@ static bool declare_owned(TypeRegistry *registry, OwnedKey key, Function *functi
 }
 
 bool type_registry_declare_owned(TypeRegistry *registry, const Type *type, Function *function) {
-    assert(type && function && function->decl && function->decl->name &&
+    assert(type && function && function->decl && function->decl->id.name &&
            "a function a type owns has a name and a signature");
 
-    return declare_owned(registry, owned_key_of(type, function->decl->name), function);
+    return declare_owned(registry, owned_key_of(type, function->decl->id.name), function);
 }
 
 bool type_registry_declare_conformance(TypeRegistry *registry, const Type *type, const String *interface) {
@@ -383,7 +386,7 @@ static Type *intern_applied(TypeRegistry *registry, Type *key, const TypeArg *ar
 }
 
 const Type *type_registry_slice_of(TypeRegistry *registry, const Type *element) {
-    Type key = type_init(TYPE_SLICE, registry->primitives.slice_decl->name);
+    Type key = type_init(TYPE_SLICE, registry->primitives.slice_decl->id.name);
 
     TypeArg argument = {.kind = TYPE_ARG_TYPE, .type = element};
 
@@ -395,7 +398,7 @@ const Type *type_registry_slice_of(TypeRegistry *registry, const Type *element) 
 
 /* The length is an argument like the element, so a generic one is a parameter rather than a count. */
 const Type *type_registry_array_with(TypeRegistry *registry, const Type *element, TypeArg length) {
-    Type key = type_init(TYPE_ARRAY, registry->primitives.array_decl->name);
+    Type key = type_init(TYPE_ARRAY, registry->primitives.array_decl->id.name);
 
     TypeArg args[2] = {{.kind = TYPE_ARG_TYPE, .type = element}, length};
 
@@ -685,7 +688,7 @@ const Type *type_registry_instantiate(TypeRegistry *registry, const TypeDecl *de
     assert(decl && "an instantiation names a declaration");
     assert(arg_count == decl->param_count && "an instantiation was given the wrong argument count");
 
-    Type key = type_init(TYPE_STRUCT, decl->name);
+    Type key = type_init(TYPE_STRUCT, decl->id.name);
 
     key.decl = decl;
     key.args = args;
@@ -714,7 +717,7 @@ const Type *type_registry_ref_to(TypeRegistry *registry, const Type *inner) {
 }
 
 const Type *type_registry_raw_of(TypeRegistry *registry, const Type *element) {
-    Type key = type_init(TYPE_RAW, registry->primitives.raw_decl->name);
+    Type key = type_init(TYPE_RAW, registry->primitives.raw_decl->id.name);
 
     TypeArg argument = {.kind = TYPE_ARG_TYPE, .type = element};
 
@@ -783,7 +786,7 @@ const KnownNames *type_registry_names(const TypeRegistry *registry) { return &re
 bool type_registry_is_unique(const TypeRegistry *registry, const Type *type) {
     const TypeDecl *decl = type_decl(type);
 
-    return decl && decl->name == registry->names.unique;
+    return decl && decl->id.name == registry->names.unique;
 }
 
 const IntrinsicLowering *type_registry_intrinsic(const TypeRegistry *registry, const String *owner,

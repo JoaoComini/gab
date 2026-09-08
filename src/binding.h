@@ -34,6 +34,23 @@ typedef struct FuncSignature {
 FuncSignature func_signature_instantiate(TypeRegistry *registry, Arena *arena, const FuncSignature *generic,
                                          const TypeArg *args, size_t arg_count);
 
+/* Which monomorphisation: a declaration together with what its parameters were fixed to. */
+typedef struct InstanceId {
+    DeclId decl;
+
+    TypeArg args[GAB_MAX_TYPE_PARAMS];
+    size_t arg_count;
+} InstanceId;
+
+bool instance_id_equals(InstanceId id, InstanceId other);
+size_t instance_id_hash(InstanceId id);
+
+/* A declaration together with the arguments given to it, which is the one place an id is assembled. */
+InstanceId instance_id_of(DeclId decl, const TypeArg *args, size_t arg_count);
+
+/* What a record stands for: its declaration, with the arguments it was specialized on. */
+InstanceId instance_id_of_function(const Function *function);
+
 #define GAB_INTRINSIC_COUNT 6
 
 /* The owner and name of a call that stands for instructions rather than a body, which IR lowering expands. */
@@ -43,9 +60,9 @@ typedef struct IntrinsicLowering {
 } IntrinsicLowering;
 
 typedef struct FuncDecl {
-    String *name;
-    String *module;
-    String *owner;
+    /* What names this declaration: the name a lookup and a diagnostic use, and what a symbol renders
+     * from together with the module and owner qualifying it. */
+    DeclId id;
 
     Linkage linkage;
 
@@ -54,9 +71,6 @@ typedef struct FuncDecl {
 
     /* The type a 'caller' function's hidden parameter has, which only the core can name. */
     const Type *location_type;
-
-    /* The declaration an instance substitutes, whose lowered body the unit holds; null for a host body. */
-    struct Function *generic;
 
     /* The lowering an 'intrinsic' names, resolved where it is declared; NULL for every other body. */
     const IntrinsicLowering *intrinsic;

@@ -62,7 +62,7 @@ static void mir_print_type(MIRPrinter *printer, const Type *type) {
         break;
     }
 
-    String *name = type_name_of(type);
+    const String *name = type_name_of(type);
 
     mir_printf(printer, "%s", name ? name->data : "?");
 }
@@ -189,7 +189,7 @@ static void mir_print_inst(MIRPrinter *printer, const MIRInst *inst) {
     case MIR_CALL: {
         const FuncDecl *decl = inst->callee ? inst->callee->decl : NULL;
 
-        mir_printf(printer, " %s", decl && decl->name ? decl->name->data : "?");
+        mir_printf(printer, " %s", decl && decl->id.name ? decl->id.name->data : "?");
         mir_print_args(printer, inst);
         break;
     }
@@ -214,7 +214,7 @@ static void mir_print_inst(MIRPrinter *printer, const MIRInst *inst) {
 static void mir_print_signature(MIRPrinter *printer, const MIRFunction *ir) {
     const FuncDecl *decl = ir->function ? ir->function->decl : NULL;
 
-    mir_printf(printer, "func %s(", decl && decl->name ? decl->name->data : "?");
+    mir_printf(printer, "func %s(", decl && decl->id.name ? decl->id.name->data : "?");
 
     for (size_t i = 0; i < ir->param_count; i++) {
         const MIRValueInfo *info = mir_value_info(ir, ir->params[i]);

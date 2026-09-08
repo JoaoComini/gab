@@ -6,41 +6,10 @@
 
 #define FUNCTION_REGISTRY_INITIAL_CAPACITY 8
 
-typedef struct InstanceKey {
-    const Function *generic;
+#define instance_key_hash(key) instance_id_hash(key)
+#define instance_key_key_equals(key, other) instance_id_equals(key, other)
 
-    TypeArg args[GAB_MAX_TYPE_PARAMS];
-    size_t arg_count;
-} InstanceKey;
-
-static inline size_t instance_key_hash_of(InstanceKey key) {
-    size_t hash = (size_t)key.generic;
-
-    for (size_t i = 0; i < key.arg_count; i++) {
-        hash = hash * 31 + type_arg_hash(key.args[i]);
-    }
-
-    return hash;
-}
-
-static inline bool instance_key_equals(InstanceKey key, InstanceKey other) {
-    if (key.generic != other.generic || key.arg_count != other.arg_count) {
-        return false;
-    }
-
-    for (size_t i = 0; i < key.arg_count; i++) {
-        if (!type_arg_equals(key.args[i], other.args[i])) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-#define instance_key_hash(key) instance_key_hash_of(key)
-#define instance_key_key_equals(key, other) instance_key_equals(key, other)
-
-GAB_HASH_MAP(InstanceTable, instance_key, InstanceKey, Function *)
+GAB_HASH_MAP(InstanceTable, instance_key, InstanceId, Function *)
 
 struct FunctionRegistry {
     Arena *arena;
@@ -83,19 +52,9 @@ Function *function_registry_owned_for(FunctionRegistry *registry, TypeRegistry *
     return function_registry_specialize(registry, declaration, type_args(type), type_arg_count(type));
 }
 
-static InstanceKey key_of(const Function *generic, const TypeArg *args, size_t arg_count) {
-    InstanceKey key = {.generic = generic, .arg_count = arg_count};
-
-    for (size_t i = 0; i < arg_count && i < GAB_MAX_TYPE_PARAMS; i++) {
-        key.args[i] = args[i];
-    }
-
-    return key;
-}
-
 Function *function_registry_specialize(FunctionRegistry *registry, Function *generic, const TypeArg *args,
                                        size_t arg_count) {
-    InstanceKey key = key_of(generic, args, arg_count);
+    InstanceId key = instance_id_of(generic->decl->id, args, arg_count);
 
     Function **cached = instance_key_lookup(registry->instances, key);
 
