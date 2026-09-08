@@ -95,7 +95,7 @@ static void a_type_that_owns_is_dropped_by_glue_named_for_it(void) {
                                       "func f(): i32 { let a: *Node = box Node { n: 1 }; return a.n; }\n");
 
     assert(strstr(text, "define linkonce_odr void @drop.ptr.Node"));
-    assert(strstr(text, "call void @gab_free"));
+    assert(strstr(text, "call void @free"));
 
     test_emission_free(&emission);
 }
@@ -143,7 +143,7 @@ static void a_box_drops_what_its_object_owns_before_freeing_it(void) {
     assert(glue);
 
     const char *inner = strstr(glue, "call void @drop.Outer(");
-    const char *freed = strstr(glue, "call void @gab_free(");
+    const char *freed = strstr(glue, "call void @free(");
 
     assert(inner && freed && inner < freed);
 

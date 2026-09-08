@@ -85,8 +85,8 @@ target_compile_options(run_test PRIVATE
     -DGAB_TEST_COMPILER="$<TARGET_FILE:gabc>"
     -DGAB_TEST_HARNESS="${CMAKE_CURRENT_SOURCE_DIR}/support/harness.c")
 
-# The suite drives the compiler as a program, and links a case against what an installation ships.
-add_dependencies(run_test gabc gab_runtime)
+# The suite drives the compiler as a program, which is what links a case against the core.
+add_dependencies(run_test gabc)
 
 # Globbed with CONFIGURE_DEPENDS so a new .gab file runs without being named here, which is
 # what a forgotten registration would otherwise cost: a test that silently never runs.

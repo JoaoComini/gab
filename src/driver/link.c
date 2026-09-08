@@ -160,8 +160,8 @@ bool gab_link(const char *object, const char *module, const char *const *extra, 
         length += (size_t)snprintf(command + length, sizeof(command) - length, " %s", extra[i]);
     }
 
-    snprintf(command + length, sizeof(command) - length, " %s/libcore.a %s/libgab_runtime.a %s -o %s", libdir,
-             libdir, flags ? flags : "", binary);
+    snprintf(command + length, sizeof(command) - length, " %s/libcore.a %s -o %s", libdir, flags ? flags : "",
+             binary);
 
     /* The linker's report of a missing interface symbol names a digest, which says nothing on its own. */
     char captured[512];

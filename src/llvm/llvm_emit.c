@@ -1,5 +1,7 @@
 #include "llvm/llvm_emit.h"
 
+#include "scope.h"
+
 #include "llvm/llvm_symbol.h"
 
 #include <llvm-c/Analysis.h>
@@ -90,30 +92,36 @@ static LLVMValueRef free_function(LLVMEmitter *emitter, LLVMTypeRef *out_signatu
 
     *out_signature = LLVMFunctionType(LLVMVoidTypeInContext(emitter->context), &pointer, 1, false);
 
-    LLVMValueRef declared = LLVMGetNamedFunction(emitter->module, "gab_free");
+    LLVMValueRef declared = LLVMGetNamedFunction(emitter->module, "free");
 
-    return declared ? declared : LLVMAddFunction(emitter->module, "gab_free", *out_signature);
+    return declared ? declared : LLVMAddFunction(emitter->module, "free", *out_signature);
 }
 
 static LLVMTypeRef trap_signature(LLVMEmitter *emitter) {
-    LLVMTypeRef pointer = LLVMPointerTypeInContext(emitter->context, 0);
+    LLVMTypeRef arguments[2] = {LLVMPointerTypeInContext(emitter->context, 0),
+                                LLVMInt32TypeInContext(emitter->context)};
 
-    return LLVMFunctionType(LLVMVoidTypeInContext(emitter->context), &pointer, 1, false);
+    return LLVMFunctionType(LLVMVoidTypeInContext(emitter->context), arguments, 2, false);
 }
 
+/* The core's, so what a failed check does is written in Gab rather than emitted here. */
+#define GAB_TRAP_SYMBOL GAB_CORE_MODULE ".trap"
+
 static LLVMValueRef trap_function(LLVMEmitter *emitter) {
-    LLVMValueRef declared = LLVMGetNamedFunction(emitter->module, "gab_trap");
+    LLVMValueRef declared = LLVMGetNamedFunction(emitter->module, GAB_TRAP_SYMBOL);
 
     if (declared) {
         return declared;
     }
 
-    LLVMValueRef trap = LLVMAddFunction(emitter->module, "gab_trap", trap_signature(emitter));
+    LLVMValueRef trap = LLVMAddFunction(emitter->module, GAB_TRAP_SYMBOL, trap_signature(emitter));
 
     LLVMSetFunctionCallConv(trap, LLVMCCallConv);
 
     return trap;
 }
+
+#define GAB_OUT_OF_RANGE "index is out of range\n"
 
 static LLVMValueRef trap_message(LLVMEmitter *emitter) {
     LLVMValueRef existing = LLVMGetNamedGlobal(emitter->module, "gab.out_of_range");
@@ -122,7 +130,7 @@ static LLVMValueRef trap_message(LLVMEmitter *emitter) {
         return existing;
     }
 
-    return LLVMBuildGlobalStringPtr(emitter->builder, "index is out of range", "gab.out_of_range");
+    return LLVMBuildGlobalStringPtr(emitter->builder, GAB_OUT_OF_RANGE, "gab.out_of_range");
 }
 
 /* A slice is a pointer followed by its length, so the length is its second field. */
@@ -629,8 +637,11 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         LLVMBuildCondBr(builder, outside, trap, ok);
 
         LLVMPositionBuilderAtEnd(builder, trap);
-        LLVMBuildCall2(builder, trap_signature(emitter), trap_function(emitter),
-                       (LLVMValueRef[]){trap_message(emitter)}, 1, "");
+        LLVMBuildCall2(
+            builder, trap_signature(emitter), trap_function(emitter),
+            (LLVMValueRef[]){trap_message(emitter), LLVMConstInt(LLVMInt32TypeInContext(emitter->context),
+                                                                 sizeof(GAB_OUT_OF_RANGE) - 1, false)},
+            2, "");
         LLVMBuildUnreachable(builder);
 
         /* What follows the check belongs to the path that passed it. */
@@ -661,18 +672,21 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         LLVMTypeRef size_type = LLVMInt64TypeInContext(emitter->context);
         LLVMTypeRef pointer = LLVMPointerTypeInContext(emitter->context, 0);
 
-        LLVMTypeRef signature = LLVMFunctionType(pointer, &size_type, 1, false);
+        /* 'calloc' rather than 'malloc': a box starts zeroed, which is what a moved-from slot reads as. */
+        LLVMTypeRef arguments[2] = {size_type, size_type};
+        LLVMTypeRef signature = LLVMFunctionType(pointer, arguments, 2, false);
 
-        LLVMValueRef box = LLVMGetNamedFunction(emitter->module, "gab_box");
+        LLVMValueRef box = LLVMGetNamedFunction(emitter->module, "calloc");
 
         if (!box) {
-            box = LLVMAddFunction(emitter->module, "gab_box", signature);
+            box = LLVMAddFunction(emitter->module, "calloc", signature);
         }
 
-        LLVMValueRef size =
-            LLVMConstInt(size_type, type_registry_size_of(emitter->ir->registry, boxed), false);
+        LLVMValueRef size[2] = {
+            LLVMConstInt(size_type, 1, false),
+            LLVMConstInt(size_type, type_registry_size_of(emitter->ir->registry, boxed), false)};
 
-        LLVMValueRef object = LLVMBuildCall2(builder, signature, box, &size, 1, "");
+        LLVMValueRef object = LLVMBuildCall2(builder, signature, box, size, 2, "");
 
         LLVMBuildStore(builder, operand_value(emitter, inst->args[0]), object);
 

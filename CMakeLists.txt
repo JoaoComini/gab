@@ -106,14 +106,6 @@ add_executable(gabc src/driver/main.c)
 
 target_link_libraries(gabc PRIVATE gab)
 
-# What a compiled program links against: the runtime a native object calls into, built apart from the
-# compiler so a binary carries neither the parser nor the emitter that produced it.
-add_library(gab_runtime STATIC src/runtime/runtime.c)
-
-target_include_directories(gab_runtime PUBLIC src)
-
-set_target_properties(gab_runtime PROPERTIES ARCHIVE_OUTPUT_DIRECTORY ${GAB_LIB_DIR})
-
 # The core is compiled by the compiler, into a library beside it: what 'gabc' links a program against
 # is the same archive an installation would ship, rather than something the test suite builds.
 add_custom_command(
@@ -131,7 +123,7 @@ set_target_properties(core PROPERTIES LINKER_LANGUAGE C ARCHIVE_OUTPUT_DIRECTORY
 # 'gab_libdir' looks for before falling back to its own directory.
 install(TARGETS gabc RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-install(TARGETS core gab_runtime ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}/gab)
+install(TARGETS core ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}/gab)
 
 install(FILES ${GAB_LIB_DIR}/core.gabi DESTINATION ${CMAKE_INSTALL_LIBDIR}/gab)
 

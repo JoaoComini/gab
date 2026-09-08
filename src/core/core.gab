@@ -1,5 +1,15 @@
 module core;
 
+extern "C" func write(fd: i32, message: &u8, length: i32): i32;
+extern "C" func abort();
+
+/* Where a check the compiler emitted has failed, such as an index out of range. Written to fd 2 rather
+ * than printed, since 'abort' flushes nothing and a buffered message is never seen. */
+func trap(message: &u8, length: i32) {
+    write(2, message, length);
+    abort();
+}
+
 /* Where a call was written, which '@caller()' in a 'caller' function answers with. */
 struct Location {
     line: i32,
