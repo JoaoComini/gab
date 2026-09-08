@@ -17,7 +17,7 @@ typedef struct DeclId {
 
     const String *name;
 
-    /* Which impl block, so two blocks over one type stay distinct even where the resolver rejects them. */
+    /* Which impl block, once syntax lets one type declare two functions of a name; always 0 until then. */
     size_t block;
 } DeclId;
 

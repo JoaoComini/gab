@@ -42,6 +42,7 @@ set(
     syntax/parser_test.c
 
     # What the type registry holds: layout, interning, and generic instantiation.
+    types/decl_id_test.c
     types/intrinsic_struct_test.c
     types/pointer_test.c
     types/raw_test.c

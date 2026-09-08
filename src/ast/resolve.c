@@ -71,9 +71,6 @@ typedef struct ResolverState {
 
     ASTUnit *unit;
 
-    /* Which impl block is being declared, which a method's id carries so two blocks stay distinct. */
-    size_t impl_block;
-
     Diagnostics *diagnostics;
 } ResolverState;
 
@@ -2725,7 +2722,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
     const String *decl_owner = (stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) ? NULL : type_name_of(owner);
 
     *decl = (FuncDecl){
-        .id = {.module = decl_module, .owner = decl_owner, .name = name, .block = state->impl_block},
+        .id = {.module = decl_module, .owner = decl_owner, .name = name},
         .linkage = linkage_of(&stmt->func_decl),
         .modifiers = modifiers_of(&stmt->func_decl),
         .location_type = location_type_of(state, &stmt->func_decl),
@@ -2960,10 +2957,8 @@ static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *i
     }
 }
 
-static void declare_impl(ResolverState *state, ASTStmt *stmt, size_t block) {
+static void declare_impl(ResolverState *state, ASTStmt *stmt) {
     Scope *enclosing = state->current_scope;
-
-    state->impl_block = block;
 
     enter_impl_scope(state, stmt);
 
@@ -2985,7 +2980,6 @@ static void declare_impl(ResolverState *state, ASTStmt *stmt, size_t block) {
         }
     }
 
-    state->impl_block = 0;
     state->current_scope = enclosing;
 }
 
@@ -3662,7 +3656,7 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
         }
 
         if (stmt && stmt->kind == STMT_IMPL) {
-            declare_impl(&state, stmt, i);
+            declare_impl(&state, stmt);
         }
     }
 
