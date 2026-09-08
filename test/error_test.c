@@ -119,7 +119,7 @@ static void collect(const char *source, Lines *actual) {
     /* Borrow checking runs while the bodies are built, so a lifetime error needs that pass too. */
     if (parse_unit(test_in_a_module(source), ctx.arena, &ctx.strings, &unit, &ctx.diagnostics) &&
         resolve_unit(ctx.arena, unit, scope, modules, false, &resolved, &ctx.diagnostics)) {
-        mir_build(ctx.arena, resolved, &bodies, &ctx.diagnostics);
+        mir_build(ctx.arena, resolved, NULL, &bodies, &ctx.diagnostics);
     }
 
     for (size_t i = 0; i < diagnostics_count(&ctx.diagnostics); i++) {

@@ -228,7 +228,66 @@ static void an_import_of_an_import_is_linked(void) {
     arena_destroy(arena);
 }
 
+/* Nothing was compiled for arguments the declaring unit never saw, so a reader instantiates the body
+ * its interface carries rather than linking against a symbol that does not exist. */
+static void an_imported_generic_is_instantiated_where_it_is_named(void) {
+    char object[512];
+    char interface[512];
+
+    snprintf(object, sizeof(object), "%s/gen.o", GAB_TEST_SCRATCH);
+    snprintf(interface, sizeof(interface), "%s/gen.gabi", GAB_TEST_SCRATCH);
+
+    assert(compile("module gen;\nfunc same<T>(x: T): T { return x; }\n", object, interface, NULL));
+
+    char user[512];
+    snprintf(user, sizeof(user), "%s/module_test_generic.o", GAB_TEST_SCRATCH);
+
+    assert(compile("module use;\nimport gen;\nfunc main(): i32 { return gen::same(7); }\n", user, NULL,
+                   GAB_TEST_SCRATCH));
+
+    char binary[512];
+    snprintf(binary, sizeof(binary), "%s/module_test_generic", GAB_TEST_SCRATCH);
+
+    /* The instance is a body of the reader's own, so linking finds it without the declaring object. */
+    assert(gab_link(user, "use", (const char *const[]){object}, 1, binary));
+}
+
+/* Two readers naming one generic each instantiate it, so the two objects state the same body and the
+ * link takes one rather than refusing both. */
+static void one_generic_instantiated_twice_links_once(void) {
+    char object[512];
+    char interface[512];
+
+    snprintf(object, sizeof(object), "%s/twice.o", GAB_TEST_SCRATCH);
+    snprintf(interface, sizeof(interface), "%s/twice.gabi", GAB_TEST_SCRATCH);
+
+    assert(compile("module twice;\nfunc same<T>(x: T): T { return x; }\n", object, interface, NULL));
+
+    char first[512];
+    char first_interface[512];
+
+    snprintf(first, sizeof(first), "%s/twice_one.o", GAB_TEST_SCRATCH);
+    snprintf(first_interface, sizeof(first_interface), "%s/one.gabi", GAB_TEST_SCRATCH);
+
+    assert(compile("module one;\nimport twice;\nfunc up(): i32 { return twice::same(1); }\n", first,
+                   first_interface, GAB_TEST_SCRATCH));
+
+    char user[512];
+    snprintf(user, sizeof(user), "%s/twice_use.o", GAB_TEST_SCRATCH);
+
+    assert(compile("module use;\nimport twice;\nimport one;\n"
+                   "func main(): i32 { return twice::same(2) + one::up(); }\n",
+                   user, NULL, GAB_TEST_SCRATCH));
+
+    char binary[512];
+    snprintf(binary, sizeof(binary), "%s/twice_linked", GAB_TEST_SCRATCH);
+
+    assert(gab_link(user, "use", (const char *const[]){object, first}, 2, binary));
+}
+
 int main(void) {
+    one_generic_instantiated_twice_links_once();
+    an_imported_generic_is_instantiated_where_it_is_named();
     a_unit_names_what_an_imported_interface_declares();
     a_module_is_named_only_where_it_is_imported();
     a_stale_interface_does_not_link();

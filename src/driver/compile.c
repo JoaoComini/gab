@@ -62,7 +62,7 @@ static bool parse_module(Arena *arena, StringPool *strings, const char *const *s
 static bool compile_unit(Arena *arena, StringPool *strings, Scope *scope, ModuleScopeMap *modules,
                          const char *const *sources, size_t source_count, bool allow_primitive_impls,
                          LLVMUnit *out, Diagnostics *diagnostics, char *module_name, size_t module_capacity,
-                         ASTUnit **out_ast, const char *const *names, ASTUnit *parsed) {
+                         ASTUnit **out_ast, const char *const *names, ASTUnit *parsed, MIRModule *generics) {
     ASTUnit *ast = parsed;
 
     if (!ast && !parse_module(arena, strings, sources, source_count, names, &ast, diagnostics)) {
@@ -85,8 +85,19 @@ static bool compile_unit(Arena *arena, StringPool *strings, Scope *scope, Module
 
     MIRModule *bodies = NULL;
 
-    if (!mir_build(arena, resolved, &bodies, diagnostics)) {
+    if (!mir_build(arena, resolved, generics, &bodies, diagnostics)) {
         return false;
+    }
+
+    /* A generic's body is what a reader instantiates, so it is kept where every later unit can find it. */
+    if (generics) {
+        for (size_t i = 0; i < bodies->entries.size; i++) {
+            MIRFunction *ir = bodies->entries.data[i].ir;
+
+            if (ir && mir_function_is_template(ir)) {
+                mir_module_add(generics, bodies->entries.data[i].function, ir);
+            }
+        }
     }
 
     if (!out) {
@@ -142,6 +153,9 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
 
     ModuleScopeMap *modules = module_scope_map_create_alloc(arena_allocator(arena), 8);
 
+    /* Every generic the core and the imports declare, which this unit instantiates from rather than links. */
+    MIRModule *generics = mir_module_create(arena);
+
     ASTUnit *declaring = NULL;
 
     ASTUnit *core_ast = NULL;
@@ -152,8 +166,9 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
     const char *core_sources[1] = {
         interface ? interface : (request->source_count ? request->sources[0] : NULL)};
 
-    bool ok = compile_unit(arena, &strings, scope, NULL, core_sources, 1, true,
-                           request->is_core ? unit : NULL, diagnostics, NULL, 0, &core_ast, NULL, NULL);
+    bool ok =
+        compile_unit(arena, &strings, scope, NULL, core_sources, 1, true, request->is_core ? unit : NULL,
+                     diagnostics, NULL, 0, &core_ast, NULL, NULL, generics);
 
     module_scope_map_insert(modules, string_from_cstr(&strings, GAB_CORE_MODULE), scope);
 
@@ -199,7 +214,20 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
                 break;
             }
 
-            char *text = gab_interface_read(found);
+            char *read = gab_interface_read(found);
+
+            /* Held for as long as the names parsed out of it, which point into the text rather than
+             * copying out of it: an import's own imports join the list this loop is still walking. */
+            char *text = NULL;
+
+            if (read) {
+                size_t length = strlen(read);
+
+                text = arena_alloc(arena, length + 1);
+                memcpy(text, read, length + 1);
+
+                free(read);
+            }
 
             if (!text) {
                 diag_error(diagnostics, GAB_ERR_NAME, declaring->imports.data[i].span,
@@ -228,7 +256,7 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
             const char *one[1] = {text};
 
             ok = compile_unit(arena, &strings, imported, NULL, one, 1, true, NULL, diagnostics, NULL, 0, NULL,
-                              NULL, NULL);
+                              NULL, NULL, generics);
 
             if (ok) {
                 if (i < declaring->imports.size) {
@@ -248,14 +276,15 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
                 }
             }
 
-            free(text);
+            /* What was parsed from this text names it still: an import's own imports were added to the
+             * list, and the names they carry point into it rather than copying out of it. */
         }
     }
 
     if (ok && !request->is_core) {
         ok = compile_unit(arena, &strings, scope, modules, request->sources, request->source_count, false,
                           unit, diagnostics, request->module_name, sizeof(request->module_name), &unit_ast,
-                          request->names, declaring);
+                          request->names, declaring, generics);
     }
 
     if (ok && request->interface) {

@@ -60,7 +60,8 @@ static void collect_called_instances(PendingBodies *work, ResolvedUnit *resolved
     }
 }
 
-bool mir_build(Arena *arena, ResolvedUnit *resolved, MIRModule **out, Diagnostics *diagnostics) {
+bool mir_build(Arena *arena, ResolvedUnit *resolved, MIRModule *imported, MIRModule **out,
+               Diagnostics *diagnostics) {
     size_t errors = diagnostics_count(diagnostics);
 
     PendingBodies *work = &resolved->work;
@@ -87,7 +88,12 @@ bool mir_build(Arena *arena, ResolvedUnit *resolved, MIRModule **out, Diagnostic
         Function *generic = work->instances.data[i].generic;
         Function *instance = work->instances.data[i].instance;
 
+        /* A generic this unit declared is lowered here; one an import declared came with its body. */
         MIRFunction *from = mir_module_lookup(bodies, generic);
+
+        if (!from && imported) {
+            from = mir_module_lookup(imported, generic);
+        }
 
         if (!from || mir_module_lookup(bodies, instance)) {
             continue;

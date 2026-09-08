@@ -29,7 +29,7 @@ static inline bool test_resolve_ir_with(TestContext *ctx, Scope *scope, ASTUnit 
     }
 
     MIRModule *bodies;
-    bool built = mir_build(ctx->arena, resolved, &bodies, &ctx->diagnostics);
+    bool built = mir_build(ctx->arena, resolved, NULL, &bodies, &ctx->diagnostics);
 
     if (mir_unit) {
         *mir_unit = bodies;
