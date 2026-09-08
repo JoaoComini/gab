@@ -1383,7 +1383,21 @@ static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
 
     const Type *target = resolution_type(state->current_scope->type_registry, resolution);
 
-    if (!target) {
+    /* 'raw<i32>(p)' names its target by application, where 'i32(x)' names one that takes no argument;
+     * a name that resolves to no type at all is a call rather than a conversion, generic or not. */
+    if (expr->call.target->var.owner_type_expr) {
+        /* The runs and the arrays name no binding of their own, so what they resolve to is asked for. */
+        bool names_a_type = resolution.kind == RESOLUTION_TYPE || resolution.kind == RESOLUTION_TYPE_DECL ||
+                            string_ref_equals_cstr(expr->call.target->var.name, "raw");
+
+        if (!names_a_type) {
+            return false;
+        }
+
+        target = resolve_type_expr(state, expr->call.target->var.owner_type_expr, expr->span);
+    }
+
+    if (!target || is_error_type(target)) {
         return false;
     }
 
@@ -1408,7 +1422,11 @@ static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
         return true;
     }
 
-    if (!is_numeric_type(target) || !is_numeric_type(from)) {
+    /* A run reads as a run of another element: the address is the same, and what it points at is not
+     * checked, which is what makes 'raw' the type that says so. */
+    bool reads_as_a_run = type_kind(target) == TYPE_RAW && type_kind(from) == TYPE_RAW;
+
+    if (!reads_as_a_run && (!is_numeric_type(target) || !is_numeric_type(from))) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot convert %s to %s",
                    type_name(state, from), type_name(state, target));
         fact_set_type(state->facts, expr, resolver_error_type(state));

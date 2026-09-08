@@ -1,0 +1,23 @@
+module test;
+import testing;
+import libc;
+
+func sums(): i32 {
+    let bytes: raw<u8> = libc::malloc(@size_of<i32>() * 4);
+    let p: raw<i32> = raw<i32>(bytes);
+
+    p[0] = 1;
+    p[3] = 8;
+
+    let total: i32 = p[0] + p[3];
+
+    libc::free(bytes);
+
+    return total;
+}
+
+func run(): i32 {
+    assert(sums() == 9);
+
+    return 0;
+}

@@ -150,6 +150,23 @@ static void a_box_drops_what_its_object_owns_before_freeing_it(void) {
     test_emission_free(&emission);
 }
 
+/* A slot the compiler proves moved-from is not read, so what a box holds need not start zeroed. */
+static void a_box_allocates_without_zeroing(void) {
+    TestEmission emission;
+    char *text = emitted_named(&emission,
+                               "struct Node { n: i32 }\n"
+                               "func f(): i32 {\n"
+                               "    let a: *Node = box Node { n: 7 };\n"
+                               "    return a.n;\n"
+                               "}\n",
+                               "f");
+
+    assert(strstr(text, "@malloc"));
+    assert(!strstr(text, "@calloc"));
+
+    test_emission_free(&emission);
+}
+
 int main(void) {
     a_body_elsewhere_is_declared_rather_than_defined();
     a_method_body_elsewhere_is_declared_too();
@@ -158,6 +175,8 @@ int main(void) {
     a_type_that_owns_is_dropped_by_glue_named_for_it();
     a_type_dropped_from_many_places_is_glued_once();
     a_box_drops_what_its_object_owns_before_freeing_it();
+
+    a_box_allocates_without_zeroing();
 
     return 0;
 }

@@ -76,6 +76,9 @@ typedef enum {
     /* What a place owns is released here, which the shape of its type says how to walk. */
     MIR_DROP,
 
+    /* Says whether a slot still holds its object, for one whose paths disagree; the drop reads it. */
+    MIR_DROP_FLAG,
+
     /* A local enters scope holding nothing, and leaves scope where its storage ends. */
     MIR_STORAGE_LIVE,
     MIR_STORAGE_DEAD,
@@ -183,6 +186,9 @@ typedef struct {
 
             /* 'MIR_LOAD' only: a moving read leaves the place holding nothing. */
             ReadKind read;
+
+            /* 'MIR_DROP' and 'MIR_DROP_FLAG': the flag this drop is guarded by, none where it is not. */
+            MIRValueId flag;
         };
 
         Function *callee;

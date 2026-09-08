@@ -235,6 +235,11 @@ static Place lower_indexed_place(Lowering *lowering, ASTExpr *target, ASTExpr *i
 
     Place place = mir_place_index(lowering->ir, base, fact_type_of(lowering->facts, target), index, element);
 
+    /* A raw run states no length, so nothing here knows what would be out of range. */
+    if (type_kind(mir_indexed_container(fact_type_of(lowering->facts, target))) == TYPE_RAW) {
+        return place;
+    }
+
     MIRValueId checked[2];
     size_t checked_count = mir_bounds_operands(place, fact_type_of(lowering->facts, target), index, checked);
 
@@ -493,11 +498,13 @@ static bool lower_intrinsic_call(Lowering *lowering, ASTExpr *expr, MIRValueId *
         container = type_pointee(container);
     }
 
-    assert((type_kind(container) == TYPE_SLICE || type_kind(container) == TYPE_ARRAY) &&
-           "only an array and a slice supply the indexing intrinsic");
+    assert((type_kind(container) == TYPE_SLICE || type_kind(container) == TYPE_ARRAY ||
+            type_kind(container) == TYPE_RAW) &&
+           "only an array, a slice and a raw run supply the indexing intrinsic");
 
-    const Type *element =
-        type_kind(container) == TYPE_SLICE ? type_slice_element(container) : type_array_element(container);
+    const Type *element = type_kind(container) == TYPE_ARRAY ? type_array_element(container)
+                          : type_kind(container) == TYPE_RAW ? type_pointee(container)
+                                                             : type_slice_element(container);
 
     Place place = lower_indexed_place(lowering, receiver, expr->call.args.data[1], element, expr->span);
 

@@ -1,0 +1,24 @@
+module test;
+import testing;
+
+struct Node { seen: *i32 }
+
+func take(p: *Node): i32 { return 1; }
+
+func freed(c: bool, d: bool): i32 {
+    let a: *Node = box Node { seen: box 0 };
+
+    if c {
+        if d { let x: i32 = take(a); }
+    }
+
+    return 0;
+}
+
+func run(): i32 {
+    assert(freed(true, true) == 0);
+    assert(freed(true, false) == 0);
+    assert(freed(false, false) == 0);
+
+    return 0;
+}

@@ -115,7 +115,11 @@ const Type *mir_indexed_container(const Type *type) {
 
 Place mir_place_index(MIRFunction *ir, Place base, const Type *container, MIRValueId index,
                       const Type *element) {
-    if (type_is_indirect(container)) {
+    /* A raw run holds the address it names, so reaching an element reads that address first; the
+     * projection names the run rather than its element, which is what says to step through it. */
+    if (type_kind(container) == TYPE_RAW) {
+        base = mir_place_project(ir, base, (Projection){.kind = PROJ_DEREF, .type = container});
+    } else if (type_is_indirect(container)) {
         base = mir_place_project(ir, base, (Projection){.kind = PROJ_DEREF, .type = type_pointee(container)});
     }
 
@@ -147,6 +151,7 @@ bool mir_op_has_place(MIROp op) {
     case MIR_STORE:
     case MIR_REF:
     case MIR_DROP:
+    case MIR_DROP_FLAG:
     case MIR_NULL:
     case MIR_STORAGE_LIVE:
     case MIR_STORAGE_DEAD:
@@ -217,6 +222,7 @@ static const char *const mir_op_names[MIR__COUNT] = {
     [MIR_SLICE_LEN] = "slice_len",
     [MIR_CALL] = "call",
     [MIR_NULL] = "null",
+    [MIR_DROP_FLAG] = "drop_flag",
     [MIR_BOX] = "box",
     [MIR_DROP] = "drop",
     [MIR_STORAGE_LIVE] = "storage_live",

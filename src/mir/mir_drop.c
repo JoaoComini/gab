@@ -221,41 +221,283 @@ static void block_remove(MIRBlock *block, size_t at) {
     block->inst_count--;
 }
 
-/* A place emptied by a move and not filled again holds nothing, so the drop it still reaches frees
- * nothing and is dropped itself. */
-static void drop_releases_of_emptied_places(MIRFunction *ir) {
+/* What a slot holds where control flow reaches it, which decides whether its drop frees anything.
+ * A slot holds its object until something empties it, so that is what an unwalked block assumes. */
+typedef enum {
+    HOLDS_ITS_OBJECT = 0,
+    HOLDS_NOTHING,
+
+    /* Reached by paths that disagree, so only a flag written along them can say. */
+    HOLDS_EITHER,
+} Holding;
+
+static Holding holding_merge(Holding a, Holding b) { return a == b ? a : HOLDS_EITHER; }
+
+/* Walks one block from what it was entered holding, answering what it leaves holding. A visitor is
+ * given each drop with what the slot holds there, which the rewriting walk uses and the fixpoint does not. */
+static void walk_block(MIRFunction *ir, MIRBlock *block, Holding *holds,
+                       void (*visit)(void *context, MIRBlock *block, size_t at, Holding held),
+                       void *context) {
+    for (size_t j = 0; j < block->inst_count; j++) {
+        const MIRInst *inst = &block->insts[j];
+
+        if (!mir_op_has_place(inst->op) || mir_value_is_none(inst->place.base) ||
+            inst->place.base.id >= ir->value_count) {
+            continue;
+        }
+
+        size_t base = inst->place.base.id;
+
+        if (inst->place.projection_count != 0) {
+            continue;
+        }
+
+        if (inst->op == MIR_NULL) {
+            holds[base] = HOLDS_NOTHING;
+        } else if (inst->op == MIR_STORE || inst->op == MIR_STORAGE_INIT) {
+            holds[base] = HOLDS_ITS_OBJECT;
+        } else if (inst->op == MIR_DROP && visit) {
+            visit(context, block, j, holds[base]);
+        }
+    }
+}
+
+/* What every block is entered holding, once every path into it agrees. */
+static Holding *entry_holdings(Arena *arena, MIRFunction *ir) {
+    size_t width = ir->value_count + 1;
+
+    Holding *entries = arena_alloc(arena, ir->block_count * width * sizeof(Holding));
+
+    memset(entries, 0, ir->block_count * width * sizeof(Holding));
+
+    Holding *exit = arena_alloc(arena, width * sizeof(Holding));
+
+    /* An entry is what its predecessors leave, so one is built afresh each round rather than merged
+     * into the last round's answer, which no merge could ever lower again. */
+    Holding *next = arena_alloc(arena, ir->block_count * width * sizeof(Holding));
+    bool *reached = arena_alloc(arena, ir->block_count * sizeof(bool));
+
+    bool changed = true;
+
+    while (changed) {
+        changed = false;
+
+        memset(next, 0, ir->block_count * width * sizeof(Holding));
+        memset(reached, 0, ir->block_count * sizeof(bool));
+
+        reached[ir->entry.id] = true;
+
+        for (size_t b = 0; b < ir->block_count; b++) {
+            memcpy(exit, &entries[b * width], width * sizeof(Holding));
+
+            walk_block(ir, ir->blocks[b], exit, NULL, NULL);
+
+            MIRBlockId successors[2];
+            size_t count = mir_block_successors(ir->blocks[b], successors);
+
+            for (size_t s = 0; s < count; s++) {
+                size_t target = successors[s].id;
+
+                if (!reached[target]) {
+                    memcpy(&next[target * width], exit, width * sizeof(Holding));
+                    reached[target] = true;
+                    continue;
+                }
+
+                for (size_t v = 0; v < width; v++) {
+                    next[target * width + v] = holding_merge(next[target * width + v], exit[v]);
+                }
+            }
+        }
+
+        if (memcmp(entries, next, ir->block_count * width * sizeof(Holding)) != 0) {
+            memcpy(entries, next, ir->block_count * width * sizeof(Holding));
+            changed = true;
+        }
+    }
+
+    return entries;
+}
+
+typedef struct {
+    MIRFunction *ir;
+
+    /* Collected rather than removed in place, so the walk is not rewriting what it reads. */
+    MIRBlock **blocks;
+    size_t *indices;
+    size_t count;
+} EmptyDrops;
+
+static void note_empty_drop(void *context, MIRBlock *block, size_t at, Holding held) {
+    EmptyDrops *found = context;
+
+    if (held != HOLDS_NOTHING) {
+        return;
+    }
+
+    found->blocks[found->count] = block;
+    found->indices[found->count] = at;
+    found->count++;
+}
+
+typedef struct {
+    MIRFunction *ir;
+
+    /* The flag each slot is guarded by, none for a slot whose paths agree. */
+    MIRValueId *flags;
+} Flagged;
+
+/* Marks every drop whose slot's paths disagree, so the walk that follows can write the flag it reads. */
+static void note_conditional_drop(void *context, MIRBlock *block, size_t at, Holding held) {
+    Flagged *flagged = context;
+
+    if (held != HOLDS_EITHER) {
+        return;
+    }
+
+    MIRInst *inst = &block->insts[at];
+
+    size_t base = inst->place.base.id;
+
+    if (mir_value_is_none(flagged->flags[base])) {
+        const Type *bool_type = type_registry_get_primitive(flagged->ir->registry, TYPE_BOOL);
+
+        flagged->flags[base] = mir_value_create(flagged->ir, bool_type, NULL, inst->span);
+    }
+
+    inst->flag = flagged->flags[base];
+}
+
+/* Writes the flag beside every point that changes what a slot holds, so the drop reading it is answered
+ * on every path rather than only the one that moved. */
+static void write_drop_flags(Arena *arena, MIRFunction *ir, const MIRValueId *flags) {
     for (size_t b = 0; b < ir->block_count; b++) {
         MIRBlock *block = ir->blocks[b];
-
-        bool *emptied = NULL;
 
         for (size_t j = 0; j < block->inst_count;) {
             const MIRInst *inst = &block->insts[j];
 
-            if (!emptied) {
-                emptied = arena_alloc(ir->arena, (ir->value_count + 1) * sizeof(bool));
-                memset(emptied, 0, (ir->value_count + 1) * sizeof(bool));
-            }
-
             if (!mir_op_has_place(inst->op) || mir_value_is_none(inst->place.base) ||
-                inst->place.base.id >= ir->value_count) {
+                inst->place.base.id >= ir->value_count || inst->place.projection_count != 0) {
                 j++;
                 continue;
             }
 
-            size_t base = inst->place.base.id;
+            MIRValueId flag = flags[inst->place.base.id];
 
-            if (inst->op == MIR_NULL && inst->place.projection_count == 0) {
-                emptied[base] = true;
-            } else if (inst->op == MIR_STORE || inst->op == MIR_STORAGE_INIT) {
-                emptied[base] = false;
-            } else if (inst->op == MIR_DROP && inst->place.projection_count == 0 && emptied[base]) {
+            if (mir_value_is_none(flag)) {
+                j++;
+                continue;
+            }
+
+            bool holds = inst->op == MIR_STORE || inst->op == MIR_STORAGE_INIT;
+
+            /* A flag starts saying the slot holds nothing, so opening its scope writes nothing itself. */
+            if (!holds && inst->op != MIR_NULL) {
+                j++;
+                continue;
+            }
+
+            Place place = inst->place;
+            Span span = inst->span;
+
+            const Type *bool_type = type_registry_get_primitive(ir->registry, TYPE_BOOL);
+
+            MIROperand *args = mir_args_alloc(ir, 1);
+            args[0] = mir_operand_const(constant_bool(bool_type, holds));
+
+            block_insert(arena, block, j + 1,
+                         (MIRInst){.op = MIR_DROP_FLAG,
+                                   .type = bool_type,
+                                   .result = MIR_NO_VALUE,
+                                   .args = args,
+                                   .arg_count = 1,
+                                   .place = place,
+                                   .flag = flag,
+                                   .span = span});
+
+            j += 2;
+        }
+    }
+}
+
+/* A drop whose paths disagree is guarded by a flag those paths write, rather than by what the slot
+ * itself was left holding, so nothing depends on a moved-from slot reading as zero. */
+static void guard_conditional_drops(Arena *arena, MIRFunction *ir) {
+    if (ir->block_count == 0) {
+        return;
+    }
+
+    size_t width = ir->value_count + 1;
+
+    Holding *entries = entry_holdings(arena, ir);
+
+    Flagged flagged = {.ir = ir, .flags = arena_alloc(arena, width * sizeof(MIRValueId))};
+
+    for (size_t i = 0; i < width; i++) {
+        flagged.flags[i] = MIR_NO_VALUE;
+    }
+
+    Holding *holds = arena_alloc(arena, width * sizeof(Holding));
+
+    for (size_t b = 0; b < ir->block_count; b++) {
+        memcpy(holds, &entries[b * width], width * sizeof(Holding));
+
+        walk_block(ir, ir->blocks[b], holds, note_conditional_drop, &flagged);
+    }
+
+    write_drop_flags(arena, ir, flagged.flags);
+
+    /* The flag now says what a moved-from slot used to say by reading as zero, so the nulling goes. */
+    for (size_t b = 0; b < ir->block_count; b++) {
+        MIRBlock *block = ir->blocks[b];
+
+        for (size_t j = 0; j < block->inst_count;) {
+            const MIRInst *inst = &block->insts[j];
+
+            if (inst->op == MIR_NULL && !mir_value_is_none(inst->place.base) &&
+                inst->place.projection_count == 0 && inst->place.base.id < ir->value_count &&
+                !mir_value_is_none(flagged.flags[inst->place.base.id])) {
                 block_remove(block, j);
                 continue;
             }
 
             j++;
         }
+    }
+}
+
+/* A place every path empties holds nothing where its drop stands, so that drop frees nothing and goes. */
+static void drop_releases_of_emptied_places(Arena *arena, MIRFunction *ir) {
+    if (ir->block_count == 0) {
+        return;
+    }
+
+    size_t width = ir->value_count + 1;
+
+    Holding *entries = entry_holdings(arena, ir);
+
+    size_t drops = 0;
+
+    for (size_t b = 0; b < ir->block_count; b++) {
+        drops += ir->blocks[b]->inst_count;
+    }
+
+    EmptyDrops found = {.ir = ir,
+                        .blocks = arena_alloc(arena, drops * sizeof(MIRBlock *)),
+                        .indices = arena_alloc(arena, drops * sizeof(size_t))};
+
+    Holding *holds = arena_alloc(arena, width * sizeof(Holding));
+
+    for (size_t b = 0; b < ir->block_count; b++) {
+        memcpy(holds, &entries[b * width], width * sizeof(Holding));
+
+        walk_block(ir, ir->blocks[b], holds, note_empty_drop, &found);
+    }
+
+    /* Removed last to first within a block, so an earlier index is still the instruction it named. */
+    for (size_t i = found.count; i > 0; i--) {
+        block_remove(found.blocks[i - 1], found.indices[i - 1]);
     }
 }
 
@@ -294,5 +536,7 @@ void mir_drop_elaborate(Arena *arena, TypeRegistry *registry, MIRFunction *ir) {
 
     drop_owned_temporaries(arena, registry, ir);
 
-    drop_releases_of_emptied_places(ir);
+    drop_releases_of_emptied_places(arena, ir);
+
+    guard_conditional_drops(arena, ir);
 }

@@ -1,0 +1,8 @@
+func f(n: i32): i32 {
+    let bytes: raw<u8> = raw<u8>(n);
+
+    return 0;
+}
+
+// error
+// :2:26: type error: cannot convert i32 to raw<u8>

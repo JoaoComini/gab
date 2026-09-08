@@ -125,9 +125,9 @@ for let i: i32 = 0; i < n; i = i + 1 { ... }
 | Generics | Structs, the methods they own, and free functions, monomorphized per instantiation. A call infers its type arguments, or names them as `id<i32>(x)` |
 | Control flow | `if` / `else`, `for` in three forms, `break`, `continue`, `return`, nested blocks with shadowing |
 | Operators | `+` `-` `*` `/` `%`, unary `-` `!`, `==` `!=` `<` `>` `<=` `>=`, `&&` `\|\|`, unary `*`, field access, indexing `xs[i]`, `@size_of<T>()` |
-| Conversions | `i32(x)` and `f32(x)`; nothing converts implicitly |
+| Conversions | `i32(x)` and `f32(x)`; `raw<T>(p)` reads a run as a run of another element. Nothing converts implicitly |
 | Memory | Unique ownership, `box`, `&` borrows, binding that copies or transfers by type, scope-based free. `impl T as Destroy` names what a type runs as it ends |
-| Modules | `module` names the namespace a unit declares into, `import` the ones it may name |
+| Modules | `module` names the namespace a unit declares into, `import` the ones it may name. `libc` binds the host's allocator, `testing` what a test asserts with |
 | Comments | `// line` and `/* block */`, which do not nest |
 
 Not yet implemented:
@@ -136,7 +136,7 @@ Not yet implemented:
 | --- | --- |
 | Integers | Only `i32`, `u8`, `usize` and `f32` do arithmetic. The rest of the width matrix — `i8`, `i64`, `u32`, `f64` — is named but not built. `usize` is the host's pointer width rather than the target's |
 | Strings | `as_bytes` and `len` only: no searching, no interpolation, no indexing |
-| Collections | Nothing grows. `array<T, N>` is fixed and `&slice<T>` reads it; there is no vector and no map. `raw<T>` names a run but nothing produces one |
+| Collections | Nothing grows. `array<T, N>` is fixed and `&slice<T>` reads it; there is no vector and no map. `libc::malloc` takes a run, and nothing but the program that took it gives it back |
 | Uninitialized locals | A local with no initialiser holds whatever its storage held; nothing zeroes it |
 | Operators | Bitwise |
 
