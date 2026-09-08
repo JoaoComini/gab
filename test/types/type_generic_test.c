@@ -7,6 +7,8 @@
 #include <assert.h>
 #include <stddef.h>
 
+static TypeDecl named_decl(String *name) { return (TypeDecl){.id = {.name = name}}; }
+
 /* Lookup then specialization, as a caller performs them. */
 static Function *owned_for(TypeRegistry *registry, FunctionRegistry *functions, const Type *type,
                            const String *name) {
@@ -33,12 +35,11 @@ static void test_a_declared_field_nests_constructors() {
 
     TypeField field = {.name = string_from_cstr(&ctx.strings, "data"), .type = field_type};
 
-    TypeDecl decl = {
-        .name = string_from_cstr(&ctx.strings, "Holder"),
-        .param_count = 1,
-        .fields = &field,
-        .field_count = 1,
-    };
+    TypeDecl decl = named_decl(string_from_cstr(&ctx.strings, "Holder"));
+
+    decl.param_count = 1;
+    decl.fields = &field;
+    decl.field_count = 1;
 
     const Type *instance = type_registry_apply(registry, &decl, &i32_type, 1);
 
@@ -69,12 +70,11 @@ static void test_a_declaration_taking_no_parameters_is_its_own_instantiation() {
 
     TypeField field = {.name = string_from_cstr(&ctx.strings, "value"), .type = i32_type};
 
-    TypeDecl decl = {
-        .name = string_from_cstr(&ctx.strings, "Plain"),
-        .param_count = 0,
-        .fields = &field,
-        .field_count = 1,
-    };
+    TypeDecl decl = named_decl(string_from_cstr(&ctx.strings, "Plain"));
+
+    decl.param_count = 0;
+    decl.fields = &field;
+    decl.field_count = 1;
 
     const Type *type = type_registry_apply(registry, &decl, NULL, 0);
 
@@ -100,17 +100,11 @@ static void test_two_declarations_alike_are_two_types() {
 
     TypeField field = {.name = string_from_cstr(&ctx.strings, "value"), .type = i32_type};
 
-    TypeDecl first = {
-        .name = string_from_cstr(&ctx.strings, "First"),
-        .fields = &field,
-        .field_count = 1,
-    };
+    TypeDecl first = named_decl(string_from_cstr(&ctx.strings, "First"));
+    TypeDecl second = named_decl(string_from_cstr(&ctx.strings, "Second"));
 
-    TypeDecl second = {
-        .name = string_from_cstr(&ctx.strings, "Second"),
-        .fields = &field,
-        .field_count = 1,
-    };
+    first.fields = second.fields = &field;
+    first.field_count = second.field_count = 1;
 
     assert(type_registry_apply(registry, &first, NULL, 0) != type_registry_apply(registry, &second, NULL, 0));
 
@@ -126,7 +120,7 @@ static void test_an_instantiation_reads_fields_declared_after_it() {
     const KnownNames names = known_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
 
-    TypeDecl decl = {.name = string_from_cstr(&ctx.strings, "Config")};
+    TypeDecl decl = named_decl(string_from_cstr(&ctx.strings, "Config"));
 
     const Type *type = type_registry_apply(registry, &decl, NULL, 0);
 
@@ -166,12 +160,11 @@ static void test_an_instantiation_does_not_share_the_declarations_fields() {
         .type = type_registry_raw_of(registry, type_registry_param(registry, 0)),
     };
 
-    TypeDecl decl = {
-        .name = string_from_cstr(&ctx.strings, "Holder"),
-        .param_count = 1,
-        .fields = &field,
-        .field_count = 1,
-    };
+    TypeDecl decl = named_decl(string_from_cstr(&ctx.strings, "Holder"));
+
+    decl.param_count = 1;
+    decl.fields = &field;
+    decl.field_count = 1;
 
     const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
     const Type *of_bool = type_registry_apply(registry, &decl, &bool_type, 1);
@@ -197,7 +190,9 @@ static void test_an_instantiation_carries_its_arguments() {
 
     const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
-    TypeDecl decl = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
+    TypeDecl decl = named_decl(string_from_cstr(&ctx.strings, "Holder"));
+
+    decl.param_count = 1;
 
     const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
 
@@ -205,7 +200,7 @@ static void test_an_instantiation_carries_its_arguments() {
     assert(type_args(of_int)[0].kind == TYPE_ARG_TYPE);
     assert(type_args(of_int)[0].type == i32_type);
 
-    TypeDecl plain = {.name = string_from_cstr(&ctx.strings, "Point")};
+    TypeDecl plain = named_decl(string_from_cstr(&ctx.strings, "Point"));
 
     assert(type_arg_count(type_registry_apply(registry, &plain, NULL, 0)) == 0);
 
@@ -228,11 +223,13 @@ static void test_a_declared_method_is_substituted_per_instantiation() {
 
     String *at = string_from_cstr(&ctx.strings, "at");
 
-    TypeDecl decl = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
+    TypeDecl decl = named_decl(string_from_cstr(&ctx.strings, "Holder"));
+
+    decl.param_count = 1;
 
     const Type *receiver[] = {type_registry_apply(registry, &decl, &param, 1)};
 
-    FuncDecl method_decl = {.name = at};
+    FuncDecl method_decl = {.id = {.name = at}};
 
     Function method = {
         .decl = &method_decl,
@@ -275,7 +272,9 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
 
     String *at = string_from_cstr(&ctx.strings, "at");
 
-    TypeDecl decl = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
+    TypeDecl decl = named_decl(string_from_cstr(&ctx.strings, "Holder"));
+
+    decl.param_count = 1;
 
     const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
 
@@ -283,7 +282,7 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
 
     const Type *receiver[] = {type_registry_apply(registry, &decl, &param, 1)};
 
-    FuncDecl method_decl = {.name = at};
+    FuncDecl method_decl = {.id = {.name = at}};
 
     Function method = {
         .decl = &method_decl,
@@ -317,11 +316,13 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
 
     String *at = string_from_cstr(&ctx.strings, "at");
 
-    TypeDecl decl = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
+    TypeDecl decl = named_decl(string_from_cstr(&ctx.strings, "Holder"));
+
+    decl.param_count = 1;
 
     const Type *receiver[] = {type_registry_apply(registry, &decl, &param, 1)};
 
-    FuncDecl method_decl = {.name = at};
+    FuncDecl method_decl = {.id = {.name = at}};
 
     Function method = {
         .decl = &method_decl,
@@ -334,7 +335,7 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
 
     const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
 
-    FuncDecl other_decl = {.name = at};
+    FuncDecl other_decl = {.id = {.name = at}};
     Function other = {.decl = &other_decl};
 
     assert(!type_registry_declare_owned(registry, of_int, &other));
@@ -358,21 +359,25 @@ static void test_a_method_declared_on_one_instantiation_answers_on_every_one() {
 
     String *name = string_from_cstr(&ctx.strings, "spill");
 
-    TypeDecl decl = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
+    TypeDecl decl = named_decl(string_from_cstr(&ctx.strings, "Holder"));
+
+    decl.param_count = 1;
 
     const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
     const Type *of_bool = type_registry_apply(registry, &decl, &bool_type, 1);
 
-    FuncDecl method_decl = {.name = name};
+    FuncDecl method_decl = {.id = {.name = name}};
     Function method = {.decl = &method_decl};
 
     assert(type_registry_declare_owned(registry, of_int, &method));
 
-    assert(type_registry_find_owned(registry, of_bool, name)->decl->name == name);
+    assert(type_registry_find_owned(registry, of_bool, name)->decl->id.name == name);
 
     assert(!type_registry_declare_owned(registry, of_bool, &method));
 
-    TypeDecl other = {.name = string_from_cstr(&ctx.strings, "Other"), .param_count = 1};
+    TypeDecl other = named_decl(string_from_cstr(&ctx.strings, "Other"));
+
+    other.param_count = 1;
 
     assert(type_registry_find_owned(registry, type_registry_apply(registry, &other, &i32_type, 1), name) ==
            NULL);
@@ -396,11 +401,13 @@ static void test_a_substituted_signature_is_read_once_per_type() {
 
     String *at = string_from_cstr(&ctx.strings, "at");
 
-    TypeDecl decl = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
+    TypeDecl decl = named_decl(string_from_cstr(&ctx.strings, "Holder"));
+
+    decl.param_count = 1;
 
     const Type *receiver[] = {type_registry_apply(registry, &decl, &param, 1)};
 
-    FuncDecl method_decl = {.name = at};
+    FuncDecl method_decl = {.id = {.name = at}};
 
     Function method = {
         .decl = &method_decl,
@@ -435,7 +442,9 @@ static void test_two_instantiations_share_one_generic_form(void) {
     const Type *bool_type = type_registry_get_primitive(registry, TYPE_BOOL);
     const Type *param = type_registry_param(registry, 0);
 
-    TypeDecl decl = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
+    TypeDecl decl = named_decl(string_from_cstr(&ctx.strings, "Holder"));
+
+    decl.param_count = 1;
 
     const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
     const Type *of_bool = type_registry_apply(registry, &decl, &bool_type, 1);
@@ -460,7 +469,9 @@ static void test_an_instantiation_reads_fields_declared_after_it_is_applied(void
     const Type *param = type_registry_param(registry, 0);
     const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
-    TypeDecl decl = {.name = string_from_cstr(&ctx.strings, "Holder"), .param_count = 1};
+    TypeDecl decl = named_decl(string_from_cstr(&ctx.strings, "Holder"));
+
+    decl.param_count = 1;
 
     const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
 
@@ -489,7 +500,7 @@ static void test_a_specialization_does_not_inherit_a_summary() {
 
     const Type *params[] = {type_registry_ref_to(registry, param)};
 
-    FuncDecl generic_decl = {.name = string_from_cstr(&ctx.strings, "pick"), .type_param_count = 1};
+    FuncDecl generic_decl = {.id = {.name = string_from_cstr(&ctx.strings, "pick")}, .type_param_count = 1};
 
     Function *generic = arena_alloc(ctx.arena, sizeof(Function));
 

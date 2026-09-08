@@ -79,6 +79,18 @@ intrinsic struct Unique<T> {
     ptr: raw<T>,
 }
 
+impl<T> Unique<T> {
+    func new(value: T): Unique<T> {
+        let allocator: Global = Global {};
+
+        let held: Unique<T> = Unique<T> { ptr: raw<T>(allocator.allocate(@size_of<T>())) };
+
+        held.ptr[0] = value;
+
+        return held;
+    }
+}
+
 /* What the run held has ended by here: the compiler drops it before this runs, since nothing written in
  * the language reaches a value through a run. */
 impl<T> Unique<T> as Destroy {

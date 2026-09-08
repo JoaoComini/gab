@@ -1,10 +1,10 @@
 #ifndef GAB_AST_PENDING_H
 #define GAB_AST_PENDING_H
 
-#include "memory/arena.h"
 #include "ast/ast.h"
 #include "binding.h"
 #include "diagnostics.h"
+#include "memory/arena.h"
 #include "type/type_registry.h"
 #include "util/list.h"
 
@@ -18,13 +18,10 @@ typedef struct {
 
 GAB_LIST(PendingBodyList, pending_body_list, PendingBody)
 
-/* An instance and the declaration whose lowered body it substitutes. */
-typedef struct {
-    Function *generic;
-    Function *instance;
-} Instantiation;
-
-GAB_LIST(InstantiationList, instantiation_list, Instantiation)
+/* The instances whose bodies are their declarations', substituted. Which declaration that is comes from
+ * an instance's own id, never from the record a call reached it through: that record may already be
+ * specialized on an owner's arguments, and so is not the template the body was lowered under. */
+GAB_LIST(InstantiationList, instantiation_list, Function *)
 
 /* What resolution leaves for generation: the bodies to lower and the instances their calls named. */
 typedef struct {
@@ -37,7 +34,6 @@ typedef struct {
 PendingBodies pending_bodies_create(Arena *arena);
 
 /* Records that an instance is wanted; its body is the declaration's, substituted after lowering. */
-void pending_bodies_instantiate(PendingBodies *work, Function *generic, Function *method,
-                                Diagnostics *diagnostics);
+void pending_bodies_instantiate(PendingBodies *work, Function *method, Diagnostics *diagnostics);
 
 #endif

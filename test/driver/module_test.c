@@ -1,6 +1,9 @@
+#include "ast/resolve.h"
 #include "driver/compile.h"
 #include "driver/interface.h"
 #include "driver/link.h"
+
+#include "support/run.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -285,7 +288,145 @@ static void one_generic_instantiated_twice_links_once(void) {
     assert(gab_link(user, "use", (const char *const[]){object, first}, 2, binary));
 }
 
+/* A method an imported generic type owns is instantiated where it is named, as a free function is. */
+static void an_imported_generic_method_is_instantiated_where_it_is_named(void) {
+    char object[512];
+    char interface[512];
+
+    snprintf(object, sizeof(object), "%s/holder.o", GAB_TEST_SCRATCH);
+    snprintf(interface, sizeof(interface), "%s/holder.gabi", GAB_TEST_SCRATCH);
+
+    assert(compile("module holder;\nstruct Box<T> { value: T }\n"
+                   "impl<T> Box<T> {\n    func get(self: &Self): T { return self.value; }\n}\n",
+                   object, interface, NULL));
+
+    char user[512];
+    snprintf(user, sizeof(user), "%s/holder_use.o", GAB_TEST_SCRATCH);
+
+    assert(compile("module use;\nimport holder;\n"
+                   "func main(): i32 { let b: holder::Box<i32> = holder::Box<i32> { value: 3 };\n"
+                   "                   return b.get(); }\n",
+                   user, NULL, GAB_TEST_SCRATCH));
+
+    char binary[512];
+    snprintf(binary, sizeof(binary), "%s/holder_linked", GAB_TEST_SCRATCH);
+
+    assert(gab_link(user, "use", (const char *const[]){object}, 1, binary));
+}
+
+typedef struct {
+    TestContext ctx;
+    Scope *scope;
+    ResolvedUnit *resolved;
+    ASTUnit *unit;
+} Reading;
+
+/* Both readings share one string pool, as the writer and the reader of an interface do in one
+ * compilation, since an id compares by the pointers interning produced. */
+static void read_source(Reading *reading, TestContext *ctx, const char *source) {
+    reading->scope = scope_create(ctx->arena, &ctx->strings, NULL);
+    reading->unit = ast_unit_create(ctx->arena);
+
+    bool ok =
+        test_resolve_ir_with(ctx, reading->scope, &reading->unit, NULL, &reading->resolved, source, false);
+
+    assert(ok);
+}
+
+static DeclId method_id_in(Reading *reading, TestContext *ctx, const char *type, const char *method) {
+    const Type *owner = scope_type_lookup(reading->scope, string_from_cstr(&ctx->strings, type));
+
+    assert(owner);
+
+    Function *found =
+        type_registry_find_owned(reading->resolved->registry, owner, string_from_cstr(&ctx->strings, method));
+
+    assert(found);
+    assert(decl_id_is_set(found->decl->id));
+
+    return found->decl->id;
+}
+
+static DeclId type_id_in(Reading *reading, TestContext *ctx, const char *name) {
+    const Type *type = scope_type_lookup(reading->scope, string_from_cstr(&ctx->strings, name));
+
+    assert(type);
+    assert(decl_id_is_set(type_decl(type)->id));
+
+    return type_decl(type)->id;
+}
+
+/* What a writer declares and what a reader of its interface declares are the same declaration. */
+static void a_declaration_read_back_has_the_id_it_was_written_with(void) {
+    const char *source = "module holder;\nstruct Box { value: i32 }\n"
+                         "impl Box {\n    func get(self: &Self): i32 { return self.value; }\n}\n";
+
+    TestContext ctx;
+    test_context_init(&ctx);
+
+    Reading writer;
+    read_source(&writer, &ctx, source);
+
+    char path[512];
+    snprintf(path, sizeof(path), "%s/id_written.gabi", GAB_TEST_SCRATCH);
+
+    assert(gab_interface_write(writer.unit, &writer.resolved->facts, path));
+
+    char *text = gab_interface_read(path);
+    assert(text);
+
+    Reading reader;
+    read_source(&reader, &ctx, text);
+
+    DeclId written = method_id_in(&writer, &ctx, "Box", "get");
+
+    assert(written.module && written.owner);
+    assert(decl_id_equals(written, method_id_in(&reader, &ctx, "Box", "get")));
+
+    assert(decl_id_equals(type_id_in(&writer, &ctx, "Box"), type_id_in(&reader, &ctx, "Box")));
+
+    free(text);
+    test_context_free(&ctx);
+}
+
+static void two_modules_declare_one_foreign_function(void) {
+    char first[512];
+    char first_interface[512];
+
+    snprintf(first, sizeof(first), "%s/ffi_one.o", GAB_TEST_SCRATCH);
+    snprintf(first_interface, sizeof(first_interface), "%s/ffi_one.gabi", GAB_TEST_SCRATCH);
+
+    assert(compile("module ffi_one;\nextern \"C\" func getpid(): i32;\n"
+                   "func stop(): i32 { return getpid(); }\n",
+                   first, first_interface, NULL));
+
+    char second[512];
+    char second_interface[512];
+
+    snprintf(second, sizeof(second), "%s/ffi_two.o", GAB_TEST_SCRATCH);
+    snprintf(second_interface, sizeof(second_interface), "%s/ffi_two.gabi", GAB_TEST_SCRATCH);
+
+    assert(compile("module ffi_two;\nextern \"C\" func getpid(): i32;\n"
+                   "func halt(): i32 { return getpid(); }\n",
+                   second, second_interface, NULL));
+
+    char user[512];
+    snprintf(user, sizeof(user), "%s/ffi_use.o", GAB_TEST_SCRATCH);
+
+    assert(compile("module use;\nimport ffi_one;\nimport ffi_two;\n"
+                   "func main(): i32 { return ffi_one::stop() - ffi_two::halt(); }\n",
+                   user, NULL, GAB_TEST_SCRATCH));
+
+    char binary[512];
+    snprintf(binary, sizeof(binary), "%s/ffi_linked", GAB_TEST_SCRATCH);
+
+    assert(gab_link(user, "use", (const char *const[]){first, second}, 2, binary));
+}
+
 int main(void) {
+    two_modules_declare_one_foreign_function();
+    a_declaration_read_back_has_the_id_it_was_written_with();
+    an_imported_generic_method_is_instantiated_where_it_is_named();
     one_generic_instantiated_twice_links_once();
     an_imported_generic_is_instantiated_where_it_is_named();
     a_unit_names_what_an_imported_interface_declares();

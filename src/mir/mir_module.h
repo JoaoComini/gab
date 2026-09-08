@@ -1,12 +1,18 @@
 #ifndef GAB_MIR_MODULE_H
 #define GAB_MIR_MODULE_H
 
+#include "binding.h"
 #include "memory/arena.h"
 #include "mir/mir.h"
 #include "util/list.h"
 
 typedef struct {
     Function *function;
+
+    /* What names this entry across compilations: a template by its declaration, an instance by that
+     * declaration together with the arguments it was fixed to. */
+    InstanceId id;
+
     MIRFunction *ir;
 } MIRModuleEntry;
 
@@ -22,5 +28,7 @@ MIRModule *mir_module_create(Arena *arena);
 void mir_module_add(MIRModule *unit, Function *function, MIRFunction *ir);
 
 MIRFunction *mir_module_lookup(const MIRModule *unit, const Function *function);
+
+MIRFunction *mir_module_lookup_id(const MIRModule *unit, InstanceId id);
 
 #endif

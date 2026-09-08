@@ -237,16 +237,24 @@ static void print_expr(FILE *out, const Facts *facts, const ASTExpr *expr) {
         fprintf(out, "%.*s", (int)expr->var.name.length, expr->var.name.data);
         return;
 
+    /* The arguments are held as an application of the builtin's own name, which is written once. */
     case EXPR_BUILTIN:
         fprintf(out, "@%.*s", (int)expr->builtin.name.length, expr->builtin.name.data);
 
-        if (expr->builtin.type_expr) {
+        if (expr->builtin.type_expr && expr->builtin.type_expr->kind == TYPE_EXPR_APPLY) {
             fputc('<', out);
-            print_type(out, expr->builtin.type_expr);
+
+            for (size_t i = 0; i < expr->builtin.type_expr->apply.args.size; i++) {
+                if (i) {
+                    fprintf(out, ", ");
+                }
+
+                print_type(out, expr->builtin.type_expr->apply.args.data[i]);
+            }
+
             fputc('>', out);
         }
 
-        fprintf(out, "()");
         return;
 
     /* Resolution answers a written form with a shape of its own, which is printed as it was written:
@@ -266,7 +274,7 @@ static void print_expr(FILE *out, const Facts *facts, const ASTExpr *expr) {
             const Function *callee = fact_callee_of(facts, expr);
 
             print_expr(out, facts, expr->call.args.data[0]);
-            fprintf(out, ".%s", callee ? callee->decl->name->data : "");
+            fprintf(out, ".%s", callee ? callee->decl->id.name->data : "");
             print_args(out, facts, &expr->call.args, 1);
             return;
         }

@@ -6,7 +6,7 @@
 struct Type {
     TypeKind kind;
 
-    String *name;
+    const String *name;
 
     const TypeDecl *decl;
 

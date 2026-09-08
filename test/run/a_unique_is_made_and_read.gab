@@ -1,0 +1,10 @@
+module test;
+import testing;
+
+func run(): i32 {
+    let held: Unique<i32> = Unique<i32>::new(9);
+
+    assert(held.ptr[0] == 9);
+
+    return 0;
+}

@@ -1,6 +1,7 @@
 #ifndef GAB_TYPE_H
 #define GAB_TYPE_H
 
+#include "decl_id.h"
 #include "memory/allocator.h"
 #include "memory/arena.h"
 #include "string/string.h"
@@ -120,7 +121,7 @@ typedef enum {
 } FuncModifier;
 
 typedef struct TypeDecl {
-    String *name;
+    DeclId id;
 
     size_t param_count;
 
@@ -129,7 +130,7 @@ typedef struct TypeDecl {
 } TypeDecl;
 
 TypeKind type_kind(const Type *type);
-String *type_name_of(const Type *type);
+const String *type_name_of(const Type *type);
 
 const TypeDecl *type_decl(const Type *type);
 
@@ -156,9 +157,9 @@ size_t type_param_index(const Type *type);
 
 bool type_has_param(const Type *type);
 
-Type *type_create(Arena *arena, TypeKind kind, String *name);
+Type *type_create(Arena *arena, TypeKind kind, const String *name);
 
-Type type_init(TypeKind kind, String *name);
+Type type_init(TypeKind kind, const String *name);
 
 TypeMetadata type_metadata_of(const Type *type);
 

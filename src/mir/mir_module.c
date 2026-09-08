@@ -9,15 +9,26 @@ MIRModule *mir_module_create(Arena *arena) {
 }
 
 void mir_module_add(MIRModule *unit, Function *function, MIRFunction *ir) {
-    mir_module_entry_list_add(&unit->entries, (MIRModuleEntry){.function = function, .ir = ir});
+    mir_module_entry_list_add(
+        &unit->entries,
+        (MIRModuleEntry){.function = function, .id = instance_id_of_function(function), .ir = ir});
 }
 
-MIRFunction *mir_module_lookup(const MIRModule *unit, const Function *function) {
+MIRFunction *mir_module_lookup_id(const MIRModule *unit, InstanceId id) {
+    /* A body no declaration names, such as what a script runs, is held but never looked up. */
+    if (!decl_id_is_set(id.decl)) {
+        return NULL;
+    }
+
     for (size_t i = 0; i < unit->entries.size; i++) {
-        if (unit->entries.data[i].function == function) {
+        if (instance_id_equals(unit->entries.data[i].id, id)) {
             return unit->entries.data[i].ir;
         }
     }
 
     return NULL;
+}
+
+MIRFunction *mir_module_lookup(const MIRModule *unit, const Function *function) {
+    return mir_module_lookup_id(unit, instance_id_of_function(function));
 }
