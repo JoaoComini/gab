@@ -27,11 +27,6 @@ GAB_HASH_MAP(OwnedTable, owned_key, OwnedKey, Function *)
 
 GAB_HASH_MAP(ConformanceTable, conformance_key, OwnedKey, bool)
 
-#define drop_key_hash(key) (size_t)key
-#define drop_key_key_equals(key, other) key == other
-
-GAB_HASH_MAP(DropTable, drop_key, const Type *, const DropPlan *)
-
 #define layout_key_hash(key) (size_t)key
 #define layout_key_key_equals(key, other) key == other
 
@@ -63,8 +58,6 @@ typedef struct TypeRegistry {
     OwnedTable *owned;
 
     ConformanceTable *conformances;
-
-    DropTable *drops;
 
     LayoutTable *layouts;
 

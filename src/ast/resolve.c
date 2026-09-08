@@ -5,7 +5,6 @@
 #include "function_registry.h"
 
 #include "binding.h"
-#include "object.h"
 #include "scope.h"
 #include "string/string.h"
 #include "string/string_ref.h"

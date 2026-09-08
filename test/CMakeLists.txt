@@ -42,7 +42,6 @@ set(
     syntax/parser_test.c
 
     # What the type registry holds: layout, interning, and generic instantiation.
-    types/object_test.c
     types/pointer_test.c
     types/scope_test.c
     types/type_generic_test.c

@@ -4,7 +4,6 @@
 #include "ast/resolve.h"
 #include "driver/interface.h"
 #include "mir/mir_build.h"
-#include "object.h"
 #include "scope.h"
 #include "support/test_context.h"
 #include "syntax/parser.h"

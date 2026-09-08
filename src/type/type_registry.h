@@ -71,8 +71,6 @@ bool type_registry_borrows(TypeRegistry *registry, const Type *type);
 
 bool type_registry_copies(TypeRegistry *registry, const Type *type);
 
-const DropPlan *type_registry_drop_of(TypeRegistry *registry, const Type *type);
-
 const TypeLayout *type_registry_layout_of(TypeRegistry *registry, const Type *type);
 
 size_t type_registry_size_of(TypeRegistry *registry, const Type *type);

@@ -68,7 +68,6 @@ add_library(gab OBJECT
     src/ast/pending.c
     src/ast/resolve.c
 
-    src/object.c
     src/scope.c
     src/function_registry.c
     src/type/type.c

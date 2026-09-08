@@ -129,9 +129,23 @@ bool gab_link(const char *object, const char *module, const char *const *extra, 
         cc = "cc";
     }
 
+    /* The C compiler drives the link, so a missing one is reported as what it is rather than as a
+     * link that failed for reasons unknown. */
+    char probe[512];
+    snprintf(probe, sizeof(probe), "command -v %s > /dev/null 2>&1", cc);
+
+    if (system(probe) != 0) {
+        fprintf(stderr,
+                "gabc: '%s' is not installed, and linking needs it; set GABC_CC to a C compiler, or "
+                "pass '-c' to compile without linking\n",
+                cc);
+
+        return false;
+    }
+
     const char *libdir = gab_libdir();
 
-    /* The sanitizers a program links must match those its runtime was built with. */
+    /* The sanitizers a program links must match those the core was built with. */
     const char *flags = getenv("GABC_LINK_FLAGS");
 
     char entry[PATH_MAX] = {0};

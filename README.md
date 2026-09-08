@@ -9,8 +9,8 @@ marks a transfer at the site, because the destination's type already says
 whether it takes ownership.
 
 Gab is early. A resolved body lowers to MIR, and the LLVM emitter reads MIR to
-produce an object file, which links against a small runtime and against the core
-library the compiler emits alongside it.
+produce an object file, which links against the core library the compiler emits
+alongside it.
 
 ## The language
 
@@ -82,7 +82,7 @@ happening to supply the right methods. A generic body is checked once where it
 is written rather than at each call, and every instantiation is monomorphized,
 so a call costs what a direct one does.
 
-`Index<T>` is declared in the prelude, and `xs[i]` is written in terms of it.
+`Index<T>` is declared in the core, and `xs[i]` is written in terms of it.
 
 ### Runs of elements
 
@@ -105,7 +105,7 @@ let n: i32 = total(a);
 `str` is the characters themselves, and nothing holds one. What names them is a
 `&str`, two words like any other view. It reads as `&slice<u8>` through
 `as_bytes`, which is the one primitive the rest of its surface is written over —
-`len` is ordinary Gab code in the prelude.
+`len` is ordinary Gab code in the core.
 
 `for` is the only loop keyword, and spells all three shapes:
 
@@ -140,25 +140,51 @@ Not yet implemented:
 | Uninitialized locals | A local with no initialiser holds whatever its storage held; nothing zeroes it |
 | Operators | Bitwise |
 
-## Running a unit
-
-A unit compiles to an object file, which links against `gab_runtime` and the
-core library. There is no host API and nothing loads a unit at runtime: a Gab
-program is an ordinary object that a linker places beside C.
-
-A script declares `extern "C" func f(x: i32): i32;` to call a C function, and
-what it declares is resolved by the linker like any other symbol.
-
-## Building
+## Building the compiler
 
 Requires CMake 3.16+, clang, and LLVM, which the backend builds its module
-through.
+through. A distribution passes `-DBUILD_TESTING=OFF`.
 
 ```sh
 cmake -S . -B build
 cmake --build build
 ctest --test-dir build
+
+cmake --install build --prefix ~/.local
 ```
+
+Installing gives `bin/gabc` and `lib/gab`, which holds the core the compiler
+links a program against. The two move together: `gabc` finds them beside itself,
+or in `../lib/gab` once installed.
+
+## Compiling a program
+
+```sh
+gabc -o hello hello.gab      # compile and link an executable
+gabc -c -o hello.o hello.gab # compile only, writing hello.gabi beside it
+./hello
+```
+
+A program is an ordinary native binary: there is no host API and nothing loads a
+unit at runtime. `extern "C" func puts(s: &u8): i32;` declares a C function, and
+the linker resolves it like any other symbol.
+
+Linking runs `clang`, which knows where this system keeps libc and the objects a
+binary starts in; `GABC_CC` names another. Compiling with `-c` needs neither.
+
+A module is written across the files it is compiled from, and reaches another
+module by importing it:
+
+```sh
+gabc -c -o lib.o lib.gab            # module lib, writing lib.gabi
+gabc -o app app.gab -L .            # app.gab says 'import lib;'
+```
+
+`-L` names a directory of interfaces; the compiler also looks beside the source
+and beside itself, so a module installed in `lib/gab` needs no flag. Each import
+is resolved from the interface alone, and the object beside it is linked in.
+
+## Testing
 
 Warnings are errors. To build and run the suite under AddressSanitizer and
 UndefinedBehaviorSanitizer:

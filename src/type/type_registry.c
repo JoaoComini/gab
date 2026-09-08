@@ -3,7 +3,6 @@
 #include "binding.h"
 
 #include "memory/arena.h"
-#include "object.h"
 #include "string/string.h"
 #include "type_internal.h"
 #include "util/align.h"
@@ -182,27 +181,8 @@ const Type *type_registry_deref_of(TypeRegistry *registry, const Type *type) {
     return NULL;
 }
 
-const DropPlan *type_registry_drop_of(TypeRegistry *registry, const Type *type) {
-    if (!type) {
-        return NULL;
-    }
-
-    const DropPlan **found = drop_key_lookup(registry->drops, type);
-
-    if (found) {
-        return *found;
-    }
-
-    const DropPlan *plan = object_build_drop(registry->arena, registry, type);
-
-    drop_key_insert(registry->drops, type, plan);
-
-    return plan;
-}
-
 TypeRegistry *type_registry_create(Arena *arena, const TypePrimitiveNames *names) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
-    registry->drops = drop_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->layouts = layout_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->owned = owned_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->conformances =
@@ -220,12 +200,10 @@ TypeRegistry *type_registry_create(Arena *arena, const TypePrimitiveNames *names
 void type_registry_destroy(TypeRegistry *registry) {
     type_intern_destroy(registry->applications);
     owned_key_destroy(registry->owned);
-    drop_key_destroy(registry->drops);
 }
 
 void type_registry_complete(TypeRegistry *registry, const Type *type) {
     type_registry_layout_of(registry, type);
-    type_registry_drop_of(registry, type);
 }
 
 const Type *type_registry_declare(TypeRegistry *registry, const TypeDecl *decl) {
@@ -391,13 +369,7 @@ const Type *type_registry_array_with(TypeRegistry *registry, const Type *element
     key.has_param =
         type_has_param(element) || (length.kind == TYPE_ARG_CONST && length.constant.kind == CONST_PARAM);
 
-    Type *type = intern_applied(registry, &key, args, 2);
-
-    if (!type->has_param) {
-        type_registry_drop_of(registry, type);
-    }
-
-    return type;
+    return intern_applied(registry, &key, args, 2);
 }
 
 const Type *type_registry_array_of(TypeRegistry *registry, const Type *element, int32_t length) {
@@ -414,13 +386,7 @@ static const Type *indirect_to(TypeRegistry *registry, TypeKind kind, const Type
     key.indirect.pointee = inner;
     key.has_param = type_has_param(inner);
 
-    Type *type = intern(registry, &key);
-
-    if (!type->has_param) {
-        type_registry_drop_of(registry, type);
-    }
-
-    return type;
+    return intern(registry, &key);
 }
 
 const Type *type_registry_box_to(TypeRegistry *registry, const Type *inner) {

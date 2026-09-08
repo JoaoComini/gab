@@ -1,6 +1,6 @@
 #include "ast/resolve.h"
-#include "syntax/parser.h"
 #include "support/test_context.h"
+#include "syntax/parser.h"
 #include "type/type.h"
 #include "type/type_registry.h"
 
@@ -78,8 +78,7 @@ static void test_homogeneous_struct() {
     test_context_init(&ctx);
 
     TypeRegistry *registry = NULL;
-    const Type *type =
-        resolve_struct(&ctx, "struct Vec3 { x: f32, y: f32, z: f32 }", "Vec3", &registry);
+    const Type *type = resolve_struct(&ctx, "struct Vec3 { x: f32, y: f32, z: f32 }", "Vec3", &registry);
 
     assert(type != NULL);
     assert(type_kind(type) == TYPE_STRUCT);
@@ -183,8 +182,7 @@ static void test_trailing_comma_allowed() {
     test_context_init(&ctx);
 
     TypeRegistry *registry = NULL;
-    const Type *type =
-        resolve_struct(&ctx, "struct Vec3 { x: f32, y: f32, z: f32, }", "Vec3", &registry);
+    const Type *type = resolve_struct(&ctx, "struct Vec3 { x: f32, y: f32, z: f32, }", "Vec3", &registry);
 
     assert(type_registry_fields_of(registry, type)->count == 3);
     assert(type_registry_size_of(registry, type) == sizeof(Vec3C));
@@ -219,8 +217,7 @@ static void test_field_lookup_misses() {
     test_context_init(&ctx);
 
     TypeRegistry *registry = NULL;
-    const Type *type =
-        resolve_struct(&ctx, "struct Vec3 { x: f32, y: f32, z: f32 }", "Vec3", &registry);
+    const Type *type = resolve_struct(&ctx, "struct Vec3 { x: f32, y: f32, z: f32 }", "Vec3", &registry);
 
     assert(type_registry_find_field(registry, type, string_from_cstr(&ctx.strings, "w")) == NULL);
 
@@ -268,7 +265,6 @@ static void test_raw_pointer_owns_nothing() {
 
     assert(!type_registry_owns(registry, ptr));
     assert(type_registry_copies(registry, ptr));
-    assert(type_registry_drop_of(registry, ptr) == NULL);
 
     assert(ptr != type_registry_box_to(registry, i32_type));
     assert(ptr != type_registry_ref_to(registry, i32_type));
