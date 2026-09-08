@@ -72,7 +72,7 @@ static void print_params(FILE *out, const StringRef *names, TypeExpr *const *bou
     fputc('>', out);
 }
 
-static void print_block(FILE *out, const ASTStmt *stmt, int depth);
+static void print_block(FILE *out, const Facts *facts, const ASTStmt *stmt, int depth);
 
 /* A generic is instantiated by whoever names it, so its interface carries the body rather than a symbol
  * to link against: nothing was compiled for arguments the declaring unit never saw. */
@@ -82,8 +82,8 @@ static bool carries_body(const ASTFuncDecl *func) { return func->body && func->t
 static size_t indent_depth(const char *indent) { return strlen(indent) / 4; }
 
 /* A signature and never a body: what an interface file states is what a caller must know. */
-static void print_func(FILE *out, const ASTFuncDecl *func, const char *indent, size_t inherited,
-                       bool states_only) {
+static void print_func(FILE *out, const Facts *facts, const ASTFuncDecl *func, const char *indent,
+                       size_t inherited, bool states_only) {
     fprintf(out, "%s", indent);
 
     /* 'caller' is how a call is made and not where the body is, so it precedes and never replaces. */
@@ -134,11 +134,11 @@ static void print_func(FILE *out, const ASTFuncDecl *func, const char *indent, s
     }
 
     fputc(' ', out);
-    print_block(out, func->body, (int)indent_depth(indent));
+    print_block(out, facts, func->body, (int)indent_depth(indent));
     fputc('\n', out);
 }
 
-static void print_expr(FILE *out, const ASTExpr *expr);
+static void print_expr(FILE *out, const Facts *facts, const ASTExpr *expr);
 
 /* Spelled as the source spells it, so what is read back binds the same operator to the same operands. */
 static const char *bin_op_text(BinOp op) {
@@ -195,21 +195,21 @@ static void print_literal(FILE *out, const Literal *literal) {
     }
 }
 
-static void print_args(FILE *out, const ASTExprList *args) {
+static void print_args(FILE *out, const Facts *facts, const ASTExprList *args, size_t from) {
     fputc('(', out);
 
-    for (size_t i = 0; i < args->size; i++) {
-        if (i) {
+    for (size_t i = from; i < args->size; i++) {
+        if (i > from) {
             fprintf(out, ", ");
         }
 
-        print_expr(out, args->data[i]);
+        print_expr(out, facts, args->data[i]);
     }
 
     fputc(')', out);
 }
 
-static void print_expr(FILE *out, const ASTExpr *expr) {
+static void print_expr(FILE *out, const Facts *facts, const ASTExpr *expr) {
     if (!expr) {
         return;
     }
@@ -222,9 +222,9 @@ static void print_expr(FILE *out, const ASTExpr *expr) {
     /* Parenthesized rather than spelled by precedence, so reading it back groups it as it was written. */
     case EXPR_BIN_OP:
         fputc('(', out);
-        print_expr(out, expr->bin_op.left);
+        print_expr(out, facts, expr->bin_op.left);
         fprintf(out, " %s ", bin_op_text(expr->bin_op.op));
-        print_expr(out, expr->bin_op.right);
+        print_expr(out, facts, expr->bin_op.right);
         fputc(')', out);
         return;
 
@@ -249,46 +249,81 @@ static void print_expr(FILE *out, const ASTExpr *expr) {
         fprintf(out, "()");
         return;
 
-    case EXPR_CALL:
-        print_expr(out, expr->call.target);
-        print_args(out, &expr->call.args);
+    /* Resolution answers a written form with a shape of its own, which is printed as it was written:
+     * what a reader parses must be the source, not the tree the resolver left. */
+    case EXPR_CALL: {
+        CallKind kind = fact_call_kind(facts, expr);
+
+        /* A conversion names a type where a call names a function, so the type alone is written. */
+        if (kind == CALL_CONVERSION && expr->call.target && expr->call.target->kind == EXPR_VARIABLE &&
+            expr->call.target->var.owner_type_expr) {
+            print_type(out, expr->call.target->var.owner_type_expr);
+            print_args(out, facts, &expr->call.args, 0);
+            return;
+        }
+
+        if (kind == CALL_METHOD && expr->call.args.size > 0) {
+            const Function *callee = fact_callee_of(facts, expr);
+
+            print_expr(out, facts, expr->call.args.data[0]);
+            fprintf(out, ".%s", callee ? callee->decl->name->data : "");
+            print_args(out, facts, &expr->call.args, 1);
+            return;
+        }
+
+        print_expr(out, facts, expr->call.target);
+        print_args(out, facts, &expr->call.args, 0);
         return;
+    }
 
     case EXPR_FIELD:
-        print_expr(out, expr->field.target);
+        print_expr(out, facts, expr->field.target);
         fprintf(out, ".%.*s", (int)expr->field.name.length, expr->field.name.data);
         return;
 
     case EXPR_INDEX:
-        print_expr(out, expr->index.target);
+        print_expr(out, facts, expr->index.target);
         fputc('[', out);
-        print_expr(out, expr->index.index);
+        print_expr(out, facts, expr->index.index);
         fputc(']', out);
         return;
 
     case EXPR_ADDR_OF:
         fputc('&', out);
-        print_expr(out, expr->unary.target);
+        print_expr(out, facts, expr->unary.target);
         return;
 
-    case EXPR_DEREF:
+    case EXPR_DEREF: {
+        const ASTExpr *inner = expr->unary.target;
+
+        /* 'xs[i]' resolves to the call its element's 'Index' names, and is written back as the index. */
+        if (inner && inner->kind == EXPR_CALL && fact_call_kind(facts, inner) == CALL_INDEX &&
+            inner->call.args.size == 2) {
+            print_expr(out, facts, inner->call.args.data[0]);
+            fputc('[', out);
+            print_expr(out, facts, inner->call.args.data[1]);
+            fputc(']', out);
+            return;
+        }
+
         fputc('*', out);
-        print_expr(out, expr->unary.target);
+        print_expr(out, facts, expr->unary.target);
         return;
+    }
 
     case EXPR_NEG:
         fprintf(out, "-");
-        print_expr(out, expr->unary.target);
+        print_expr(out, facts, expr->unary.target);
         return;
 
     case EXPR_NOT:
         fputc('!', out);
-        print_expr(out, expr->unary.target);
+        print_expr(out, facts, expr->unary.target);
         return;
 
     case EXPR_BOX:
         fprintf(out, "box ");
-        print_expr(out, expr->box_expr.value);
+        print_expr(out, facts, expr->box_expr.value);
         return;
 
     case EXPR_ARRAY_LIT:
@@ -299,7 +334,7 @@ static void print_expr(FILE *out, const ASTExpr *expr) {
                 fprintf(out, ", ");
             }
 
-            print_expr(out, expr->array_lit.elements.data[i]);
+            print_expr(out, facts, expr->array_lit.elements.data[i]);
         }
 
         fputc(']', out);
@@ -317,7 +352,7 @@ static void print_expr(FILE *out, const ASTExpr *expr) {
             }
 
             fprintf(out, "%.*s: ", (int)field->name.length, field->name.data);
-            print_expr(out, field->value);
+            print_expr(out, facts, field->value);
         }
 
         fprintf(out, " }");
@@ -325,7 +360,7 @@ static void print_expr(FILE *out, const ASTExpr *expr) {
     }
 }
 
-static void print_body_stmt(FILE *out, const ASTStmt *stmt, int depth);
+static void print_body_stmt(FILE *out, const Facts *facts, const ASTStmt *stmt, int depth);
 
 static void print_indent(FILE *out, int depth) {
     for (int i = 0; i < depth; i++) {
@@ -334,10 +369,10 @@ static void print_indent(FILE *out, int depth) {
 }
 
 /* A block prints its own braces, so a statement that holds one does not print them again. */
-static void print_block(FILE *out, const ASTStmt *stmt, int depth) {
+static void print_block(FILE *out, const Facts *facts, const ASTStmt *stmt, int depth) {
     if (!stmt || stmt->kind != STMT_BLOCK) {
         fprintf(out, "{\n");
-        print_body_stmt(out, stmt, depth + 1);
+        print_body_stmt(out, facts, stmt, depth + 1);
         print_indent(out, depth);
         fprintf(out, "}");
         return;
@@ -346,7 +381,7 @@ static void print_block(FILE *out, const ASTStmt *stmt, int depth) {
     fprintf(out, "{\n");
 
     for (size_t i = 0; i < stmt->block.list.size; i++) {
-        print_body_stmt(out, stmt->block.list.data[i], depth + 1);
+        print_body_stmt(out, facts, stmt->block.list.data[i], depth + 1);
     }
 
     print_indent(out, depth);
@@ -354,11 +389,11 @@ static void print_block(FILE *out, const ASTStmt *stmt, int depth) {
 }
 
 /* The header of a 'for', which prints on one line however many of its three parts were written. */
-static void print_for_header(FILE *out, const ASTForStmt *loop) {
+static void print_for_header(FILE *out, const Facts *facts, const ASTForStmt *loop) {
     if (!loop->init && !loop->post) {
         if (loop->condition) {
             fputc(' ', out);
-            print_expr(out, loop->condition);
+            print_expr(out, facts, loop->condition);
         }
 
         fputc(' ', out);
@@ -381,29 +416,29 @@ static void print_for_header(FILE *out, const ASTForStmt *loop) {
 
             if (decl->initializer) {
                 fprintf(out, " = ");
-                print_expr(out, decl->initializer);
+                print_expr(out, facts, decl->initializer);
             }
         } else if (loop->init->kind == STMT_ASSIGN) {
-            print_expr(out, loop->init->assign.target);
+            print_expr(out, facts, loop->init->assign.target);
             fprintf(out, " = ");
-            print_expr(out, loop->init->assign.value);
+            print_expr(out, facts, loop->init->assign.value);
         }
     }
 
     fprintf(out, "; ");
-    print_expr(out, loop->condition);
+    print_expr(out, facts, loop->condition);
     fprintf(out, "; ");
 
     if (loop->post && loop->post->kind == STMT_ASSIGN) {
-        print_expr(out, loop->post->assign.target);
+        print_expr(out, facts, loop->post->assign.target);
         fprintf(out, " = ");
-        print_expr(out, loop->post->assign.value);
+        print_expr(out, facts, loop->post->assign.value);
     }
 
     fputc(' ', out);
 }
 
-static void print_body_stmt(FILE *out, const ASTStmt *stmt, int depth) {
+static void print_body_stmt(FILE *out, const Facts *facts, const ASTStmt *stmt, int depth) {
     if (!stmt) {
         return;
     }
@@ -423,7 +458,7 @@ static void print_body_stmt(FILE *out, const ASTStmt *stmt, int depth) {
 
         if (decl->initializer) {
             fprintf(out, " = ");
-            print_expr(out, decl->initializer);
+            print_expr(out, facts, decl->initializer);
         }
 
         fprintf(out, ";\n");
@@ -431,21 +466,21 @@ static void print_body_stmt(FILE *out, const ASTStmt *stmt, int depth) {
     }
 
     case STMT_EXPR:
-        print_expr(out, stmt->expr.value);
+        print_expr(out, facts, stmt->expr.value);
         fprintf(out, ";\n");
         return;
 
     case STMT_ASSIGN:
-        print_expr(out, stmt->assign.target);
+        print_expr(out, facts, stmt->assign.target);
         fprintf(out, " = ");
-        print_expr(out, stmt->assign.value);
+        print_expr(out, facts, stmt->assign.value);
         fprintf(out, ";\n");
         return;
 
     case STMT_COMPOUND_ASSIGN:
-        print_expr(out, stmt->compound_assign.target);
+        print_expr(out, facts, stmt->compound_assign.target);
         fprintf(out, " %s= ", bin_op_text(stmt->compound_assign.op));
-        print_expr(out, stmt->compound_assign.value);
+        print_expr(out, facts, stmt->compound_assign.value);
         fprintf(out, ";\n");
         return;
 
@@ -454,7 +489,7 @@ static void print_body_stmt(FILE *out, const ASTStmt *stmt, int depth) {
 
         if (stmt->ret.result) {
             fputc(' ', out);
-            print_expr(out, stmt->ret.result);
+            print_expr(out, facts, stmt->ret.result);
         }
 
         fprintf(out, ";\n");
@@ -466,13 +501,13 @@ static void print_body_stmt(FILE *out, const ASTStmt *stmt, int depth) {
 
     case STMT_IF:
         fprintf(out, "if ");
-        print_expr(out, stmt->ifstmt.condition);
+        print_expr(out, facts, stmt->ifstmt.condition);
         fputc(' ', out);
-        print_block(out, stmt->ifstmt.then_block, depth);
+        print_block(out, facts, stmt->ifstmt.then_block, depth);
 
         if (stmt->ifstmt.else_block) {
             fprintf(out, " else ");
-            print_block(out, stmt->ifstmt.else_block, depth);
+            print_block(out, facts, stmt->ifstmt.else_block, depth);
         }
 
         fputc('\n', out);
@@ -480,13 +515,13 @@ static void print_body_stmt(FILE *out, const ASTStmt *stmt, int depth) {
 
     case STMT_FOR:
         fprintf(out, "for");
-        print_for_header(out, &stmt->forstmt);
-        print_block(out, stmt->forstmt.body, depth);
+        print_for_header(out, facts, &stmt->forstmt);
+        print_block(out, facts, stmt->forstmt.body, depth);
         fputc('\n', out);
         return;
 
     case STMT_BLOCK:
-        print_block(out, stmt, depth);
+        print_block(out, facts, stmt, depth);
         fputc('\n', out);
         return;
 
@@ -498,28 +533,30 @@ static void print_body_stmt(FILE *out, const ASTStmt *stmt, int depth) {
     }
 }
 
-static void print_stmt(FILE *out, const ASTStmt *stmt);
+static void print_stmt(FILE *out, const Facts *facts, const ASTStmt *stmt);
 
-static void print_members(FILE *out, const ASTStmtList *members, size_t inherited, bool states_only) {
+static void print_members(FILE *out, const Facts *facts, const ASTStmtList *members, size_t inherited,
+                          bool states_only) {
     for (size_t i = 0; i < members->size; i++) {
         const ASTStmt *member = members->data[i];
 
         if (member && member->kind == STMT_FUNC_DECL) {
             size_t own = member->func_decl.type_param_count;
 
-            print_func(out, &member->func_decl, "    ", inherited < own ? inherited : own, states_only);
+            print_func(out, facts, &member->func_decl, "    ", inherited < own ? inherited : own,
+                       states_only);
         }
     }
 }
 
-static void print_stmt(FILE *out, const ASTStmt *stmt) {
+static void print_stmt(FILE *out, const Facts *facts, const ASTStmt *stmt) {
     if (!stmt) {
         return;
     }
 
     switch (stmt->kind) {
     case STMT_FUNC_DECL:
-        print_func(out, &stmt->func_decl, "", 0, false);
+        print_func(out, facts, &stmt->func_decl, "", 0, false);
         return;
 
     case STMT_STRUCT_DECL: {
@@ -549,7 +586,7 @@ static void print_stmt(FILE *out, const ASTStmt *stmt) {
         print_params(out, decl->params, NULL, decl->param_count);
         fprintf(out, " {\n");
 
-        print_members(out, &decl->members, 0, true);
+        print_members(out, facts, &decl->members, 0, true);
 
         fprintf(out, "}\n");
         return;
@@ -585,7 +622,7 @@ static void print_stmt(FILE *out, const ASTStmt *stmt) {
 
         fprintf(out, " {\n");
 
-        print_members(out, &impl->members, impl->param_count, false);
+        print_members(out, facts, &impl->members, impl->param_count, false);
 
         fprintf(out, "}\n");
         return;
@@ -621,7 +658,7 @@ void gab_interface_symbol(char *out, size_t capacity, const char *module, uint64
     snprintf(out, capacity, "gab.iface.%s.%016llx", module, (unsigned long long)digest);
 }
 
-void gab_interface_print(const ASTUnit *unit, FILE *out) {
+void gab_interface_print(const ASTUnit *unit, const Facts *facts, FILE *out) {
     fprintf(out, "module %.*s;\n", (int)unit->module_name.length, unit->module_name.data);
 
     /* What this module imports, so linking against it reaches the objects its bodies call into. */
@@ -633,18 +670,18 @@ void gab_interface_print(const ASTUnit *unit, FILE *out) {
     fputc('\n', out);
 
     for (size_t i = 0; i < unit->statements.size; i++) {
-        print_stmt(out, unit->statements.data[i]);
+        print_stmt(out, facts, unit->statements.data[i]);
     }
 }
 
-bool gab_interface_write(const ASTUnit *unit, const char *path) {
+bool gab_interface_write(const ASTUnit *unit, const Facts *facts, const char *path) {
     FILE *out = fopen(path, "w");
 
     if (!out) {
         return false;
     }
 
-    gab_interface_print(unit, out);
+    gab_interface_print(unit, facts, out);
 
     fclose(out);
 

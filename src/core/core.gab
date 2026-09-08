@@ -78,3 +78,13 @@ impl Global as Allocator {
 intrinsic struct Unique<T> {
     ptr: raw<T>,
 }
+
+/* What the run held has ended by here: the compiler drops it before this runs, since nothing written in
+ * the language reaches a value through a run. */
+impl<T> Unique<T> as Destroy {
+    func destroy(self: &Self) {
+        let allocator: Global = Global {};
+
+        allocator.release(raw<u8>(self.ptr));
+    }
+}

@@ -499,6 +499,7 @@ static void lower_method_call(ResolverState *state, Arena *arena, ASTExpr *expr,
     expr->call.target = NULL;
     expr->call.args = args;
     fact_set_callee(state->facts, expr, method);
+    fact_set_call_kind(state->facts, expr, CALL_METHOD);
 }
 
 static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *receiver, const Type *declared,
@@ -957,6 +958,8 @@ static void rewrite_index_as_call(ResolverState *state, ASTExpr *expr) {
 
     expr->kind = EXPR_DEREF;
     expr->unary.target = call;
+
+    fact_set_call_kind(state->facts, call, CALL_INDEX);
 
     /* The rewrite is an implementation detail, so a missing method is reported as the missing interface. */
     size_t errors_before = diagnostics_count(state->diagnostics);
