@@ -25,7 +25,7 @@ static void compile(TestContext *ctx, const char *source) {
 
     if (parse_unit(test_in_a_module(source), ctx->arena, &ctx->strings, &unit, diagnostics) &&
         resolve_unit(arena, unit, &global_scope, NULL, false, &resolved, diagnostics)) {
-        mir_build(arena, resolved, &mir_unit, diagnostics);
+        mir_build(arena, resolved, NULL, &mir_unit, diagnostics);
     }
 }
 

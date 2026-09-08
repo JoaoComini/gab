@@ -983,6 +983,12 @@ void llvm_unit_add(LLVMUnit *unit, const MIRFunction *ir) {
         function = LLVMAddFunction(unit->module, symbol, signature);
     }
 
+    /* Every reader that names a generic instantiates it, so each states the same body under the same
+     * symbol and the link takes one rather than refusing the pair. */
+    if (ir->function->type_arg_count > 0) {
+        LLVMSetLinkage(function, LLVMLinkOnceODRLinkage);
+    }
+
     for (size_t i = 0; i < ir->param_count; i++) {
         emitter.values[ir->params[i].id] = LLVMGetParam(function, (unsigned)i);
     }
