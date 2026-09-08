@@ -30,6 +30,7 @@ static void register_primitives(TypeRegistry *registry, const TypePrimitiveNames
     registry->primitives.bool_type = register_builtin(registry, TYPE_BOOL, names->bool_name);
 
     registry->primitives.u8_type = register_builtin(registry, TYPE_U8, names->u8_name);
+    registry->primitives.usize_type = register_builtin(registry, TYPE_USIZE, names->usize_name);
 
     registry->primitives.str_type = register_builtin(registry, TYPE_STR, names->str_name);
 
@@ -44,6 +45,14 @@ static void register_primitives(TypeRegistry *registry, const TypePrimitiveNames
     *array = (TypeDecl){.name = names->array_name, .param_count = 2};
 
     registry->primitives.array_decl = array;
+
+    TypeDecl *raw = arena_alloc(registry->arena, sizeof(TypeDecl));
+    *raw = (TypeDecl){.name = names->raw_name, .param_count = 1};
+
+    registry->primitives.raw_decl = raw;
+
+    registry->primitives.destroy_name = names->destroy_name;
+    registry->primitives.destroy_method = names->destroy_method;
 }
 
 static bool layout_of_scalar(TypeKind kind, size_t *size, size_t *alignment) {
@@ -66,6 +75,12 @@ static bool layout_of_scalar(TypeKind kind, size_t *size, size_t *alignment) {
     case TYPE_U8:
         *size = 1;
         *alignment = 1;
+        return true;
+
+    /* A count of bytes reaches every address, so it is as wide as a pointer on the target. */
+    case TYPE_USIZE:
+        *size = sizeof(void *);
+        *alignment = _Alignof(void *);
         return true;
 
     case TYPE_STR:
@@ -142,7 +157,7 @@ const TypeLayout *type_registry_layout_of(TypeRegistry *registry, const Type *ty
 
         case TYPE_BOX:
         case TYPE_REF:
-        case TYPE_PTR:
+        case TYPE_RAW:
             layout_of_indirect(type, &layout->size, &layout->alignment);
             break;
 
@@ -271,6 +286,14 @@ bool type_registry_declare_conformance(TypeRegistry *registry, const Type *type,
 
 bool type_registry_conforms(TypeRegistry *registry, const Type *type, const String *interface) {
     return conformance_key_lookup(registry->conformances, owned_key_of(type, interface)) != NULL;
+}
+
+Function *type_registry_destructor(TypeRegistry *registry, const Type *type) {
+    if (!type_registry_conforms(registry, type, registry->primitives.destroy_name)) {
+        return NULL;
+    }
+
+    return type_registry_find_owned(registry, type, registry->primitives.destroy_method);
 }
 
 /* A signature mentioning no type parameter is one function for every instantiation of its owner. */
@@ -444,8 +467,8 @@ const Type *type_registry_substitute(TypeRegistry *registry, const Type *type, c
         return type_registry_ref_to(registry,
                                     type_registry_substitute(registry, type_pointee(type), args, arg_count));
 
-    case TYPE_PTR:
-        return type_registry_ptr_to(registry,
+    case TYPE_RAW:
+        return type_registry_raw_of(registry,
                                     type_registry_substitute(registry, type_pointee(type), args, arg_count));
 
     case TYPE_ARRAY:
@@ -525,7 +548,7 @@ bool type_registry_owns(TypeRegistry *registry, const Type *type) {
     case TYPE_REF:
         return false;
 
-    case TYPE_PTR:
+    case TYPE_RAW:
         return false;
 
     case TYPE_ARRAY:
@@ -537,6 +560,11 @@ bool type_registry_owns(TypeRegistry *registry, const Type *type) {
 
     default:
         break;
+    }
+
+    /* An ending of its own is something to run, so the type is one that ends even holding nothing. */
+    if (type_registry_conforms(registry, type, registry->primitives.destroy_name)) {
+        return true;
     }
 
     const TypeFields *fields = type_registry_fields_of(registry, type);
@@ -560,7 +588,7 @@ bool type_registry_borrows(TypeRegistry *registry, const Type *type) {
         return true;
 
     case TYPE_BOX:
-    case TYPE_PTR:
+    case TYPE_RAW:
         return false;
 
     case TYPE_ARRAY:
@@ -594,7 +622,7 @@ bool type_registry_copies(TypeRegistry *registry, const Type *type) {
     case TYPE_BOX:
         return false;
     case TYPE_REF:
-    case TYPE_PTR:
+    case TYPE_RAW:
         return true;
 
     case TYPE_ARRAY:
@@ -664,8 +692,16 @@ const Type *type_registry_ref_to(TypeRegistry *registry, const Type *inner) {
     return indirect_to(registry, TYPE_REF, inner);
 }
 
-const Type *type_registry_ptr_to(TypeRegistry *registry, const Type *pointee) {
-    return indirect_to(registry, TYPE_PTR, pointee);
+const Type *type_registry_raw_of(TypeRegistry *registry, const Type *element) {
+    Type key = type_init(TYPE_RAW, registry->primitives.raw_decl->name);
+
+    TypeArg argument = {.kind = TYPE_ARG_TYPE, .type = element};
+
+    key.decl = registry->primitives.raw_decl;
+    key.has_param = type_has_param(element);
+    key.indirect.pointee = element;
+
+    return intern_applied(registry, &key, &argument, 1);
 }
 
 const Type *type_registry_error_type(TypeRegistry *registry) { return registry->primitives.error_type; }
@@ -680,6 +716,8 @@ const Type *type_registry_get_primitive(TypeRegistry *registry, TypeKind kind) {
         return registry->primitives.bool_type;
     case TYPE_U8:
         return registry->primitives.u8_type;
+    case TYPE_USIZE:
+        return registry->primitives.usize_type;
     case TYPE_STR:
         return registry->primitives.str_type;
 
@@ -700,8 +738,12 @@ TypePrimitiveNames type_primitive_names(StringPool *strings) {
         .bool_name = string_from_cstr(strings, "bool"),
 
         .u8_name = string_from_cstr(strings, "u8"),
+        .usize_name = string_from_cstr(strings, "usize"),
         .str_name = string_from_cstr(strings, "str"),
         .slice_name = string_from_cstr(strings, "slice"),
+        .raw_name = string_from_cstr(strings, "raw"),
+        .destroy_name = string_from_cstr(strings, "Destroy"),
+        .destroy_method = string_from_cstr(strings, "destroy"),
         .array_name = string_from_cstr(strings, "array"),
 
         .error_name = string_from_cstr(strings, "<error>"),

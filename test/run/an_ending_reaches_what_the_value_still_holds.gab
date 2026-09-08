@@ -1,0 +1,22 @@
+module test;
+import testing;
+
+struct Held { seen: &i32 }
+
+struct Owner { held: *Held }
+
+impl Owner as Destroy {
+    func destroy(self: &Self) {
+        *self.held.seen = 7;
+    }
+}
+
+func run(): i32 {
+    let seen: i32 = 0;
+
+    { let o: Owner = Owner { held: box Held { seen: seen } }; }
+
+    assert(seen == 7);
+
+    return 0;
+}

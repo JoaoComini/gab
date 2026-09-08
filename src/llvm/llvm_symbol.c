@@ -2,6 +2,7 @@
 
 #include "type/type.h"
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -49,9 +50,13 @@ static void append_type(SymbolBuffer *buffer, const Type *type) {
         append_type(buffer, type_pointee(type));
         return;
 
-    case TYPE_PTR:
+    case TYPE_RAW:
+        symbol_append(buffer, "raw.");
+        append_type(buffer, type_pointee(type));
+        return;
+
     case TYPE_BOX:
-        symbol_append(buffer, "ptr.");
+        symbol_append(buffer, "box.");
         append_type(buffer, type_pointee(type));
         return;
 
@@ -88,7 +93,7 @@ static void append_type_args(SymbolBuffer *buffer, const Function *function) {
         }
 
         char value[32];
-        snprintf(value, sizeof(value), "%d", function->type_args[i].constant.value.as_int);
+        snprintf(value, sizeof(value), "%" PRId64, function->type_args[i].constant.value.as_int);
 
         symbol_append(buffer, value);
     }

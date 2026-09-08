@@ -18,8 +18,9 @@ typedef enum {
     TYPE_BOOL,
 
     TYPE_U8,
+    TYPE_USIZE,
 
-    TYPE_PTR,
+    TYPE_RAW,
 
     TYPE_STR,
 
@@ -166,6 +167,12 @@ bool type_is_str_ref(const Type *type);
 bool type_is_sized(const Type *type);
 
 bool type_is_primitive(const Type *type);
+
+/* Whether values of this type are whole numbers, which arithmetic on them is integer arithmetic. */
+bool type_is_integer(const Type *type);
+
+/* Whether a whole number of this type counts rather than measures, which orders and divides it unsigned. */
+bool type_is_unsigned(const Type *type);
 
 bool type_names_itself(const Type *type);
 

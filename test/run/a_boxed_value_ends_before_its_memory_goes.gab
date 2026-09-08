@@ -1,0 +1,20 @@
+module test;
+import testing;
+
+struct Noted { seen: &i32 }
+
+impl Noted as Destroy {
+    func destroy(self: &Self) {
+        *self.seen = 5;
+    }
+}
+
+func run(): i32 {
+    let seen: i32 = 0;
+
+    { let n: *Noted = box Noted { seen: seen }; }
+
+    assert(seen == 5);
+
+    return 0;
+}

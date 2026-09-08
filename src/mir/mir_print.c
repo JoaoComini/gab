@@ -1,5 +1,6 @@
 #include "mir/mir_print.h"
 
+#include <inttypes.h>
 #include <stdarg.h>
 #include <string.h>
 
@@ -47,7 +48,7 @@ static void mir_print_type(MIRPrinter *printer, const Type *type) {
         mir_printf(printer, "&");
         mir_print_type(printer, type_pointee(type));
         return;
-    case TYPE_PTR:
+    case TYPE_RAW:
     case TYPE_BOX:
         mir_printf(printer, "*");
         mir_print_type(printer, type_pointee(type));
@@ -92,7 +93,7 @@ static void mir_print_constant(MIRPrinter *printer, Constant constant) {
         return;
     }
 
-    mir_printf(printer, "%d", constant.as_int);
+    mir_printf(printer, "%" PRId64, constant.as_int);
 }
 
 static void mir_print_operand(MIRPrinter *printer, MIROperand operand) {
@@ -147,7 +148,7 @@ static void mir_print_inst(MIRPrinter *printer, const MIRInst *inst) {
 
     switch (inst->op) {
     case MIR_CONST_INT:
-        mir_printf(printer, " %d", inst->constant.as_int);
+        mir_printf(printer, " %" PRId64, inst->constant.as_int);
         break;
     case MIR_CONST_FLOAT:
         mir_printf(printer, " %g", (double)inst->constant.as_float);

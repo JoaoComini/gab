@@ -1,0 +1,14 @@
+struct C { seen: &i32 }
+
+func f(): i32 {
+    let outer: i32 = 1;
+    let xs: array<C, 1> = [C { seen: outer }];
+
+    { let inner: i32 = 5; xs[0] = C { seen: inner }; }
+
+    return *xs[0].seen;
+}
+
+// error
+// :7:27: lifetime error: this borrow outlives what it names, so it cannot be stored here
+// :9:12: lifetime error: this names memory that has been freed

@@ -1,7 +1,7 @@
 #include "memory/arena.h"
+#include "syntax/lexer.h"
 #include <assert.h>
 #include <diagnostics.h>
-#include "syntax/lexer.h"
 #include <string.h>
 #include <string/string_pool.h>
 
@@ -307,7 +307,7 @@ static void test_a_number_token_carries_its_value() {
 }
 
 static void test_an_out_of_range_integer_is_an_error() {
-    Lexer lexer = test_lexer("99999999999999");
+    Lexer lexer = test_lexer("99999999999999999999");
     assert_token(&lexer, TOKEN_INVALID);
 
     assert(diagnostics_count(&diagnostics) == 1);
@@ -318,11 +318,11 @@ static void test_an_out_of_range_integer_is_an_error() {
 }
 
 static void test_the_largest_integer_literal_lexes() {
-    Lexer lexer = test_lexer("2147483647");
+    Lexer lexer = test_lexer("9223372036854775807");
 
     Token token = lexer_next(&lexer);
     assert(token.type == TOKEN_INT);
-    assert(token.value.as_int == 2147483647);
+    assert(token.value.as_int == 9223372036854775807);
 
     assert(diagnostics_count(&diagnostics) == 0);
 }

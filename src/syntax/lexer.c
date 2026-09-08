@@ -189,15 +189,15 @@ static Token lexer_number(Lexer *lexer) {
     }
 
     errno = 0;
-    long value = strtol(begin, NULL, 10);
+    long long value = strtoll(begin, NULL, 10);
 
-    if (errno == ERANGE || value > INT32_MAX) {
+    if (errno == ERANGE) {
         diag_error(lexer->diagnostics, GAB_ERR_TYPE, opened, "integer literal is out of range");
 
         return token_create(lexer, TOKEN_INVALID);
     }
 
-    return token_create_value(lexer, type, (TokenValue){.as_int = (int32_t)value});
+    return token_create_value(lexer, type, (TokenValue){.as_int = (int64_t)value});
 }
 
 static bool lexer_reserve(Lexer *lexer, size_t needed) {

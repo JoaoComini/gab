@@ -78,7 +78,7 @@ const Type *type_pointee(const Type *type) {
     switch (type->kind) {
     case TYPE_BOX:
     case TYPE_REF:
-    case TYPE_PTR:
+    case TYPE_RAW:
         return type->indirect.pointee;
 
     default:
@@ -154,7 +154,7 @@ size_t type_structural_hash(const Type *type) {
     switch (type->kind) {
     case TYPE_BOX:
     case TYPE_REF:
-    case TYPE_PTR:
+    case TYPE_RAW:
         hash = ((hash << 5) + hash) + (size_t)(uintptr_t)type->indirect.pointee;
         break;
 
@@ -188,7 +188,7 @@ bool type_structurally_equals(const Type *type, const Type *other) {
     switch (type->kind) {
     case TYPE_BOX:
     case TYPE_REF:
-    case TYPE_PTR:
+    case TYPE_RAW:
         return type->indirect.pointee == other->indirect.pointee;
 
     case TYPE_ARRAY:
@@ -221,13 +221,75 @@ bool type_is_primitive(const Type *type) {
     case TYPE_F32:
     case TYPE_BOOL:
     case TYPE_U8:
+    case TYPE_USIZE:
     case TYPE_STR:
     case TYPE_SLICE:
     case TYPE_ARRAY:
+    case TYPE_RAW:
         return true;
     default:
         return false;
     }
+}
+
+/* Listing every kind rather than the ones that answer true, so a kind added later must be placed here. */
+bool type_is_integer(const Type *type) {
+    if (!type) {
+        return false;
+    }
+
+    switch (type->kind) {
+    case TYPE_I32:
+    case TYPE_U8:
+    case TYPE_USIZE:
+        return true;
+
+    case TYPE_F32:
+    case TYPE_BOOL:
+    case TYPE_STR:
+    case TYPE_ARRAY:
+    case TYPE_SLICE:
+    case TYPE_STRUCT:
+    case TYPE_BOX:
+    case TYPE_REF:
+    case TYPE_RAW:
+    case TYPE_PARAM:
+    case TYPE_UNKNOWN:
+    case TYPE_ERROR:
+        return false;
+    }
+
+    return false;
+}
+
+/* Listing every kind rather than the ones that answer true, so a kind added later must be placed here. */
+bool type_is_unsigned(const Type *type) {
+    if (!type) {
+        return false;
+    }
+
+    switch (type->kind) {
+    case TYPE_U8:
+    case TYPE_USIZE:
+        return true;
+
+    case TYPE_I32:
+    case TYPE_F32:
+    case TYPE_BOOL:
+    case TYPE_STR:
+    case TYPE_ARRAY:
+    case TYPE_SLICE:
+    case TYPE_STRUCT:
+    case TYPE_BOX:
+    case TYPE_REF:
+    case TYPE_RAW:
+    case TYPE_PARAM:
+    case TYPE_UNKNOWN:
+    case TYPE_ERROR:
+        return false;
+    }
+
+    return false;
 }
 
 bool type_names_itself(const Type *type) {
@@ -236,6 +298,7 @@ bool type_names_itself(const Type *type) {
     case TYPE_F32:
     case TYPE_BOOL:
     case TYPE_U8:
+    case TYPE_USIZE:
     case TYPE_STR:
     case TYPE_ERROR:
 

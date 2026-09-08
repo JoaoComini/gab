@@ -43,6 +43,7 @@ set(
 
     # What the type registry holds: layout, interning, and generic instantiation.
     types/pointer_test.c
+    types/raw_test.c
     types/scope_test.c
     types/type_generic_test.c
     types/type_layout_test.c

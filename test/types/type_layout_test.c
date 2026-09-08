@@ -256,12 +256,12 @@ static void test_raw_pointer_owns_nothing() {
 
     const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
-    const Type *ptr = type_registry_ptr_to(registry, i32_type);
+    const Type *ptr = type_registry_raw_of(registry, i32_type);
 
-    assert(type_kind(ptr) == TYPE_PTR);
+    assert(type_kind(ptr) == TYPE_RAW);
     assert(type_pointee(ptr) == i32_type);
 
-    assert(type_registry_ptr_to(registry, i32_type) == ptr);
+    assert(type_registry_raw_of(registry, i32_type) == ptr);
 
     assert(!type_registry_owns(registry, ptr));
     assert(type_registry_copies(registry, ptr));

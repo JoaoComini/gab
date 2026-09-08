@@ -1,0 +1,6 @@
+func f(): usize {
+    return @size_of<Missing>();
+}
+
+// error
+// :2:12: name error: unknown type 'Missing'

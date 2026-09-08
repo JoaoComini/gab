@@ -664,7 +664,7 @@ static bool parse_type_args(Parser *parser, TypeExprList *out) {
         TypeExpr *argument;
 
         if (parser->current.type == TOKEN_INT) {
-            argument = type_expr_const(parser->arena, parser->current.value.as_int);
+            argument = type_expr_const(parser->arena, (int32_t)parser->current.value.as_int);
             parser_next_token(parser);
         } else {
             argument = parse_type_expr(parser);
@@ -1653,7 +1653,7 @@ static ASTExpr *parse_primary(Parser *parser) {
         return ast_array_lit_expr_create(parser->arena, span, elements);
     }
     case TOKEN_INT: {
-        int32_t value = parser->current.value.as_int;
+        int64_t value = parser->current.value.as_int;
 
         parser_next_token(parser);
 
@@ -1691,7 +1691,17 @@ static ASTExpr *parse_primary(Parser *parser) {
 
         parser_next_token(parser);
 
-        return ast_builtin_expr_create(parser->arena, span, name);
+        TypeExpr *type_expr = NULL;
+
+        if (parser->current.type == TOKEN_LESS) {
+            type_expr = type_expr_apply(parser->arena, type_expr_name(parser->arena, name));
+
+            if (!parse_type_args(parser, &type_expr->apply.args)) {
+                return NULL;
+            }
+        }
+
+        return ast_builtin_expr_create(parser->arena, span, name, type_expr);
     }
     case TOKEN_IDENT: {
         Token name = parser->current;

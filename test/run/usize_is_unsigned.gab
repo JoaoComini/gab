@@ -1,0 +1,12 @@
+module test;
+import testing;
+
+func run(): i32 {
+    let big: usize = 0 - 1;
+    let two: usize = 2;
+
+    assert(big > two);
+    assert(big / two > two);
+
+    return 0;
+}

@@ -94,7 +94,7 @@ static void a_type_that_owns_is_dropped_by_glue_named_for_it(void) {
     char *text = unit_text(&emission, "struct Node { n: i32 }\n"
                                       "func f(): i32 { let a: *Node = box Node { n: 1 }; return a.n; }\n");
 
-    assert(strstr(text, "define linkonce_odr void @drop.ptr.Node"));
+    assert(strstr(text, "define linkonce_odr void @drop.box.Node"));
     assert(strstr(text, "call void @free"));
 
     test_emission_free(&emission);
@@ -123,8 +123,8 @@ static void a_type_dropped_from_many_places_is_glued_once(void) {
                                       "    return a.n;\n"
                                       "}\n");
 
-    assert(occurrences(text, "define linkonce_odr void @drop.ptr.Inner(") == 1);
-    assert(occurrences(text, "call void @drop.ptr.Inner(") > 1);
+    assert(occurrences(text, "define linkonce_odr void @drop.box.Inner(") == 1);
+    assert(occurrences(text, "call void @drop.box.Inner(") > 1);
 
     test_emission_free(&emission);
 }
@@ -138,7 +138,7 @@ static void a_box_drops_what_its_object_owns_before_freeing_it(void) {
                                       "    return 0;\n"
                                       "}\n");
 
-    const char *glue = strstr(text, "define linkonce_odr void @drop.ptr.Outer(");
+    const char *glue = strstr(text, "define linkonce_odr void @drop.box.Outer(");
 
     assert(glue);
 
