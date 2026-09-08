@@ -46,8 +46,10 @@ include(GNUInstallDirs)
 # installed, which is the pair of places 'gab_libdir' looks.
 set(GAB_LIB_DIR ${CMAKE_BINARY_DIR})
 
-# The compiler as a library: source text in, a native object out, through the stages in order.
-add_library(gab
+# The compiler's own objects, linked into the program below and into each test that reaches past it.
+# An object library rather than an archive: nothing outside this build links the compiler, and an
+# installed 'libgab.a' would make these 45 headers an API this language does not offer.
+add_library(gab OBJECT
     src/memory/allocator.c
     src/memory/arena.c
     src/string/string.c
