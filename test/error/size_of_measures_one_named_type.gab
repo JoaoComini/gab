@@ -1,0 +1,6 @@
+func f(): usize {
+    return @size_of();
+}
+
+// error
+// :2:12: type error: '@size_of<T>()' measures one type, as '@size_of<i32>()'

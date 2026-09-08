@@ -78,7 +78,7 @@ typedef enum {
 } TokenType;
 
 typedef union {
-    int32_t as_int;
+    int64_t as_int;
     float as_float;
     String *as_string;
 } TokenValue;

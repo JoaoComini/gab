@@ -1,0 +1,17 @@
+module test;
+import testing;
+
+struct Plain { n: i32 }
+
+impl Plain {
+    func destroy(self: &Self): i32 { return self.n; }
+}
+
+func run(): i32 {
+    let p: Plain = Plain { n: 3 };
+
+    assert(p.destroy() == 3);
+    assert(Plain::destroy(p) == 3);
+
+    return 0;
+}

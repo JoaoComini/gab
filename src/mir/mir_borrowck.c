@@ -149,6 +149,18 @@ static size_t tracked_depth(const Place *place) {
     return depth;
 }
 
+/* Whether a place reaches memory beyond the local it starts at, which only a dereference does: an
+ * element is storage the root still holds, so what it may be given is what the root's scope bounds. */
+static bool reaches_past_its_root(const Place *place) {
+    for (size_t i = 0; i < place->projection_count; i++) {
+        if (place->projections[i].kind == PROJ_DEREF) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static const MIRInst *definition_of(const MIRFlow *flow, MIRValueId value) {
     if (mir_value_is_none(value)) {
         return NULL;
@@ -447,7 +459,7 @@ static void flow_inst(MIRFlow *flow, const MIRInst *inst) {
 
         /* Writing through a pointer reaches memory this body does not bound, so the borrow
          * stored there must outlive every scope rather than merely the place holding it. */
-        if (depth != inst->place.projection_count) {
+        if (reaches_past_its_root(&inst->place)) {
             if (borrows_memory(flow, type_of(flow, mir_operand_as_value(inst->args[0]))) &&
                 outlives_its_source(flow, mir_operand_as_value(inst->args[0]), MIR_NO_VALUE, false,
                                     MIR_WHOLE_VALUE)) {

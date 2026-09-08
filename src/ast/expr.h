@@ -24,7 +24,7 @@ typedef enum {
 typedef struct {
     LiteralKind kind;
     union {
-        int32_t as_int;
+        int64_t as_int;
         float as_float;
         bool as_bool;
 
@@ -108,6 +108,9 @@ typedef struct ASTExpr {
 
         struct {
             StringRef name;
+
+            /* What '@size_of<T>()' measures; none for a builtin that takes no type. */
+            TypeExpr *type_expr;
         } builtin;
 
         struct {
@@ -151,7 +154,7 @@ typedef struct ASTExpr {
 ASTExpr *ast_literal_expr_create(Arena *arena, Span span, Literal value);
 ASTExpr *ast_bin_op_expr_create(Arena *arena, Span span, ASTExpr *left, BinOp op, ASTExpr *right);
 ASTExpr *ast_variable_expr_create(Arena *arena, Span span, StringRef name);
-ASTExpr *ast_builtin_expr_create(Arena *arena, Span span, StringRef name);
+ASTExpr *ast_builtin_expr_create(Arena *arena, Span span, StringRef name, TypeExpr *type_expr);
 ASTExpr *ast_call_expr_create(Arena *arena, Span span, ASTExpr *target, ASTExprList args);
 ASTExpr *ast_field_expr_create(Arena *arena, Span span, ASTExpr *target, StringRef name);
 ASTExpr *ast_addr_of_expr_create(Arena *arena, Span span, ASTExpr *target);

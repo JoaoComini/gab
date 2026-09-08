@@ -1,0 +1,13 @@
+module test;
+import testing;
+
+func run(): i32 {
+    let high: &slice<u8> = "ÿ".as_bytes();
+    let low: &slice<u8> = "a".as_bytes();
+
+    assert(high[0] > low[0]);
+    assert(low[0] + low[0] > low[0]);
+    assert(high[0] / low[0] == low[0] - low[0] + high[0] / low[0]);
+
+    return 0;
+}

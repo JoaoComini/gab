@@ -18,8 +18,14 @@ typedef struct TypePrimitiveNames {
     String *f32_name;
     String *bool_name;
     String *u8_name;
+    String *usize_name;
     String *str_name;
     String *slice_name;
+    String *raw_name;
+
+    /* The interface whose implementor runs its own ending, which makes the type one that owns. */
+    String *destroy_name;
+    String *destroy_method;
     String *array_name;
     String *error_name;
 } TypePrimitiveNames;
@@ -54,6 +60,9 @@ Function *type_registry_find_owned(TypeRegistry *registry, const Type *type, con
 bool type_registry_declare_conformance(TypeRegistry *registry, const Type *type, const String *interface);
 
 bool type_registry_conforms(TypeRegistry *registry, const Type *type, const String *interface);
+
+/* What this type runs as it ends, or NULL where it declares no ending of its own. */
+Function *type_registry_destructor(TypeRegistry *registry, const Type *type);
 
 /* True when a declaration's signature names no type parameter, so every instantiation shares it. */
 bool type_registry_owned_is_shared(const Function *declaration, const Type *type);
@@ -102,7 +111,7 @@ const Type *type_registry_slice_of(TypeRegistry *registry, const Type *element);
 const Type *type_registry_box_to(TypeRegistry *registry, const Type *inner);
 const Type *type_registry_ref_to(TypeRegistry *registry, const Type *inner);
 
-const Type *type_registry_ptr_to(TypeRegistry *registry, const Type *pointee);
+const Type *type_registry_raw_of(TypeRegistry *registry, const Type *pointee);
 
 const Type *type_registry_param(TypeRegistry *registry, size_t index);
 

@@ -36,6 +36,7 @@ typedef struct {
     const Type *i32_type;
 
     const Type *u8_type;
+    const Type *usize_type;
     const Type *f32_type;
     const Type *bool_type;
 
@@ -46,6 +47,12 @@ typedef struct {
 
     /* Every array shares one declaration, which is what carries the conformance all of them have. */
     const TypeDecl *array_decl;
+
+    /* Every raw run shares one declaration, which is what carries the indexing all of them have. */
+    const TypeDecl *raw_decl;
+
+    String *destroy_name;
+    String *destroy_method;
 
     const Type *error_type;
 } TypePrimitives;

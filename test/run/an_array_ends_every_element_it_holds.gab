@@ -1,0 +1,20 @@
+module test;
+import testing;
+
+struct Counted { seen: &i32 }
+
+impl Counted as Destroy {
+    func destroy(self: &Self) {
+        *self.seen = *self.seen + 1;
+    }
+}
+
+func run(): i32 {
+    let seen: i32 = 0;
+
+    { let xs: array<Counted, 3> = [Counted { seen: seen }, Counted { seen: seen }, Counted { seen: seen }]; }
+
+    assert(seen == 3);
+
+    return 0;
+}

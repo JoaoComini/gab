@@ -16,6 +16,11 @@ struct Location {
     column: i32,
 }
 
+/* What a type does as it ends, run before what it owns is released. */
+interface Destroy {
+    func destroy(self: &Self);
+}
+
 /* 'str' reads as a slice of bytes, so what a slice declares precedes it. */
 interface Index<T> {
     func index(self: &Self, at: i32): &T;
@@ -27,6 +32,11 @@ impl<T> slice<T> {
 
 impl<T> slice<T> as Index<T> {
     intrinsic func index(self: &slice<T>, at: i32): &T;
+}
+
+/* A raw run has no length, so nothing bounds its index and nothing it holds is dropped through it. */
+impl<T> raw<T> as Index<T> {
+    intrinsic func index(self: &Self, at: i32): &T;
 }
 
 impl<T, N: i32> array<T, N> {

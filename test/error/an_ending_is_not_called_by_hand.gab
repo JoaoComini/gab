@@ -1,0 +1,16 @@
+struct Counted { seen: *i32 }
+
+impl Counted as Destroy {
+    func destroy(self: &Self) { }
+}
+
+func f(): i32 {
+    let c: Counted = Counted { seen: box 0 };
+
+    c.destroy();
+
+    return 0;
+}
+
+// error
+// :10:6: type error: 'destroy' runs where the value ends, so nothing calls it by hand

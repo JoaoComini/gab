@@ -1,0 +1,15 @@
+module test;
+import testing;
+
+struct Pair { a: i32, b: i32 }
+
+func run(): i32 {
+    let one: usize = 1;
+
+    assert(@size_of<i32>() == one * 4);
+    assert(@size_of<u8>() == one);
+    assert(@size_of<Pair>() == one * 8);
+    assert(@size_of<array<i32, 3>>() == one * 12);
+
+    return 0;
+}

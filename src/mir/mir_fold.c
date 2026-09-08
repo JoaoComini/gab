@@ -196,6 +196,11 @@ static bool fold_binary(const KnownValue *left, const KnownValue *right, MIRInst
     if (constant_is_int(left->constant)) {
         int32_t folded;
 
+        /* This folds signed, so a count's division is left for the backend, which divides it unsigned. */
+        if (type_is_unsigned(left->constant.type) && (inst->op == MIR_DIV || inst->op == MIR_MOD)) {
+            return false;
+        }
+
         if (!fold_int_binary(inst->op, left->constant.as_int, right->constant.as_int, &folded)) {
             return false;
         }

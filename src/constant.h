@@ -18,14 +18,14 @@ typedef struct {
     const Type *type;
 
     union {
-        int32_t as_int;
+        int64_t as_int;
         float as_float;
         bool as_bool;
         String *as_string;
     };
 } Constant;
 
-static inline Constant constant_int(const Type *type, int32_t value) {
+static inline Constant constant_int(const Type *type, int64_t value) {
     return (Constant){.type = type, .as_int = value};
 }
 

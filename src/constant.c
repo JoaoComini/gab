@@ -4,7 +4,7 @@
 
 #include <string.h>
 
-bool constant_is_int(Constant constant) { return constant.type && type_kind(constant.type) == TYPE_I32; }
+bool constant_is_int(Constant constant) { return constant.type && type_is_integer(constant.type); }
 
 bool constant_is_float(Constant constant) { return constant.type && type_kind(constant.type) == TYPE_F32; }
 

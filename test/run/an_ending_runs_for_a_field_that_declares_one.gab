@@ -1,0 +1,22 @@
+module test;
+import testing;
+
+struct Leaf { seen: &i32 }
+
+impl Leaf as Destroy {
+    func destroy(self: &Self) {
+        *self.seen = *self.seen + 1;
+    }
+}
+
+struct Branch { left: Leaf, right: Leaf }
+
+func run(): i32 {
+    let seen: i32 = 0;
+
+    { let b: Branch = Branch { left: Leaf { seen: seen }, right: Leaf { seen: seen } }; }
+
+    assert(seen == 2);
+
+    return 0;
+}

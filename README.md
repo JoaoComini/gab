@@ -119,14 +119,14 @@ for let i: i32 = 0; i < n; i = i + 1 { ... }
 
 | | |
 | --- | --- |
-| Types | `i32`, `f32`, `bool`, `u8`, characters named by `&str`, `array<T, N>`, elements named by `&slice<T>`, structs, owning `*T`, borrows `&T` |
+| Types | `i32`, `f32`, `bool`, `u8`, `usize`, characters named by `&str`, `array<T, N>`, elements named by `&slice<T>`, a run of them named by `raw<T>`, structs, owning `*T`, borrows `&T` |
 | Declarations | `let` with inferred or annotated type, `func`, `struct`, `impl`, `interface`, `module`. A struct local is written as a literal |
 | Interfaces | `interface` names signatures and may take type parameters, `impl T as I<A>` supplies them and is checked at the declaration. `<T: I<A>>` bounds a parameter, and a generic body is checked once against its bounds |
 | Generics | Structs, the methods they own, and free functions, monomorphized per instantiation. A call infers its type arguments, or names them as `id<i32>(x)` |
 | Control flow | `if` / `else`, `for` in three forms, `break`, `continue`, `return`, nested blocks with shadowing |
-| Operators | `+` `-` `*` `/` `%`, unary `-` `!`, `==` `!=` `<` `>` `<=` `>=`, `&&` `\|\|`, unary `*`, field access, indexing `xs[i]` |
+| Operators | `+` `-` `*` `/` `%`, unary `-` `!`, `==` `!=` `<` `>` `<=` `>=`, `&&` `\|\|`, unary `*`, field access, indexing `xs[i]`, `@size_of<T>()` |
 | Conversions | `i32(x)` and `f32(x)`; nothing converts implicitly |
-| Memory | Unique ownership, `box`, `&` borrows, binding that copies or transfers by type, scope-based free |
+| Memory | Unique ownership, `box`, `&` borrows, binding that copies or transfers by type, scope-based free. `impl T as Destroy` names what a type runs as it ends |
 | Modules | `module` names the namespace a unit declares into, `import` the ones it may name |
 | Comments | `// line` and `/* block */`, which do not nest |
 
@@ -134,9 +134,9 @@ Not yet implemented:
 
 | | |
 | --- | --- |
-| Integers | Only `i32` and `f32` do arithmetic. The rest of the width matrix — `i8`, `i64`, `u32`, `f64` — is named but not built |
+| Integers | Only `i32`, `u8`, `usize` and `f32` do arithmetic. The rest of the width matrix — `i8`, `i64`, `u32`, `f64` — is named but not built. `usize` is the host's pointer width rather than the target's |
 | Strings | `as_bytes` and `len` only: no searching, no interpolation, no indexing |
-| Collections | Nothing grows. `array<T, N>` is fixed and `&slice<T>` reads it; there is no vector and no map |
+| Collections | Nothing grows. `array<T, N>` is fixed and `&slice<T>` reads it; there is no vector and no map. `raw<T>` names a run but nothing produces one |
 | Uninitialized locals | A local with no initialiser holds whatever its storage held; nothing zeroes it |
 | Operators | Bitwise |
 

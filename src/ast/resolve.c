@@ -300,6 +300,16 @@ static const char *type_name(ResolverState *state, const Type *type) {
         return out;
     }
 
+    if (type_kind(type) == TYPE_RAW) {
+        const char *element = type_name(state, type_pointee(type));
+        size_t length = strlen(element) + 16;
+        char *out = arena_alloc(state->compile_arena, length);
+
+        snprintf(out, length, "raw<%s>", element);
+
+        return out;
+    }
+
     if (type_name_of(type)) {
         return type_name_of(type)->data;
     }
@@ -977,7 +987,8 @@ static void rewrite_index_as_call(ResolverState *state, ASTExpr *expr) {
 
 /* A declaration is an intrinsic only where this names one of these, so the two cannot drift. */
 static const IntrinsicLowering INTRINSICS[] = {
-    {"array", "index"}, {"array", "len"}, {"slice", "index"}, {"slice", "len"}, {"str", "as_bytes"},
+    {"array", "index"}, {"array", "len"}, {"slice", "index"},
+    {"slice", "len"},   {"raw", "index"}, {"str", "as_bytes"},
 };
 
 static const IntrinsicLowering *intrinsic_for(const String *owner, const String *name) {
@@ -1023,6 +1034,14 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 
         diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "%s has no method '%s'",
                    type_name(state, base), method_name->data);
+        fact_set_type(state->facts, expr, resolver_error_type(state));
+        return;
+    }
+
+    /* The ending runs where the value ends, so calling it here would run it twice on that value. */
+    if (method == type_registry_destructor(state->current_scope->type_registry, base)) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                   "'destroy' runs where the value ends, so nothing calls it by hand");
         fact_set_type(state->facts, expr, resolver_error_type(state));
         return;
     }
@@ -1227,9 +1246,33 @@ static bool borrow_into(ResolverState *state, ASTExpr *expr, const Type *destina
     return true;
 }
 
-bool is_numeric_type(const Type *t) { return type_kind(t) == TYPE_I32 || type_kind(t) == TYPE_F32; }
+/* Listing every kind rather than the ones that answer true, so a kind added later must be placed here. */
+bool is_integer_type(const Type *t) {
+    switch (type_kind(t)) {
+    case TYPE_I32:
+    case TYPE_U8:
+    case TYPE_USIZE:
+        return true;
 
-bool is_integer_type(const Type *t) { return type_kind(t) == TYPE_I32; }
+    case TYPE_F32:
+    case TYPE_BOOL:
+    case TYPE_STR:
+    case TYPE_ARRAY:
+    case TYPE_SLICE:
+    case TYPE_STRUCT:
+    case TYPE_BOX:
+    case TYPE_REF:
+    case TYPE_RAW:
+    case TYPE_PARAM:
+    case TYPE_UNKNOWN:
+    case TYPE_ERROR:
+        return false;
+    }
+
+    return false;
+}
+
+bool is_numeric_type(const Type *t) { return is_integer_type(t) || type_kind(t) == TYPE_F32; }
 
 bool is_boolean_type(const Type *t) { return type_kind(t) == TYPE_BOOL; }
 
@@ -1383,8 +1426,10 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
 
     switch (expr->kind) {
     case EXPR_BIN_OP: {
-        resolve_expr(state, expr->bin_op.left, NULL);
-        resolve_expr(state, expr->bin_op.right, NULL);
+        resolve_expr(state, expr->bin_op.left, expected);
+
+        /* The left side types the right, so a literal beside a count is that count's width. */
+        resolve_expr(state, expr->bin_op.right, fact_type_of(state->facts, expr->bin_op.left));
 
         const Type *left_type = fact_type_of(state->facts, expr->bin_op.left);
         const Type *right_type = fact_type_of(state->facts, expr->bin_op.right);
@@ -1454,6 +1499,35 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             break;
         }
 
+        if (string_ref_equals_cstr(expr->builtin.name, "size_of")) {
+            if (!expr->builtin.type_expr || expr->builtin.type_expr->apply.args.size != 1) {
+                diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                           "'@size_of<T>()' measures one type, as '@size_of<i32>()'");
+
+                fact_set_type(state->facts, expr, resolver_error_type(state));
+                break;
+            }
+
+            const Type *measured =
+                resolve_type_expr(state, expr->builtin.type_expr->apply.args.data[0], expr->span);
+
+            if (is_error_type(measured)) {
+                fact_set_type(state->facts, expr, resolver_error_type(state));
+                break;
+            }
+
+            const Type *counted =
+                type_registry_get_primitive(state->current_scope->type_registry, TYPE_USIZE);
+
+            /* The size is known here, so it is recorded beside the node rather than measured again. */
+            fact_set_constant(state->facts, expr,
+                              constant_int(counted, (int32_t)type_registry_size_of(
+                                                        state->current_scope->type_registry, measured)));
+
+            fact_set_type(state->facts, expr, counted);
+            break;
+        }
+
         diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "the compiler supplies no '@%.*s'",
                    (int)expr->builtin.name.length, expr->builtin.name.data);
 
@@ -1515,6 +1589,13 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             if (expr->call.args.size) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "'@%.*s()' takes no arguments",
                            (int)expr->call.target->builtin.name.length, expr->call.target->builtin.name.data);
+            }
+
+            /* A constant one answers with the constant itself, which the call is worth just as much. */
+            Constant answered;
+
+            if (fact_constant_of(state->facts, expr->call.target, &answered)) {
+                fact_set_constant(state->facts, expr, answered);
             }
 
             fact_set_type(state->facts, expr, fact_type_of(state->facts, expr->call.target));
@@ -1913,6 +1994,12 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
 
         TypeKind kind = literal_type_kind(expr->lit.kind);
 
+        /* A whole number takes the integer type its context asks for, rather than a width of its own. */
+        if (expr->lit.kind == LITERAL_INT && expected && is_integer_type(expected)) {
+            fact_set_type(state->facts, expr, expected);
+            break;
+        }
+
         /* Text is read through a reference, since the unit holds it and the value names where. */
         fact_set_type(state->facts, expr,
                       kind == TYPE_STR
@@ -2074,6 +2161,22 @@ static const Type *resolve_slice_type(ResolverState *state, TypeExpr *expr, Span
     return type_registry_slice_of(state->current_scope->type_registry, element);
 }
 
+/* A raw run names where elements start and nothing more: no length, and nothing it owns. */
+static const Type *resolve_raw_type(ResolverState *state, TypeExpr *expr, Span span) {
+    if (expr->apply.args.size != 1 || expr->apply.args.data[0]->kind == TYPE_EXPR_CONST) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'raw' takes one element type, as 'raw<i32>'");
+        return resolver_error_type(state);
+    }
+
+    const Type *element = resolve_element_type(state, expr->apply.args.data[0], span, "a raw run's element");
+
+    if (!element) {
+        return resolver_error_type(state);
+    }
+
+    return type_registry_raw_of(state->current_scope->type_registry, element);
+}
+
 static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) {
     if (!expr) {
         return NULL;
@@ -2101,6 +2204,10 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
 
         if (string_ref_equals_cstr(expr->apply.base->name, "slice")) {
             return resolve_slice_type(state, expr, span);
+        }
+
+        if (string_ref_equals_cstr(expr->apply.base->name, "raw")) {
+            return resolve_raw_type(state, expr, span);
         }
 
         Scope *base_scope = resolver_expr_scope(state, expr->apply.base->name);
@@ -2932,6 +3039,13 @@ static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
                    type_name_of(owner)->data, member->data);
 
         return NULL;
+    }
+
+    /* The ending runs where the value ends, so calling it here would run it twice on that value. The
+     * function is still named, so what follows reports nothing further about a name it did resolve. */
+    if (found == type_registry_destructor(state->current_scope->type_registry, owner)) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
+                   "'destroy' runs where the value ends, so nothing calls it by hand");
     }
 
     return found;

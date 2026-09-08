@@ -1,0 +1,19 @@
+module test;
+import testing;
+
+func run(): i32 {
+    let a: usize = 40;
+    let b: usize = 2;
+
+    assert(a + b == 42);
+    assert(a - b == 38);
+    assert(a * b == 80);
+    assert(a / b == 20);
+    assert(a % b == 0);
+
+    assert(a > b);
+    assert(b < a);
+    assert(a != b);
+
+    return 0;
+}

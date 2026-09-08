@@ -49,9 +49,11 @@ static LLVMTypeRef llvm_type_of(LLVMEmitter *emitter, const Type *type) {
         return LLVMInt1TypeInContext(emitter->context);
     case TYPE_U8:
         return LLVMInt8TypeInContext(emitter->context);
+    case TYPE_USIZE:
+        return LLVMIntTypeInContext(emitter->context, (unsigned)(sizeof(void *) * 8));
 
     case TYPE_BOX:
-    case TYPE_PTR:
+    case TYPE_RAW:
     case TYPE_REF: {
         LLVMTypeRef pointer = LLVMPointerTypeInContext(emitter->context, 0);
 
@@ -148,6 +150,7 @@ static LLVMValueRef slice_length(LLVMEmitter *emitter, MIROperand operand) {
 }
 
 static LLVMValueRef drop_glue_of(LLVMEmitter *emitter, const Type *type);
+static LLVMValueRef callee_value(LLVMEmitter *emitter, const Function *callee, LLVMTypeRef *out_signature);
 
 /* Drops whatever a value of this type owns, reached from its address. */
 static void emit_drop_body(LLVMEmitter *emitter, const Type *type, LLVMValueRef self) {
@@ -174,8 +177,44 @@ static void emit_drop_body(LLVMEmitter *emitter, const Type *type, LLVMValueRef 
         return;
     }
 
+    /* Every element of a run is live, so the walk is the whole length rather than a tracked part of it. */
+    if (type_kind(type) == TYPE_ARRAY) {
+        const Type *element = type_array_element(type);
+
+        if (!type_registry_owns(emitter->registry, element)) {
+            return;
+        }
+
+        LLVMTypeRef held = llvm_type_of(emitter, type);
+        LLVMValueRef glue = drop_glue_of(emitter, element);
+        LLVMTypeRef signature = LLVMFunctionType(LLVMVoidTypeInContext(emitter->context), &pointer, 1, false);
+
+        LLVMTypeRef i32 = LLVMInt32TypeInContext(emitter->context);
+
+        for (int32_t i = 0; i < type_array_length(type); i++) {
+            LLVMValueRef indices[2] = {LLVMConstInt(i32, 0, false),
+                                       LLVMConstInt(i32, (unsigned long long)i, false)};
+
+            LLVMValueRef address = LLVMBuildGEP2(emitter->builder, held, self, indices, 2, "");
+
+            LLVMBuildCall2(emitter->builder, signature, glue, &address, 1, "");
+        }
+
+        return;
+    }
+
     if (type_kind(type) != TYPE_STRUCT) {
         return;
+    }
+
+    /* What the type does as it ends runs before its fields go, so it still reaches what it holds. */
+    Function *destroy = type_registry_destructor(emitter->registry, type);
+
+    if (destroy) {
+        LLVMTypeRef signature;
+        LLVMValueRef callee = callee_value(emitter, destroy, &signature);
+
+        LLVMBuildCall2(emitter->builder, signature, callee, &self, 1, "");
     }
 
     LLVMTypeRef held = llvm_type_of(emitter, type);
@@ -357,20 +396,35 @@ static bool operands_are_float(LLVMEmitter *emitter, const MIRInst *inst) {
     return info && info->type && type_kind(info->type) == TYPE_F32;
 }
 
-static LLVMIntPredicate int_predicate(CmpPredicate predicate) {
+/* Whether an instruction's operands count rather than measure, which orders and divides them unsigned. */
+static bool operands_are_unsigned(LLVMEmitter *emitter, const MIRInst *inst) {
+    if (inst->arg_count == 0) {
+        return false;
+    }
+
+    if (inst->args[0].kind == OPERAND_CONST) {
+        return type_is_unsigned(inst->args[0].constant.type);
+    }
+
+    const MIRValueInfo *info = mir_value_info(emitter->ir, inst->args[0].value);
+
+    return info && type_is_unsigned(info->type);
+}
+
+static LLVMIntPredicate int_predicate(CmpPredicate predicate, bool is_unsigned) {
     switch (predicate) {
     case MIR_CMP_LT:
-        return LLVMIntSLT;
+        return is_unsigned ? LLVMIntULT : LLVMIntSLT;
     case MIR_CMP_GT:
-        return LLVMIntSGT;
+        return is_unsigned ? LLVMIntUGT : LLVMIntSGT;
     case MIR_CMP_EQ:
         return LLVMIntEQ;
     case MIR_CMP_NE:
         return LLVMIntNE;
     case MIR_CMP_LE:
-        return LLVMIntSLE;
+        return is_unsigned ? LLVMIntULE : LLVMIntSLE;
     case MIR_CMP_GE:
-        return LLVMIntSGE;
+        return is_unsigned ? LLVMIntUGE : LLVMIntSGE;
     }
 
     return LLVMIntEQ;
@@ -470,15 +524,21 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
     case MIR_DIV:
         values[inst->result.id] = floating ? LLVMBuildFDiv(builder, operand_value(emitter, inst->args[0]),
                                                            operand_value(emitter, inst->args[1]), "")
-                                           : LLVMBuildSDiv(builder, operand_value(emitter, inst->args[0]),
-                                                           operand_value(emitter, inst->args[1]), "");
+                                  : operands_are_unsigned(emitter, inst)
+                                      ? LLVMBuildUDiv(builder, operand_value(emitter, inst->args[0]),
+                                                      operand_value(emitter, inst->args[1]), "")
+                                      : LLVMBuildSDiv(builder, operand_value(emitter, inst->args[0]),
+                                                      operand_value(emitter, inst->args[1]), "");
         break;
 
     case MIR_MOD:
         values[inst->result.id] = floating ? LLVMBuildFRem(builder, operand_value(emitter, inst->args[0]),
                                                            operand_value(emitter, inst->args[1]), "")
-                                           : LLVMBuildSRem(builder, operand_value(emitter, inst->args[0]),
-                                                           operand_value(emitter, inst->args[1]), "");
+                                  : operands_are_unsigned(emitter, inst)
+                                      ? LLVMBuildURem(builder, operand_value(emitter, inst->args[0]),
+                                                      operand_value(emitter, inst->args[1]), "")
+                                      : LLVMBuildSRem(builder, operand_value(emitter, inst->args[0]),
+                                                      operand_value(emitter, inst->args[1]), "");
         break;
 
     case MIR_NEG:
@@ -491,12 +551,14 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         break;
 
     case MIR_CMP:
-        values[inst->result.id] = floating ? LLVMBuildFCmp(builder, real_predicate(inst->predicate),
-                                                           operand_value(emitter, inst->args[0]),
-                                                           operand_value(emitter, inst->args[1]), "")
-                                           : LLVMBuildICmp(builder, int_predicate(inst->predicate),
-                                                           operand_value(emitter, inst->args[0]),
-                                                           operand_value(emitter, inst->args[1]), "");
+        values[inst->result.id] =
+            floating
+                ? LLVMBuildFCmp(builder, real_predicate(inst->predicate),
+                                operand_value(emitter, inst->args[0]), operand_value(emitter, inst->args[1]),
+                                "")
+                : LLVMBuildICmp(builder, int_predicate(inst->predicate, operands_are_unsigned(emitter, inst)),
+                                operand_value(emitter, inst->args[0]), operand_value(emitter, inst->args[1]),
+                                "");
         break;
 
     case MIR_ITOF:

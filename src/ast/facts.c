@@ -11,6 +11,7 @@ void facts_init(Facts *facts, Arena *arena) {
     expr_move_init_alloc(&facts->moves, allocator, FACTS_INITIAL_CAPACITY);
     expr_adjust_init_alloc(&facts->adjustments, allocator, FACTS_INITIAL_CAPACITY);
     expr_call_init_alloc(&facts->calls, allocator, FACTS_INITIAL_CAPACITY);
+    expr_const_init_alloc(&facts->constants, allocator, FACTS_INITIAL_CAPACITY);
     stmt_fact_init_alloc(&facts->returns, allocator, FACTS_INITIAL_CAPACITY);
 }
 
@@ -32,7 +33,18 @@ FACT_SETTER(fact_set_callee, expr_callee, callees, const ASTExpr *, Function *)
 FACT_SETTER(fact_set_moves, expr_move, moves, const ASTExpr *, bool)
 FACT_SETTER(fact_set_adjustment, expr_adjust, adjustments, const ASTExpr *, Adjustment)
 FACT_SETTER(fact_set_call_kind, expr_call, calls, const ASTExpr *, CallKind)
+FACT_SETTER(fact_set_constant, expr_const, constants, const ASTExpr *, Constant)
 FACT_SETTER(fact_set_return_type, stmt_fact, returns, const ASTStmt *, const Type *)
+
+bool fact_constant_of(const Facts *facts, const ASTExpr *expr, Constant *out) {
+    Constant *constant = expr_const_lookup((ExprConstMap *)&facts->constants, expr);
+
+    if (constant && out) {
+        *out = *constant;
+    }
+
+    return constant != NULL;
+}
 
 const Type *fact_type_of(const Facts *facts, const ASTExpr *expr) {
     const Type **type = expr_fact_lookup((ExprTypeMap *)&facts->types, expr);

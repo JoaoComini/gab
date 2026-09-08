@@ -679,6 +679,23 @@ static MIRValueId lower_array_lit(Lowering *lowering, ASTExpr *expr) {
 
 /* A slice is where the elements start and how many there are, which the resolver already counted. */
 static MIRValueId lower_unadjusted(Lowering *lowering, ASTExpr *expr) {
+    Constant answered;
+
+    /* One resolution answered outright is that value, whatever the node it was written as. */
+    if (fact_constant_of(lowering->facts, expr, &answered)) {
+        MIRValueId result = lower_temp(lowering, answered.type, expr->span);
+
+        emit(lowering, (MIRInst){.op = MIR_CONST_INT,
+                                 .type = answered.type,
+                                 .result = result,
+                                 .constant = {.as_int = answered.as_int},
+                                 .span = expr->span});
+
+        note_constant(lowering, result, answered);
+
+        return result;
+    }
+
     switch (expr->kind) {
     case EXPR_LITERAL:
         return lower_literal(lowering, expr);
@@ -783,7 +800,7 @@ static MIRValueId lower_expr(Lowering *lowering, ASTExpr *expr) {
                                                 : fact_type_of(lowering->facts, expr);
 
         /* The slice names where the elements start, which is a pointer rather than a slice itself. */
-        const Type *elements = type_registry_ptr_to(lowering->registry, reached);
+        const Type *elements = type_registry_raw_of(lowering->registry, reached);
 
         operands[0] = lower_temp(lowering, elements, expr->span);
 
