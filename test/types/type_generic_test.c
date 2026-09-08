@@ -23,7 +23,7 @@ static void test_a_declared_field_nests_constructors() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    const KnownNames names = known_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
 
     const Type *param = type_registry_param(registry, 0);
@@ -62,7 +62,7 @@ static void test_a_declaration_taking_no_parameters_is_its_own_instantiation() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    const KnownNames names = known_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
 
     const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
@@ -93,7 +93,7 @@ static void test_two_declarations_alike_are_two_types() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    const KnownNames names = known_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
 
     const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
@@ -123,7 +123,7 @@ static void test_an_instantiation_reads_fields_declared_after_it() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    const KnownNames names = known_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
 
     TypeDecl decl = {.name = string_from_cstr(&ctx.strings, "Config")};
@@ -155,7 +155,7 @@ static void test_an_instantiation_does_not_share_the_declarations_fields() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    const KnownNames names = known_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
 
     const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
@@ -192,7 +192,7 @@ static void test_an_instantiation_carries_its_arguments() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    const KnownNames names = known_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
 
     const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
@@ -218,7 +218,7 @@ static void test_a_declared_method_is_substituted_per_instantiation() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    const KnownNames names = known_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
     FunctionRegistry *functions = function_registry_create(ctx.arena, registry);
 
@@ -266,7 +266,7 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    const KnownNames names = known_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
     FunctionRegistry *functions = function_registry_create(ctx.arena, registry);
 
@@ -308,7 +308,7 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    const KnownNames names = known_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
     FunctionRegistry *functions = function_registry_create(ctx.arena, registry);
 
@@ -350,7 +350,7 @@ static void test_a_method_declared_on_one_instantiation_answers_on_every_one() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    const KnownNames names = known_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
 
     const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
@@ -386,7 +386,7 @@ static void test_a_substituted_signature_is_read_once_per_type() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    const KnownNames names = known_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
     FunctionRegistry *functions = function_registry_create(ctx.arena, registry);
 
@@ -428,7 +428,7 @@ static void test_two_instantiations_share_one_generic_form(void) {
     TestContext ctx;
     test_context_init(&ctx);
 
-    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    const KnownNames names = known_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
 
     const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
@@ -454,7 +454,7 @@ static void test_an_instantiation_reads_fields_declared_after_it_is_applied(void
     TestContext ctx;
     test_context_init(&ctx);
 
-    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    const KnownNames names = known_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
 
     const Type *param = type_registry_param(registry, 0);
@@ -480,7 +480,7 @@ static void test_a_specialization_does_not_inherit_a_summary() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    const TypePrimitiveNames names = type_primitive_names(&ctx.strings);
+    const KnownNames names = known_names(&ctx.strings);
     TypeRegistry *registry = type_registry_create(ctx.arena, &names);
     FunctionRegistry *functions = function_registry_create(ctx.arena, registry);
 

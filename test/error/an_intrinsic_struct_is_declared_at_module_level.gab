@@ -1,0 +1,8 @@
+func f(): i32 {
+    intrinsic struct Unique<T> { ptr: raw<T> }
+
+    return 0;
+}
+
+// error
+// :2:5: syntax error: an intrinsic cannot be declared inside a function; declare it at module level

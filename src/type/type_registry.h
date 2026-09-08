@@ -13,22 +13,35 @@
 
 typedef struct TypeRegistry TypeRegistry;
 
-typedef struct TypePrimitiveNames {
-    String *i32_name;
-    String *f32_name;
-    String *bool_name;
-    String *u8_name;
-    String *usize_name;
-    String *str_name;
-    String *slice_name;
-    String *raw_name;
+typedef struct IntrinsicLowering IntrinsicLowering;
 
-    /* The interface whose implementor runs its own ending, which makes the type one that owns. */
-    String *destroy_name;
+/* Every name the compiler knows, interned once so a site compares pointers rather than characters. */
+typedef struct KnownNames {
+    /* Spelled by the source itself, and fixed by the grammar. */
+    String *i32;
+    String *f32;
+    String *boolean;
+    String *u8;
+    String *usize;
+    String *str;
+    String *slice;
+    String *raw;
+    String *array;
+    String *self;
+    String *error;
+
+    /* Declared by the core and found by name, so the two drift if either moves alone. */
+    String *destroy;
     String *destroy_method;
-    String *array_name;
-    String *error_name;
-} TypePrimitiveNames;
+    String *unique;
+    String *index;
+    String *len;
+    String *as_bytes;
+
+    /* Written as '@name', which the compiler answers rather than binds. */
+    String *caller;
+    String *size_of;
+} KnownNames;
 
 typedef struct Binding Binding;
 
@@ -85,9 +98,20 @@ const TypeLayout *type_registry_layout_of(TypeRegistry *registry, const Type *ty
 size_t type_registry_size_of(TypeRegistry *registry, const Type *type);
 size_t type_registry_align_of(TypeRegistry *registry, const Type *type);
 
-TypeRegistry *type_registry_create(Arena *arena, const TypePrimitiveNames *names);
+TypeRegistry *type_registry_create(Arena *arena, const KnownNames *names);
 
-TypePrimitiveNames type_primitive_names(StringPool *strings);
+KnownNames known_names(StringPool *strings);
+
+/* The lowering for a call the compiler expands rather than binds, none where the pair names no intrinsic. */
+const IntrinsicLowering *type_registry_intrinsic(const TypeRegistry *registry, const String *owner,
+                                                 const String *name);
+
+/* The names the registry was built with, which every site matching one compares against by pointer. */
+const KnownNames *type_registry_names(const TypeRegistry *registry);
+
+/* Whether the type is the owner the compiler writes a drop for, rather than a struct that merely holds a run.
+ */
+bool type_registry_is_unique(const TypeRegistry *registry, const Type *type);
 
 void type_registry_destroy(TypeRegistry *registry);
 

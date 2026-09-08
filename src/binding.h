@@ -34,10 +34,12 @@ typedef struct FuncSignature {
 FuncSignature func_signature_instantiate(TypeRegistry *registry, Arena *arena, const FuncSignature *generic,
                                          const TypeArg *args, size_t arg_count);
 
+#define GAB_INTRINSIC_COUNT 6
+
 /* The owner and name of a call that stands for instructions rather than a body, which IR lowering expands. */
 typedef struct IntrinsicLowering {
-    const char *owner;
-    const char *name;
+    const String *owner;
+    const String *name;
 } IntrinsicLowering;
 
 typedef struct FuncDecl {

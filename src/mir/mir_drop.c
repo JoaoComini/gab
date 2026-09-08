@@ -1,5 +1,7 @@
 #include "mir/mir_drop.h"
 
+#include "function_registry.h"
+
 #include <string.h>
 
 static MIRInst *block_insert(Arena *arena, MIRBlock *block, size_t at, MIRInst inst) {
@@ -501,7 +503,27 @@ static void drop_releases_of_emptied_places(Arena *arena, MIRFunction *ir) {
     }
 }
 
-void mir_drop_elaborate(Arena *arena, TypeRegistry *registry, MIRFunction *ir) {
+/* The ending a drop runs, resolved for the type it actually drops so an instance of it is lowered rather
+ * than the declaration it was written as. What a drop reaches through it ends too, so each level is named. */
+static void resolve_endings(TypeRegistry *registry, FunctionRegistry *functions, MIRFunction *ir) {
+    const String *name = type_registry_names(registry)->destroy_method;
+
+    for (size_t b = 0; b < ir->block_count; b++) {
+        MIRBlock *block = ir->blocks[b];
+
+        for (size_t j = 0; j < block->inst_count; j++) {
+            MIRInst *inst = &block->insts[j];
+
+            if (inst->op != MIR_DROP) {
+                continue;
+            }
+
+            inst->ending = function_registry_owned_for(functions, registry, inst->type, name);
+        }
+    }
+}
+
+void mir_drop_elaborate(Arena *arena, TypeRegistry *registry, FunctionRegistry *functions, MIRFunction *ir) {
     for (size_t b = 0; b < ir->block_count; b++) {
         MIRBlock *block = ir->blocks[b];
 
@@ -539,4 +561,6 @@ void mir_drop_elaborate(Arena *arena, TypeRegistry *registry, MIRFunction *ir) {
     drop_releases_of_emptied_places(arena, ir);
 
     guard_conditional_drops(arena, ir);
+
+    resolve_endings(registry, functions, ir);
 }

@@ -42,12 +42,13 @@ ASTStmt *ast_func_decl_stmt_create(Arena *arena, Span span, StringRef name, Type
 }
 
 ASTStmt *ast_struct_decl_stmt_create(Arena *arena, Span span, StringRef name, const StringRef *params,
-                                     size_t param_count, ASTFieldList fields) {
+                                     size_t param_count, ASTFieldList fields, bool intrinsic) {
     ASTStmt *stmt = ast_stmt_create(arena, span);
     stmt->kind = STMT_STRUCT_DECL;
     stmt->struct_decl.name = name;
     stmt->struct_decl.fields = fields;
     stmt->struct_decl.param_count = param_count;
+    stmt->struct_decl.intrinsic = intrinsic;
 
     for (size_t i = 0; i < param_count; i++) {
         stmt->struct_decl.params[i] = params[i];

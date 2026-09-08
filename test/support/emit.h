@@ -52,7 +52,8 @@ static inline TestEmission test_lower_ir_named(const char *source, const char *n
     assert(emission.ir);
 
     mir_fold(emission.ctx.arena, emission.ir);
-    mir_drop_elaborate(emission.ctx.arena, emission.scope->type_registry, emission.ir);
+    mir_drop_elaborate(emission.ctx.arena, emission.scope->type_registry, emission.scope->functions,
+                       emission.ir);
 
     return emission;
 }
@@ -86,7 +87,7 @@ static inline TestEmission test_lower_unit(const char *source, MIRFunction **out
         }
 
         mir_fold(emission.ctx.arena, ir);
-        mir_drop_elaborate(emission.ctx.arena, emission.scope->type_registry, ir);
+        mir_drop_elaborate(emission.ctx.arena, emission.scope->type_registry, emission.scope->functions, ir);
 
         out[(*count)++] = ir;
     }

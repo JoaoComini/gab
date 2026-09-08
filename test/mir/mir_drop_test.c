@@ -38,7 +38,7 @@ static MIRFunction *elaborate(Elaborated *out, const char *source, const char *n
             mir_build_function(out->ctx.arena, out->scope->type_registry, &out->resolved->facts,
                                stmt->func_decl.function, &stmt->func_decl.params, stmt->func_decl.body);
 
-        mir_drop_elaborate(out->ctx.arena, out->scope->type_registry, ir);
+        mir_drop_elaborate(out->ctx.arena, out->scope->type_registry, out->scope->functions, ir);
 
         return ir;
     }

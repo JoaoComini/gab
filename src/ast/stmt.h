@@ -95,6 +95,9 @@ typedef struct {
     StringRef params[GAB_MAX_TYPE_PARAMS];
     size_t param_count;
 
+    /* The compiler supplies what this type means, which only a name it knows may claim. */
+    bool intrinsic;
+
     bool declared;
 } ASTStructDecl;
 
@@ -191,7 +194,7 @@ ASTStmt *ast_var_decl_stmt_create(Arena *arena, Span span, StringRef name, TypeE
 ASTStmt *ast_func_decl_stmt_create(Arena *arena, Span span, StringRef name, TypeExpr *return_type,
                                    ASTFieldList params, ASTStmt *body);
 ASTStmt *ast_struct_decl_stmt_create(Arena *arena, Span span, StringRef name, const StringRef *params,
-                                     size_t param_count, ASTFieldList fields);
+                                     size_t param_count, ASTFieldList fields, bool intrinsic);
 ASTStmt *ast_assign_stmt_create(Arena *arena, Span span, ASTExpr *target, ASTExpr *value);
 ASTStmt *ast_compound_assign_stmt_create(Arena *arena, Span span, ASTExpr *target, BinOp op, ASTExpr *value);
 ASTStmt *ast_if_stmt_create(Arena *arena, Span span, ASTExpr *condition, ASTStmt *then_block,

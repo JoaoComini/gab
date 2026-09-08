@@ -197,6 +197,11 @@ typedef struct {
         MIRBlockId targets[2];
     };
 
+    /* 'MIR_DROP': the ending the dropped type declares, specialized for it, none where it declares none.
+     * Resolved here rather than where the drop is emitted, so an instance of it is lowered like any callee.
+     */
+    Function *ending;
+
     Span span;
 } MIRInst;
 

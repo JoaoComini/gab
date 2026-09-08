@@ -35,8 +35,10 @@ static ASTStmt *parse_decl_statement(Parser *parser);
 static ASTStmt *parse_statement(Parser *parser);
 static ASTStmt *parse_var_decl_stmt(Parser *parser, ExprContext ctx);
 static ASTStmt *parse_func_decl_stmt(Parser *parser);
+static ASTStmt *parse_func_decl_stmt_after_intrinsic(Parser *parser, Span span);
 static ASTStmt *parse_func_signature_stmt(Parser *parser);
 static ASTStmt *parse_struct_decl_stmt(Parser *parser);
+static ASTStmt *parse_struct_decl_stmt_at(Parser *parser, bool intrinsic, Span span);
 static ASTStmt *parse_impl_stmt(Parser *parser);
 static ASTStmt *parse_interface_decl_stmt(Parser *parser);
 static ASTField *parse_field(Parser *parser, const char *name_message);
@@ -248,9 +250,22 @@ static ASTStmt *parse_decl_statement(Parser *parser) {
         stmt = parse_var_decl_stmt(parser, EXPR_ANY);
         break;
     }
+    case TOKEN_INTRINSIC: {
+        /* 'intrinsic' qualifies a struct as well as a function, and one token of source separates them. */
+        Span span = parser_span(parser);
+
+        parser_next_token(parser);
+
+        if (parser->current.type == TOKEN_STRUCT) {
+            stmt = parse_struct_decl_stmt_at(parser, true, span);
+            break;
+        }
+
+        stmt = parse_func_decl_stmt_after_intrinsic(parser, span);
+        break;
+    }
     case TOKEN_FUNC:
     case TOKEN_EXTERN:
-    case TOKEN_INTRINSIC:
     case TOKEN_CALLER: {
         stmt = parse_func_decl_stmt(parser);
         break;
@@ -309,6 +324,21 @@ static ASTStmt *parse_statement(Parser *parser) {
     case TOKEN_STRUCT: {
         stmt = parse_struct_decl_stmt(parser);
         break;
+    }
+    case TOKEN_INTRINSIC: {
+        Span span = parser_span(parser);
+
+        parser_error(parser, "an intrinsic cannot be declared inside a function; declare it at module level");
+
+        parser_next_token(parser);
+
+        if (parser->current.type == TOKEN_STRUCT) {
+            parse_struct_decl_stmt_at(parser, true, span);
+        } else {
+            parse_func_decl_stmt_after_intrinsic(parser, span);
+        }
+
+        return NULL;
     }
     case TOKEN_IMPL: {
         parser_error(parser,
@@ -756,9 +786,7 @@ static TypeExpr *parse_type_expr(Parser *parser) {
     return type;
 }
 
-static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
-    Span span = parser_span(parser);
-
+static ASTStmt *parse_struct_decl_stmt_at(Parser *parser, bool intrinsic, Span span) {
     parser_next_token(parser);
 
     if (!parser_expect(parser, TOKEN_IDENT, "expected a struct name")) {
@@ -807,7 +835,7 @@ static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
     parser_next_token(parser);
 
     return ast_struct_decl_stmt_create(parser->arena, span, name, type_params.names, type_params.count,
-                                       fields);
+                                       fields, intrinsic);
 }
 
 /* Prepended, so a member's own parameters continue the numbering of the ones its owner declares. */
@@ -887,14 +915,14 @@ static bool parse_func_syntax(Parser *parser, bool signature_only, unsigned *out
     return true;
 }
 
-static ASTStmt *parse_func_decl_stmt_inner(Parser *parser, bool signature_only) {
-    Span span = parser_span(parser);
-
+static ASTStmt *parse_func_decl_stmt_at(Parser *parser, bool signature_only, Span span, unsigned prefix) {
     unsigned syntax;
 
     if (!parse_func_syntax(parser, signature_only, &syntax)) {
         return NULL;
     }
+
+    syntax |= prefix;
 
     /* An intrinsic has no body either, though it is the compiler and not a linker that supplies it. */
     bool is_extern = (syntax & (FUNC_SYN_EXTERN | FUNC_SYN_INTRINSIC)) != 0;
@@ -1005,9 +1033,22 @@ static ASTStmt *parse_func_decl_stmt_inner(Parser *parser, bool signature_only) 
     return decl;
 }
 
-static ASTStmt *parse_func_decl_stmt(Parser *parser) { return parse_func_decl_stmt_inner(parser, false); }
+static ASTStmt *parse_struct_decl_stmt(Parser *parser) {
+    return parse_struct_decl_stmt_at(parser, false, parser_span(parser));
+}
 
-static ASTStmt *parse_func_signature_stmt(Parser *parser) { return parse_func_decl_stmt_inner(parser, true); }
+static ASTStmt *parse_func_decl_stmt(Parser *parser) {
+    return parse_func_decl_stmt_at(parser, false, parser_span(parser), FUNC_SYN_NONE);
+}
+
+/* 'intrinsic' is consumed before a struct and a function can be told apart, so its span is given back. */
+static ASTStmt *parse_func_decl_stmt_after_intrinsic(Parser *parser, Span span) {
+    return parse_func_decl_stmt_at(parser, false, span, FUNC_SYN_INTRINSIC);
+}
+
+static ASTStmt *parse_func_signature_stmt(Parser *parser) {
+    return parse_func_decl_stmt_at(parser, true, parser_span(parser), FUNC_SYN_NONE);
+}
 
 static ASTStmt *parse_impl_stmt(Parser *parser) {
     Span span = parser_span(parser);
