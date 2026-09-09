@@ -7,7 +7,7 @@
 
 #include <stdbool.h>
 
-/* One compilation: source text in, a native object out. The core is compiled by the same call that
+/* One compilation: source text in, a native object out. The prelude is compiled by the same call that
  * compiles a program, distinguished only by whether it may declare methods on the primitives. */
 typedef struct {
     const char *module;
@@ -21,11 +21,12 @@ typedef struct {
 
     const char *object;
 
-    /* Where the declarations a later compilation reads are written, when compiling the core. */
+    /* Where the declarations a later compilation reads are written. */
     const char *interface;
 
-    /* The core declares 'impl str' and 'impl<T> slice<T>', which a program may not. */
-    bool is_core;
+    /* The prelude declares 'impl str' and 'impl<T> slice<T>', which a program may not; it is also the
+     * one compilation that does not read the prelude, being what writes it. */
+    bool allow_primitive_impls;
 
     /* The module the source named, which the entry point a link writes must call into. */
     char module_name[64];

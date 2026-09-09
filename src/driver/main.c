@@ -1,6 +1,8 @@
 #include "driver/compile.h"
 #include "driver/link.h"
 
+#include "decl_id.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,12 +41,12 @@ int main(int argc, char **argv) {
     size_t extra_count = 0;
     const char *search[16];
     size_t search_count = 0;
-    bool is_core = false;
+    bool is_prelude = false;
     bool compile_only = false;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--core") == 0) {
-            is_core = true;
+            is_prelude = true;
         } else if (strcmp(argv[i], "-c") == 0) {
             compile_only = true;
         } else if (strcmp(argv[i], "-L") == 0 && i + 1 < argc && search_count < 16) {
@@ -66,8 +68,8 @@ int main(int argc, char **argv) {
         return usage();
     }
 
-    /* The core is a library, so it is only ever compiled. */
-    compile_only = compile_only || is_core;
+    /* The prelude is a library, so it is only ever compiled. */
+    compile_only = compile_only || is_prelude;
 
     const char *sources[16];
 
@@ -93,7 +95,7 @@ int main(int argc, char **argv) {
     Arena *arena = arena_create(4096);
 
     Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, arena, path_count ? paths[0] : "core");
+    diagnostics_init(&diagnostics, arena, path_count ? paths[0] : GAB_CORE_MODULE);
 
     /* Linking reads an object, so one is written beside the binary even where it was not asked for. */
     char scratch[512];
@@ -102,13 +104,13 @@ int main(int argc, char **argv) {
         snprintf(scratch, sizeof(scratch), "%s.o", output);
     }
 
-    /* The core's declarations are written beside its object, which is what a program later reads. */
+    /* The prelude's declarations are written where a program later reads them, beside its object. */
     char interface[512] = {0};
 
-    if (is_core) {
-        snprintf(interface, sizeof(interface), "%s/%s.gabi", gab_libdir(), "core");
+    if (is_prelude) {
+        snprintf(interface, sizeof(interface), "%s/%s.gabi", gab_libdir(), GAB_CORE_MODULE);
     } else if (compile_only) {
-        /* A unit compiled to an object states what importers may name, beside the object itself. */
+        /* A module compiled to an object states what importers may name, beside the object itself. */
         snprintf(interface, sizeof(interface), "%.*s.gabi", (int)strlen(output) - 2, output);
     }
 
@@ -119,7 +121,7 @@ int main(int argc, char **argv) {
         .names = paths,
         .object = compile_only ? output : scratch,
         .interface = interface[0] ? interface : NULL,
-        .is_core = is_core,
+        .allow_primitive_impls = is_prelude,
         .search = search,
         .search_count = search_count,
         .source_directory = directory,

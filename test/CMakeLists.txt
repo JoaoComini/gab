@@ -8,7 +8,7 @@ function(gab_test_binary TEST_NAME TEST_SOURCE)
     target_compile_options(${TEST_NAME} PRIVATE -UNDEBUG
         -DGAB_TEST_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}"
         -DGAB_TEST_CORE_INTERFACE="${GAB_LIB_DIR}/core.gabi"
-        -DGAB_TEST_CORE_SOURCE="${CMAKE_SOURCE_DIR}/src/core/core.gab")
+        -DGAB_TEST_CORE_SOURCE="${CMAKE_SOURCE_DIR}/lib/core.gab")
 
     target_link_libraries(${TEST_NAME} PRIVATE gab)
     target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

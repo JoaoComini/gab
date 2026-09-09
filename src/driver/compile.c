@@ -100,11 +100,14 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
 
     char *interface = NULL;
 
-    const Facts *core_facts = NULL;
-    const Facts *unit_facts = NULL;
+    const Facts *facts = NULL;
 
-    if (!request->is_core) {
-        /* A program reads what the core declares, never the source those declarations came from. */
+    /* The prelude is a module like any other; this compilation reads its declarations unless it is
+     * the one writing them. */
+    bool declares_prelude = request->allow_primitive_impls;
+
+    if (!declares_prelude) {
+        /* A program reads what the prelude declares, never the source those declarations came from. */
         char path[PATH_MAX];
         snprintf(path, sizeof(path), "%s/%s.gabi", gab_libdir(), GAB_CORE_MODULE);
 
@@ -123,34 +126,31 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
 
     ModuleScopeMap *modules = module_scope_map_create_alloc(arena_allocator(arena), 8);
 
-    /* Every generic the core and the imports declare, which this unit instantiates from rather than links. */
+    /* Every generic the prelude and the imports declare, which this module instantiates from rather
+     * than links. */
     MIRModule *generics = mir_module_create(arena);
 
     ASTModule *declaring = NULL;
 
-    ASTModule *core_module = NULL;
-    ASTModule *module_ast = NULL;
+    bool ok = true;
 
-    /* The core's declarations are resolved into the scope a program then names, and its bodies are
-     * emitted only when the core is what was asked for. */
-    const char *core_sources[1] = {
-        interface ? interface : (request->source_count ? request->sources[0] : NULL)};
+    if (!declares_prelude) {
+        const char *sources[1] = {interface};
 
-    bool ok =
-        compile_unit(arena, &strings, scope, NULL, core_sources, 1, true, request->is_core ? unit : NULL,
-                     diagnostics, NULL, 0, &core_module, NULL, NULL, generics, &core_facts);
+        ok = compile_unit(arena, &strings, scope, NULL, sources, 1, true, NULL, diagnostics, NULL, 0, NULL,
+                          NULL, NULL, generics, NULL);
+    }
 
     module_scope_map_insert(modules, string_from_cstr(&strings, GAB_CORE_MODULE), scope);
 
-    /* Each import is its own compilation: its declarations land in a scope of their own, which the
-     * unit then names, so a symbol keeps the module that defines it rather than taking this one's. */
-    if (ok && !request->is_core &&
-        !parse_module(request->sources, request->source_count, request->names, arena, &strings, &declaring,
-                      diagnostics)) {
+    /* Each import is its own compilation: its declarations land in a scope of their own, which this
+     * module then names, so a symbol keeps the module that defines it rather than taking this one's. */
+    if (ok && !parse_module(request->sources, request->source_count, request->names, arena, &strings,
+                            &declaring, diagnostics)) {
         ok = false;
     }
 
-    if (ok && !request->is_core) {
+    if (ok) {
         GabSearchPath path = {.directories = request->search,
                               .count = request->search_count,
                               .source_directory = request->source_directory};
@@ -263,15 +263,14 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
         }
     }
 
-    if (ok && !request->is_core) {
-        ok = compile_unit(arena, &strings, scope, modules, request->sources, request->source_count, false,
-                          unit, diagnostics, request->module_name, sizeof(request->module_name), &module_ast,
-                          request->names, declaring, generics, &unit_facts);
+    if (ok) {
+        ok = compile_unit(arena, &strings, scope, modules, request->sources, request->source_count,
+                          request->allow_primitive_impls, unit, diagnostics, request->module_name,
+                          sizeof(request->module_name), NULL, request->names, declaring, generics, &facts);
     }
 
     if (ok && request->interface) {
-        ok = gab_interface_write(request->is_core ? core_module : module_ast,
-                                 request->is_core ? core_facts : unit_facts, request->interface);
+        ok = gab_interface_write(declaring, facts, request->interface);
 
         if (!ok) {
             diag_error(diagnostics, GAB_ERR_CODEGEN, (Span){0, 0}, "could not write %s", request->interface);
@@ -281,10 +280,8 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
         char *written = ok ? gab_interface_read(request->interface) : NULL;
 
         if (written) {
-            const ASTModule *ast = request->is_core ? core_module : module_ast;
-
             char module[128];
-            snprintf(module, sizeof(module), "%.*s", (int)ast->name.length, ast->name.data);
+            snprintf(module, sizeof(module), "%.*s", (int)declaring->name.length, declaring->name.data);
 
             char symbol[512];
             gab_interface_symbol(symbol, sizeof(symbol), module, gab_interface_digest(written));
