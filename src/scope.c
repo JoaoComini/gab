@@ -193,7 +193,7 @@ bool scope_bind_argument(Scope *scope, String *name, TypeArg arg) {
     return true;
 }
 
-bool scope_bind_interface(Scope *scope, String *name, Interface *interface) {
+bool scope_bind_interface(Scope *scope, String *name, InterfaceDecl *interface) {
     if (interface_map_lookup(scope->interfaces, name)) {
         return false;
     }
@@ -203,9 +203,9 @@ bool scope_bind_interface(Scope *scope, String *name, Interface *interface) {
     return true;
 }
 
-Interface *scope_interface_lookup(Scope *scope, String *name) {
+InterfaceDecl *scope_interface_lookup(Scope *scope, String *name) {
     for (Scope *s = scope; s; s = s->parent) {
-        Interface **found = interface_map_lookup(s->interfaces, name);
+        InterfaceDecl **found = interface_map_lookup(s->interfaces, name);
 
         if (found) {
             return *found;

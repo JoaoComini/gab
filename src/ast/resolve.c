@@ -232,8 +232,8 @@ static Resolution resolver_resolve_name(ResolverState *state, Scope *scope, Stri
 }
 
 /* The prelude's interfaces are named without an import, as the methods it declares on a primitive are. */
-static Interface *resolver_lookup_interface(ResolverState *state, String *name) {
-    Interface *found = scope_interface_lookup(state->current_scope, name);
+static InterfaceDecl *resolver_lookup_interface(ResolverState *state, String *name) {
+    InterfaceDecl *found = scope_interface_lookup(state->current_scope, name);
 
     if (found || !state->module_scopes) {
         return found;
@@ -811,7 +811,7 @@ static Function *specialize_call(ResolverState *state, ASTExpr *expr, Function *
 static const Type *resolve_param_type_in(ResolverState *state, ASTField *param, bool generic);
 
 /* The signature as the implementor sees it: 'Self' and the interface's parameters substituted away. */
-static Function *interface_method_for(ResolverState *state, const Interface *interface, size_t index,
+static Function *interface_method_for(ResolverState *state, const InterfaceDecl *interface, size_t index,
                                       const Type *implementor, const TypeArg *args, size_t arg_count) {
     const Function *signature = interface->methods[index];
 
@@ -2790,9 +2790,9 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
 
     state->current_scope = enclosing;
 
-    Interface *interface = arena_alloc(arena, sizeof(Interface));
+    InterfaceDecl *interface = arena_alloc(arena, sizeof(InterfaceDecl));
 
-    *interface = (Interface){
+    *interface = (InterfaceDecl){
         .id = {.module = state->module_name, .name = name},
         .methods = methods,
         .method_count = count,
@@ -2820,7 +2820,7 @@ static bool block_declares(ResolverState *state, const ASTStmt *stmt, const Stri
 static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *implementor) {
     String *interface_name = resolver_intern(state, stmt->impl.interface_name);
 
-    Interface *interface = resolver_lookup_interface(state, interface_name);
+    InterfaceDecl *interface = resolver_lookup_interface(state, interface_name);
 
     if (!interface) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->impl.interface_span, "unknown interface '%s'",
@@ -3039,7 +3039,7 @@ static void enter_param_bounds(ResolverState *state, ASTStmt *stmt) {
         const TypeExpr *named = bound->kind == TYPE_EXPR_APPLY ? bound->apply.base : bound;
 
         String *name = resolver_intern(state, named->name);
-        Interface *interface = resolver_lookup_interface(state, name);
+        InterfaceDecl *interface = resolver_lookup_interface(state, name);
 
         if (!interface) {
             diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span,

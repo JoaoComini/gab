@@ -16,7 +16,7 @@ typedef struct Scope Scope;
 
 typedef struct ASTStmt ASTStmt;
 
-typedef struct Interface {
+typedef struct InterfaceDecl {
     DeclId id;
 
     /* Resolved once, with 'Self' as type parameter 0 and the interface's own as 1..param_count;
@@ -25,11 +25,11 @@ typedef struct Interface {
     size_t method_count;
 
     size_t param_count;
-} Interface;
+} InterfaceDecl;
 
 /* An interface applied to arguments, which is what a bound states and what a conformance answers. */
 typedef struct InterfaceRef {
-    const Interface *interface;
+    const InterfaceDecl *interface;
 
     TypeArg args[GAB_MAX_TYPE_PARAMS];
     size_t arg_count;
@@ -38,7 +38,7 @@ typedef struct InterfaceRef {
 #define interface_map_hash(key) (size_t)key
 #define interface_map_key_equals(key, other) key == other
 
-GAB_HASH_MAP(InterfaceMap, interface_map, String *, Interface *)
+GAB_HASH_MAP(InterfaceMap, interface_map, String *, InterfaceDecl *)
 
 #define module_scope_map_hash(key) (size_t)key
 #define module_scope_map_key_equals(key, other) key == other
@@ -119,9 +119,9 @@ bool scope_bind_argument(Scope *scope, String *name, TypeArg arg);
 
 bool scope_bind_decl(Scope *scope, String *name, const TypeDecl *decl);
 
-bool scope_bind_interface(Scope *scope, String *name, Interface *interface);
+bool scope_bind_interface(Scope *scope, String *name, InterfaceDecl *interface);
 
-Interface *scope_interface_lookup(Scope *scope, String *name);
+InterfaceDecl *scope_interface_lookup(Scope *scope, String *name);
 
 void scope_init_staging(Scope *scope, Arena *arena, StringPool *strings, Scope *target);
 
