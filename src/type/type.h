@@ -120,6 +120,34 @@ typedef enum {
     FUNC_MOD_CALLER = 1 << 1,
 } FuncModifier;
 
+/* A member named on a type's declaration rather than on one instantiation, so every instantiation of a
+ * generic owner finds the one entry. A box, a reference and a parameter declare nothing, so they key on
+ * the id no declaration has. */
+typedef struct TypeMemberKey {
+    DeclId owner;
+
+    const String *name;
+} TypeMemberKey;
+
+TypeMemberKey type_member_key_of(const Type *type, const String *name);
+
+/* A type declaration together with an interface applied to arguments: what an impl block records and what
+ * a bound asks about, so 'Index<i32>' answers apart from 'Index<bool>'. Named by declaration on both
+ * sides, so implementing a generic covers every instantiation of it. */
+typedef struct ConformanceKey {
+    DeclId owner;
+
+    DeclId interface;
+
+    TypeArg args[GAB_MAX_TYPE_PARAMS];
+    size_t arg_count;
+} ConformanceKey;
+
+ConformanceKey conformance_key_of(const Type *type, DeclId interface, const TypeArg *args, size_t arg_count);
+
+bool conformance_key_equals(ConformanceKey key, ConformanceKey other);
+size_t conformance_key_hash_of(ConformanceKey key);
+
 typedef struct TypeDecl {
     DeclId id;
 

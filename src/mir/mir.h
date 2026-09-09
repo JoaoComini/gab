@@ -4,6 +4,7 @@
 #include "binding.h"
 #include "constant.h"
 #include "diagnostics.h"
+#include "function_registry.h"
 #include "memory/arena.h"
 #include "string/string.h"
 #include "type/type.h"
@@ -227,6 +228,9 @@ typedef struct {
 
     /* What a type holds, which the IR asks for field counts and widths rather than storing them. */
     TypeRegistry *registry;
+
+    /* Set as drops are elaborated, so emission can find an ending no instruction resolved. */
+    FunctionRegistry *functions;
 
     MIRBlock **blocks;
     size_t block_count;

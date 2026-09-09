@@ -10,24 +10,10 @@
 
 GAB_HASH_MAP(TypeInternTable, type_intern, const Type *, Type *)
 
-/* Keyed on the declaration rather than the type, so every instantiation of an owner finds the one entry. */
-typedef struct OwnedKey {
-    DeclId owner;
+#define conformance_key_hash(key) conformance_key_hash_of(key)
+#define conformance_key_key_equals(key, other) conformance_key_equals(key, other)
 
-    const String *name;
-} OwnedKey;
-
-#define owned_key_hash(key) ((decl_id_hash((key).owner) * 31) ^ (size_t)(key).name)
-#define owned_key_key_equals(key, other)                                                                     \
-    (decl_id_equals((key).owner, (other).owner) && (key).name == (other).name)
-
-GAB_HASH_MAP(OwnedTable, owned_key, OwnedKey, Function *)
-
-/* Keyed on the declaration too, so implementing a generic covers every instantiation of it. */
-#define conformance_key_hash(key) owned_key_hash(key)
-#define conformance_key_key_equals(key, other) owned_key_key_equals(key, other)
-
-GAB_HASH_MAP(ConformanceTable, conformance_key, OwnedKey, bool)
+GAB_HASH_MAP(ConformanceTable, conformance_key, ConformanceKey, bool)
 
 #define layout_key_hash(key) (size_t)key
 #define layout_key_key_equals(key, other) key == other
@@ -60,8 +46,6 @@ typedef struct TypeRegistry {
     Arena *arena;
 
     TypeInternTable *applications;
-
-    OwnedTable *owned;
 
     ConformanceTable *conformances;
 

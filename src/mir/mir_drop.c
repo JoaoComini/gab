@@ -518,12 +518,14 @@ static void resolve_endings(TypeRegistry *registry, FunctionRegistry *functions,
                 continue;
             }
 
-            inst->ending = function_registry_owned_for(functions, registry, inst->type, name);
+            inst->ending = function_registry_owned_for(functions, inst->type, name);
         }
     }
 }
 
 void mir_drop_elaborate(Arena *arena, TypeRegistry *registry, FunctionRegistry *functions, MIRFunction *ir) {
+    ir->functions = functions;
+
     for (size_t b = 0; b < ir->block_count; b++) {
         MIRBlock *block = ir->blocks[b];
 

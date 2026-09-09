@@ -170,7 +170,7 @@ static Function *ending_of(LLVMEmitter *emitter, const Type *type) {
         }
     }
 
-    return type_registry_destructor(emitter->registry, type);
+    return function_registry_destructor(emitter->ir->functions, type);
 }
 
 /* What a 'Unique' points at, which is the argument it was instantiated with. */

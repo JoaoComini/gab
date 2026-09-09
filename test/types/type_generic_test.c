@@ -9,18 +9,6 @@
 
 static TypeDecl named_decl(String *name) { return (TypeDecl){.id = {.name = name}}; }
 
-/* Lookup then specialization, as a caller performs them. */
-static Function *owned_for(TypeRegistry *registry, FunctionRegistry *functions, const Type *type,
-                           const String *name) {
-    Function *declaration = type_registry_find_owned(registry, type, name);
-
-    if (!declaration || type_registry_owned_is_shared(declaration, type)) {
-        return declaration;
-    }
-
-    return function_registry_instance(functions, declaration->decl, type_args(type), type_arg_count(type));
-}
-
 static void test_a_declared_field_nests_constructors() {
     TestContext ctx;
     test_context_init(&ctx);
@@ -234,13 +222,13 @@ static void test_a_declared_method_is_substituted_per_instantiation() {
 
     Function method = {.decl = &method_decl, .signature = method_decl.signature};
 
-    type_registry_declare_owned(registry, type_registry_apply(registry, &decl, &param, 1), &method);
+    function_registry_declare_owned(functions, type_registry_apply(registry, &decl, &param, 1), &method);
 
     const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
     const Type *of_bool = type_registry_apply(registry, &decl, &bool_type, 1);
 
-    const Function *from_int = owned_for(registry, functions, of_int, at);
-    const Function *from_bool = owned_for(registry, functions, of_bool, at);
+    const Function *from_int = function_registry_owned_for(functions, of_int, at);
+    const Function *from_bool = function_registry_owned_for(functions, of_bool, at);
 
     assert(from_int && from_bool);
 
@@ -274,7 +262,7 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
 
     const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
 
-    assert(type_registry_find_owned(registry, of_int, at) == NULL);
+    assert(function_registry_find_owned(functions, of_int, at) == NULL);
 
     const Type *receiver[] = {type_registry_apply(registry, &decl, &param, 1)};
 
@@ -283,9 +271,9 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
 
     Function method = {.decl = &method_decl, .signature = method_decl.signature};
 
-    type_registry_declare_owned(registry, type_registry_apply(registry, &decl, &param, 1), &method);
+    function_registry_declare_owned(functions, type_registry_apply(registry, &decl, &param, 1), &method);
 
-    const Function *found = owned_for(registry, functions, of_int, at);
+    const Function *found = function_registry_owned_for(functions, of_int, at);
 
     assert(found);
     assert(found->return_type == i32_type);
@@ -319,16 +307,16 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
 
     Function method = {.decl = &method_decl, .signature = method_decl.signature};
 
-    type_registry_declare_owned(registry, type_registry_apply(registry, &decl, &param, 1), &method);
+    function_registry_declare_owned(functions, type_registry_apply(registry, &decl, &param, 1), &method);
 
     const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
 
     FuncDecl other_decl = {.id = {.name = at}};
     Function other = {.decl = &other_decl};
 
-    assert(!type_registry_declare_owned(registry, of_int, &other));
+    assert(!function_registry_declare_owned(functions, of_int, &other));
 
-    assert(owned_for(registry, functions, of_int, at)->return_type == i32_type);
+    assert(function_registry_owned_for(functions, of_int, at)->return_type == i32_type);
 
     type_registry_destroy(registry);
     string_pool_free(&ctx.strings);
@@ -351,25 +339,28 @@ static void test_a_method_declared_on_one_instantiation_answers_on_every_one() {
 
     decl.param_count = 1;
 
+    FunctionRegistry *functions = function_registry_create(ctx.arena, registry);
+
     const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
     const Type *of_bool = type_registry_apply(registry, &decl, &bool_type, 1);
 
     FuncDecl method_decl = {.id = {.name = name}};
     Function method = {.decl = &method_decl};
 
-    assert(type_registry_declare_owned(registry, of_int, &method));
+    assert(function_registry_declare_owned(functions, of_int, &method));
 
-    assert(type_registry_find_owned(registry, of_bool, name)->decl->id.name == name);
+    assert(function_registry_find_owned(functions, of_bool, name)->decl->id.name == name);
 
-    assert(!type_registry_declare_owned(registry, of_bool, &method));
+    assert(!function_registry_declare_owned(functions, of_bool, &method));
 
     TypeDecl other = named_decl(string_from_cstr(&ctx.strings, "Other"));
 
     other.param_count = 1;
 
-    assert(type_registry_find_owned(registry, type_registry_apply(registry, &other, &i32_type, 1), name) ==
-           NULL);
+    assert(function_registry_find_owned(functions, type_registry_apply(registry, &other, &i32_type, 1),
+                                        name) == NULL);
 
+    function_registry_destroy(functions);
     type_registry_destroy(registry);
     string_pool_free(&ctx.strings);
     arena_destroy(ctx.arena);
@@ -400,15 +391,17 @@ static void test_a_substituted_signature_is_read_once_per_type() {
 
     Function method = {.decl = &method_decl, .signature = method_decl.signature};
 
-    type_registry_declare_owned(registry, type_registry_apply(registry, &decl, &param, 1), &method);
+    function_registry_declare_owned(functions, type_registry_apply(registry, &decl, &param, 1), &method);
 
     const Type *of_int = type_registry_apply(registry, &decl, &i32_type, 1);
 
-    assert(owned_for(registry, functions, of_int, at) == owned_for(registry, functions, of_int, at));
+    assert(function_registry_owned_for(functions, of_int, at) ==
+           function_registry_owned_for(functions, of_int, at));
 
     const Type *of_bool = type_registry_apply(registry, &decl, &bool_type, 1);
 
-    assert(owned_for(registry, functions, of_int, at) != owned_for(registry, functions, of_bool, at));
+    assert(function_registry_owned_for(functions, of_int, at) !=
+           function_registry_owned_for(functions, of_bool, at));
 
     type_registry_destroy(registry);
     string_pool_free(&ctx.strings);

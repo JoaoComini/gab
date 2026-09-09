@@ -338,8 +338,8 @@ static DeclId method_id_in(Reading *reading, TestContext *ctx, const char *type,
 
     assert(owner);
 
-    Function *found =
-        type_registry_find_owned(reading->resolved->registry, owner, string_from_cstr(&ctx->strings, method));
+    Function *found = function_registry_find_owned(reading->resolved->functions, owner,
+                                                   string_from_cstr(&ctx->strings, method));
 
     assert(found);
     assert(decl_id_is_set(found->decl->id));

@@ -210,7 +210,6 @@ const Type *type_registry_deref_of(TypeRegistry *registry, const Type *type) {
 TypeRegistry *type_registry_create(Arena *arena, const KnownNames *names) {
     TypeRegistry *registry = arena_alloc(arena, sizeof(TypeRegistry));
     registry->layouts = layout_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
-    registry->owned = owned_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->conformances =
         conformance_key_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     registry->applications = type_intern_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
@@ -225,7 +224,7 @@ TypeRegistry *type_registry_create(Arena *arena, const KnownNames *names) {
 
 void type_registry_destroy(TypeRegistry *registry) {
     type_intern_destroy(registry->applications);
-    owned_key_destroy(registry->owned);
+    conformance_key_destroy(registry->conformances);
 }
 
 void type_registry_complete(TypeRegistry *registry, const Type *type) {
@@ -262,81 +261,41 @@ const Type *type_registry_declare_struct(TypeRegistry *registry, String *name, c
     return type_registry_declare(registry, decl);
 }
 
-static OwnedKey owned_key_of(const Type *type, const String *name) {
-    const TypeDecl *decl = type_decl(type);
-
-    /* A box, a reference and a parameter declare nothing, so they key on the id no declaration has. */
-    return (OwnedKey){.owner = decl ? decl->id : (DeclId){0}, .name = name};
-}
-
-static bool declare_owned(TypeRegistry *registry, OwnedKey key, Function *function) {
-    if (owned_key_lookup(registry->owned, key)) {
+bool type_registry_declare_conformance(TypeRegistry *registry, const Type *type, DeclId interface,
+                                       const TypeArg *args, size_t arg_count) {
+    if (type_registry_conforms_at_any(registry, type, interface)) {
         return false;
     }
 
-    owned_key_insert(registry->owned, key, function);
+    conformance_key_insert(registry->conformances, conformance_key_of(type, interface, args, arg_count),
+                           true);
 
     return true;
 }
 
-bool type_registry_declare_owned(TypeRegistry *registry, const Type *type, Function *function) {
-    assert(type && function && function->decl && function->decl->id.name &&
-           "a function a type owns has a name and a signature");
-
-    return declare_owned(registry, owned_key_of(type, function->decl->id.name), function);
+bool type_registry_conforms(TypeRegistry *registry, const Type *type, DeclId interface, const TypeArg *args,
+                            size_t arg_count) {
+    return conformance_key_lookup(registry->conformances,
+                                  conformance_key_of(type, interface, args, arg_count)) != NULL;
 }
 
-bool type_registry_declare_conformance(TypeRegistry *registry, const Type *type, const String *interface) {
-    OwnedKey key = owned_key_of(type, interface);
+bool type_registry_conforms_at_any(TypeRegistry *registry, const Type *type, DeclId interface) {
+    ConformanceKey wanted = conformance_key_of(type, interface, NULL, 0);
 
-    if (conformance_key_lookup(registry->conformances, key)) {
-        return false;
-    }
+    for (size_t i = 0; i < registry->conformances->capacity; i++) {
+        const ConformanceTableEntry *entry = &registry->conformances->entries[i];
 
-    conformance_key_insert(registry->conformances, key, true);
+        if (entry->state != HASH_MAP_LIVE) {
+            continue;
+        }
 
-    return true;
-}
-
-bool type_registry_conforms(TypeRegistry *registry, const Type *type, const String *interface) {
-    return conformance_key_lookup(registry->conformances, owned_key_of(type, interface)) != NULL;
-}
-
-Function *type_registry_destructor(TypeRegistry *registry, const Type *type) {
-    if (!type_registry_conforms(registry, type, registry->names.destroy)) {
-        return NULL;
-    }
-
-    return type_registry_find_owned(registry, type, registry->names.destroy_method);
-}
-
-/* A signature mentioning no type parameter is one function for every instantiation of its owner. */
-static bool owned_is_shared(const Function *declaration, const Type *type) {
-    if (type_arg_count(type) == 0) {
-        return true;
-    }
-
-    for (size_t i = 0; i < declaration->param_count; i++) {
-        if (type_has_param(declaration->params[i])) {
-            return false;
+        if (decl_id_equals(entry->key.owner, wanted.owner) &&
+            decl_id_equals(entry->key.interface, wanted.interface)) {
+            return true;
         }
     }
 
-    return !type_has_param(declaration->return_type);
-}
-
-Function *type_registry_find_owned(TypeRegistry *registry, const Type *type, const String *name) {
-    if (!type) {
-        return NULL;
-    }
-
-    Function **declared = owned_key_lookup(registry->owned, owned_key_of(type, name));
-
-    return declared ? *declared : NULL;
-}
-
-bool type_registry_owned_is_shared(const Function *declaration, const Type *type) {
-    return owned_is_shared(declaration, type);
+    return false;
 }
 
 static Type *intern(TypeRegistry *registry, const Type *key) {
@@ -582,7 +541,7 @@ bool type_registry_owns(TypeRegistry *registry, const Type *type) {
     }
 
     /* An ending of its own is something to run, so the type is one that ends even holding nothing. */
-    if (type_registry_conforms(registry, type, registry->names.destroy)) {
+    if (type_registry_conforms(registry, type, registry->names.destroy_interface, NULL, 0)) {
         return true;
     }
 
@@ -769,7 +728,8 @@ KnownNames known_names(StringPool *strings) {
         .self = string_from_cstr(strings, "Self"),
         .error = string_from_cstr(strings, "<error>"),
 
-        .destroy = string_from_cstr(strings, "Destroy"),
+        .destroy_interface = {.module = string_from_cstr(strings, GAB_CORE_MODULE),
+                              .name = string_from_cstr(strings, "Destroy")},
         .destroy_method = string_from_cstr(strings, "destroy"),
         .unique = string_from_cstr(strings, "Unique"),
         .index = string_from_cstr(strings, "index"),

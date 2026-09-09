@@ -24,7 +24,7 @@ static void collect_dropped_endings(PendingBodies *work, ResolvedUnit *resolved,
 
     const String *name = type_registry_names(resolved->registry)->destroy_method;
 
-    instantiate_needed(work, function_registry_owned_for(resolved->functions, resolved->registry, type, name),
+    instantiate_needed(work, function_registry_owned_for(resolved->functions, type, name),
                        diagnostics);
 
     collect_dropped_endings(work, resolved, type_pointee(type), diagnostics);

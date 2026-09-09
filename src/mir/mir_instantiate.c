@@ -50,7 +50,7 @@ static Function *subst_callee(Instantiation *in, Function *callee) {
         const Type *self = subst_type(in, callee->bound_self);
 
         Function *owned =
-            function_registry_owned_for(in->functions, in->registry, self, callee->decl->id.name);
+            function_registry_owned_for(in->functions, self, callee->decl->id.name);
 
         return owned ? owned : callee;
     }

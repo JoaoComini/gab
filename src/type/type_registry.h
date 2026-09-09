@@ -31,7 +31,9 @@ typedef struct KnownNames {
     String *error;
 
     /* Declared by the core and found by name, so the two drift if either moves alone. */
-    String *destroy;
+    /* The interface an ending is recorded under, which a conformance names by declaration. */
+    DeclId destroy_interface;
+
     String *destroy_method;
     String *unique;
     String *index;
@@ -65,20 +67,15 @@ typedef struct TypeFieldSpec {
 const Type *type_registry_declare_struct(TypeRegistry *registry, String *name, const TypeFieldSpec *fields,
                                          size_t field_count);
 
-bool type_registry_declare_owned(TypeRegistry *registry, const Type *type, Function *function);
+/* False when this type already implements the interface at these arguments, which it may do only once. */
+bool type_registry_declare_conformance(TypeRegistry *registry, const Type *type, DeclId interface,
+                                       const TypeArg *args, size_t arg_count);
 
-Function *type_registry_find_owned(TypeRegistry *registry, const Type *type, const String *name);
+bool type_registry_conforms(TypeRegistry *registry, const Type *type, DeclId interface, const TypeArg *args,
+                            size_t arg_count);
 
-/* False when this type already implements the interface, which it may do only once. */
-bool type_registry_declare_conformance(TypeRegistry *registry, const Type *type, const String *interface);
-
-bool type_registry_conforms(TypeRegistry *registry, const Type *type, const String *interface);
-
-/* What this type runs as it ends, or NULL where it declares no ending of its own. */
-Function *type_registry_destructor(TypeRegistry *registry, const Type *type);
-
-/* True when a declaration's signature names no type parameter, so every instantiation shares it. */
-bool type_registry_owned_is_shared(const Function *declaration, const Type *type);
+/* Whether the type implements the interface at any arguments, which is what a name alone can ask. */
+bool type_registry_conforms_at_any(TypeRegistry *registry, const Type *type, DeclId interface);
 
 void type_registry_complete(TypeRegistry *registry, const Type *type);
 

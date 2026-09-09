@@ -315,3 +315,47 @@ size_t type_param_index(const Type *type) {
 }
 
 bool type_has_param(const Type *type) { return type && type->has_param; }
+
+TypeMemberKey type_member_key_of(const Type *type, const String *name) {
+    const TypeDecl *decl = type_decl(type);
+
+    return (TypeMemberKey){.owner = decl ? decl->id : (DeclId){0}, .name = name};
+}
+
+ConformanceKey conformance_key_of(const Type *type, DeclId interface, const TypeArg *args, size_t arg_count) {
+    const TypeDecl *decl = type_decl(type);
+
+    ConformanceKey key = {.owner = decl ? decl->id : (DeclId){0}, .interface = interface};
+
+    for (size_t i = 0; i < arg_count && i < GAB_MAX_TYPE_PARAMS; i++) {
+        key.args[i] = args[i];
+        key.arg_count++;
+    }
+
+    return key;
+}
+
+bool conformance_key_equals(ConformanceKey key, ConformanceKey other) {
+    if (!decl_id_equals(key.owner, other.owner) || !decl_id_equals(key.interface, other.interface) ||
+        key.arg_count != other.arg_count) {
+        return false;
+    }
+
+    for (size_t i = 0; i < key.arg_count; i++) {
+        if (!type_arg_equals(key.args[i], other.args[i])) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+size_t conformance_key_hash_of(ConformanceKey key) {
+    size_t hash = decl_id_hash(key.owner) * 31 + decl_id_hash(key.interface);
+
+    for (size_t i = 0; i < key.arg_count; i++) {
+        hash = hash * 31 + type_arg_hash(key.args[i]);
+    }
+
+    return hash;
+}

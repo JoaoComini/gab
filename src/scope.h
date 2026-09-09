@@ -17,6 +17,8 @@ typedef struct Scope Scope;
 typedef struct ASTStmt ASTStmt;
 
 typedef struct Interface {
+    DeclId id;
+
     String *name;
 
     /* Resolved once, with 'Self' as type parameter 0 and the interface's own as 1..param_count;
@@ -26,6 +28,14 @@ typedef struct Interface {
 
     size_t param_count;
 } Interface;
+
+/* An interface applied to arguments, which is what a bound states and what a conformance answers. */
+typedef struct InterfaceRef {
+    const Interface *interface;
+
+    TypeArg args[GAB_MAX_TYPE_PARAMS];
+    size_t arg_count;
+} InterfaceRef;
 
 #define interface_map_hash(key) (size_t)key
 #define interface_map_key_equals(key, other) key == other
@@ -56,8 +66,6 @@ typedef struct Scope {
 
     bool declares_module;
 } Scope;
-
-#define GAB_CORE_MODULE "core"
 
 /* The struct the core declares for a source position, which '@caller()' answers with. */
 #define GAB_LOCATION_TYPE "Location"

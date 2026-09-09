@@ -16,7 +16,7 @@ static DeclId method_id(TestContext *ctx, const char *source, const char *type, 
     assert(owner);
 
     Function *found =
-        type_registry_find_owned(resolved->registry, owner, string_from_cstr(&ctx->strings, name));
+        function_registry_find_owned(resolved->functions, owner, string_from_cstr(&ctx->strings, name));
     assert(found);
 
     return found->decl->id;

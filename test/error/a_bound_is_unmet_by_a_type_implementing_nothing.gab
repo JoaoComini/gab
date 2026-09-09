@@ -1,0 +1,16 @@
+interface Countable {
+    func count(self: &Self): i32;
+}
+
+struct Bag { n: i32 }
+
+func total<C: Countable>(c: &C): i32 { return c.count(); }
+
+func f(): i32 {
+    let b: Bag = Bag { n: 1 };
+
+    return total(b);
+}
+
+// error
+// :12:12: type error: Bag does not implement 'Countable'

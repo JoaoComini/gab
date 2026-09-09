@@ -62,12 +62,8 @@ typedef struct ResolverState {
 
     StructDeclList resolving;
 
-    /* The interface bounding each type parameter of the declaration being resolved, by index. */
-    Interface *param_bounds[GAB_MAX_TYPE_PARAMS];
-
-    /* What each bound applies to its interface's parameters. */
-    TypeArg param_bound_args[GAB_MAX_TYPE_PARAMS][GAB_MAX_TYPE_PARAMS];
-    size_t param_bound_arg_count[GAB_MAX_TYPE_PARAMS];
+    /* The bound on each type parameter of the declaration being resolved, by index. */
+    InterfaceRef param_bounds[GAB_MAX_TYPE_PARAMS];
 
     ASTUnit *unit;
 
@@ -399,16 +395,10 @@ static const Type *receiver_base_type(const Type *type) {
 
 static const Type *derefs_to(TypeRegistry *registry, const Type *type);
 
-/* A declaration serves every instantiation of its owner, so the one for this type is made on demand. */
-static Function *owned_for(TypeRegistry *registry, FunctionRegistry *functions, const Type *type,
-                           const String *name) {
-    return function_registry_owned_for(functions, registry, type, name);
-}
-
 static Function *find_method_on_chain(TypeRegistry *registry, FunctionRegistry *functions, const Type *type,
                                       const String *name, const Type **out_base) {
     for (const Type *at = receiver_base_type(type); at; at = derefs_to(registry, at)) {
-        Function *found = owned_for(registry, functions, at, name);
+        Function *found = function_registry_owned_for(functions, at, name);
 
         if (found) {
             *out_base = at;
@@ -735,53 +725,10 @@ static size_t take_receiver_type_args(const Type *receiver, TypeArg *args) {
     return fixed;
 }
 
-/* Conformance is recorded by interface name, so what it was given is judged against the real method. */
-static bool bound_arguments_match(ResolverState *state, const Function *generic, size_t index,
-                                  const Type *implementor) {
-    const Interface *bound = generic->decl->type_param_bounds[index];
-
-    if (!generic->decl->type_param_bound_args || generic->decl->type_param_bound_arg_counts[index] == 0) {
-        return true;
-    }
-
-    const TypeArg *promised = generic->decl->type_param_bound_args[index];
-    size_t promised_count = generic->decl->type_param_bound_arg_counts[index];
-
-    TypeRegistry *registry = state->current_scope->type_registry;
-    FunctionRegistry *functions = state->current_scope->functions;
-
-    for (size_t m = 0; m < bound->method_count; m++) {
-        const Function *declared = bound->methods[m];
-
-        Function *actual =
-            function_registry_owned_for(functions, registry, implementor, declared->decl->id.name);
-
-        if (!actual) {
-            return false;
-        }
-
-        TypeArg substitutions[GAB_MAX_TYPE_PARAMS];
-        substitutions[0] = (TypeArg){.kind = TYPE_ARG_TYPE, .type = implementor};
-
-        for (size_t a = 0; a < promised_count && a + 1 < GAB_MAX_TYPE_PARAMS; a++) {
-            substitutions[a + 1] = promised[a];
-        }
-
-        const Type *wanted =
-            type_registry_substitute(registry, declared->return_type, substitutions, promised_count + 1);
-
-        if (wanted != actual->return_type) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
 /* A bound is nominal: the argument must say it implements the interface, not merely supply its methods. */
 static bool check_bounds_satisfied(ResolverState *state, ASTExpr *expr, const Function *generic,
                                    const TypeArg *args, size_t owed) {
-    const Interface *const *bounds = generic->decl->type_param_bounds;
+    const InterfaceRef *bounds = generic->decl->type_param_bounds;
 
     if (!bounds) {
         return true;
@@ -791,20 +738,23 @@ static bool check_bounds_satisfied(ResolverState *state, ASTExpr *expr, const Fu
 
     for (size_t i = 0; i < owed && i < GAB_MAX_TYPE_PARAMS; i++) {
         /* Only a type argument carries a conformance; a value one has no interface to satisfy. */
-        if (!bounds[i] || !type_arg_is_set(args[i]) || args[i].kind != TYPE_ARG_TYPE ||
+        if (!bounds[i].interface || !type_arg_is_set(args[i]) || args[i].kind != TYPE_ARG_TYPE ||
             type_kind(args[i].type) == TYPE_PARAM) {
             continue;
         }
 
-        if (!type_registry_conforms(registry, args[i].type, bounds[i]->name)) {
+        const InterfaceRef *bound = &bounds[i];
+
+        if (!type_registry_conforms_at_any(registry, args[i].type, bound->interface->id)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "%s does not implement '%s'",
-                       type_name(state, args[i].type), bounds[i]->name->data);
+                       type_name(state, args[i].type), bound->interface->name->data);
             return false;
         }
 
-        if (!bound_arguments_match(state, generic, i, args[i].type)) {
+        if (!type_registry_conforms(registry, args[i].type, bound->interface->id, bound->args,
+                                    bound->arg_count)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "%s implements '%s' at another type",
-                       type_name(state, args[i].type), bounds[i]->name->data);
+                       type_name(state, args[i].type), bound->interface->name->data);
             return false;
         }
     }
@@ -901,19 +851,18 @@ static Function *bound_method(ResolverState *state, const Type *base, String *na
 
     size_t index = type_param_index(base);
 
-    Interface *interface = state->param_bounds[index];
+    const InterfaceRef *bound = &state->param_bounds[index];
 
-    if (!interface) {
+    if (!bound->interface) {
         return NULL;
     }
 
-    for (size_t i = 0; i < interface->method_count; i++) {
-        if (interface->methods[i]->decl->id.name != name) {
+    for (size_t i = 0; i < bound->interface->method_count; i++) {
+        if (bound->interface->methods[i]->decl->id.name != name) {
             continue;
         }
 
-        return interface_method_for(state, interface, i, base, state->param_bound_args[index],
-                                    state->param_bound_arg_count[index]);
+        return interface_method_for(state, bound->interface, i, base, bound->args, bound->arg_count);
     }
 
     return NULL;
@@ -1018,7 +967,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 
     if (!method) {
         /* A parameter's methods are its bound's, so one with no bound has none to name. */
-        if (base && type_kind(base) == TYPE_PARAM && !state->param_bounds[type_param_index(base)]) {
+        if (base && type_kind(base) == TYPE_PARAM && !state->param_bounds[type_param_index(base)].interface) {
             diag_error(state->diagnostics, GAB_ERR_NAME, expr->span,
                        "a type parameter has the methods its bound declares, and this one has no bound");
             fact_set_type(state->facts, expr, resolver_error_type(state));
@@ -1032,7 +981,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     }
 
     /* The ending runs where the value ends, so calling it here would run it twice on that value. */
-    if (method == type_registry_destructor(state->current_scope->type_registry, base)) {
+    if (method == function_registry_destructor(state->current_scope->functions, base)) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                    "'destroy' runs where the value ends, so nothing calls it by hand");
         fact_set_type(state->facts, expr, resolver_error_type(state));
@@ -2748,7 +2697,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         .signature = decl->signature,
     };
 
-    if (!type_registry_declare_owned(state->current_scope->type_registry, owner, func)) {
+    if (!function_registry_declare_owned(state->current_scope->functions, owner, func)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' already has a function '%s'",
                    type_name_of(owner)->data, name->data);
         return;
@@ -2842,6 +2791,7 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
     Interface *interface = arena_alloc(arena, sizeof(Interface));
 
     *interface = (Interface){
+        .id = {.module = state->module_name, .name = name},
         .name = name,
         .methods = methods,
         .method_count = count,
@@ -2899,20 +2849,20 @@ static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *i
         args[i] = (TypeArg){.kind = TYPE_ARG_TYPE, .type = argument};
     }
 
-    if (!type_registry_declare_conformance(state->current_scope->type_registry, implementor,
-                                           interface_name)) {
+    if (!type_registry_declare_conformance(state->current_scope->type_registry, implementor, interface->id,
+                                           args, arg_count)) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->impl.interface_span,
                    "'%s' already implements '%s'", type_name(state, implementor), interface_name->data);
         return;
     }
 
-    TypeRegistry *registry = state->current_scope->type_registry;
-
     for (size_t i = 0; i < interface->method_count; i++) {
         const String *name = interface->methods[i]->decl->id.name;
 
         Function *supplied =
-            block_declares(state, stmt, name) ? type_registry_find_owned(registry, implementor, name) : NULL;
+            block_declares(state, stmt, name)
+                ? function_registry_find_owned(state->current_scope->functions, implementor, name)
+                : NULL;
 
         if (!supplied) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->impl.interface_span,
@@ -3048,8 +2998,7 @@ static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
     }
 
     String *member = resolver_intern(state, member_ref);
-    Function *found =
-        owned_for(state->current_scope->type_registry, state->current_scope->functions, owner, member);
+    Function *found = function_registry_owned_for(state->current_scope->functions, owner, member);
 
     if (!found) {
         diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "'%s' has no function '%s'",
@@ -3060,7 +3009,7 @@ static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
 
     /* The ending runs where the value ends, so calling it here would run it twice on that value. The
      * function is still named, so what follows reports nothing further about a name it did resolve. */
-    if (found == type_registry_destructor(state->current_scope->type_registry, owner)) {
+    if (found == function_registry_destructor(state->current_scope->functions, owner)) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                    "'destroy' runs where the value ends, so nothing calls it by hand");
     }
@@ -3074,8 +3023,7 @@ static void check_abstract_body(ResolverState *state, ASTStmt *stmt) { resolve_f
 /* Each bound names an interface, which the body is checked against before any instantiation. */
 static void enter_param_bounds(ResolverState *state, ASTStmt *stmt) {
     for (size_t i = 0; i < GAB_MAX_TYPE_PARAMS; i++) {
-        state->param_bounds[i] = NULL;
-        state->param_bound_arg_count[i] = 0;
+        state->param_bounds[i] = (InterfaceRef){0};
     }
 
     for (size_t i = 0; i < stmt->func_decl.type_param_count; i++) {
@@ -3108,13 +3056,13 @@ static void enter_param_bounds(ResolverState *state, ASTStmt *stmt) {
         }
 
         for (size_t a = 0; a < arg_count; a++) {
-            state->param_bound_args[i][a] =
+            state->param_bounds[i].args[a] =
                 (TypeArg){.kind = TYPE_ARG_TYPE,
                           .type = resolve_type_expr(state, bound->apply.args.data[a], stmt->span)};
         }
 
-        state->param_bound_arg_count[i] = arg_count;
-        state->param_bounds[i] = interface;
+        state->param_bounds[i].arg_count = arg_count;
+        state->param_bounds[i].interface = interface;
     }
 }
 
@@ -3126,26 +3074,13 @@ static void record_param_bounds(ResolverState *state, FuncDecl *decl) {
 
     Arena *arena = resolver_owner_arena(state);
 
-    const Interface **bounds = arena_alloc(arena, GAB_MAX_TYPE_PARAMS * sizeof(const Interface *));
-    const TypeArg **bound_args = arena_alloc(arena, GAB_MAX_TYPE_PARAMS * sizeof(const TypeArg *));
-    size_t *bound_arg_counts = arena_alloc(arena, GAB_MAX_TYPE_PARAMS * sizeof(size_t));
+    InterfaceRef *bounds = arena_alloc(arena, GAB_MAX_TYPE_PARAMS * sizeof(InterfaceRef));
 
     for (size_t i = 0; i < GAB_MAX_TYPE_PARAMS; i++) {
         bounds[i] = state->param_bounds[i];
-        bound_arg_counts[i] = state->param_bound_arg_count[i];
-
-        TypeArg *args = arena_alloc(arena, GAB_MAX_TYPE_PARAMS * sizeof(TypeArg));
-
-        for (size_t a = 0; a < GAB_MAX_TYPE_PARAMS; a++) {
-            args[a] = state->param_bound_args[i][a];
-        }
-
-        bound_args[i] = args;
     }
 
     decl->type_param_bounds = bounds;
-    decl->type_param_bound_args = bound_args;
-    decl->type_param_bound_arg_counts = bound_arg_counts;
 }
 
 static void declare_func(ResolverState *state, ASTStmt *stmt) {

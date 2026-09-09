@@ -76,12 +76,8 @@ typedef struct FuncDecl {
     /* How many arguments this declaration is generic over, whether they came from an owner or itself. */
     size_t type_param_count;
 
-    /* The interface bounding each of them, by index; null where it is unbounded. */
-    const struct Interface *const *type_param_bounds;
-
-    /* What each bound's interface was given, so a call judges 'Index<int>' apart from 'Index<bool>'. */
-    const TypeArg *const *type_param_bound_args;
-    const size_t *type_param_bound_arg_counts;
+    /* The bound on each of them, by index; its interface is null where the parameter is unbounded. */
+    const InterfaceRef *type_param_bounds;
 } FuncDecl;
 
 typedef struct Function {
