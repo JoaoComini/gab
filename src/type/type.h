@@ -94,28 +94,6 @@ typedef struct TypeFields {
     size_t count;
 } TypeFields;
 
-/* Where a function's definition is, which is what its symbol must name. */
-typedef enum {
-    LINKAGE_INTERNAL,
-
-    /* Another Gab unit, whose module the symbol keeps rather than taking the referring one's. */
-    LINKAGE_GAB,
-
-    /* A C body, whose symbol is what the declaration spells. */
-    LINKAGE_C,
-} Linkage;
-
-/* What qualifies a function beyond where it is defined. These compose, and none excludes another. */
-typedef enum {
-    FUNC_MOD_NONE = 0,
-
-    /* The compiler lowers the call itself, so nothing is bound and no body is written. */
-    FUNC_MOD_INTRINSIC = 1 << 0,
-
-    /* '__line__' in the body is the line of the call that reached it. */
-    FUNC_MOD_CALLER = 1 << 1,
-} FuncModifier;
-
 /* A member named on a type's declaration rather than on one instantiation, so every instantiation of a
  * generic owner finds the one entry. A box, a reference and a parameter declare nothing, so they key on
  * the id no declaration has. */
