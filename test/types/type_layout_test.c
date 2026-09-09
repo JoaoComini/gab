@@ -40,7 +40,7 @@ typedef struct {
 
 static const Type *resolve_struct(TestContext *ctx, const char *source, const char *name,
                                   TypeRegistry **out_registry) {
-    ASTUnit *unit;
+    ASTModule *unit;
 
     Scope global_scope;
     scope_init(&global_scope, ctx->arena, &ctx->strings, NULL);
@@ -49,10 +49,11 @@ static const Type *resolve_struct(TestContext *ctx, const char *source, const ch
         *out_registry = global_scope.type_registry;
     }
 
-    ResolvedUnit *resolved;
+    ResolvedModule *resolved;
 
-    if (parse_unit(test_in_a_module(source), ctx->arena, &ctx->strings, &unit, &ctx->diagnostics)) {
-        resolve_unit(ctx->arena, unit, &global_scope, NULL, false, &resolved, &ctx->diagnostics);
+    if (parse_module((const char *const[]){test_in_a_module(source)}, 1, NULL, ctx->arena, &ctx->strings,
+                     &unit, &ctx->diagnostics)) {
+        resolve_module(ctx->arena, unit, &global_scope, NULL, false, &resolved, &ctx->diagnostics);
     }
 
     if (diagnostics_has_errors(&ctx->diagnostics)) {
@@ -194,16 +195,16 @@ static void test_unknown_field_type_is_not_registered() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    ASTUnit *unit;
+    ASTModule *unit;
     const char *source = "module test;\nstruct Broken { value: Nope }";
 
     Scope global_scope;
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
 
-    ResolvedUnit *resolved;
+    ResolvedModule *resolved;
 
-    parse_unit(source, ctx.arena, &ctx.strings, &unit, &ctx.diagnostics);
-    resolve_unit(ctx.arena, unit, &global_scope, NULL, false, &resolved, &ctx.diagnostics);
+    parse_module((const char *const[]){source}, 1, NULL, ctx.arena, &ctx.strings, &unit, &ctx.diagnostics);
+    resolve_module(ctx.arena, unit, &global_scope, NULL, false, &resolved, &ctx.diagnostics);
 
     assert(diagnostics_count(&ctx.diagnostics) == 1);
 
@@ -356,17 +357,17 @@ static void test_a_failed_field_poisons_what_holds_it() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    ASTUnit *unit;
+    ASTModule *unit;
     const char *source = test_in_a_module("struct A { b: B }\n"
                                           "struct B { a: A }\n");
 
     Scope global_scope;
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
 
-    ResolvedUnit *resolved;
+    ResolvedModule *resolved;
 
-    parse_unit(source, ctx.arena, &ctx.strings, &unit, &ctx.diagnostics);
-    resolve_unit(ctx.arena, unit, &global_scope, NULL, false, &resolved, &ctx.diagnostics);
+    parse_module((const char *const[]){source}, 1, NULL, ctx.arena, &ctx.strings, &unit, &ctx.diagnostics);
+    resolve_module(ctx.arena, unit, &global_scope, NULL, false, &resolved, &ctx.diagnostics);
 
     assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "A")) == NULL);
     assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "B")) == NULL);
@@ -410,16 +411,16 @@ static void test_rejects_an_array_of_the_struct_declaring_it() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    ASTUnit *unit;
+    ASTModule *unit;
     const char *source = test_in_a_module("struct A { cells: array<A, 2> }");
 
     Scope global_scope;
     scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
 
-    ResolvedUnit *resolved;
+    ResolvedModule *resolved;
 
-    parse_unit(source, ctx.arena, &ctx.strings, &unit, &ctx.diagnostics);
-    resolve_unit(ctx.arena, unit, &global_scope, NULL, false, &resolved, &ctx.diagnostics);
+    parse_module((const char *const[]){source}, 1, NULL, ctx.arena, &ctx.strings, &unit, &ctx.diagnostics);
+    resolve_module(ctx.arena, unit, &global_scope, NULL, false, &resolved, &ctx.diagnostics);
 
     assert(diagnostics_count(&ctx.diagnostics) == 1);
     assert(strcmp(diagnostics_get(&ctx.diagnostics, 0)->message,

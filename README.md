@@ -127,7 +127,7 @@ for let i: i32 = 0; i < n; i = i + 1 { ... }
 | Operators | `+` `-` `*` `/` `%`, unary `-` `!`, `==` `!=` `<` `>` `<=` `>=`, `&&` `\|\|`, unary `*`, field access, indexing `xs[i]`, `@size_of<T>()` |
 | Conversions | `i32(x)` and `f32(x)`; `raw<T>(p)` reads a run as a run of another element. Nothing converts implicitly |
 | Memory | Unique ownership, `box`, `&` borrows, binding that copies or transfers by type, scope-based free. `impl T as Destroy` names what a type runs as it ends. `Allocator` names where memory comes from, and `Global` takes it from the host |
-| Modules | `module` names the namespace a unit declares into, `import` the ones it may name. `testing` states what a test asserts |
+| Modules | `module` names the namespace a file declares into, `import` the ones that file may name. `testing` states what a test asserts |
 | Comments | `// line` and `/* block */`, which do not nest |
 
 Not yet implemented:
@@ -173,7 +173,9 @@ Linking runs `clang`, which knows where this system keeps libc and the objects a
 binary starts in; `GABC_CC` names another. Compiling with `-c` needs neither.
 
 A module is written across the files it is compiled from, and reaches another
-module by importing it:
+module by importing it. What a file declares is visible across the module; what
+it imports is visible in that file alone, so each file states the modules it
+names:
 
 ```sh
 gabc -c -o lib.o lib.gab            # module lib, writing lib.gabi

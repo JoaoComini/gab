@@ -16,15 +16,18 @@
 #include <string.h>
 
 /* The prelude declares methods on the primitives, which only a compilation given permission may do. */
-static inline bool test_resolve_ir_with(TestContext *ctx, Scope *scope, ASTUnit **unit, MIRModule **mir_unit,
-                                        ResolvedUnit **out, const char *source, bool allow_primitive_impls) {
-    if (!parse_unit(test_in_a_module(source), ctx->arena, &ctx->strings, unit, &ctx->diagnostics)) {
+static inline bool test_resolve_ir_with(TestContext *ctx, Scope *scope, ASTModule **unit,
+                                        MIRModule **mir_unit, ResolvedModule **out, const char *source,
+                                        bool allow_primitive_impls) {
+    if (!parse_module((const char *const[]){test_in_a_module(source)}, 1, NULL, ctx->arena, &ctx->strings,
+                      unit, &ctx->diagnostics)) {
         return false;
     }
 
-    ResolvedUnit *resolved;
+    ResolvedModule *resolved;
 
-    if (!resolve_unit(ctx->arena, *unit, scope, NULL, allow_primitive_impls, &resolved, &ctx->diagnostics)) {
+    if (!resolve_module(ctx->arena, *unit, scope, NULL, allow_primitive_impls, &resolved,
+                        &ctx->diagnostics)) {
         return false;
     }
 
@@ -42,12 +45,12 @@ static inline bool test_resolve_ir_with(TestContext *ctx, Scope *scope, ASTUnit 
     return built;
 }
 
-static inline bool test_resolve_ir(TestContext *ctx, Scope *scope, ASTUnit **unit, MIRModule **mir_unit,
-                                   ResolvedUnit **out, const char *source) {
+static inline bool test_resolve_ir(TestContext *ctx, Scope *scope, ASTModule **unit, MIRModule **mir_unit,
+                                   ResolvedModule **out, const char *source) {
     return test_resolve_ir_with(ctx, scope, unit, mir_unit, out, source, false);
 }
 
-static inline bool test_resolve(TestContext *ctx, Scope *scope, ASTUnit **unit, const char *source) {
+static inline bool test_resolve(TestContext *ctx, Scope *scope, ASTModule **unit, const char *source) {
     return test_resolve_ir(ctx, scope, unit, NULL, NULL, source);
 }
 
@@ -61,9 +64,9 @@ static inline Scope *test_scope_with_core(TestContext *ctx, ModuleScopeMap **out
 
     assert(core && "the core is compiled before a test resolves against it");
 
-    ASTUnit *unit = ast_unit_create(ctx->arena);
+    ASTModule *unit = ast_module_create(ctx->arena);
     MIRModule *bodies = NULL;
-    ResolvedUnit *resolved = NULL;
+    ResolvedModule *resolved = NULL;
 
     bool ok = test_resolve_ir_with(ctx, scope, &unit, &bodies, &resolved, core, true);
 
@@ -87,7 +90,7 @@ static inline bool test_compiles(const char *source) {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit;
+    ASTModule *unit;
 
     bool ok = test_resolve(&ctx, scope, &unit, source);
 
@@ -101,7 +104,7 @@ static inline bool test_diagnostic_mentions(const char *source, const char *need
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit;
+    ASTModule *unit;
 
     test_resolve(&ctx, scope, &unit, source);
 
@@ -125,9 +128,9 @@ static inline bool test_core_diagnostic_mentions(const char *source, const char 
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit;
+    ASTModule *unit;
     MIRModule *bodies;
-    ResolvedUnit *resolved;
+    ResolvedModule *resolved;
 
     test_resolve_ir_with(&ctx, scope, &unit, &bodies, &resolved, source, true);
 
@@ -150,7 +153,7 @@ static inline size_t test_diagnostic_count(const char *source) {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit;
+    ASTModule *unit;
 
     test_resolve(&ctx, scope, &unit, source);
 

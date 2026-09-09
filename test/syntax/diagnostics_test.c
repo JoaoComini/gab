@@ -19,12 +19,13 @@ static void compile(TestContext *ctx, const char *source) {
     Scope global_scope;
     scope_init(&global_scope, arena, &ctx->strings, NULL);
 
-    ASTUnit *unit;
-    ResolvedUnit *resolved;
+    ASTModule *unit;
+    ResolvedModule *resolved;
     MIRModule *mir_unit;
 
-    if (parse_unit(test_in_a_module(source), ctx->arena, &ctx->strings, &unit, diagnostics) &&
-        resolve_unit(arena, unit, &global_scope, NULL, false, &resolved, diagnostics)) {
+    if (parse_module((const char *const[]){test_in_a_module(source)}, 1, NULL, ctx->arena, &ctx->strings,
+                     &unit, diagnostics) &&
+        resolve_module(arena, unit, &global_scope, NULL, false, &resolved, diagnostics)) {
         mir_build(arena, resolved, NULL, &mir_unit, diagnostics);
     }
 }

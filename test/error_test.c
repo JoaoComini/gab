@@ -111,14 +111,15 @@ static void collect(const char *source, Lines *actual) {
     ModuleScopeMap *modules;
     Scope *scope = test_scope_with_core(&ctx, &modules);
 
-    ASTUnit *unit;
-    ResolvedUnit *resolved;
+    ASTModule *unit;
+    ResolvedModule *resolved;
 
     MIRModule *bodies;
 
     /* Borrow checking runs while the bodies are built, so a lifetime error needs that pass too. */
-    if (parse_unit(test_in_a_module(source), ctx.arena, &ctx.strings, &unit, &ctx.diagnostics) &&
-        resolve_unit(ctx.arena, unit, scope, modules, false, &resolved, &ctx.diagnostics)) {
+    if (parse_module((const char *const[]){test_in_a_module(source)}, 1, NULL, ctx.arena, &ctx.strings, &unit,
+                     &ctx.diagnostics) &&
+        resolve_module(ctx.arena, unit, scope, modules, false, &resolved, &ctx.diagnostics)) {
         mir_build(ctx.arena, resolved, NULL, &bodies, &ctx.diagnostics);
     }
 

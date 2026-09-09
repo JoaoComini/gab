@@ -26,9 +26,9 @@ static char *interface_of(const char *source) {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTModule *unit = ast_module_create(ctx.arena);
 
-    ResolvedUnit *resolved = NULL;
+    ResolvedModule *resolved = NULL;
 
     bool ok = test_resolve_ir_with(&ctx, scope, &unit, NULL, &resolved, source, true);
     assert(ok);
@@ -56,7 +56,7 @@ static void a_written_interface_compiles(void) {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTModule *unit = ast_module_create(ctx.arena);
 
     assert(test_resolve_ir_with(&ctx, scope, &unit, NULL, NULL, text, true));
 

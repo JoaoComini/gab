@@ -11,9 +11,9 @@
 typedef struct {
     TestContext ctx;
     Scope *scope;
-    ASTUnit *unit;
+    ASTModule *unit;
     MIRModule *mir_unit;
-    ResolvedUnit *resolved;
+    ResolvedModule *resolved;
 
     ModuleScopeMap *module_scopes;
 
@@ -27,14 +27,14 @@ static inline TestEmission test_lower_ir_named(const char *source, const char *n
     test_context_init(&emission.ctx);
 
     emission.scope = scope_create(emission.ctx.arena, &emission.ctx.strings, NULL);
-    emission.unit = ast_unit_create(emission.ctx.arena);
+    emission.unit = ast_module_create(emission.ctx.arena);
     bool resolved = test_resolve_ir(&emission.ctx, emission.scope, &emission.unit, &emission.mir_unit,
                                     &emission.resolved, source);
 
     assert(resolved);
 
-    for (size_t i = 0; i < emission.unit->statements.size; i++) {
-        ASTStmt *stmt = emission.unit->statements.data[i];
+    for (size_t i = 0; i < ast_module_statements(emission.unit)[0].size; i++) {
+        ASTStmt *stmt = ast_module_statements(emission.unit)[0].data[i];
 
         if (!stmt || stmt->kind != STMT_FUNC_DECL || !stmt->func_decl.body) {
             continue;
@@ -68,7 +68,7 @@ static inline TestEmission test_lower_unit(const char *source, MIRFunction **out
     test_context_init(&emission.ctx);
 
     emission.scope = scope_create(emission.ctx.arena, &emission.ctx.strings, NULL);
-    emission.unit = ast_unit_create(emission.ctx.arena);
+    emission.unit = ast_module_create(emission.ctx.arena);
 
     bool resolved = test_resolve_ir_with(&emission.ctx, emission.scope, &emission.unit, &emission.mir_unit,
                                          &emission.resolved, source, true);

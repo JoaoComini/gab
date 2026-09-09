@@ -6,8 +6,8 @@
 
 static DeclId method_id(TestContext *ctx, const char *source, const char *type, const char *name) {
     Scope *scope = scope_create(ctx->arena, &ctx->strings, NULL);
-    ASTUnit *unit;
-    ResolvedUnit *resolved;
+    ASTModule *unit;
+    ResolvedModule *resolved;
 
     bool ok = test_resolve_ir(ctx, scope, &unit, NULL, &resolved, source);
     assert(ok);

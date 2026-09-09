@@ -18,6 +18,11 @@
 typedef struct StructDecl {
     ASTStmt *stmt;
     Scope *scope;
+
+    /* Fields resolve after every file has declared, so the struct carries the file whose imports its
+     * field types may name. */
+    const ASTFile *file;
+
     String *name;
 
     TypeDecl *decl;
@@ -46,7 +51,8 @@ typedef struct ResolverState {
 
     ModuleScopeMap *module_scopes;
 
-    const ASTImportList *imports;
+    /* The file being resolved, whose imports are the ones its statements may name. */
+    const ASTFile *file;
 
     String *module_name;
 
@@ -64,8 +70,6 @@ typedef struct ResolverState {
 
     /* The bound on each type parameter of the declaration being resolved, by index. */
     TypeParamBound param_bounds[GAB_MAX_TYPE_PARAMS];
-
-    ASTUnit *unit;
 
     Diagnostics *diagnostics;
 } ResolverState;
@@ -149,8 +153,8 @@ static bool resolver_may_name(ResolverState *state, String *module) {
         return true;
     }
 
-    for (size_t i = 0; i < state->imports->size; i++) {
-        if (string_from_ref(state->current_scope->strings, state->imports->data[i].name) == module) {
+    for (size_t i = 0; i < state->file->imports.size; i++) {
+        if (string_from_ref(state->current_scope->strings, state->file->imports.data[i].name) == module) {
             return true;
         }
     }
@@ -186,8 +190,8 @@ static Binding *resolver_imported_binding(ResolverState *state, String *name) {
         return NULL;
     }
 
-    for (size_t i = 0; i < state->imports->size; i++) {
-        String *module = string_from_ref(state->current_scope->strings, state->imports->data[i].name);
+    for (size_t i = 0; i < state->file->imports.size; i++) {
+        String *module = string_from_ref(state->current_scope->strings, state->file->imports.data[i].name);
 
         Scope **imported = module_scope_map_lookup(state->module_scopes, module);
 
@@ -212,8 +216,8 @@ static Resolution resolver_resolve_name(ResolverState *state, Scope *scope, Stri
         return resolution;
     }
 
-    for (size_t i = 0; i < state->imports->size; i++) {
-        String *module = string_from_ref(state->current_scope->strings, state->imports->data[i].name);
+    for (size_t i = 0; i < state->file->imports.size; i++) {
+        String *module = string_from_ref(state->current_scope->strings, state->file->imports.data[i].name);
 
         Scope **imported = module_scope_map_lookup(state->module_scopes, module);
 
@@ -246,8 +250,8 @@ static InterfaceDecl *resolver_lookup_interface(ResolverState *state, String *na
         return found;
     }
 
-    for (size_t i = 0; i < state->imports->size; i++) {
-        String *module = string_from_ref(state->current_scope->strings, state->imports->data[i].name);
+    for (size_t i = 0; i < state->file->imports.size; i++) {
+        String *module = string_from_ref(state->current_scope->strings, state->file->imports.data[i].name);
 
         Scope **imported = module_scope_map_lookup(state->module_scopes, module);
 
@@ -2341,6 +2345,7 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
     *decl = (StructDecl){
         .stmt = stmt,
         .scope = state->current_scope,
+        .file = state->file,
         .name = struct_name,
         .decl = declared,
         .fields_demanded = false,
@@ -2420,6 +2425,10 @@ static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
     TypeDecl *declared = decl->decl;
 
     Scope *enclosing = state->current_scope;
+    const ASTFile *naming = state->file;
+
+    state->file = decl->file;
+
     Scope *params = scope_create(resolver_owner_arena(state), decl->scope->strings, decl->scope);
 
     for (size_t i = 0; i < stmt->struct_decl.param_count; i++) {
@@ -2495,6 +2504,7 @@ static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
     }
 
     state->current_scope = enclosing;
+    state->file = naming;
 
     state->resolving.size--;
 
@@ -3557,11 +3567,12 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
     }
 }
 
-bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, ModuleScopeMap *module_scopes,
-                  bool allow_primitive_impls, ResolvedUnit **out, Diagnostics *diagnostics) {
-    ResolvedUnit *resolved = arena_alloc(compile_arena, sizeof(ResolvedUnit));
+bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope,
+                    ModuleScopeMap *module_scopes, bool allow_primitive_impls, ResolvedModule **out,
+                    Diagnostics *diagnostics) {
+    ResolvedModule *resolved = arena_alloc(compile_arena, sizeof(ResolvedModule));
 
-    resolved->unit = unit;
+    resolved->module = module;
     resolved->work = pending_bodies_create(compile_arena);
     resolved->registry = global_scope->type_registry;
     resolved->functions = global_scope->functions;
@@ -3573,9 +3584,8 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
         .global_scope = global_scope,
         .current_scope = global_scope,
         .module_scopes = module_scopes,
-        .imports = &unit->imports,
-        .module_name =
-            unit->module_name.data ? string_from_ref(global_scope->strings, unit->module_name) : NULL,
+        .file = module->files.size ? module->files.data[0] : ast_file_create(compile_arena),
+        .module_name = module->name.data ? string_from_ref(global_scope->strings, module->name) : NULL,
         .allow_primitive_impls = allow_primitive_impls,
         .func_context =
             {
@@ -3585,21 +3595,26 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
         .facts = &resolved->facts,
         .work = &resolved->work,
         .resolving = struct_decl_list_create(arena_allocator(compile_arena)),
-        .unit = unit,
         .diagnostics = diagnostics,
     };
 
     size_t errors_before = diagnostics_count(diagnostics);
 
-    for (size_t i = 0; i < unit->statements.size; i++) {
-        ASTStmt *stmt = unit->statements.data[i];
+    /* Every file declares before any file resolves, so a declaration is visible across the module
+     * however the files were ordered. */
+    for (size_t f = 0; f < module->files.size; f++) {
+        state.file = module->files.data[f];
 
-        if (stmt && stmt->kind == STMT_INTERFACE_DECL) {
-            declare_interface(&state, stmt);
-        }
+        for (size_t i = 0; i < state.file->statements.size; i++) {
+            ASTStmt *stmt = state.file->statements.data[i];
 
-        if (stmt && stmt->kind == STMT_STRUCT_DECL) {
-            declare_struct(&state, stmt);
+            if (stmt && stmt->kind == STMT_INTERFACE_DECL) {
+                declare_interface(&state, stmt);
+            }
+
+            if (stmt && stmt->kind == STMT_STRUCT_DECL) {
+                declare_struct(&state, stmt);
+            }
         }
     }
 
@@ -3607,35 +3622,47 @@ bool resolve_unit(Arena *compile_arena, ASTUnit *unit, Scope *global_scope, Modu
         resolve_struct_fields(&state, state.struct_decls.data[i]);
     }
 
-    for (size_t i = 0; i < unit->statements.size; i++) {
-        ASTStmt *stmt = unit->statements.data[i];
+    for (size_t f = 0; f < module->files.size; f++) {
+        state.file = module->files.data[f];
 
-        if (stmt && stmt->kind == STMT_FUNC_DECL) {
-            declare_func(&state, stmt);
-        }
+        for (size_t i = 0; i < state.file->statements.size; i++) {
+            ASTStmt *stmt = state.file->statements.data[i];
 
-        if (stmt && stmt->kind == STMT_IMPL) {
-            declare_impl(&state, stmt);
+            if (stmt && stmt->kind == STMT_FUNC_DECL) {
+                declare_func(&state, stmt);
+            }
+
+            if (stmt && stmt->kind == STMT_IMPL) {
+                declare_impl(&state, stmt);
+            }
         }
     }
 
-    for (size_t i = 0; i < unit->statements.size; i++) {
-        resolve_stmt(&state, unit->statements.data[i]);
+    for (size_t f = 0; f < module->files.size; f++) {
+        state.file = module->files.data[f];
+
+        for (size_t i = 0; i < state.file->statements.size; i++) {
+            resolve_stmt(&state, state.file->statements.data[i]);
+        }
     }
 
     /* What a script runs is a body like any other, gathered from the statements the unit holds so it
      * lowers and emits the same way. A declaration is not something it runs, so it stays behind. */
     ASTStmtList top_level = ast_stmt_list_create(arena_allocator(state.compile_arena));
 
-    for (size_t i = 0; i < unit->statements.size; i++) {
-        ASTStmt *stmt = unit->statements.data[i];
+    for (size_t f = 0; f < module->files.size; f++) {
+        const ASTFile *file = module->files.data[f];
 
-        if (!stmt || stmt->kind == STMT_FUNC_DECL || stmt->kind == STMT_STRUCT_DECL ||
-            stmt->kind == STMT_INTERFACE_DECL || stmt->kind == STMT_IMPL) {
-            continue;
+        for (size_t i = 0; i < file->statements.size; i++) {
+            ASTStmt *stmt = file->statements.data[i];
+
+            if (!stmt || stmt->kind == STMT_FUNC_DECL || stmt->kind == STMT_STRUCT_DECL ||
+                stmt->kind == STMT_INTERFACE_DECL || stmt->kind == STMT_IMPL) {
+                continue;
+            }
+
+            ast_stmt_list_add(&top_level, stmt);
         }
-
-        ast_stmt_list_add(&top_level, stmt);
     }
 
     if (top_level.size > 0 && diagnostics_count(diagnostics) == 0) {

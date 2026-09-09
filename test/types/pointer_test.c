@@ -27,7 +27,7 @@ static void test_pointer_types_are_interned() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit;
+    ASTModule *unit;
 
     bool ok = test_resolve(&ctx, scope, &unit,
                            "struct Player { health: i32 }\n"
@@ -52,7 +52,7 @@ static void test_pointer_depth_nests() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit;
+    ASTModule *unit;
 
     bool ok = test_resolve(&ctx, scope, &unit, "struct Holder { p: *i32, q: **i32 }\n");
     assert(ok);
@@ -71,7 +71,7 @@ static void test_pointer_is_a_word() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit;
+    ASTModule *unit;
 
     bool ok = test_resolve(&ctx, scope, &unit,
                            "struct Big { a: i32, b: i32, c: i32, d: i32 }\n"
@@ -96,7 +96,7 @@ static void test_ref_is_a_distinct_type() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit;
+    ASTModule *unit;
 
     bool ok = test_resolve(&ctx, scope, &unit,
                            "struct Node { n: i32 }\n"
@@ -122,7 +122,7 @@ static void test_ref_pointers_are_interned() {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit;
+    ASTModule *unit;
 
     bool ok = test_resolve(&ctx, scope, &unit,
                            "struct Node { n: i32 }\n"

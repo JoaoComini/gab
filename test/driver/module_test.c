@@ -133,6 +133,76 @@ static void a_module_is_named_only_where_it_is_imported(void) {
                     GAB_TEST_SCRATCH));
 }
 
+static void an_import_is_named_only_in_the_file_that_imports_it(void) {
+    char object[512];
+    char interface[512];
+
+    snprintf(object, sizeof(object), "%s/perfile.o", GAB_TEST_SCRATCH);
+    snprintf(interface, sizeof(interface), "%s/perfile.gabi", GAB_TEST_SCRATCH);
+
+    assert(compile("module perfile;\nfunc helper(): i32 { return 7; }\n", object, interface, NULL));
+
+    char user[512];
+    snprintf(user, sizeof(user), "%s/perfile_use.o", GAB_TEST_SCRATCH);
+
+    const char *parts[2] = {"module use;\nimport perfile;\nfunc one(): i32 { return perfile::helper(); }\n",
+                            "module use;\nfunc two(): i32 { return perfile::helper(); }\n"};
+
+    assert(!compile_all(parts, 2, user, NULL, GAB_TEST_SCRATCH));
+}
+
+/* A field's type is resolved after every file has declared, so it reads the imports of its own file. */
+static void a_field_names_a_type_its_own_file_imports(void) {
+    char object[512];
+    char interface[512];
+
+    snprintf(object, sizeof(object), "%s/fieldlib.o", GAB_TEST_SCRATCH);
+    snprintf(interface, sizeof(interface), "%s/fieldlib.gabi", GAB_TEST_SCRATCH);
+
+    assert(compile("module fieldlib;\nstruct Held { value: i32, }\n", object, interface, NULL));
+
+    char user[512];
+    snprintf(user, sizeof(user), "%s/fieldlib_use.o", GAB_TEST_SCRATCH);
+
+    const char *parts[2] = {"module use;\nimport fieldlib;\nstruct Wrap { held: fieldlib::Held, }\n",
+                            "module use;\nfunc main(): i32 { return 0; }\n"};
+
+    assert(compile_all(parts, 2, user, NULL, GAB_TEST_SCRATCH));
+}
+
+/* An interface states the module, so a module names an import once however many of its files import it. */
+static void an_interface_states_an_import_once(void) {
+    char object[512];
+    char interface[512];
+
+    snprintf(object, sizeof(object), "%s/shared.o", GAB_TEST_SCRATCH);
+    snprintf(interface, sizeof(interface), "%s/shared.gabi", GAB_TEST_SCRATCH);
+
+    assert(compile("module shared;\nfunc helper(): i32 { return 7; }\n", object, interface, NULL));
+
+    char user[512];
+    char stated[512];
+
+    snprintf(user, sizeof(user), "%s/twice.o", GAB_TEST_SCRATCH);
+    snprintf(stated, sizeof(stated), "%s/twice.gabi", GAB_TEST_SCRATCH);
+
+    const char *parts[2] = {"module twice;\nimport shared;\nfunc one(): i32 { return shared::helper(); }\n",
+                            "module twice;\nimport shared;\nfunc two(): i32 { return shared::helper(); }\n"};
+
+    assert(compile_all(parts, 2, user, stated, GAB_TEST_SCRATCH));
+
+    char *written = gab_interface_read(stated);
+
+    assert(written);
+
+    const char *first = strstr(written, "import shared;");
+
+    assert(first);
+    assert(!strstr(first + 1, "import shared;"));
+
+    free(written);
+}
+
 /* An interface and the object it was compiled from name each other, so a stale pair cannot be linked. */
 static void a_stale_interface_does_not_link(void) {
     char object[512];
@@ -317,15 +387,15 @@ static void an_imported_generic_method_is_instantiated_where_it_is_named(void) {
 typedef struct {
     TestContext ctx;
     Scope *scope;
-    ResolvedUnit *resolved;
-    ASTUnit *unit;
+    ResolvedModule *resolved;
+    ASTModule *unit;
 } Reading;
 
 /* Both readings share one string pool, as the writer and the reader of an interface do in one
  * compilation, since an id compares by the pointers interning produced. */
 static void read_source(Reading *reading, TestContext *ctx, const char *source) {
     reading->scope = scope_create(ctx->arena, &ctx->strings, NULL);
-    reading->unit = ast_unit_create(ctx->arena);
+    reading->unit = ast_module_create(ctx->arena);
 
     bool ok =
         test_resolve_ir_with(ctx, reading->scope, &reading->unit, NULL, &reading->resolved, source, false);
@@ -431,6 +501,9 @@ int main(void) {
     an_imported_generic_is_instantiated_where_it_is_named();
     a_unit_names_what_an_imported_interface_declares();
     a_module_is_named_only_where_it_is_imported();
+    an_import_is_named_only_in_the_file_that_imports_it();
+    a_field_names_a_type_its_own_file_imports();
+    an_interface_states_an_import_once();
     a_stale_interface_does_not_link();
     a_module_is_written_across_the_files_it_is_compiled_from();
     every_file_of_a_module_declares_that_module();

@@ -9,23 +9,23 @@
 typedef struct {
     TestContext ctx;
     Scope *scope;
-    ASTUnit *unit;
-    ResolvedUnit *resolved;
+    ASTModule *unit;
+    ResolvedModule *resolved;
 } Lowered;
 
 static MIRFunction *lower_first_function(Lowered *lowered, const char *source) {
     test_context_init(&lowered->ctx);
 
     lowered->scope = scope_create(lowered->ctx.arena, &lowered->ctx.strings, NULL);
-    lowered->unit = ast_unit_create(lowered->ctx.arena);
+    lowered->unit = ast_module_create(lowered->ctx.arena);
 
     bool ok =
         test_resolve_ir(&lowered->ctx, lowered->scope, &lowered->unit, NULL, &lowered->resolved, source);
 
     assert(ok);
 
-    for (size_t i = 0; i < lowered->unit->statements.size; i++) {
-        ASTStmt *stmt = lowered->unit->statements.data[i];
+    for (size_t i = 0; i < ast_module_statements(lowered->unit)[0].size; i++) {
+        ASTStmt *stmt = ast_module_statements(lowered->unit)[0].data[i];
 
         if (!stmt || stmt->kind != STMT_FUNC_DECL || !stmt->func_decl.body) {
             continue;
@@ -237,7 +237,7 @@ static MIRFunction *lower_named_function(Lowered *lowered, const char *source, c
     test_context_init(&lowered->ctx);
 
     lowered->scope = scope_create(lowered->ctx.arena, &lowered->ctx.strings, NULL);
-    lowered->unit = ast_unit_create(lowered->ctx.arena);
+    lowered->unit = ast_module_create(lowered->ctx.arena);
 
     bool ok =
         test_resolve_ir(&lowered->ctx, lowered->scope, &lowered->unit, NULL, &lowered->resolved, source);
@@ -246,8 +246,8 @@ static MIRFunction *lower_named_function(Lowered *lowered, const char *source, c
 
     size_t length = strlen(name);
 
-    for (size_t i = 0; i < lowered->unit->statements.size; i++) {
-        ASTStmt *stmt = lowered->unit->statements.data[i];
+    for (size_t i = 0; i < ast_module_statements(lowered->unit)[0].size; i++) {
+        ASTStmt *stmt = ast_module_statements(lowered->unit)[0].data[i];
 
         if (!stmt || stmt->kind != STMT_FUNC_DECL || !stmt->func_decl.body) {
             continue;
@@ -482,15 +482,15 @@ static void a_jump_outside_a_loop_emits_no_terminator(void) {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
-    ResolvedUnit *resolved;
+    ASTModule *unit = ast_module_create(ctx.arena);
+    ResolvedModule *resolved;
 
     test_resolve_ir(&ctx, scope, &unit, NULL, &resolved, "func f(): i32 { break; }\n");
 
     ASTStmt *decl = NULL;
 
-    for (size_t i = 0; i < unit->statements.size; i++) {
-        ASTStmt *stmt = unit->statements.data[i];
+    for (size_t i = 0; i < ast_module_statements(unit)[0].size; i++) {
+        ASTStmt *stmt = ast_module_statements(unit)[0].data[i];
 
         if (stmt && stmt->kind == STMT_FUNC_DECL && stmt->func_decl.body) {
             decl = stmt;

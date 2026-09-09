@@ -9,22 +9,22 @@
 typedef struct {
     TestContext ctx;
     Scope *scope;
-    ASTUnit *unit;
-    ResolvedUnit *resolved;
+    ASTModule *unit;
+    ResolvedModule *resolved;
 } Elaborated;
 
 static MIRFunction *elaborate(Elaborated *out, const char *source, const char *name) {
     test_context_init(&out->ctx);
 
     out->scope = scope_create(out->ctx.arena, &out->ctx.strings, NULL);
-    out->unit = ast_unit_create(out->ctx.arena);
+    out->unit = ast_module_create(out->ctx.arena);
 
     assert(test_resolve_ir(&out->ctx, out->scope, &out->unit, NULL, &out->resolved, source));
 
     size_t length = strlen(name);
 
-    for (size_t i = 0; i < out->unit->statements.size; i++) {
-        ASTStmt *stmt = out->unit->statements.data[i];
+    for (size_t i = 0; i < ast_module_statements(out->unit)[0].size; i++) {
+        ASTStmt *stmt = ast_module_statements(out->unit)[0].data[i];
 
         if (!stmt || stmt->kind != STMT_FUNC_DECL || !stmt->func_decl.body) {
             continue;

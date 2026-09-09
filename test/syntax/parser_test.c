@@ -1,9 +1,9 @@
-#include "memory/arena.h"
 #include "ast/ast.h"
 #include "ast/stmt.h"
 #include "diagnostics.h"
-#include "syntax/parser.h"
+#include "memory/arena.h"
 #include "support/test_context.h"
+#include "syntax/parser.h"
 #include "type/type.h"
 
 #include <assert.h>
@@ -14,11 +14,12 @@
 /* A parsed unit points into the context's arena, so the context outlives every unit handed back. */
 static TestContext parsed;
 
-static ASTUnit *assert_parse(const char *code) {
+static ASTModule *assert_parse(const char *code) {
     Diagnostics *diagnostics = &parsed.diagnostics;
 
-    ASTUnit *unit;
-    bool ok = parse_unit(test_in_a_module(code), parsed.arena, &parsed.strings, &unit, diagnostics);
+    ASTModule *unit;
+    bool ok = parse_module((const char *const[]){test_in_a_module(code)}, 1, NULL, parsed.arena,
+                           &parsed.strings, &unit, diagnostics);
     assert(ok);
     assert(!diagnostics_has_errors(diagnostics));
 
@@ -30,8 +31,9 @@ static void assert_parse_error(const char *code, const char *expected_error) {
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
-    ASTUnit *unit;
-    bool ok = parse_unit(test_in_a_module(code), ctx.arena, &ctx.strings, &unit, diagnostics);
+    ASTModule *unit;
+    bool ok = parse_module((const char *const[]){test_in_a_module(code)}, 1, NULL, ctx.arena, &ctx.strings,
+                           &unit, diagnostics);
     assert(!ok);
 
     assert(diagnostics_has_errors(diagnostics));
@@ -60,10 +62,12 @@ static const char *func_wrap(const char *code) {
     return code_buffer;
 }
 
-static ASTStmtList func_unwrap(ASTUnit *unit) { return unit->statements.data[0]->func_decl.body->block.list; }
+static ASTStmtList func_unwrap(ASTModule *unit) {
+    return ast_module_statements(unit)[0].data[0]->func_decl.body->block.list;
+}
 
 static void test_single_number() {
-    ASTUnit *unit = assert_parse(func_wrap("42;"));
+    ASTModule *unit = assert_parse(func_wrap("42;"));
 
     ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_EXPR);
@@ -73,7 +77,7 @@ static void test_single_number() {
 }
 
 static void test_booleans() {
-    ASTUnit *unit = assert_parse(func_wrap("true; false;"));
+    ASTModule *unit = assert_parse(func_wrap("true; false;"));
 
     ASTStmt *true_stmt = func_unwrap(unit).data[0];
     assert(true_stmt->kind == STMT_EXPR);
@@ -89,7 +93,7 @@ static void test_booleans() {
 }
 
 static void test_multiple_statements() {
-    ASTUnit *unit = assert_parse(func_wrap("42; 3 + 5;"));
+    ASTModule *unit = assert_parse(func_wrap("42; 3 + 5;"));
 
     ASTStmt *first = func_unwrap(unit).data[0];
     assert(first->kind == STMT_EXPR);
@@ -99,7 +103,7 @@ static void test_multiple_statements() {
 }
 
 static void test_simple_addition() {
-    ASTUnit *unit = assert_parse(func_wrap("3 + 4;"));
+    ASTModule *unit = assert_parse(func_wrap("3 + 4;"));
 
     ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_EXPR);
@@ -111,7 +115,7 @@ static void test_simple_addition() {
 }
 
 static void test_operator_precedence() {
-    ASTUnit *unit = assert_parse(func_wrap("3 + 4 * 2;"));
+    ASTModule *unit = assert_parse(func_wrap("3 + 4 * 2;"));
 
     ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_EXPR);
@@ -133,7 +137,7 @@ static void test_operator_precedence() {
 }
 
 static void test_parentheses() {
-    ASTUnit *unit = assert_parse(func_wrap("(3 + 4) * 2;"));
+    ASTModule *unit = assert_parse(func_wrap("(3 + 4) * 2;"));
 
     ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_EXPR);
@@ -156,7 +160,7 @@ static void test_parentheses() {
 }
 
 static void test_variables() {
-    ASTUnit *unit = assert_parse(func_wrap("let x = 2; let y = 3; 2 + (x * y);"));
+    ASTModule *unit = assert_parse(func_wrap("let x = 2; let y = 3; 2 + (x * y);"));
 
     ASTStmt *stmt = func_unwrap(unit).data[2];
     assert(stmt->kind == STMT_EXPR);
@@ -179,7 +183,7 @@ static void test_variables() {
 }
 
 static void test_var_declaration() {
-    ASTUnit *unit = assert_parse(func_wrap("let x = 2 + 3;"));
+    ASTModule *unit = assert_parse(func_wrap("let x = 2 + 3;"));
 
     ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_VAR_DECL);
@@ -201,7 +205,7 @@ static void test_var_declaration() {
 }
 
 static void test_var_uninit_declaration() {
-    ASTUnit *unit = assert_parse(func_wrap("let x: i32;"));
+    ASTModule *unit = assert_parse(func_wrap("let x: i32;"));
 
     ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_VAR_DECL);
@@ -215,9 +219,9 @@ static void test_var_untyped_uninti_declaration() {
 }
 
 static void test_struct_declaration() {
-    ASTUnit *unit = assert_parse("struct Vec3 { x: f32, y: f32, z: f32 }");
+    ASTModule *unit = assert_parse("struct Vec3 { x: f32, y: f32, z: f32 }");
 
-    ASTStmt *stmt = unit->statements.data[0];
+    ASTStmt *stmt = ast_module_statements(unit)[0].data[0];
     assert(stmt->kind == STMT_STRUCT_DECL);
     assert(string_ref_equals_cstr(stmt->struct_decl.name, "Vec3"));
 
@@ -231,17 +235,17 @@ static void test_struct_declaration() {
 }
 
 static void test_struct_trailing_comma() {
-    ASTUnit *unit = assert_parse("struct Pair { a: i32, b: i32, }");
+    ASTModule *unit = assert_parse("struct Pair { a: i32, b: i32, }");
 
-    ASTStmt *stmt = unit->statements.data[0];
+    ASTStmt *stmt = ast_module_statements(unit)[0].data[0];
     assert(stmt->kind == STMT_STRUCT_DECL);
     assert(stmt->struct_decl.fields.size == 2);
 }
 
 static void test_empty_struct_declaration() {
-    ASTUnit *unit = assert_parse("struct Empty { }");
+    ASTModule *unit = assert_parse("struct Empty { }");
 
-    ASTStmt *stmt = unit->statements.data[0];
+    ASTStmt *stmt = ast_module_statements(unit)[0].data[0];
     assert(stmt->kind == STMT_STRUCT_DECL);
     assert(stmt->struct_decl.fields.size == 0);
 }
@@ -259,11 +263,11 @@ static void test_struct_unterminated() {
 }
 
 static void test_func_declaration() {
-    ASTUnit *unit = assert_parse("func add(x : i32, y : i32): i32 {"
-                                 "    return x + y;"
-                                 "}");
+    ASTModule *unit = assert_parse("func add(x : i32, y : i32): i32 {"
+                                   "    return x + y;"
+                                   "}");
 
-    ASTStmt *stmt = unit->statements.data[0];
+    ASTStmt *stmt = ast_module_statements(unit)[0].data[0];
     assert(stmt->kind == STMT_FUNC_DECL);
 
     assert(string_ref_equals_cstr(stmt->func_decl.name, "add"));
@@ -279,11 +283,11 @@ static void test_func_declaration() {
 }
 
 static void test_unit_func_declaration() {
-    ASTUnit *unit = assert_parse("func test(x : i32, y : i32) {"
-                                 "    let a = x + y;"
-                                 "}");
+    ASTModule *unit = assert_parse("func test(x : i32, y : i32) {"
+                                   "    let a = x + y;"
+                                   "}");
 
-    ASTStmt *stmt = unit->statements.data[0];
+    ASTStmt *stmt = ast_module_statements(unit)[0].data[0];
     assert(stmt->kind == STMT_FUNC_DECL);
 
     assert(string_ref_equals_cstr(stmt->func_decl.name, "test"));
@@ -299,11 +303,11 @@ static void test_unit_func_declaration() {
 }
 
 static void test_no_params_func_declaration() {
-    ASTUnit *unit = assert_parse("func test() {"
-                                 "    return true;"
-                                 "}");
+    ASTModule *unit = assert_parse("func test() {"
+                                   "    return true;"
+                                   "}");
 
-    ASTStmt *stmt = unit->statements.data[0];
+    ASTStmt *stmt = ast_module_statements(unit)[0].data[0];
     assert(stmt->kind == STMT_FUNC_DECL);
     assert(string_ref_equals_cstr(stmt->func_decl.name, "test"));
     assert(stmt->func_decl.return_type == NULL);
@@ -316,7 +320,7 @@ static void test_no_params_func_declaration() {
     assert(body->block.list.data[0]->kind == STMT_RETURN);
 }
 static void test_assignment() {
-    ASTUnit *unit = assert_parse(func_wrap("x = 2;"));
+    ASTModule *unit = assert_parse(func_wrap("x = 2;"));
 
     ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_ASSIGN);
@@ -331,7 +335,7 @@ static void test_assignment() {
 }
 
 static void test_block() {
-    ASTUnit *unit = assert_parse(func_wrap("{ let x = 2; x = 1; }"));
+    ASTModule *unit = assert_parse(func_wrap("{ let x = 2; x = 1; }"));
 
     ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_BLOCK);
@@ -339,7 +343,7 @@ static void test_block() {
 }
 
 static void test_if() {
-    ASTUnit *unit = assert_parse(func_wrap("if 2 < 1 { 10; } else { 20; }"));
+    ASTModule *unit = assert_parse(func_wrap("if 2 < 1 { 10; } else { 20; }"));
 
     ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_IF);
@@ -357,7 +361,7 @@ static void test_if() {
 }
 
 static void test_return() {
-    ASTUnit *unit = assert_parse(func_wrap("return 2;"));
+    ASTModule *unit = assert_parse(func_wrap("return 2;"));
 
     ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_RETURN);
@@ -389,33 +393,34 @@ static void test_expression_not_assignable() {
 }
 
 static void test_module_directive() {
-    ASTUnit *unit = assert_parse("module Player;\nfunc f(): i32 { return 1; }\n");
+    ASTModule *unit = assert_parse("module Player;\nfunc f(): i32 { return 1; }\n");
 
-    assert(unit->module_name.data);
-    assert(unit->module_name.length == 6);
-    assert(strncmp(unit->module_name.data, "Player", 6) == 0);
-    assert(unit->module_span.line == 1);
+    assert(unit->name.data);
+    assert(unit->name.length == 6);
+    assert(strncmp(unit->name.data, "Player", 6) == 0);
+    assert(unit->span.line == 1);
 
-    assert(unit->statements.size == 1);
+    assert(ast_module_statements(unit)[0].size == 1);
 }
 
 static void test_a_unit_must_name_its_module() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    ASTUnit *unit;
+    ASTModule *unit;
 
-    assert(!parse_unit("func f(): i32 { return 1; }\n", ctx.arena, &ctx.strings, &unit, &ctx.diagnostics));
+    assert(!parse_module((const char *const[]){"func f(): i32 { return 1; }\n"}, 1, NULL, ctx.arena,
+                         &ctx.strings, &unit, &ctx.diagnostics));
     assert(diagnostics_has_errors(&ctx.diagnostics));
 
     test_context_free(&ctx);
 }
 
 static void test_module_directive_alone() {
-    ASTUnit *unit = assert_parse("module Player;\n");
+    ASTModule *unit = assert_parse("module Player;\n");
 
-    assert(unit->module_name.data);
-    assert(unit->statements.size == 0);
+    assert(unit->name.data);
+    assert(ast_module_statements(unit)[0].size == 0);
 }
 
 static void test_module_name_cannot_be_nested() {
@@ -468,7 +473,7 @@ static void test_function_cannot_be_declared_inside_a_method() {
 }
 
 static void test_for_infinite() {
-    ASTUnit *unit = assert_parse(func_wrap("for { 10; }"));
+    ASTModule *unit = assert_parse(func_wrap("for { 10; }"));
 
     ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_FOR);
@@ -480,7 +485,7 @@ static void test_for_infinite() {
 }
 
 static void test_for_condition() {
-    ASTUnit *unit = assert_parse(func_wrap("for 2 < 1 { 10; }"));
+    ASTModule *unit = assert_parse(func_wrap("for 2 < 1 { 10; }"));
 
     ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_FOR);
@@ -491,7 +496,7 @@ static void test_for_condition() {
 }
 
 static void test_for_clauses() {
-    ASTUnit *unit = assert_parse(func_wrap("for let i: i32 = 0; i < 3; i = i + 1 { 10; }"));
+    ASTModule *unit = assert_parse(func_wrap("for let i: i32 = 0; i < 3; i = i + 1 { 10; }"));
 
     ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_FOR);
@@ -509,7 +514,7 @@ static void test_for_clauses() {
 }
 
 static void test_break_and_continue() {
-    ASTUnit *unit = assert_parse(func_wrap("for { break; continue; }"));
+    ASTModule *unit = assert_parse(func_wrap("for { break; continue; }"));
 
     ASTStmtList body = func_unwrap(unit).data[0]->forstmt.body->block.list;
 
@@ -521,9 +526,9 @@ static void test_break_and_continue() {
 }
 
 static void test_a_type_takes_several_arguments() {
-    ASTUnit *unit = assert_parse("struct Holder { a: Map<i32,f32> }");
+    ASTModule *unit = assert_parse("struct Holder { a: Map<i32,f32> }");
 
-    TypeExpr *apply = unit->statements.data[0]->struct_decl.fields.data[0]->type_expr;
+    TypeExpr *apply = ast_module_statements(unit)[0].data[0]->struct_decl.fields.data[0]->type_expr;
 
     assert(apply->kind == TYPE_EXPR_APPLY);
     assert(string_ref_equals_cstr(apply->apply.base->name, "Map"));
@@ -533,9 +538,9 @@ static void test_a_type_takes_several_arguments() {
 }
 
 static void test_an_argument_may_be_an_application() {
-    ASTUnit *unit = assert_parse("struct Holder { a: Vec<Vec<i32>> }");
+    ASTModule *unit = assert_parse("struct Holder { a: Vec<Vec<i32>> }");
 
-    TypeExpr *outer = unit->statements.data[0]->struct_decl.fields.data[0]->type_expr;
+    TypeExpr *outer = ast_module_statements(unit)[0].data[0]->struct_decl.fields.data[0]->type_expr;
 
     assert(outer->kind == TYPE_EXPR_APPLY);
     assert(outer->apply.args.size == 1);
@@ -548,9 +553,9 @@ static void test_an_argument_may_be_an_application() {
 }
 
 static void test_a_type_is_a_tree() {
-    ASTUnit *unit = assert_parse("struct Holder { a: &*array<i32, 3> }");
+    ASTModule *unit = assert_parse("struct Holder { a: &*array<i32, 3> }");
 
-    ASTStmt *stmt = unit->statements.data[0];
+    ASTStmt *stmt = ast_module_statements(unit)[0].data[0];
     ASTFieldList fields = stmt->struct_decl.fields;
 
     TypeExpr *ref = fields.data[0]->type_expr;

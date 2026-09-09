@@ -16,7 +16,7 @@ static void instantiate_needed(PendingBodies *work, Function *callee, Diagnostic
 /* An ending is reached by the drop the backend writes rather than by a call, so what a drop needs is
  * collected beside what a call does or no instance of it is ever lowered. */
 /* What a drop reaches through it ends too, so every level an owner reaches names the ending it declares. */
-static void collect_dropped_endings(PendingBodies *work, ResolvedUnit *resolved, const Type *type,
+static void collect_dropped_endings(PendingBodies *work, ResolvedModule *resolved, const Type *type,
                                     Diagnostics *diagnostics) {
     if (!type) {
         return;
@@ -37,7 +37,7 @@ static void collect_dropped_endings(PendingBodies *work, ResolvedUnit *resolved,
     }
 }
 
-static void collect_called_instances(PendingBodies *work, ResolvedUnit *resolved, const MIRFunction *body,
+static void collect_called_instances(PendingBodies *work, ResolvedModule *resolved, const MIRFunction *body,
                                      Diagnostics *diagnostics) {
     for (size_t b = 0; b < body->block_count; b++) {
         const MIRBlock *block = body->blocks[b];
@@ -59,7 +59,7 @@ static void collect_called_instances(PendingBodies *work, ResolvedUnit *resolved
     }
 }
 
-bool mir_build(Arena *arena, ResolvedUnit *resolved, MIRModule *imported, MIRModule **out,
+bool mir_build(Arena *arena, ResolvedModule *resolved, MIRModule *imported, MIRModule **out,
                Diagnostics *diagnostics) {
     size_t errors = diagnostics_count(diagnostics);
 

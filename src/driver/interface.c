@@ -666,30 +666,56 @@ void gab_interface_symbol(char *out, size_t capacity, const char *module, uint64
     snprintf(out, capacity, "gab.iface.%s.%016llx", module, (unsigned long long)digest);
 }
 
-void gab_interface_print(const ASTUnit *unit, const Facts *facts, FILE *out) {
-    fprintf(out, "module %.*s;\n", (int)unit->module_name.length, unit->module_name.data);
+static bool import_stated_before(const ASTModule *module, size_t file, size_t index, StringRef name) {
+    for (size_t f = 0; f <= file; f++) {
+        const ASTImportList *imports = &module->files.data[f]->imports;
 
-    /* What this module imports, so linking against it reaches the objects its bodies call into. */
-    for (size_t i = 0; i < unit->imports.size; i++) {
-        fprintf(out, "import %.*s;\n", (int)unit->imports.data[i].name.length,
-                unit->imports.data[i].name.data);
+        for (size_t i = 0; i < (f == file ? index : imports->size); i++) {
+            if (string_ref_equals(imports->data[i].name, name)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+void gab_interface_print(const ASTModule *module, const Facts *facts, FILE *out) {
+    fprintf(out, "module %.*s;\n", (int)module->name.length, module->name.data);
+
+    /* What this module imports, so linking against it reaches the objects its bodies call into. An
+     * interface states the module, so a name any of its files imports is stated once. */
+    for (size_t f = 0; f < module->files.size; f++) {
+        const ASTImportList *imports = &module->files.data[f]->imports;
+
+        for (size_t i = 0; i < imports->size; i++) {
+            StringRef name = imports->data[i].name;
+
+            if (!import_stated_before(module, f, i, name)) {
+                fprintf(out, "import %.*s;\n", (int)name.length, name.data);
+            }
+        }
     }
 
     fputc('\n', out);
 
-    for (size_t i = 0; i < unit->statements.size; i++) {
-        print_stmt(out, facts, unit->statements.data[i]);
+    for (size_t f = 0; f < module->files.size; f++) {
+        const ASTFile *file = module->files.data[f];
+
+        for (size_t i = 0; i < file->statements.size; i++) {
+            print_stmt(out, facts, file->statements.data[i]);
+        }
     }
 }
 
-bool gab_interface_write(const ASTUnit *unit, const Facts *facts, const char *path) {
+bool gab_interface_write(const ASTModule *module, const Facts *facts, const char *path) {
     FILE *out = fopen(path, "w");
 
     if (!out) {
         return false;
     }
 
-    gab_interface_print(unit, facts, out);
+    gab_interface_print(module, facts, out);
 
     fclose(out);
 

@@ -20,53 +20,14 @@
 
 #define GAB_COMPILE_BLOCK_SIZE 4096
 
-/* Resolves one unit into 'scope' and lowers every body it declares, appending them to 'unit'. */
-/* Every file of one module, parsed into a single unit: a module is one namespace however many files
- * write it, so what they declare is resolved together rather than one file at a time. */
-static bool parse_module(Arena *arena, StringPool *strings, const char *const *sources, size_t count,
-                         const char *const *names, ASTUnit **out, Diagnostics *diagnostics) {
-    ASTUnit *whole = ast_unit_create(arena);
-
-    for (size_t i = 0; i < count; i++) {
-        ASTUnit *part = ast_unit_create(arena);
-
-        if (!parse_unit(sources[i], arena, strings, &part, diagnostics)) {
-            return false;
-        }
-
-        if (i == 0) {
-            whole->module_name = part->module_name;
-            whole->module_span = part->module_span;
-        } else if (!string_ref_equals(whole->module_name, part->module_name)) {
-            diag_error(diagnostics, GAB_ERR_NAME, part->module_span,
-                       "%s declares module '%.*s', which is compiled as part of '%.*s'",
-                       names && names[i] ? names[i] : "this file", (int)part->module_name.length,
-                       part->module_name.data, (int)whole->module_name.length, whole->module_name.data);
-            return false;
-        }
-
-        for (size_t j = 0; j < part->statements.size; j++) {
-            ast_unit_add_statement(whole, part->statements.data[j]);
-        }
-
-        for (size_t j = 0; j < part->imports.size; j++) {
-            ast_import_list_add(&whole->imports, part->imports.data[j]);
-        }
-    }
-
-    *out = whole;
-
-    return true;
-}
-
 static bool compile_unit(Arena *arena, StringPool *strings, Scope *scope, ModuleScopeMap *modules,
                          const char *const *sources, size_t source_count, bool allow_primitive_impls,
                          LLVMUnit *out, Diagnostics *diagnostics, char *module_name, size_t module_capacity,
-                         ASTUnit **out_ast, const char *const *names, ASTUnit *parsed, MIRModule *generics,
-                         const Facts **out_facts) {
-    ASTUnit *ast = parsed;
+                         ASTModule **out_ast, const char *const *names, ASTModule *parsed,
+                         MIRModule *generics, const Facts **out_facts) {
+    ASTModule *ast = parsed;
 
-    if (!ast && !parse_module(arena, strings, sources, source_count, names, &ast, diagnostics)) {
+    if (!ast && !parse_module(sources, source_count, names, arena, strings, &ast, diagnostics)) {
         return false;
     }
 
@@ -75,12 +36,12 @@ static bool compile_unit(Arena *arena, StringPool *strings, Scope *scope, Module
     }
 
     if (module_name) {
-        snprintf(module_name, module_capacity, "%.*s", (int)ast->module_name.length, ast->module_name.data);
+        snprintf(module_name, module_capacity, "%.*s", (int)ast->name.length, ast->name.data);
     }
 
-    ResolvedUnit *resolved = NULL;
+    ResolvedModule *resolved = NULL;
 
-    if (!resolve_unit(arena, ast, scope, modules, allow_primitive_impls, &resolved, diagnostics)) {
+    if (!resolve_module(arena, ast, scope, modules, allow_primitive_impls, &resolved, diagnostics)) {
         return false;
     }
 
@@ -165,10 +126,10 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
     /* Every generic the core and the imports declare, which this unit instantiates from rather than links. */
     MIRModule *generics = mir_module_create(arena);
 
-    ASTUnit *declaring = NULL;
+    ASTModule *declaring = NULL;
 
-    ASTUnit *core_ast = NULL;
-    ASTUnit *unit_ast = NULL;
+    ASTModule *core_module = NULL;
+    ASTModule *module_ast = NULL;
 
     /* The core's declarations are resolved into the scope a program then names, and its bodies are
      * emitted only when the core is what was asked for. */
@@ -177,14 +138,14 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
 
     bool ok =
         compile_unit(arena, &strings, scope, NULL, core_sources, 1, true, request->is_core ? unit : NULL,
-                     diagnostics, NULL, 0, &core_ast, NULL, NULL, generics, &core_facts);
+                     diagnostics, NULL, 0, &core_module, NULL, NULL, generics, &core_facts);
 
     module_scope_map_insert(modules, string_from_cstr(&strings, GAB_CORE_MODULE), scope);
 
     /* Each import is its own compilation: its declarations land in a scope of their own, which the
      * unit then names, so a symbol keeps the module that defines it rather than taking this one's. */
     if (ok && !request->is_core &&
-        !parse_module(arena, &strings, request->sources, request->source_count, request->names, &declaring,
+        !parse_module(request->sources, request->source_count, request->names, arena, &strings, &declaring,
                       diagnostics)) {
         ok = false;
     }
@@ -196,7 +157,19 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
 
         /* The list grows as interfaces are read: an import's imports are linked too, though nothing
          * here names them. */
-        ASTImportList reached = declaring->imports;
+        ASTImportList reached = ast_import_list_create(arena_allocator(arena));
+
+        for (size_t f = 0; f < declaring->files.size; f++) {
+            const ASTImportList *written = &declaring->files.data[f]->imports;
+
+            for (size_t i = 0; i < written->size; i++) {
+                ast_import_list_add(&reached, written->data[i]);
+            }
+        }
+
+        /* What the module itself imports, ahead of what reading those interfaces appended: only a
+         * direct import is a scope this unit may name. */
+        size_t direct = reached.size;
 
         for (size_t i = 0; ok && i < reached.size; i++) {
             StringRef named = reached.data[i].name;
@@ -217,7 +190,7 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
             char found[512];
 
             if (!gab_find_interface(&path, module, found, sizeof(found))) {
-                diag_error(diagnostics, GAB_ERR_NAME, declaring->imports.data[i].span,
+                diag_error(diagnostics, GAB_ERR_NAME, reached.data[i].span,
                            "no interface for '%s' on the search path", module);
                 ok = false;
                 break;
@@ -239,19 +212,19 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
             }
 
             if (!text) {
-                diag_error(diagnostics, GAB_ERR_NAME, declaring->imports.data[i].span,
+                diag_error(diagnostics, GAB_ERR_NAME, reached.data[i].span,
                            "the interface for '%s' could not be read", module);
                 ok = false;
                 break;
             }
 
-            ASTUnit *stated = ast_unit_create(arena);
+            ASTFile *stated = NULL;
 
             /* Read for what it imports, which the diagnostics of a failed parse have already named. */
             Diagnostics quiet;
             diagnostics_init(&quiet, arena, found);
 
-            if (parse_unit(text, arena, &strings, &stated, &quiet)) {
+            if (parse_file(text, arena, &strings, &stated, &quiet)) {
                 for (size_t j = 0; j < stated->imports.size; j++) {
                     ast_import_list_add(&reached, stated->imports.data[j]);
                 }
@@ -268,7 +241,7 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
                               NULL, NULL, generics, NULL);
 
             if (ok) {
-                if (i < declaring->imports.size) {
+                if (i < direct) {
                     module_scope_map_insert(modules, string_from_cstr(&strings, module), imported);
                 }
 
@@ -292,12 +265,12 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
 
     if (ok && !request->is_core) {
         ok = compile_unit(arena, &strings, scope, modules, request->sources, request->source_count, false,
-                          unit, diagnostics, request->module_name, sizeof(request->module_name), &unit_ast,
+                          unit, diagnostics, request->module_name, sizeof(request->module_name), &module_ast,
                           request->names, declaring, generics, &unit_facts);
     }
 
     if (ok && request->interface) {
-        ok = gab_interface_write(request->is_core ? core_ast : unit_ast,
+        ok = gab_interface_write(request->is_core ? core_module : module_ast,
                                  request->is_core ? core_facts : unit_facts, request->interface);
 
         if (!ok) {
@@ -308,10 +281,10 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
         char *written = ok ? gab_interface_read(request->interface) : NULL;
 
         if (written) {
-            const ASTUnit *ast = request->is_core ? core_ast : unit_ast;
+            const ASTModule *ast = request->is_core ? core_module : module_ast;
 
             char module[128];
-            snprintf(module, sizeof(module), "%.*s", (int)ast->module_name.length, ast->module_name.data);
+            snprintf(module, sizeof(module), "%.*s", (int)ast->name.length, ast->name.data);
 
             char symbol[512];
             gab_interface_symbol(symbol, sizeof(symbol), module, gab_interface_digest(written));

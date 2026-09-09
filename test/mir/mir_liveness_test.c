@@ -9,8 +9,8 @@
 typedef struct {
     TestContext ctx;
     Scope *scope;
-    ASTUnit *unit;
-    ResolvedUnit *resolved;
+    ASTModule *unit;
+    ResolvedModule *resolved;
     MIRFunction *ir;
 } Lowered;
 
@@ -18,12 +18,12 @@ static void lower(Lowered *lowered, const char *source) {
     test_context_init(&lowered->ctx);
 
     lowered->scope = scope_create(lowered->ctx.arena, &lowered->ctx.strings, NULL);
-    lowered->unit = ast_unit_create(lowered->ctx.arena);
+    lowered->unit = ast_module_create(lowered->ctx.arena);
 
     assert(test_resolve_ir(&lowered->ctx, lowered->scope, &lowered->unit, NULL, &lowered->resolved, source));
 
-    for (size_t i = 0; i < lowered->unit->statements.size; i++) {
-        ASTStmt *stmt = lowered->unit->statements.data[i];
+    for (size_t i = 0; i < ast_module_statements(lowered->unit)[0].size; i++) {
+        ASTStmt *stmt = ast_module_statements(lowered->unit)[0].data[i];
 
         if (stmt && stmt->kind == STMT_FUNC_DECL && stmt->func_decl.body) {
             lowered->ir = mir_build_function(lowered->ctx.arena, lowered->scope->type_registry,

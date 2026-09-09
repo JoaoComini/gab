@@ -9,15 +9,15 @@ static void resolving_a_unit_lowers_every_function(void) {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTModule *unit = ast_module_create(ctx.arena);
     MIRModule *mir_unit = NULL;
 
     assert(test_resolve_ir(&ctx, scope, &unit, &mir_unit, NULL,
                            "func one(): i32 { return 1; }\n"
                            "func two(): i32 { return 2; }\n"));
 
-    for (size_t i = 0; i < unit->statements.size; i++) {
-        ASTStmt *stmt = unit->statements.data[i];
+    for (size_t i = 0; i < ast_module_statements(unit)[0].size; i++) {
+        ASTStmt *stmt = ast_module_statements(unit)[0].data[i];
 
         if (stmt && stmt->kind == STMT_FUNC_DECL && stmt->func_decl.body) {
             assert(mir_module_lookup(mir_unit, stmt->func_decl.function));
@@ -32,7 +32,7 @@ static void a_function_the_unit_never_resolved_is_absent(void) {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTModule *unit = ast_module_create(ctx.arena);
     MIRModule *mir_unit = NULL;
 
     assert(test_resolve_ir(&ctx, scope, &unit, &mir_unit, NULL, "func one(): i32 { return 1; }\n"));
@@ -49,13 +49,13 @@ static void a_lowered_body_carries_the_function_it_came_from(void) {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit = ast_unit_create(ctx.arena);
+    ASTModule *unit = ast_module_create(ctx.arena);
     MIRModule *mir_unit = NULL;
 
     assert(test_resolve_ir(&ctx, scope, &unit, &mir_unit, NULL, "func one(a: i32): i32 { return a; }\n"));
 
-    for (size_t i = 0; i < unit->statements.size; i++) {
-        ASTStmt *stmt = unit->statements.data[i];
+    for (size_t i = 0; i < ast_module_statements(unit)[0].size; i++) {
+        ASTStmt *stmt = ast_module_statements(unit)[0].data[i];
 
         if (stmt && stmt->kind == STMT_FUNC_DECL && stmt->func_decl.body) {
             MIRFunction *ir = mir_module_lookup(mir_unit, stmt->func_decl.function);

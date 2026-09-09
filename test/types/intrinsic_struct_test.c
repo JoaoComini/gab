@@ -20,9 +20,9 @@ static void a_unique_owns_what_it_points_at(void) {
     test_context_init(&ctx);
 
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
-    ASTUnit *unit;
+    ASTModule *unit;
     MIRModule *bodies;
-    ResolvedUnit *resolved;
+    ResolvedModule *resolved;
 
     bool ok = test_resolve_ir_with(&ctx, scope, &unit, &bodies, &resolved,
                                    "intrinsic struct Unique<T> { ptr: raw<T> }\n"

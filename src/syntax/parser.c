@@ -29,7 +29,7 @@ typedef struct {
 } Parser;
 
 static Parser parser_create(Lexer *lexer, Diagnostics *diagnostics);
-static bool parser_parse(Parser *parser, ASTUnit *unit);
+static bool parser_parse(Parser *parser, ASTFile *file);
 
 static ASTStmt *parse_decl_statement(Parser *parser);
 static ASTStmt *parse_statement(Parser *parser);
@@ -79,7 +79,7 @@ void parser_next_token(Parser *parser) { parser->current = lexer_next(parser->le
 
 static Span parser_span(Parser *parser) { return token_span(parser->current); }
 
-static void parse_module_directive(Parser *parser, ASTUnit *unit) {
+static void parse_module_directive(Parser *parser, ASTFile *file) {
     Span span = parser_span(parser);
 
     parser_next_token(parser);
@@ -113,15 +113,15 @@ static void parse_module_directive(Parser *parser, ASTUnit *unit) {
         return;
     }
 
-    unit->module_name = name;
-    unit->module_span = span;
+    file->module_name = name;
+    file->module_span = span;
 
     if (parser_expect(parser, TOKEN_SEMICOLON, "expected ';' after the module name")) {
         parser_next_token(parser);
     }
 }
 
-static void parse_import_directive(Parser *parser, ASTUnit *unit) {
+static void parse_import_directive(Parser *parser, ASTFile *file) {
     Span span = parser_span(parser);
 
     parser_next_token(parser);
@@ -142,27 +142,27 @@ static void parse_import_directive(Parser *parser, ASTUnit *unit) {
         return;
     }
 
-    ast_import_list_add(&unit->imports, (ASTImport){.name = name, .span = span});
+    ast_import_list_add(&file->imports, (ASTImport){.name = name, .span = span});
 
     if (parser_expect(parser, TOKEN_SEMICOLON, "expected ';' after the module name")) {
         parser_next_token(parser);
     }
 }
 
-static bool parser_parse(Parser *parser, ASTUnit *unit) {
+static bool parser_parse(Parser *parser, ASTFile *file) {
     size_t errors_before = diagnostics_count(parser->diagnostics);
 
     parser_next_token(parser);
 
     if (parser->current.type == TOKEN_MODULE) {
-        parse_module_directive(parser, unit);
+        parse_module_directive(parser, file);
     } else {
         diag_error(parser->diagnostics, GAB_ERR_SYNTAX, parser_span(parser),
-                   "a unit must name its module: write 'module <name>;' before anything else");
+                   "a file must name its module: write 'module <name>;' before anything else");
     }
 
     while (parser->current.type == TOKEN_IMPORT) {
-        parse_import_directive(parser, unit);
+        parse_import_directive(parser, file);
     }
 
     while (parser->current.type != TOKEN_EOF) {
@@ -175,7 +175,7 @@ static bool parser_parse(Parser *parser, ASTUnit *unit) {
             diag_error(parser->diagnostics, GAB_ERR_SYNTAX, parser_span(parser),
                        "'import' must appear before any declaration");
 
-            ASTUnit discarded = *unit;
+            ASTFile discarded = *file;
             parse_import_directive(parser, &discarded);
             continue;
         }
@@ -184,7 +184,7 @@ static bool parser_parse(Parser *parser, ASTUnit *unit) {
             diag_error(parser->diagnostics, GAB_ERR_SYNTAX, parser_span(parser),
                        "'module' must appear once, before any declaration");
 
-            ASTUnit discarded = *unit;
+            ASTFile discarded = *file;
             parse_module_directive(parser, &discarded);
             continue;
         }
@@ -203,7 +203,7 @@ static bool parser_parse(Parser *parser, ASTUnit *unit) {
             continue;
         }
 
-        ast_unit_add_statement(unit, stmt);
+        ast_file_add_statement(file, stmt);
     }
 
     return diagnostics_count(parser->diagnostics) == errors_before;
@@ -1888,17 +1888,47 @@ static void parser_error_found(Parser *parser, const char *message) {
                token_description(parser->current.type));
 }
 
-bool parse_unit(const char *source, Arena *arena, StringPool *strings, ASTUnit **out,
+bool parse_file(const char *source, Arena *arena, StringPool *strings, ASTFile **out,
                 Diagnostics *diagnostics) {
     Lexer lexer = lexer_create(source, arena, strings, diagnostics);
     Parser parser = parser_create(&lexer, diagnostics);
-    ASTUnit *unit = ast_unit_create(arena);
+    ASTFile *file = ast_file_create(arena);
 
-    if (!parser_parse(&parser, unit)) {
+    if (!parser_parse(&parser, file)) {
         return false;
     }
 
-    *out = unit;
+    *out = file;
+
+    return true;
+}
+
+bool parse_module(const char *const *sources, size_t count, const char *const *names, Arena *arena,
+                  StringPool *strings, ASTModule **out, Diagnostics *diagnostics) {
+    ASTModule *module = ast_module_create(arena);
+
+    for (size_t i = 0; i < count; i++) {
+        ASTFile *file = NULL;
+
+        if (!parse_file(sources[i], arena, strings, &file, diagnostics)) {
+            return false;
+        }
+
+        if (i == 0) {
+            module->name = file->module_name;
+            module->span = file->module_span;
+        } else if (!string_ref_equals(module->name, file->module_name)) {
+            diag_error(diagnostics, GAB_ERR_NAME, file->module_span,
+                       "%s declares module '%.*s', which is compiled as part of '%.*s'",
+                       names && names[i] ? names[i] : "this file", (int)file->module_name.length,
+                       file->module_name.data, (int)module->name.length, module->name.data);
+            return false;
+        }
+
+        ast_module_add_file(module, file);
+    }
+
+    *out = module;
 
     return true;
 }
