@@ -81,14 +81,16 @@ typedef struct InterfaceRef {
 
 /* What a type parameter was declared against. A type parameter is bounded by an interface it must
  * implement; a value parameter names the type its value has, as 'array<T, N: i32>' does. */
+typedef enum {
+    BOUND_NONE,
+
+    BOUND_INTERFACE,
+
+    BOUND_VALUE,
+} BoundKind;
+
 typedef struct TypeParamBound {
-    enum {
-        BOUND_NONE,
-
-        BOUND_INTERFACE,
-
-        BOUND_VALUE,
-    } kind;
+    BoundKind kind;
 
     union {
         InterfaceRef interface;

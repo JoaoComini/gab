@@ -2039,16 +2039,23 @@ static const Type *resolve_element_type(ResolverState *state, TypeExpr *expr, Sp
     return element;
 }
 
-/* 'N: i32' declares a value parameter, as Rust spells 'const N: usize'; any other bound names an interface.
- */
-static bool param_is_a_value(const TypeRegistry *registry, StringPool *strings, const TypeExpr *bound) {
-    return bound && bound->kind == TYPE_EXPR_NAME &&
-           string_from_ref(strings, bound->name) == type_registry_names(registry)->i32;
+/* Which kind of parameter a bound declares, which its syntax alone says: nothing here is resolved, so
+ * this answers before the parameters are in scope and their bounds can be. 'N: i32' declares a value
+ * parameter, as Rust spells 'const N: usize'; any other bound names an interface. */
+static BoundKind bound_kind_of(const TypeRegistry *registry, StringPool *strings, const TypeExpr *bound) {
+    if (!bound) {
+        return BOUND_NONE;
+    }
+
+    return bound->kind == TYPE_EXPR_NAME &&
+                   string_from_ref(strings, bound->name) == type_registry_names(registry)->i32
+               ? BOUND_VALUE
+               : BOUND_INTERFACE;
 }
 
-static bool bind_type_param(Scope *params, String *name, size_t index, const TypeExpr *bound) {
+static bool bind_type_param(Scope *params, String *name, size_t index, BoundKind kind) {
     TypeArg arg =
-        param_is_a_value(params->type_registry, params->strings, bound)
+        kind == BOUND_VALUE
             ? (TypeArg){.kind = TYPE_ARG_CONST, .constant = {.kind = CONST_PARAM, .param = index}}
             : (TypeArg){.kind = TYPE_ARG_TYPE, .type = type_registry_param(params->type_registry, index)};
 
@@ -2554,7 +2561,8 @@ static void enter_owner_scope(ResolverState *state, TypeExpr *owner, TypeExpr *c
                 continue;
             }
 
-            bind_type_param(params, resolver_intern(state, arg->name), i, bounds ? bounds[i] : NULL);
+            bind_type_param(params, resolver_intern(state, arg->name), i,
+                            bound_kind_of(params->type_registry, params->strings, bounds ? bounds[i] : NULL));
         }
     }
 
@@ -2578,7 +2586,9 @@ static void bind_own_type_params(ResolverState *state, ASTStmt *stmt, size_t own
             continue;
         }
 
-        if (!bind_type_param(state->current_scope, name, i, stmt->func_decl.type_param_bounds[i])) {
+        if (!bind_type_param(state->current_scope, name, i,
+                             bound_kind_of(state->current_scope->type_registry, state->current_scope->strings,
+                                           stmt->func_decl.type_param_bounds[i]))) {
             diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "duplicate type parameter '%s' on '%s'",
                        name->data, name->data);
         }
@@ -3031,12 +3041,15 @@ static void enter_param_bounds(ResolverState *state, ASTStmt *stmt) {
     for (size_t i = 0; i < stmt->func_decl.type_param_count; i++) {
         const TypeExpr *bound = stmt->func_decl.type_param_bounds[i];
 
-        if (!bound) {
+        BoundKind kind =
+            bound_kind_of(state->current_scope->type_registry, state->current_scope->strings, bound);
+
+        if (kind == BOUND_NONE) {
             continue;
         }
 
         /* A value parameter's bound names its type rather than an interface, so it declares no methods. */
-        if (param_is_a_value(state->current_scope->type_registry, state->current_scope->strings, bound)) {
+        if (kind == BOUND_VALUE) {
             state->param_bounds[i] = (TypeParamBound){
                 .kind = BOUND_VALUE,
                 .value = resolve_type_expr(state, (TypeExpr *)bound, stmt->span),
@@ -3114,7 +3127,9 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
                 continue;
             }
 
-            if (!bind_type_param(params, param_name, i, stmt->func_decl.type_param_bounds[i])) {
+            if (!bind_type_param(params, param_name, i,
+                                 bound_kind_of(params->type_registry, params->strings,
+                                               stmt->func_decl.type_param_bounds[i]))) {
                 diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span,
                            "duplicate type parameter '%s' on '%s'", param_name->data, param_name->data);
             }
