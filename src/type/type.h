@@ -84,10 +84,6 @@ typedef enum {
     TYPE_META_LENGTH,
 } TypeMetadata;
 
-typedef struct Binding Binding;
-
-typedef struct Function Function;
-
 typedef struct TypeField {
     String *name;
     const Type *type;

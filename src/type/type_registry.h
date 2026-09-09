@@ -45,8 +45,6 @@ typedef struct KnownNames {
     String *size_of;
 } KnownNames;
 
-typedef struct Binding Binding;
-
 typedef struct {
     /* What the name binds: a type, or the value 'array<T, N>' names for its length. */
     TypeArg arg;
