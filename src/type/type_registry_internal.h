@@ -1,7 +1,7 @@
 #ifndef GAB_TYPE_REGISTRY_INTERNAL_H
 #define GAB_TYPE_REGISTRY_INTERNAL_H
 
-#include "binding.h"
+#include "decl.h"
 #include "type_internal.h"
 #include "type_registry.h"
 

@@ -1,7 +1,7 @@
 #ifndef GAB_MIR_MODULE_H
 #define GAB_MIR_MODULE_H
 
-#include "binding.h"
+#include "decl.h"
 #include "memory/arena.h"
 #include "mir/mir.h"
 #include "util/list.h"

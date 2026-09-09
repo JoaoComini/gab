@@ -2,7 +2,7 @@
 #define GAB_AST_EXPR_H
 
 #include "ast/type_expr.h"
-#include "binding.h"
+#include "decl.h"
 #include "diagnostics.h"
 #include "memory/arena.h"
 #include "string/string.h"

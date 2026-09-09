@@ -1,7 +1,7 @@
 #ifndef GAB_MIR_H
 #define GAB_MIR_H
 
-#include "binding.h"
+#include "decl.h"
 #include "constant.h"
 #include "diagnostics.h"
 #include "function_registry.h"

@@ -4,7 +4,7 @@
 
 #include "function_registry.h"
 
-#include "binding.h"
+#include "decl.h"
 #include "scope.h"
 #include "string/string.h"
 #include "string/string_ref.h"

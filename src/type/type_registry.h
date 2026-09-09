@@ -45,18 +45,6 @@ typedef struct KnownNames {
     String *size_of;
 } KnownNames;
 
-typedef struct {
-    /* What the name binds: a type, or the value 'array<T, N>' names for its length. */
-    TypeArg arg;
-
-    const TypeDecl *decl;
-} TypeBinding;
-
-#define type_map_hash(key) (size_t)key
-#define type_map_key_equals(key, other) key == other
-
-GAB_HASH_MAP(TypeMap, type_map, String *, TypeBinding)
-
 typedef struct TypeFieldSpec {
     String *name;
     const Type *type;

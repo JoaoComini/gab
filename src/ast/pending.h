@@ -2,7 +2,7 @@
 #define GAB_AST_PENDING_H
 
 #include "ast/ast.h"
-#include "binding.h"
+#include "decl.h"
 #include "diagnostics.h"
 #include "memory/arena.h"
 #include "type/type_registry.h"

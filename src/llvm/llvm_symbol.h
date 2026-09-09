@@ -1,7 +1,7 @@
 #ifndef GAB_LLVM_SYMBOL_H
 #define GAB_LLVM_SYMBOL_H
 
-#include "binding.h"
+#include "decl.h"
 #include "memory/arena.h"
 
 /* The symbol a function is linked by: its module, its owner, and what a specialization was given,

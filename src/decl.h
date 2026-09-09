@@ -1,9 +1,9 @@
-#ifndef GAB_BINDING_H
-#define GAB_BINDING_H
+#ifndef GAB_DECL_H
+#define GAB_DECL_H
 
-#include "scope.h"
 #include "string/string.h"
 #include "type/type.h"
+#include "type/type_registry.h"
 #include "util/hash_map.h"
 
 #include <stdbool.h>
@@ -18,6 +18,8 @@ typedef enum {
 } BindingKind;
 
 typedef struct ASTStmt ASTStmt;
+
+typedef struct Function Function;
 
 /* Parameters and result. On a declaration these name its type parameters; on a Function they are what
  * substituting that declaration's arguments into them produced. */
@@ -42,6 +44,25 @@ typedef struct IntrinsicLowering {
     const String *owner;
     const String *name;
 } IntrinsicLowering;
+
+typedef struct InterfaceDecl {
+    DeclId id;
+
+    /* Resolved once, with 'Self' as type parameter 0 and the interface's own as 1..param_count;
+     * an implementor substitutes itself and its arguments for them. */
+    Function *const *methods;
+    size_t method_count;
+
+    size_t param_count;
+} InterfaceDecl;
+
+/* An interface applied to arguments, which is what a bound states and what a conformance answers. */
+typedef struct InterfaceRef {
+    const InterfaceDecl *interface;
+
+    TypeArg args[GAB_MAX_TYPE_PARAMS];
+    size_t arg_count;
+} InterfaceRef;
 
 typedef struct FuncDecl {
     /* What names this declaration: the name a lookup and a diagnostic use, and what a symbol renders

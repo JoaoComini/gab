@@ -1,6 +1,6 @@
 #include "scope.h"
 
-#include "binding.h"
+#include "decl.h"
 #include "function_registry.h"
 #include "memory/arena.h"
 #include "string/string.h"

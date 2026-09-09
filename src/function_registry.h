@@ -1,7 +1,7 @@
 #ifndef GAB_FUNCTION_REGISTRY_H
 #define GAB_FUNCTION_REGISTRY_H
 
-#include "binding.h"
+#include "decl.h"
 #include "memory/arena.h"
 #include "type/type.h"
 #include "type/type_registry.h"

@@ -1,4 +1,4 @@
-#include "binding.h"
+#include "decl.h"
 #include "function_registry.h"
 #include "support/test_context.h"
 #include "type/type.h"

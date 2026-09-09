@@ -1,5 +1,5 @@
 #include "memory/arena.h"
-#include "binding.h"
+#include "decl.h"
 #include "scope.h"
 #include "string/string.h"
 #include "support/test_context.h"

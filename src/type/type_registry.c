@@ -1,6 +1,6 @@
 #include "type_registry_internal.h"
 
-#include "binding.h"
+#include "decl.h"
 
 #include "memory/arena.h"
 #include "string/string.h"

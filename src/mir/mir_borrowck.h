@@ -2,7 +2,7 @@
 #define GAB_MIR_BORROWCK_H
 
 #include "memory/arena.h"
-#include "binding.h"
+#include "decl.h"
 #include "diagnostics.h"
 #include "mir/mir.h"
 #include "type/type_registry.h"

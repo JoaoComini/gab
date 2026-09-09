@@ -3,7 +3,7 @@
 
 #include "ast/expr.h"
 #include "ast/stmt.h"
-#include "binding.h"
+#include "decl.h"
 #include "constant.h"
 #include "memory/arena.h"
 #include "type/type.h"

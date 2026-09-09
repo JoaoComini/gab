@@ -1,39 +1,30 @@
 #ifndef GAB_SCOPE_H
 #define GAB_SCOPE_H
 
+#include "decl.h"
 #include "memory/arena.h"
 #include "string/string.h"
 #include "type/type_registry.h"
 
 typedef struct FunctionRegistry FunctionRegistry;
-typedef struct Function Function;
 
 #include <stdbool.h>
 
-typedef struct BindingTable BindingTable;
-typedef struct Binding Binding;
 typedef struct Scope Scope;
 
 typedef struct ASTStmt ASTStmt;
 
-typedef struct InterfaceDecl {
-    DeclId id;
+typedef struct {
+    /* What the name binds: a type, or the value 'array<T, N>' names for its length. */
+    TypeArg arg;
 
-    /* Resolved once, with 'Self' as type parameter 0 and the interface's own as 1..param_count;
-     * an implementor substitutes itself and its arguments for them. */
-    Function *const *methods;
-    size_t method_count;
+    const TypeDecl *decl;
+} TypeBinding;
 
-    size_t param_count;
-} InterfaceDecl;
+#define type_map_hash(key) (size_t)key
+#define type_map_key_equals(key, other) key == other
 
-/* An interface applied to arguments, which is what a bound states and what a conformance answers. */
-typedef struct InterfaceRef {
-    const InterfaceDecl *interface;
-
-    TypeArg args[GAB_MAX_TYPE_PARAMS];
-    size_t arg_count;
-} InterfaceRef;
+GAB_HASH_MAP(TypeMap, type_map, String *, TypeBinding)
 
 #define interface_map_hash(key) (size_t)key
 #define interface_map_key_equals(key, other) key == other
