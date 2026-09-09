@@ -63,7 +63,7 @@ typedef struct ResolverState {
     StructDeclList resolving;
 
     /* The bound on each type parameter of the declaration being resolved, by index. */
-    InterfaceRef param_bounds[GAB_MAX_TYPE_PARAMS];
+    TypeParamBound param_bounds[GAB_MAX_TYPE_PARAMS];
 
     ASTUnit *unit;
 
@@ -728,7 +728,7 @@ static size_t take_receiver_type_args(const Type *receiver, TypeArg *args) {
 /* A bound is nominal: the argument must say it implements the interface, not merely supply its methods. */
 static bool check_bounds_satisfied(ResolverState *state, ASTExpr *expr, const Function *generic,
                                    const TypeArg *args, size_t owed) {
-    const InterfaceRef *bounds = generic->decl->type_param_bounds;
+    const TypeParamBound *bounds = generic->decl->type_param_bounds;
 
     if (!bounds) {
         return true;
@@ -738,12 +738,12 @@ static bool check_bounds_satisfied(ResolverState *state, ASTExpr *expr, const Fu
 
     for (size_t i = 0; i < owed && i < GAB_MAX_TYPE_PARAMS; i++) {
         /* Only a type argument carries a conformance; a value one has no interface to satisfy. */
-        if (!bounds[i].interface || !type_arg_is_set(args[i]) || args[i].kind != TYPE_ARG_TYPE ||
+        if (bounds[i].kind != BOUND_INTERFACE || !type_arg_is_set(args[i]) || args[i].kind != TYPE_ARG_TYPE ||
             type_kind(args[i].type) == TYPE_PARAM) {
             continue;
         }
 
-        const InterfaceRef *bound = &bounds[i];
+        const InterfaceRef *bound = &bounds[i].interface;
 
         if (!type_registry_conforms_at_any(registry, args[i].type, bound->interface->id)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "%s does not implement '%s'",
@@ -851,11 +851,11 @@ static Function *bound_method(ResolverState *state, const Type *base, String *na
 
     size_t index = type_param_index(base);
 
-    const InterfaceRef *bound = &state->param_bounds[index];
-
-    if (!bound->interface) {
+    if (state->param_bounds[index].kind != BOUND_INTERFACE) {
         return NULL;
     }
+
+    const InterfaceRef *bound = &state->param_bounds[index].interface;
 
     for (size_t i = 0; i < bound->interface->method_count; i++) {
         if (bound->interface->methods[i]->decl->id.name != name) {
@@ -967,7 +967,8 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 
     if (!method) {
         /* A parameter's methods are its bound's, so one with no bound has none to name. */
-        if (base && type_kind(base) == TYPE_PARAM && !state->param_bounds[type_param_index(base)].interface) {
+        if (base && type_kind(base) == TYPE_PARAM &&
+            state->param_bounds[type_param_index(base)].kind != BOUND_INTERFACE) {
             diag_error(state->diagnostics, GAB_ERR_NAME, expr->span,
                        "a type parameter has the methods its bound declares, and this one has no bound");
             fact_set_type(state->facts, expr, resolver_error_type(state));
@@ -3024,15 +3025,22 @@ static void check_abstract_body(ResolverState *state, ASTStmt *stmt) { resolve_f
 /* Each bound names an interface, which the body is checked against before any instantiation. */
 static void enter_param_bounds(ResolverState *state, ASTStmt *stmt) {
     for (size_t i = 0; i < GAB_MAX_TYPE_PARAMS; i++) {
-        state->param_bounds[i] = (InterfaceRef){0};
+        state->param_bounds[i] = (TypeParamBound){.kind = BOUND_NONE};
     }
 
     for (size_t i = 0; i < stmt->func_decl.type_param_count; i++) {
         const TypeExpr *bound = stmt->func_decl.type_param_bounds[i];
 
+        if (!bound) {
+            continue;
+        }
+
         /* A value parameter's bound names its type rather than an interface, so it declares no methods. */
-        if (!bound ||
-            param_is_a_value(state->current_scope->type_registry, state->current_scope->strings, bound)) {
+        if (param_is_a_value(state->current_scope->type_registry, state->current_scope->strings, bound)) {
+            state->param_bounds[i] = (TypeParamBound){
+                .kind = BOUND_VALUE,
+                .value = resolve_type_expr(state, (TypeExpr *)bound, stmt->span),
+            };
             continue;
         }
 
@@ -3056,14 +3064,14 @@ static void enter_param_bounds(ResolverState *state, ASTStmt *stmt) {
             continue;
         }
 
+        state->param_bounds[i] = (TypeParamBound){
+            .kind = BOUND_INTERFACE, .interface = {.interface = interface, .arg_count = arg_count}};
+
         for (size_t a = 0; a < arg_count; a++) {
-            state->param_bounds[i].args[a] =
+            state->param_bounds[i].interface.args[a] =
                 (TypeArg){.kind = TYPE_ARG_TYPE,
                           .type = resolve_type_expr(state, bound->apply.args.data[a], stmt->span)};
         }
-
-        state->param_bounds[i].arg_count = arg_count;
-        state->param_bounds[i].interface = interface;
     }
 }
 
@@ -3075,7 +3083,7 @@ static void record_param_bounds(ResolverState *state, FuncDecl *decl) {
 
     Arena *arena = resolver_owner_arena(state);
 
-    InterfaceRef *bounds = arena_alloc(arena, GAB_MAX_TYPE_PARAMS * sizeof(InterfaceRef));
+    TypeParamBound *bounds = arena_alloc(arena, GAB_MAX_TYPE_PARAMS * sizeof(TypeParamBound));
 
     for (size_t i = 0; i < GAB_MAX_TYPE_PARAMS; i++) {
         bounds[i] = state->param_bounds[i];

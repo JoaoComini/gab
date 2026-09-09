@@ -79,6 +79,24 @@ typedef struct InterfaceRef {
     size_t arg_count;
 } InterfaceRef;
 
+/* What a type parameter was declared against. A type parameter is bounded by an interface it must
+ * implement; a value parameter names the type its value has, as 'array<T, N: i32>' does. */
+typedef struct TypeParamBound {
+    enum {
+        BOUND_NONE,
+
+        BOUND_INTERFACE,
+
+        BOUND_VALUE,
+    } kind;
+
+    union {
+        InterfaceRef interface;
+
+        const Type *value;
+    };
+} TypeParamBound;
+
 typedef struct FuncDecl {
     /* What names this declaration: the name a lookup and a diagnostic use, and what a symbol renders
      * from together with the module and owner qualifying it. */
@@ -98,8 +116,8 @@ typedef struct FuncDecl {
     /* How many arguments this declaration is generic over, whether they came from an owner or itself. */
     size_t type_param_count;
 
-    /* The bound on each of them, by index; its interface is null where the parameter is unbounded. */
-    const InterfaceRef *type_param_bounds;
+    /* What each of them was declared against, by index. */
+    const TypeParamBound *type_param_bounds;
 } FuncDecl;
 
 typedef struct Function {
