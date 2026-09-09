@@ -292,46 +292,10 @@ FuncSignature func_signature_instantiate(TypeRegistry *registry, Arena *arena, c
     return out;
 }
 
-InstanceId instance_id_of(DeclId decl, const TypeArg *args, size_t arg_count) {
-    InstanceId id = {.decl = decl};
-
-    /* The count is what was stored, so comparing one never reads a slot the arguments did not fill. */
-    for (size_t i = 0; i < arg_count && i < GAB_MAX_TYPE_PARAMS; i++) {
-        id.args[i] = args[i];
-        id.arg_count++;
-    }
-
-    return id;
-}
-
 InstanceId instance_id_of_function(const Function *function) {
     if (!function || !function->decl) {
         return (InstanceId){0};
     }
 
     return instance_id_of(function->decl->id, function->type_args, function->type_arg_count);
-}
-
-bool instance_id_equals(InstanceId id, InstanceId other) {
-    if (!decl_id_equals(id.decl, other.decl) || id.arg_count != other.arg_count) {
-        return false;
-    }
-
-    for (size_t i = 0; i < id.arg_count; i++) {
-        if (!type_arg_equals(id.args[i], other.args[i])) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-size_t instance_id_hash(InstanceId id) {
-    size_t hash = decl_id_hash(id.decl);
-
-    for (size_t i = 0; i < id.arg_count; i++) {
-        hash = hash * 31 + type_arg_hash(id.args[i]);
-    }
-
-    return hash;
 }

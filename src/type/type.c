@@ -322,27 +322,25 @@ TypeMemberKey type_member_key_of(const Type *type, const String *name) {
     return (TypeMemberKey){.owner = decl ? decl->id : (DeclId){0}, .name = name};
 }
 
-ConformanceKey conformance_key_of(const Type *type, DeclId interface, const TypeArg *args, size_t arg_count) {
-    const TypeDecl *decl = type_decl(type);
+InstanceId instance_id_of(DeclId decl, const TypeArg *args, size_t arg_count) {
+    InstanceId id = {.decl = decl};
 
-    ConformanceKey key = {.owner = decl ? decl->id : (DeclId){0}, .interface = interface};
-
+    /* The count is what was stored, so comparing one never reads a slot the arguments did not fill. */
     for (size_t i = 0; i < arg_count && i < GAB_MAX_TYPE_PARAMS; i++) {
-        key.args[i] = args[i];
-        key.arg_count++;
+        id.args[i] = args[i];
+        id.arg_count++;
     }
 
-    return key;
+    return id;
 }
 
-bool conformance_key_equals(ConformanceKey key, ConformanceKey other) {
-    if (!decl_id_equals(key.owner, other.owner) || !decl_id_equals(key.interface, other.interface) ||
-        key.arg_count != other.arg_count) {
+bool instance_id_equals(InstanceId id, InstanceId other) {
+    if (!decl_id_equals(id.decl, other.decl) || id.arg_count != other.arg_count) {
         return false;
     }
 
-    for (size_t i = 0; i < key.arg_count; i++) {
-        if (!type_arg_equals(key.args[i], other.args[i])) {
+    for (size_t i = 0; i < id.arg_count; i++) {
+        if (!type_arg_equals(id.args[i], other.args[i])) {
             return false;
         }
     }
@@ -350,12 +348,27 @@ bool conformance_key_equals(ConformanceKey key, ConformanceKey other) {
     return true;
 }
 
-size_t conformance_key_hash_of(ConformanceKey key) {
-    size_t hash = decl_id_hash(key.owner) * 31 + decl_id_hash(key.interface);
+size_t instance_id_hash(InstanceId id) {
+    size_t hash = decl_id_hash(id.decl);
 
-    for (size_t i = 0; i < key.arg_count; i++) {
-        hash = hash * 31 + type_arg_hash(key.args[i]);
+    for (size_t i = 0; i < id.arg_count; i++) {
+        hash = hash * 31 + type_arg_hash(id.args[i]);
     }
 
     return hash;
+}
+
+ConformanceKey conformance_key_of(const Type *type, DeclId interface, const TypeArg *args, size_t arg_count) {
+    const TypeDecl *decl = type_decl(type);
+
+    return (ConformanceKey){.owner = decl ? decl->id : (DeclId){0},
+                            .interface = instance_id_of(interface, args, arg_count)};
+}
+
+bool conformance_key_equals(ConformanceKey key, ConformanceKey other) {
+    return decl_id_equals(key.owner, other.owner) && instance_id_equals(key.interface, other.interface);
+}
+
+size_t conformance_key_hash_of(ConformanceKey key) {
+    return decl_id_hash(key.owner) * 31 + instance_id_hash(key.interface);
 }

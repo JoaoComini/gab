@@ -131,16 +131,28 @@ typedef struct TypeMemberKey {
 
 TypeMemberKey type_member_key_of(const Type *type, const String *name);
 
-/* A type declaration together with an interface applied to arguments: what an impl block records and what
- * a bound asks about, so 'Index<i32>' answers apart from 'Index<bool>'. Named by declaration on both
- * sides, so implementing a generic covers every instantiation of it. */
-typedef struct ConformanceKey {
-    DeclId owner;
-
-    DeclId interface;
+/* A declaration together with what its parameters were fixed to: which monomorphisation, which
+ * instantiation of a generic type, which interface a bound names. */
+typedef struct InstanceId {
+    DeclId decl;
 
     TypeArg args[GAB_MAX_TYPE_PARAMS];
     size_t arg_count;
+} InstanceId;
+
+/* The one place an id is assembled, so a caller never fills the slots itself. */
+InstanceId instance_id_of(DeclId decl, const TypeArg *args, size_t arg_count);
+
+bool instance_id_equals(InstanceId id, InstanceId other);
+size_t instance_id_hash(InstanceId id);
+
+/* A type declaration together with the interface it implements, applied to what the impl block gave it,
+ * so 'Index<i32>' answers apart from 'Index<bool>'. Named by declaration on both sides, so implementing
+ * a generic covers every instantiation of it. */
+typedef struct ConformanceKey {
+    DeclId owner;
+
+    InstanceId interface;
 } ConformanceKey;
 
 ConformanceKey conformance_key_of(const Type *type, DeclId interface, const TypeArg *args, size_t arg_count);

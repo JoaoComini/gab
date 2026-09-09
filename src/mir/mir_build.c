@@ -24,8 +24,7 @@ static void collect_dropped_endings(PendingBodies *work, ResolvedUnit *resolved,
 
     const String *name = type_registry_names(resolved->registry)->destroy_method;
 
-    instantiate_needed(work, function_registry_owned_for(resolved->functions, type, name),
-                       diagnostics);
+    instantiate_needed(work, function_registry_owned_for(resolved->functions, type, name), diagnostics);
 
     collect_dropped_endings(work, resolved, type_pointee(type), diagnostics);
 
@@ -87,7 +86,7 @@ bool mir_build(Arena *arena, ResolvedUnit *resolved, MIRModule *imported, MIRMod
     for (size_t i = 0; i < work->instances.size; i++) {
         Function *instance = work->instances.data[i];
 
-        InstanceId generic = {.decl = instance->decl->id};
+        InstanceId generic = instance_id_of(instance->decl->id, NULL, 0);
 
         /* A generic this unit declared is lowered here; one an import declared came with its body. */
         MIRFunction *from = mir_module_lookup_id(bodies, generic);

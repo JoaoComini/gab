@@ -290,7 +290,7 @@ bool type_registry_conforms_at_any(TypeRegistry *registry, const Type *type, Dec
         }
 
         if (decl_id_equals(entry->key.owner, wanted.owner) &&
-            decl_id_equals(entry->key.interface, wanted.interface)) {
+            decl_id_equals(entry->key.interface.decl, wanted.interface.decl)) {
             return true;
         }
     }

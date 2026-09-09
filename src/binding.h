@@ -32,20 +32,6 @@ typedef struct FuncSignature {
 FuncSignature func_signature_instantiate(TypeRegistry *registry, Arena *arena, const FuncSignature *generic,
                                          const TypeArg *args, size_t arg_count);
 
-/* Which monomorphisation: a declaration together with what its parameters were fixed to. */
-typedef struct InstanceId {
-    DeclId decl;
-
-    TypeArg args[GAB_MAX_TYPE_PARAMS];
-    size_t arg_count;
-} InstanceId;
-
-bool instance_id_equals(InstanceId id, InstanceId other);
-size_t instance_id_hash(InstanceId id);
-
-/* A declaration together with the arguments given to it, which is the one place an id is assembled. */
-InstanceId instance_id_of(DeclId decl, const TypeArg *args, size_t arg_count);
-
 /* What a record stands for: its declaration, with the arguments it was specialized on. */
 InstanceId instance_id_of_function(const Function *function);
 
