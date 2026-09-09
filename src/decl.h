@@ -10,13 +10,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define BINDING_TABLE_INITIAL_CAPACITY 8
-
-typedef enum {
-    BINDING_VAR,
-    BINDING_FUNC,
-} BindingKind;
-
 typedef struct ASTStmt ASTStmt;
 
 typedef struct Function Function;
@@ -133,26 +126,5 @@ static inline bool function_runs_native(const Function *function) {
     return function->decl->linkage != LINKAGE_INTERNAL ||
            (function->decl->modifiers & FUNC_MOD_INTRINSIC) != 0;
 }
-
-typedef struct Binding {
-    BindingKind kind;
-
-    int scope_depth;
-
-    bool pinned;
-
-    union {
-        struct {
-            const Type *type;
-        } var;
-
-        Function *func;
-    };
-} Binding;
-
-#define binding_table_hash(key) (size_t)key
-#define binding_table_key_equals(key, other) key == other
-
-GAB_HASH_MAP(BindingTable, binding_table, String *, Binding *);
 
 #endif

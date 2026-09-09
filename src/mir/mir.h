@@ -1,11 +1,11 @@
 #ifndef GAB_MIR_H
 #define GAB_MIR_H
 
-#include "decl.h"
 #include "constant.h"
 #include "diagnostics.h"
 #include "function_registry.h"
 #include "memory/arena.h"
+#include "scope.h"
 #include "string/string.h"
 #include "type/type.h"
 #include "type/type_registry.h"

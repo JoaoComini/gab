@@ -36,6 +36,34 @@ GAB_HASH_MAP(InterfaceMap, interface_map, String *, InterfaceDecl *)
 
 GAB_HASH_MAP(ModuleScopeMap, module_scope_map, String *, Scope *)
 
+#define BINDING_TABLE_INITIAL_CAPACITY 8
+
+typedef enum {
+    BINDING_VAR,
+    BINDING_FUNC,
+} BindingKind;
+
+typedef struct Binding {
+    BindingKind kind;
+
+    int scope_depth;
+
+    bool pinned;
+
+    union {
+        struct {
+            const Type *type;
+        } var;
+
+        Function *func;
+    };
+} Binding;
+
+#define binding_table_hash(key) (size_t)key
+#define binding_table_key_equals(key, other) key == other
+
+GAB_HASH_MAP(BindingTable, binding_table, String *, Binding *);
+
 typedef struct Scope {
     Arena *arena;
 

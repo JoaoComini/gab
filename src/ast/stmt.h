@@ -3,8 +3,8 @@
 
 #include "ast/expr.h"
 #include "ast/type_expr.h"
-#include "decl.h"
 #include "memory/arena.h"
+#include "scope.h"
 #include "string/string_ref.h"
 #include "type/type.h"
 #include "util/list.h"
