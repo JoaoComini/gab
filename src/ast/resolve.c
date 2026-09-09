@@ -747,14 +747,14 @@ static bool check_bounds_satisfied(ResolverState *state, ASTExpr *expr, const Fu
 
         if (!type_registry_conforms_at_any(registry, args[i].type, bound->interface->id)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "%s does not implement '%s'",
-                       type_name(state, args[i].type), bound->interface->name->data);
+                       type_name(state, args[i].type), bound->interface->id.name->data);
             return false;
         }
 
         if (!type_registry_conforms(registry, args[i].type, bound->interface->id, bound->args,
                                     bound->arg_count)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "%s implements '%s' at another type",
-                       type_name(state, args[i].type), bound->interface->name->data);
+                       type_name(state, args[i].type), bound->interface->id.name->data);
             return false;
         }
     }
@@ -2794,7 +2794,6 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
 
     *interface = (Interface){
         .id = {.module = state->module_name, .name = name},
-        .name = name,
         .methods = methods,
         .method_count = count,
         .param_count = param_count,

@@ -19,8 +19,6 @@ typedef struct ASTStmt ASTStmt;
 typedef struct Interface {
     DeclId id;
 
-    String *name;
-
     /* Resolved once, with 'Self' as type parameter 0 and the interface's own as 1..param_count;
      * an implementor substitutes itself and its arguments for them. */
     Function *const *methods;
