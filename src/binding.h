@@ -70,17 +70,8 @@ typedef struct Function {
     const FuncDecl *decl;
 
     /* Its declaration's signature with 'type_args' substituted in, held here since every reader wants
-     * the concrete form and substituting allocates. Unnamed so 'f->params' still reaches it. */
-    union {
-        FuncSignature signature;
-
-        struct {
-            const Type *return_type;
-
-            const Type **params;
-            size_t param_count;
-        };
-    };
+     * the concrete form and substituting allocates. */
+    FuncSignature signature;
 
     /* What this instance was given, one per type parameter of its declaration. */
     const TypeArg *type_args;

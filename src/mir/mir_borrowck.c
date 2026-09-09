@@ -623,7 +623,7 @@ void mir_borrowck(Arena *arena, TypeRegistry *registry, MIRFunction *ir, Diagnos
                     .registry = registry,
                     .ir = ir,
                     .liveness = liveness,
-                    .return_type = function ? function->return_type : NULL,
+                    .return_type = function ? function->signature.return_type : NULL,
                     .reporting = false};
 
     for (size_t i = 0; i < ir->param_count; i++) {

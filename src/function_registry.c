@@ -79,13 +79,13 @@ bool function_registry_owned_is_shared(const Function *declaration, const Type *
         return true;
     }
 
-    for (size_t i = 0; i < declaration->param_count; i++) {
-        if (type_has_param(declaration->params[i])) {
+    for (size_t i = 0; i < declaration->signature.param_count; i++) {
+        if (type_has_param(declaration->signature.params[i])) {
             return false;
         }
     }
 
-    return !type_has_param(declaration->return_type);
+    return !type_has_param(declaration->signature.return_type);
 }
 
 Function *function_registry_destructor(FunctionRegistry *registry, const Type *type) {

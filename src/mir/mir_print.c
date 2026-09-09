@@ -227,9 +227,9 @@ static void mir_print_signature(MIRPrinter *printer, const MIRFunction *ir) {
 
     mir_printf(printer, ")");
 
-    if (ir->function && ir->function->return_type) {
+    if (ir->function && ir->function->signature.return_type) {
         mir_printf(printer, ": ");
-        mir_print_type(printer, ir->function->return_type);
+        mir_print_type(printer, ir->function->signature.return_type);
     }
 
     mir_printf(printer, " {\n");

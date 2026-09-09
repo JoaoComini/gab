@@ -29,11 +29,11 @@ static MIRInst *block_insert(Arena *arena, MIRBlock *block, size_t at, MIRInst i
 /* Whether a callee takes the argument at this position, rather than only borrowing it; a borrowed
  * argument stays the caller's to end. */
 static bool callee_takes(TypeRegistry *registry, const Function *callee, size_t index) {
-    if (!callee || index >= callee->param_count) {
+    if (!callee || index >= callee->signature.param_count) {
         return false;
     }
 
-    return type_registry_owns(registry, callee->params[index]);
+    return type_registry_owns(registry, callee->signature.params[index]);
 }
 
 static bool is_given_away(TypeRegistry *registry, const MIRFunction *ir, MIRValueId value) {

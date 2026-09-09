@@ -232,11 +232,11 @@ static void test_a_declared_method_is_substituted_per_instantiation() {
 
     assert(from_int && from_bool);
 
-    assert(from_int->return_type == i32_type);
-    assert(from_bool->return_type == bool_type);
+    assert(from_int->signature.return_type == i32_type);
+    assert(from_bool->signature.return_type == bool_type);
 
-    assert(from_int->params[0] == of_int);
-    assert(from_bool->params[0] == of_bool);
+    assert(from_int->signature.params[0] == of_int);
+    assert(from_bool->signature.params[0] == of_bool);
 
     type_registry_destroy(registry);
     string_pool_free(&ctx.strings);
@@ -276,7 +276,7 @@ static void test_a_method_reaches_an_instantiation_interned_before_it() {
     const Function *found = function_registry_owned_for(functions, of_int, at);
 
     assert(found);
-    assert(found->return_type == i32_type);
+    assert(found->signature.return_type == i32_type);
 
     type_registry_destroy(registry);
     string_pool_free(&ctx.strings);
@@ -316,7 +316,7 @@ static void test_a_declared_method_takes_the_name_on_every_instantiation() {
 
     assert(!function_registry_declare_owned(functions, of_int, &other));
 
-    assert(function_registry_owned_for(functions, of_int, at)->return_type == i32_type);
+    assert(function_registry_owned_for(functions, of_int, at)->signature.return_type == i32_type);
 
     type_registry_destroy(registry);
     string_pool_free(&ctx.strings);

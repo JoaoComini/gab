@@ -466,7 +466,7 @@ static void lower_method_call(ResolverState *state, Arena *arena, ASTExpr *expr,
         Adjustment coercion = {.kind = adjustment.unsize_length > 0 ? ADJUST_UNSIZE
                                        : adjustment.address_of      ? ADJUST_BORROW
                                                                     : ADJUST_NONE,
-                               .to = method->params[0],
+                               .to = method->signature.params[0],
                                .length = adjustment.unsize_length};
 
         adjust_derefs(state, &coercion, fact_type_of(state->facts, receiver),
@@ -648,9 +648,9 @@ static bool infer_call_args(ResolverState *state, ASTExpr *expr, Function *funct
                             size_t fixed, size_t self_params) {
     size_t owed = function->decl->type_param_count;
 
-    if (expr->call.args.size + self_params != function->param_count) {
+    if (expr->call.args.size + self_params != function->signature.param_count) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %zu argument(s), found %zu",
-                   function->param_count - self_params, expr->call.args.size);
+                   function->signature.param_count - self_params, expr->call.args.size);
         return false;
     }
 
@@ -661,7 +661,7 @@ static bool infer_call_args(ResolverState *state, ASTExpr *expr, Function *funct
             return false;
         }
 
-        infer_type_args(function->params[i + self_params],
+        infer_type_args(function->signature.params[i + self_params],
                         fact_type_of(state->facts, expr->call.args.data[i]), args, owed);
     }
 
@@ -995,9 +995,9 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         return;
     }
 
-    const Type *declared_receiver = method->param_count > 0 ? method->params[0] : base;
+    const Type *declared_receiver = method->signature.param_count > 0 ? method->signature.params[0] : base;
 
-    if (method->param_count == 0) {
+    if (method->signature.param_count == 0) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                    "'%s' takes nothing, so it is called as '%s::%s()' rather than on a value",
                    method_name->data, type_name(state, base), method_name->data);
@@ -1006,7 +1006,7 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         return;
     }
 
-    size_t declared_params = method->param_count - 1;
+    size_t declared_params = method->signature.param_count - 1;
 
     ReceiverAdjustment adjustment;
 
@@ -1027,19 +1027,20 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     if (method->decl->modifiers & FUNC_MOD_INTRINSIC) {
         lower_method_call(state, state->compile_arena, expr, method, adjustment);
 
-        check_call_args(state, &expr->call.args, method->params);
+        check_call_args(state, &expr->call.args, method->signature.params);
 
         fact_set_type(state->facts, expr,
-                      type_registry_substitute(state->current_scope->type_registry, method->return_type,
-                                               type_args(base), type_arg_count(base)));
+                      type_registry_substitute(state->current_scope->type_registry,
+                                               method->signature.return_type, type_args(base),
+                                               type_arg_count(base)));
         return;
     }
 
     lower_method_call(state, state->compile_arena, expr, method, adjustment);
 
-    check_call_args(state, &expr->call.args, method->params);
+    check_call_args(state, &expr->call.args, method->signature.params);
 
-    fact_set_type(state->facts, expr, method->return_type);
+    fact_set_type(state->facts, expr, method->signature.return_type);
 }
 
 static bool reads_as_a_view(TypeRegistry *registry, const Type *to, const Type *from) {
@@ -1529,7 +1530,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
     }
     case EXPR_CALL: {
         if (!expr->call.target && fact_callee_of(state->facts, expr)) {
-            fact_set_type(state->facts, expr, fact_callee_of(state->facts, expr)->return_type);
+            fact_set_type(state->facts, expr, fact_callee_of(state->facts, expr)->signature.return_type);
             break;
         }
 
@@ -1577,10 +1578,10 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             fact_set_callee(state->facts, expr->call.target, callee);
         }
 
-        bool params_known = callee && expr->call.args.size == callee->param_count;
+        bool params_known = callee && expr->call.args.size == callee->signature.param_count;
 
         for (size_t i = 0; i < expr->call.args.size; i++) {
-            resolve_expr(state, expr->call.args.data[i], params_known ? callee->params[i] : NULL);
+            resolve_expr(state, expr->call.args.data[i], params_known ? callee->signature.params[i] : NULL);
         }
 
         if (!callee) {
@@ -1592,17 +1593,17 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             break;
         }
 
-        if (expr->call.args.size != callee->param_count) {
+        if (expr->call.args.size != callee->signature.param_count) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %zu argument(s), found %zu",
-                       callee->param_count, expr->call.args.size);
+                       callee->signature.param_count, expr->call.args.size);
             fact_set_type(state->facts, expr, resolver_error_type(state));
             break;
         }
 
-        check_call_args(state, &expr->call.args, callee->params);
+        check_call_args(state, &expr->call.args, callee->signature.params);
 
         fact_set_callee(state->facts, expr, callee);
-        fact_set_type(state->facts, expr, callee->return_type);
+        fact_set_type(state->facts, expr, callee->signature.return_type);
         break;
     }
     case EXPR_INDEX: {
@@ -2767,7 +2768,8 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
         Function *method = arena_alloc(arena, sizeof(Function));
         *method = (Function){
             .decl = decl,
-            .return_type = resolve_type_expr(state, signature->func_decl.return_type, signature->span),
+            .signature = {.return_type =
+                              resolve_type_expr(state, signature->func_decl.return_type, signature->span)},
         };
 
         size_t signature_params = signature->func_decl.params.size;
@@ -2779,8 +2781,8 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
                 types[p] = resolve_param_type_in(state, signature->func_decl.params.data[p], true);
             }
 
-            method->params = types;
-            method->param_count = signature_params;
+            method->signature.params = types;
+            method->signature.param_count = signature_params;
         }
 
         methods[i] = method;
@@ -2873,33 +2875,33 @@ static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *i
 
         const Function *required = interface_method_for(state, interface, i, implementor, args, arg_count);
 
-        const Type *expected_return = required->return_type;
+        const Type *expected_return = required->signature.return_type;
 
-        if (expected_return != supplied->return_type) {
+        if (expected_return != supplied->signature.return_type) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->impl.interface_span,
                        "'%s' of '%s' returns %s, but '%s' declares it returns %s", name->data,
-                       type_name(state, implementor), type_name(state, supplied->return_type),
+                       type_name(state, implementor), type_name(state, supplied->signature.return_type),
                        interface_name->data, type_name(state, expected_return));
             continue;
         }
 
-        size_t expected_count = required->param_count;
+        size_t expected_count = required->signature.param_count;
 
-        if (expected_count != supplied->param_count) {
+        if (expected_count != supplied->signature.param_count) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->impl.interface_span,
                        "'%s' of '%s' takes %zu parameters, but '%s' declares %zu", name->data,
-                       type_name(state, implementor), supplied->param_count, interface_name->data,
+                       type_name(state, implementor), supplied->signature.param_count, interface_name->data,
                        expected_count);
             continue;
         }
 
         for (size_t p = 0; p < expected_count; p++) {
-            const Type *expected = required->params[p];
+            const Type *expected = required->signature.params[p];
 
-            if (expected != supplied->params[p]) {
+            if (expected != supplied->signature.params[p]) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->impl.interface_span,
                            "parameter %zu of '%s' is %s, but '%s' declares it %s", p + 1, name->data,
-                           type_name(state, supplied->params[p]), interface_name->data,
+                           type_name(state, supplied->signature.params[p]), interface_name->data,
                            type_name(state, expected));
                 break;
             }
@@ -3200,8 +3202,8 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
         String *param_name = resolver_intern(state, param->name);
 
         /* The signature resolved this already, so resolving it again would report its errors twice. */
-        const Type *param_type = signature && i < signature->param_count
-                                     ? signature->params[i]
+        const Type *param_type = signature && i < signature->signature.param_count
+                                     ? signature->signature.params[i]
                                      : resolve_type_expr(state, param->type_expr, param->span);
 
         if (reject_self_as_name(state, param_name, param->span)) {

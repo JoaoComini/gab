@@ -501,10 +501,11 @@ static LLVMRealPredicate real_predicate(CmpPredicate predicate) {
 static LLVMTypeRef callee_signature(LLVMEmitter *emitter, const Function *callee) {
     LLVMTypeRef params[GAB_MAX_CALL_ARGS];
 
-    size_t count = callee->param_count < GAB_MAX_CALL_ARGS ? callee->param_count : GAB_MAX_CALL_ARGS;
+    size_t count =
+        callee->signature.param_count < GAB_MAX_CALL_ARGS ? callee->signature.param_count : GAB_MAX_CALL_ARGS;
 
     for (size_t i = 0; i < count; i++) {
-        params[i] = llvm_type_of(emitter, callee->params[i]);
+        params[i] = llvm_type_of(emitter, callee->signature.params[i]);
     }
 
     /* A 'caller' function is reached through the location its call passes, which no declaration writes. */
@@ -513,8 +514,8 @@ static LLVMTypeRef callee_signature(LLVMEmitter *emitter, const Function *callee
         params[count++] = llvm_type_of(emitter, callee->decl->location_type);
     }
 
-    LLVMTypeRef returns = callee->return_type ? llvm_type_of(emitter, callee->return_type)
-                                              : LLVMVoidTypeInContext(emitter->context);
+    LLVMTypeRef returns = callee->signature.return_type ? llvm_type_of(emitter, callee->signature.return_type)
+                                                        : LLVMVoidTypeInContext(emitter->context);
 
     return LLVMFunctionType(returns, params, (unsigned)count, false);
 }
@@ -868,7 +869,7 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         if (inst->arg_count == 0) {
             /* A body whose paths all return still ends with a block nothing reaches, which returns no
              * value however the signature reads. */
-            if (emitter->ir->function->return_type) {
+            if (emitter->ir->function->signature.return_type) {
                 LLVMBuildUnreachable(builder);
                 break;
             }
@@ -968,8 +969,9 @@ void llvm_unit_add(LLVMUnit *unit, const MIRFunction *ir) {
         params[i] = llvm_type_of(&emitter, mir_value_info(ir, ir->params[i])->type);
     }
 
-    LLVMTypeRef returns = ir->function->return_type ? llvm_type_of(&emitter, ir->function->return_type)
-                                                    : LLVMVoidTypeInContext(unit->context);
+    LLVMTypeRef returns = ir->function->signature.return_type
+                              ? llvm_type_of(&emitter, ir->function->signature.return_type)
+                              : LLVMVoidTypeInContext(unit->context);
 
     LLVMTypeRef signature = LLVMFunctionType(returns, params, (unsigned)ir->param_count, false);
 
