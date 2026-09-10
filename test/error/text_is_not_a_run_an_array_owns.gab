@@ -1,0 +1,7 @@
+func f(): i32 {
+    let xs: array<u8, 2> = "hi";
+    return xs[0];
+}
+
+// error
+// :2:28: type error: text is borrowed characters, so array<u8, 2> cannot take it

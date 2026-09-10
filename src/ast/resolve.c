@@ -3271,16 +3271,14 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
                     if (type_registry_deref_of(state->global->types, decl_type) &&
                         type_is_str_ref(init_type)) {
                         diag_error(state->global->diagnostics, GAB_ERR_TYPE, stmt->var_decl.initializer->span,
-                                   "a %s borrows characters it does not own, so a 'String' cannot take it; "
-                                   "write 'str', or '.to_owned()' to copy them",
-                                   type_name(state, init_type));
-                        decl_type = resolver_error_type(state);
-                        break;
+                                   "text is borrowed characters, so %s cannot take it",
+                                   type_name(state, decl_type));
+                    } else {
+                        diag_error(state->global->diagnostics, GAB_ERR_TYPE, stmt->var_decl.initializer->span,
+                                   "cannot initialize a variable of type %s with a value of type %s",
+                                   type_name(state, decl_type), type_name(state, init_type));
                     }
 
-                    diag_error(state->global->diagnostics, GAB_ERR_TYPE, stmt->var_decl.initializer->span,
-                               "cannot initialize a variable of type %s with a value of type %s",
-                               type_name(state, decl_type), type_name(state, init_type));
                     decl_type = resolver_error_type(state);
                 } else if (!borrow_into(state, stmt->var_decl.initializer, decl_type,
                                         stmt->var_decl.initializer->span)) {
