@@ -197,6 +197,16 @@ static Scope *resolver_expr_scope(ResolverState *state, StringRef name) {
     return existing ? *existing : NULL;
 }
 
+/* The scope of the import at 'index' in this file, or null where it names nothing this compilation
+ * read: walking these is how an unqualified name reaches what an import declares. */
+static Scope *resolver_import_scope(ResolverState *state, size_t index) {
+    String *module = string_from_ref(state->current_scope->strings, state->file->imports.data[index].name);
+
+    Scope **imported = module_scope_map_lookup(state->module_scopes, module);
+
+    return imported ? *imported : NULL;
+}
+
 /* A name an import declares, which an unqualified use reaches once this unit declares none itself. */
 static Binding *resolver_imported_binding(ResolverState *state, String *name) {
     if (!state->module_scopes) {
@@ -204,15 +214,9 @@ static Binding *resolver_imported_binding(ResolverState *state, String *name) {
     }
 
     for (size_t i = 0; i < state->file->imports.size; i++) {
-        String *module = string_from_ref(state->current_scope->strings, state->file->imports.data[i].name);
+        Scope *imported = resolver_import_scope(state, i);
 
-        Scope **imported = module_scope_map_lookup(state->module_scopes, module);
-
-        if (!imported) {
-            continue;
-        }
-
-        Binding *found = scope_binding_lookup(*imported, name);
+        Binding *found = imported ? scope_binding_lookup(imported, name) : NULL;
 
         if (found) {
             return found;
@@ -230,15 +234,9 @@ static Resolution resolver_resolve_name(ResolverState *state, Scope *scope, Stri
     }
 
     for (size_t i = 0; i < state->file->imports.size; i++) {
-        String *module = string_from_ref(state->current_scope->strings, state->file->imports.data[i].name);
+        Scope *imported = resolver_import_scope(state, i);
 
-        Scope **imported = module_scope_map_lookup(state->module_scopes, module);
-
-        if (!imported) {
-            continue;
-        }
-
-        Resolution found = scope_resolve(*imported, name);
+        Resolution found = imported ? scope_resolve(imported, name) : (Resolution){0};
 
         if (found.kind != RESOLUTION_NONE) {
             return found;
@@ -256,11 +254,9 @@ static InterfaceDecl *resolver_lookup_interface(ResolverState *state, String *na
     }
 
     for (size_t i = 0; i < state->file->imports.size; i++) {
-        String *module = string_from_ref(state->current_scope->strings, state->file->imports.data[i].name);
+        Scope *imported = resolver_import_scope(state, i);
 
-        Scope **imported = module_scope_map_lookup(state->module_scopes, module);
-
-        if (imported && (found = scope_interface_lookup(*imported, name))) {
+        if (imported && (found = scope_interface_lookup(imported, name))) {
             return found;
         }
     }
