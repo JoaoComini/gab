@@ -34,6 +34,26 @@ static Linkage linkage_of(const ASTFuncDecl *decl) {
     return decl->body ? LINKAGE_INTERNAL : LINKAGE_GAB;
 }
 
+/* A body defined elsewhere is linked against as it was compiled, and arguments the definition never
+ * saw compile nothing. A C body is named by what the declaration spells, which states no argument at
+ * all, so every parameter it could be reached through leaves two instances one symbol. True where it
+ * was reported. */
+static bool reject_generic_without_body(ResolverState *state, const ASTStmt *stmt, const String *name) {
+    if (stmt->func_decl.type_param_count == 0 || linkage_of(&stmt->func_decl) == LINKAGE_INTERNAL) {
+        return false;
+    }
+
+    if (stmt->func_decl.syntax & FUNC_SYN_FOREIGN) {
+        diag_error(state->global->diagnostics, GAB_ERR_TYPE, stmt->span,
+                   "C declares no generic, so '%s' cannot take type parameters", name->data);
+    } else {
+        diag_error(state->global->diagnostics, GAB_ERR_TYPE, stmt->span,
+                   "a generic is instantiated by whoever names it, so '%s' must carry a body", name->data);
+    }
+
+    return true;
+}
+
 /* The syntax that survives resolution, which the rest of the compiler reads instead of the tokens. */
 /* Where a declaration belongs: what a file declares is the module's, however many files write it, so
  * only what a file imports stays with the file. */
@@ -600,7 +620,9 @@ static Function *specialize(ResolverState *state, ASTExpr *expr, Function *gener
 
     /* An owner's parameters were fixed before the call, so this already is the instance. */
     if (owed <= fixed) {
-        pending_bodies_instantiate(state->work, generic, state->global->diagnostics);
+        if (type_args_are_concrete(generic->type_args, generic->type_arg_count)) {
+            pending_bodies_instantiate(state->work, generic, state->global->diagnostics);
+        }
 
         return generic;
     }
@@ -614,6 +636,12 @@ static Function *specialize(ResolverState *state, ASTExpr *expr, Function *gener
     }
 
     Function *specialized = function_registry_instance(state->global->functions, generic->decl, args, owed);
+
+    /* A call inside a generic's own body names its parameters, which stand for no argument yet; what
+     * that call wants is named again by each instance, with the arguments substituted in. */
+    if (!type_args_are_concrete(args, owed)) {
+        return specialized;
+    }
 
     pending_bodies_instantiate(state->work, specialized, state->global->diagnostics);
 
@@ -1994,6 +2022,12 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
 
     String *name = stmt->func_decl.name->name;
 
+    /* An owner's parameters are the instance's, which name a symbol of their own; only the ones this
+     * function adds have no definition to link against. */
+    if (reject_generic_without_body(state, stmt, name)) {
+        return;
+    }
+
     FuncDecl *decl = arena_alloc(state->global->arena, sizeof(FuncDecl));
     const String *decl_module = (stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) ? NULL : state->module_name;
     const String *decl_owner = (stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) ? NULL : type_name_of(owner);
@@ -2453,6 +2487,11 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
     String *declared_name = func_name->name;
 
     if (reject_self_as_name(state, declared_name, func_name->span)) {
+        state->env = saved;
+        return;
+    }
+
+    if (reject_generic_without_body(state, stmt, declared_name)) {
         state->env = saved;
         return;
     }

@@ -1,0 +1,4 @@
+extern func f<T>(a: T): i32;
+
+// error
+// :1:1: type error: a generic is instantiated by whoever names it, so 'f' must carry a body

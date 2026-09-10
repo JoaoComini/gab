@@ -1,20 +1,19 @@
 #include "ast/pending.h"
+#include <assert.h>
 
 #include "type/type.h"
 
 #define GAB_MAX_INSTANTIATIONS 256
 
-/* True when an argument the specialization was given is itself still a parameter, so it has no width. */
-static bool instantiated_abstractly(const Function *method) {
-    for (size_t i = 0; i < method->type_arg_count; i++) {
-        const TypeArg arg = method->type_args[i];
-
-        if (arg.kind == TYPE_ARG_TYPE ? type_has_param(arg.type) : arg.constant.kind == CONST_PARAM) {
-            return true;
+bool type_args_are_concrete(const TypeArg *args, size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        if (args[i].kind == TYPE_ARG_TYPE ? type_has_param(args[i].type)
+                                          : args[i].constant.kind == CONST_PARAM) {
+            return false;
         }
     }
 
-    return false;
+    return true;
 }
 
 PendingBodies pending_bodies_create(Arena *arena) {
@@ -25,14 +24,16 @@ PendingBodies pending_bodies_create(Arena *arena) {
 }
 
 void pending_bodies_instantiate(PendingBodies *work, Function *method, Diagnostics *diagnostics) {
-    if (function_runs_native(method)) {
+    if (function_lowers_no_body(method)) {
         return;
     }
 
-    if (method->decl->type_param_count == 0 || method->type_arg_count == 0 ||
-        instantiated_abstractly(method)) {
+    if (method->decl->type_param_count == 0 || method->type_arg_count == 0) {
         return;
     }
+
+    assert(type_args_are_concrete(method->type_args, method->type_arg_count) &&
+           "an instance wanted here is fixed to arguments with a width");
 
     for (size_t i = 0; i < work->instances.size; i++) {
         if (work->instances.data[i] == method) {

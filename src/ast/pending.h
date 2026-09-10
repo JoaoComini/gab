@@ -33,6 +33,9 @@ typedef struct {
     bool instantiation_overflowed;
 } PendingBodies;
 
+/* Whether every argument names a type with a width, rather than a parameter still standing for one. */
+bool type_args_are_concrete(const TypeArg *args, size_t count);
+
 PendingBodies pending_bodies_create(Arena *arena);
 
 /* Records that an instance is wanted; its body is the declaration's, substituted after lowering. */

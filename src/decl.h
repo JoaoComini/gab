@@ -142,7 +142,7 @@ typedef struct Function {
 } Function;
 
 /* True where no Gab body is lowered here: the definition is elsewhere, or the compiler expands it. */
-static inline bool function_runs_native(const Function *function) {
+static inline bool function_lowers_no_body(const Function *function) {
     return function->decl->linkage != LINKAGE_INTERNAL ||
            (function->decl->modifiers & FUNC_MOD_INTRINSIC) != 0;
 }

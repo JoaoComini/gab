@@ -1,0 +1,8 @@
+struct S<T> { n: T }
+
+impl<T> S<T> {
+    extern func g(self: &Self): i32;
+}
+
+// error
+// :4:5: type error: a generic is instantiated by whoever names it, so 'g' must carry a body

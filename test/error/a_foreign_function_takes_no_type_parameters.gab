@@ -1,0 +1,4 @@
+extern "C" func f<T>(a: T): i32;
+
+// error
+// :1:1: type error: C declares no generic, so 'f' cannot take type parameters

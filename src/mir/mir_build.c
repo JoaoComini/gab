@@ -77,6 +77,12 @@ bool mir_build(Arena *arena, ResolvedModule *resolved, MIRModule *imported, MIRM
 
         mir_module_add(bodies, body->function, lowered[i]);
 
+        /* A template stands for its instances, whose own arguments name what is wanted; what it
+         * calls with its parameters unsubstituted names nothing that is lowered. */
+        if (mir_function_is_template(lowered[i])) {
+            continue;
+        }
+
         /* A body's own drops name endings too, so they are collected beside the instances its calls name. */
         collect_called_instances(work, resolved, lowered[i], diagnostics);
     }
