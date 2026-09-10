@@ -549,7 +549,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
     return false;
 }
 
-static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expected);
+static const Type *resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expected);
 static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr);
 
 /* A generic instantiating itself at an ever-larger type would collect without end. */
@@ -936,13 +936,11 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     ASTExpr *receiver = expr->call.target->field.target;
     StringRef name = expr->call.target->field.name;
 
-    resolve_expr(state, receiver, NULL);
+    const Type *receiver_type = resolve_expr(state, receiver, NULL);
 
     for (size_t i = 0; i < expr->call.args.size; i++) {
         resolve_expr(state, expr->call.args.data[i], NULL);
     }
-
-    const Type *receiver_type = fact_type_of(state->facts, receiver);
 
     if (is_error_type(receiver_type)) {
         fact_set_type(state->facts, expr, resolver_error_type(state));
@@ -1344,9 +1342,7 @@ static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
         return true;
     }
 
-    resolve_expr(state, operand, NULL);
-
-    const Type *from = fact_type_of(state->facts, operand);
+    const Type *from = resolve_expr(state, operand, NULL);
 
     if (is_error_type(from)) {
         fact_set_type(state->facts, expr, resolver_error_type(state));
@@ -1368,24 +1364,16 @@ static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
     return true;
 }
 
-static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expected) {
-    if (!expr) {
-        return;
-    }
-
+static const Type *resolve_expr_kind(ResolverState *state, ASTExpr *expr, const Type *expected) {
     switch (expr->kind) {
     case EXPR_BIN_OP: {
-        resolve_expr(state, expr->bin_op.left, expected);
+        const Type *left_type = resolve_expr(state, expr->bin_op.left, expected);
 
         /* The left side types the right, so a literal beside a count is that count's width. */
-        resolve_expr(state, expr->bin_op.right, fact_type_of(state->facts, expr->bin_op.left));
-
-        const Type *left_type = fact_type_of(state->facts, expr->bin_op.left);
-        const Type *right_type = fact_type_of(state->facts, expr->bin_op.right);
+        const Type *right_type = resolve_expr(state, expr->bin_op.right, left_type);
 
         if (is_error_type(left_type) || is_error_type(right_type)) {
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
         const char *op_name = bin_op_name(expr->bin_op.op);
@@ -1397,13 +1385,11 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         if (left_type != right_type && !both_strings) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot apply '%s' to %s and %s",
                        op_name, type_name(state, left_type), type_name(state, right_type));
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
         if (!bin_op_accepts(state, expr->bin_op.op, left_type, expr->span)) {
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
         if (both_strings) {
@@ -1414,12 +1400,8 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             borrow_into(state, expr->bin_op.right, characters, expr->span);
         }
 
-        fact_set_type(state->facts, expr,
-                      bin_op_yields_bool(expr->bin_op.op)
-                          ? type_registry_get_primitive(state->types, TYPE_BOOL)
-                          : left_type);
-
-        break;
+        return bin_op_yields_bool(expr->bin_op.op) ? type_registry_get_primitive(state->types, TYPE_BOOL)
+                                                   : left_type;
     }
     case EXPR_BUILTIN: {
         if (names_the_same(state, expr->builtin.name, resolver_names(state)->caller)) {
@@ -1428,8 +1410,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
                            "'@caller()' answers where a call was written, so only a 'caller' function "
                            "asks it");
 
-                fact_set_type(state->facts, expr, resolver_error_type(state));
-                break;
+                return resolver_error_type(state);
             }
 
             const Type *location = resolver_location_type(state);
@@ -1438,12 +1419,10 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
                 diag_error(state->diagnostics, GAB_ERR_NAME, expr->span,
                            "the core declares no '%s', which '@caller()' answers with", GAB_LOCATION_TYPE);
 
-                fact_set_type(state->facts, expr, resolver_error_type(state));
-                break;
+                return resolver_error_type(state);
             }
 
-            fact_set_type(state->facts, expr, location);
-            break;
+            return location;
         }
 
         if (names_the_same(state, expr->builtin.name, resolver_names(state)->size_of)) {
@@ -1451,16 +1430,14 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
                 diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                            "'@size_of<T>()' measures one type, as '@size_of<i32>()'");
 
-                fact_set_type(state->facts, expr, resolver_error_type(state));
-                break;
+                return resolver_error_type(state);
             }
 
             const Type *measured =
                 resolve_type_expr(state, expr->builtin.type_expr->apply.args.data[0], expr->span);
 
             if (is_error_type(measured)) {
-                fact_set_type(state->facts, expr, resolver_error_type(state));
-                break;
+                return resolver_error_type(state);
             }
 
             const Type *counted = type_registry_get_primitive(state->types, TYPE_USIZE);
@@ -1469,15 +1446,13 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             fact_set_constant(state->facts, expr,
                               constant_int(counted, (int32_t)type_registry_size_of(state->types, measured)));
 
-            fact_set_type(state->facts, expr, counted);
-            break;
+            return counted;
         }
 
         diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "the compiler supplies no '@%.*s'",
                    (int)expr->builtin.name.length, expr->builtin.name.data);
 
-        fact_set_type(state->facts, expr, resolver_error_type(state));
-        break;
+        return resolver_error_type(state);
     }
     case EXPR_VARIABLE: {
         String *sought = resolver_intern(state, expr->var.name);
@@ -1491,12 +1466,11 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         if (entry) {
             if (entry->kind == SYMBOL_FUNC) {
                 fact_set_callee(state->facts, expr, entry->func);
-                break;
+                return NULL;
             }
 
             fact_set_use(state->facts, expr, entry);
-            fact_set_type(state->facts, expr, entry->var.type);
-            break;
+            return entry->var.type;
         }
 
         fact_set_callee(state->facts, expr, resolve_qualified_func(state, expr));
@@ -1506,25 +1480,23 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "undeclared variable '%s'", name);
             free(name);
 
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
-        break;
+        return NULL;
     }
     case EXPR_CALL: {
         if (!expr->call.target && fact_callee_of(state->facts, expr)) {
-            fact_set_type(state->facts, expr, fact_callee_of(state->facts, expr)->signature.return_type);
-            break;
+            return fact_callee_of(state->facts, expr)->signature.return_type;
         }
 
         if (expr->call.target && expr->call.target->kind == EXPR_FIELD) {
             resolve_method_call(state, expr);
-            break;
+            return fact_type_of(state->facts, expr);
         }
 
         if (expr->call.target && expr->call.target->kind == EXPR_VARIABLE && resolve_cast(state, expr)) {
-            break;
+            return fact_type_of(state->facts, expr);
         }
 
         /* A builtin names no function, so what it answers with is what the call is. */
@@ -1543,8 +1515,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
                 fact_set_constant(state->facts, expr, answered);
             }
 
-            fact_set_type(state->facts, expr, fact_type_of(state->facts, expr->call.target));
-            break;
+            return fact_type_of(state->facts, expr->call.target);
         }
 
         resolve_expr(state, expr->call.target, NULL);
@@ -1555,8 +1526,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             callee = specialize_call(state, expr, callee);
 
             if (!callee) {
-                fact_set_type(state->facts, expr, resolver_error_type(state));
-                break;
+                return resolver_error_type(state);
             }
 
             fact_set_callee(state->facts, expr->call.target, callee);
@@ -1573,32 +1543,26 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
                 diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "this expression is not callable");
             }
 
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
         if (expr->call.args.size != callee->signature.param_count) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %zu argument(s), found %zu",
                        callee->signature.param_count, expr->call.args.size);
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
         check_call_args(state, &expr->call.args, callee->signature.params);
 
         fact_set_callee(state->facts, expr, callee);
-        fact_set_type(state->facts, expr, callee->signature.return_type);
-        break;
+        return callee->signature.return_type;
     }
     case EXPR_INDEX: {
-        resolve_expr(state, expr->index.target, NULL);
-        resolve_expr(state, expr->index.index, NULL);
+        const Type *target_type = resolve_expr(state, expr->index.target, NULL);
+        const Type *index_type = resolve_expr(state, expr->index.index, NULL);
 
-        const Type *target_type = fact_type_of(state->facts, expr->index.target);
-
-        if (is_error_type(target_type) || is_error_type(fact_type_of(state->facts, expr->index.index))) {
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+        if (is_error_type(target_type) || is_error_type(index_type)) {
+            return resolver_error_type(state);
         }
 
         while (type_is_indirect(target_type)) {
@@ -1608,28 +1572,22 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         /* An array indexes inline, against the length its type carries; anything else supplies 'Index'. */
         if (type_kind(target_type) != TYPE_ARRAY) {
             rewrite_index_as_call(state, expr);
-            break;
+            return fact_type_of(state->facts, expr);
         }
 
-        if (fact_type_of(state->facts, expr->index.index) !=
-            type_registry_get_primitive(state->types, TYPE_I32)) {
+        if (index_type != type_registry_get_primitive(state->types, TYPE_I32)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "an index must be an i32, not %s",
-                       type_name(state, fact_type_of(state->facts, expr->index.index)));
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+                       type_name(state, index_type));
+            return resolver_error_type(state);
         }
 
-        fact_set_type(state->facts, expr, type_array_element(target_type));
-        break;
+        return type_array_element(target_type);
     }
     case EXPR_FIELD: {
-        resolve_expr(state, expr->field.target, NULL);
-
-        const Type *target_type = fact_type_of(state->facts, expr->field.target);
+        const Type *target_type = resolve_expr(state, expr->field.target, NULL);
 
         if (is_error_type(target_type)) {
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
         while (type_is_indirect(target_type)) {
@@ -1640,8 +1598,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "%s is not a struct, so it has no fields",
                        type_name(state, fact_type_of(state->facts, expr->field.target)));
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
         String *field_name = resolver_intern(state, expr->field.name);
@@ -1650,39 +1607,31 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         if (!field) {
             diag_error(state->diagnostics, GAB_ERR_NAME, expr->span, "'%s' has no field '%s'",
                        type_name(state, target_type), field_name->data);
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
         expr->field.index = (size_t)(field - type_registry_fields_of(state->types, target_type)->fields);
 
-        fact_set_type(state->facts, expr, field->type);
-
-        break;
+        return field->type;
     }
     case EXPR_ADDR_OF: {
-        resolve_expr(state, expr->unary.target, NULL);
-
-        const Type *target_type = fact_type_of(state->facts, expr->unary.target);
+        const Type *target_type = resolve_expr(state, expr->unary.target, NULL);
 
         if (is_error_type(target_type)) {
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
         if (!is_addressable(state, expr->unary.target)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "cannot take the address of a temporary");
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
         if (type_kind(target_type) == TYPE_BOX) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "cannot take the address of an owning pointer; return ownership instead of "
                        "repointing it through a borrow");
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
         Symbol *addressed = fact_root_local(state->facts, expr->unary.target);
@@ -1690,89 +1639,67 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             addressed->pinned = true;
         }
 
-        fact_set_type(state->facts, expr, type_registry_ref_to(state->types, target_type));
-        break;
+        return type_registry_ref_to(state->types, target_type);
     }
     case EXPR_DEREF: {
-        resolve_expr(state, expr->unary.target, NULL);
-
-        const Type *target_type = fact_type_of(state->facts, expr->unary.target);
+        const Type *target_type = resolve_expr(state, expr->unary.target, NULL);
 
         if (is_error_type(target_type)) {
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
         if (!type_is_indirect(target_type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "cannot dereference %s",
                        type_name(state, target_type));
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
-        fact_set_type(state->facts, expr, type_pointee(target_type));
-
-        break;
+        return type_pointee(target_type);
     }
     case EXPR_NEG: {
-        resolve_expr(state, expr->unary.target, NULL);
-
-        const Type *target_type = fact_type_of(state->facts, expr->unary.target);
+        const Type *target_type = resolve_expr(state, expr->unary.target, NULL);
 
         if (is_error_type(target_type)) {
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
         if (!is_numeric_type(target_type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "unary '-' requires a numeric type, found %s", type_name(state, target_type));
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
-        fact_set_type(state->facts, expr, target_type);
-        break;
+        return target_type;
     }
     case EXPR_NOT: {
-        resolve_expr(state, expr->unary.target, NULL);
-
-        const Type *target_type = fact_type_of(state->facts, expr->unary.target);
+        const Type *target_type = resolve_expr(state, expr->unary.target, NULL);
 
         if (is_error_type(target_type)) {
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
         if (!is_boolean_type(target_type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "unary '!' requires bool, found %s",
                        type_name(state, target_type));
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
-        fact_set_type(state->facts, expr, target_type);
-        break;
+        return target_type;
     }
     case EXPR_BOX: {
-        resolve_expr(state, expr->box_expr.value, NULL);
-
-        const Type *type = fact_type_of(state->facts, expr->box_expr.value);
+        const Type *type = resolve_expr(state, expr->box_expr.value, NULL);
 
         if (is_error_type(type)) {
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
         if (type_kind(type) == TYPE_REF) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "cannot allocate %s; a heap slot cannot hold a borrow", type_name(state, type));
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
-        fact_set_type(state->facts, expr, type_registry_box_to(state->types, type));
-        break;
+        return type_registry_box_to(state->types, type);
     }
     case EXPR_STRUCT_LIT: {
         const Type *type = resolve_type_expr(state, expr->struct_lit.type_expr, expr->span);
@@ -1782,8 +1709,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
                 resolve_expr(state, expr->struct_lit.fields.data[i].value, NULL);
             }
 
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
         TypeRegistry *registry = state->types;
@@ -1795,8 +1721,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
 
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "%s is not a struct",
                        type_name(state, type));
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
         const TypeFields *fields = type_registry_fields_of(registry, type);
@@ -1874,8 +1799,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             }
         }
 
-        fact_set_type(state->facts, expr, ok ? type : resolver_error_type(state));
-        break;
+        return ok ? type : resolver_error_type(state);
     }
     case EXPR_ARRAY_LIT: {
         for (size_t i = 0; i < expr->array_lit.elements.size; i++) {
@@ -1886,8 +1810,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span,
                        "an array's elements need the array's type to be written, as "
                        "'let xs: [i32; 3] = [1, 2, 3];'");
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
         int32_t length = type_array_length(expected);
@@ -1896,8 +1819,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         if ((int32_t)expr->array_lit.elements.size != length) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %d element(s), found %zu",
                        length, expr->array_lit.elements.size);
-            fact_set_type(state->facts, expr, resolver_error_type(state));
-            break;
+            return resolver_error_type(state);
         }
 
         bool ok = true;
@@ -1926,8 +1848,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             mark_implicit_move(state, expr->array_lit.elements.data[i], element, value->span);
         }
 
-        fact_set_type(state->facts, expr, ok ? expected : resolver_error_type(state));
-        break;
+        return ok ? expected : resolver_error_type(state);
     }
     case EXPR_LITERAL: {
         TypeRegistry *registry = state->types;
@@ -1936,20 +1857,32 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
 
         /* A whole number takes the integer type its context asks for, rather than a width of its own. */
         if (expr->lit.kind == LITERAL_INT && expected && is_integer_type(expected)) {
-            fact_set_type(state->facts, expr, expected);
-            break;
+            return expected;
         }
 
         /* Text is read through a reference, since the unit holds it and the value names where. */
-        fact_set_type(state->facts, expr,
-                      kind == TYPE_STR
-                          ? type_registry_ref_to(registry, type_registry_get_primitive(registry, kind))
-                          : type_registry_get_primitive(registry, kind));
-        break;
+        return kind == TYPE_STR ? type_registry_ref_to(registry, type_registry_get_primitive(registry, kind))
+                                : type_registry_get_primitive(registry, kind);
     }
     default:
-        break;
+        return NULL;
     }
+}
+
+/* Records what the expression was found to be, so an arm states its answer by returning it. */
+static const Type *resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expected) {
+    if (!expr) {
+        return NULL;
+    }
+
+    const Type *type = resolve_expr_kind(state, expr, expected);
+
+    /* A name denoting a function concludes no type, and recording none leaves it that way. */
+    if (type) {
+        fact_set_type(state->facts, expr, type);
+    }
+
+    return type;
 }
 
 static void mark_implicit_move(ResolverState *state, ASTExpr *value, const Type *destination, Span span) {
@@ -3378,12 +3311,9 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         break;
     }
     case STMT_ASSIGN: {
-        resolve_expr(state, stmt->assign.target, NULL);
+        const Type *target_type = resolve_expr(state, stmt->assign.target, NULL);
 
-        resolve_expr(state, stmt->assign.value, fact_type_of(state->facts, stmt->assign.target));
-
-        const Type *target_type = fact_type_of(state->facts, stmt->assign.target);
-        const Type *value_type = fact_type_of(state->facts, stmt->assign.value);
+        const Type *value_type = resolve_expr(state, stmt->assign.value, target_type);
 
         if (!is_error_type(target_type) && !is_error_type(value_type) &&
             !type_accepts(state->types, target_type, value_type)) {
@@ -3420,11 +3350,8 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         break;
     }
     case STMT_COMPOUND_ASSIGN: {
-        resolve_expr(state, stmt->compound_assign.target, NULL);
-        resolve_expr(state, stmt->compound_assign.value, NULL);
-
-        const Type *target_type = fact_type_of(state->facts, stmt->compound_assign.target);
-        const Type *value_type = fact_type_of(state->facts, stmt->compound_assign.value);
+        const Type *target_type = resolve_expr(state, stmt->compound_assign.target, NULL);
+        const Type *value_type = resolve_expr(state, stmt->compound_assign.value, NULL);
 
         if (is_error_type(target_type) || is_error_type(value_type)) {
             break;
@@ -3448,9 +3375,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         break;
     }
     case STMT_IF: {
-        resolve_expr(state, stmt->ifstmt.condition, NULL);
-
-        const Type *condition_type = fact_type_of(state->facts, stmt->ifstmt.condition);
+        const Type *condition_type = resolve_expr(state, stmt->ifstmt.condition, NULL);
 
         if (condition_type && !is_error_type(condition_type) && !is_boolean_type(condition_type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->ifstmt.condition->span,
@@ -3470,9 +3395,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         resolve_stmt(state, stmt->forstmt.init);
 
         if (stmt->forstmt.condition) {
-            resolve_expr(state, stmt->forstmt.condition, NULL);
-
-            const Type *condition_type = fact_type_of(state->facts, stmt->forstmt.condition);
+            const Type *condition_type = resolve_expr(state, stmt->forstmt.condition, NULL);
 
             if (condition_type && !is_error_type(condition_type) && !is_boolean_type(condition_type)) {
                 diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->forstmt.condition->span,
