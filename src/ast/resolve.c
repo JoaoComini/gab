@@ -1768,7 +1768,11 @@ static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
 
     if (poisoned) {
         decl->poisoned = true;
-        scope_withdraw(decl->scope, decl->name);
+
+        declared->fields = fields;
+        declared->field_count = resolved;
+
+        layout_struct(state, decl);
         return;
     }
 

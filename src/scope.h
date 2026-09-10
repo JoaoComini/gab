@@ -111,8 +111,6 @@ Symbol *scope_type_lookup_declaring(Scope *scope, String *name);
 
 Symbol *scope_lookup_declaring(Scope *scope, String *name);
 
-void scope_withdraw(Scope *scope, String *name);
-
 bool scope_bind_type(Scope *scope, String *name, const Type *type);
 
 bool scope_bind_type_param(Scope *scope, String *name, const Type *type);

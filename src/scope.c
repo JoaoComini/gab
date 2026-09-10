@@ -110,8 +110,6 @@ Symbol *scope_lookup_declaring(Scope *scope, String *name) {
     }
 }
 
-void scope_withdraw(Scope *scope, String *name) { symbol_table_delete(scope->symbols, name); }
-
 static bool scope_bind(Scope *scope, String *name, Symbol shape) {
     if (symbol_table_lookup(scope->symbols, name)) {
         return false;

@@ -1,0 +1,6 @@
+struct Bad { v: Nope }
+
+struct Holds { b: Bad }
+
+// error
+// :1:14: name error: unknown type 'Nope'

@@ -1,0 +1,6 @@
+struct Bad { a: i32, a: i32 }
+
+func f(b: &Bad): i32 { return b.a; }
+
+// error
+// :1:22: name error: duplicate field 'a' in struct 'Bad'
