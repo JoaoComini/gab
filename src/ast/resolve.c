@@ -1,135 +1,19 @@
 #include "ast/resolve.h"
 
-#include "ast/facts.h"
-
-#include "function_registry.h"
-
-#include "decl.h"
-#include "scope.h"
-#include "string/string.h"
-#include "string/string_ref.h"
-#include "type/type.h"
-#include "type/type_registry.h"
+#include "ast/check.h"
 
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* What a file may name: the modules it imports, and the core, which every file reaches without
- * stating it. One per file, so a name one file reaches is not a name its siblings do. */
-typedef struct {
-    Module **modules;
-    size_t count;
-} Visible;
+const KnownNames *resolver_names(ResolverState *state) { return type_registry_names(state->global->types); }
 
-typedef struct StructDecl {
-    ASTStmt *stmt;
-
-    /* Where the type is bound, which is the module's however many files write it. */
-    Scope *scope;
-
-    /* Where its fields resolve from, which is the file that wrote it: a field's type may name what
-     * that file imports, and fields resolve after every file has declared. */
-    Scope *file_scope;
-
-    /* Fields resolve after every file has declared, so the struct carries the file whose imports its
-     * field types may name, and what that file may name. */
-    const ASTFile *file;
-
-    const Visible *visible;
-
-    String *name;
-
-    TypeDecl *decl;
-
-    bool fields_demanded;
-
-    bool poisoned;
-} StructDecl;
-
-GAB_LIST(StructDeclList, struct_decl_list, StructDecl *)
-
-typedef struct {
-    const Type *return_type;
-
-    /* Whether the body being resolved was declared 'caller', which is what '@caller()' needs. */
-    bool is_caller;
-
-    unsigned int loop_depth;
-} FuncContext;
-
-/* Where a lookup happens, and what it may reach. One value, so resolving something out of place
- * saves and restores it whole rather than field by field. */
-typedef struct {
-    Scope *scope;
-
-    /* Where a declaration being resolved belongs, which is the module while a top-level statement is
-     * read: a scope binding type parameters stands between it and the file, and binds none of them. */
-    Scope *declaring;
-
-    /* The file being resolved, whose imports are the ones its statements may name. */
-    const ASTFile *file;
-
-    /* The modules that file may name, which is what an unqualified name reaches past this module. */
-    const Visible *visible;
-
-    FuncContext func;
-
-    /* The bound on each type parameter of the declaration being resolved, by index. An owner's
-     * parameters are prepended to a member's, so one list numbers both and the declaration keeps it. */
-    const TypeParamBound *param_bounds;
-} Env;
-
-/* What every module resolved in one compilation shares, and what none of them may change. */
-typedef struct {
-    Arena *arena;
-
-    TypeRegistry *types;
-    FunctionRegistry *functions;
-    StringPool *strings;
-
-    Diagnostics *diagnostics;
-} Global;
-
-/* Resolving one module: what it shares with the compilation, what it is concluding, and where it is. */
-typedef struct ResolverState {
-    const Global *global;
-
-    Env env;
-
-    /* Where this module's declarations land, which every file of it declares into. */
-    Scope *module_scope;
-
-    String *module_name;
-
-    bool declares_intrinsics;
-
-    /* What resolving concluded about each node, and the bodies generation will lower. */
-    Facts *facts;
-    PendingBodies *work;
-
-    StructDeclList struct_decls;
-    StructDeclList resolving;
-} ResolverState;
-
-static const Type *resolver_error_type(ResolverState *state) {
-    return type_registry_error_type(state->global->types);
-}
-
-static String *resolver_intern(ResolverState *state, StringRef ref) {
-    return string_from_ref(state->global->strings, ref);
-}
-
-static const KnownNames *resolver_names(ResolverState *state) {
-    return type_registry_names(state->global->types);
-}
-
-static bool names_the_same(ResolverState *state, StringRef ref, const String *known) {
+bool names_the_same(ResolverState *state, StringRef ref, const String *known) {
     return resolver_intern(state, ref) == known;
 }
 
 /* 'Self' names the type an impl block is for, so nothing else may take the name. */
-static bool reject_self_as_name(ResolverState *state, String *name, Span span) {
+bool reject_self_as_name(ResolverState *state, String *name, Span span) {
     if (name != resolver_names(state)->self) {
         return false;
     }
@@ -193,7 +77,7 @@ static unsigned modifiers_of(const ASTFuncDecl *decl) {
 
 /* What a name qualified by a module resolves through: an import binds the module in this file, so
  * naming it is the lookup any other name is, and one this file did not import is bound nowhere. */
-static Scope *resolver_expr_scope(ResolverState *state, StringRef name) {
+Scope *resolver_expr_scope(ResolverState *state, StringRef name) {
     StringRef module, member;
 
     if (!string_ref_split_colons(name, &module, &member)) {
@@ -229,7 +113,7 @@ static Symbol *file_lookup(const ResolverState *state, String *name) {
     return NULL;
 }
 
-static Symbol *resolver_resolve_name(ResolverState *state, Scope *scope, String *name) {
+Symbol *resolver_resolve_name(ResolverState *state, Scope *scope, String *name) {
     Symbol *found = scope ? scope_lookup(scope, name) : NULL;
 
     /* A name qualified by a module is that module's, so what this file imports does not answer it. */
@@ -264,7 +148,7 @@ static InterfaceDecl *resolver_lookup_interface(ResolverState *state, String *na
     return interface_of(file_lookup(state, name));
 }
 
-static String *resolver_expr_member(ResolverState *state, StringRef name) {
+String *resolver_expr_member(ResolverState *state, StringRef name) {
     StringRef module, member;
 
     if (string_ref_split_colons(name, &module, &member)) {
@@ -274,9 +158,7 @@ static String *resolver_expr_member(ResolverState *state, StringRef name) {
     return resolver_intern(state, name);
 }
 
-static bool is_error_type(const Type *type) { return !type || type_kind(type) == TYPE_ERROR; }
-
-static const char *type_name(ResolverState *state, const Type *type) {
+const char *type_name(ResolverState *state, const Type *type) {
     if (!type) {
         return "none";
     }
@@ -374,32 +256,6 @@ static const char *bin_op_name(BinOp op) {
     return "?";
 }
 
-static bool is_addressable(ResolverState *state, const ASTExpr *expr) {
-    switch (expr->kind) {
-    case EXPR_VARIABLE:
-        return fact_use_of(state->facts, expr) && fact_use_of(state->facts, expr)->kind == SYMBOL_VAR;
-    case EXPR_FIELD:
-        return is_addressable(state, expr->field.target);
-    case EXPR_INDEX:
-
-        return is_addressable(state, expr->index.target);
-    case EXPR_DEREF:
-        return true;
-    default:
-        return false;
-    }
-}
-
-static const Type *receiver_base_type(const Type *type) {
-    while (type_is_indirect(type)) {
-        type = type_pointee(type);
-    }
-
-    return type;
-}
-
-static const Type *derefs_to(TypeRegistry *registry, const Type *type);
-
 static Function *find_method_on_chain(TypeRegistry *registry, FunctionRegistry *functions, const Type *type,
                                       const String *name, const Type **out_base) {
     for (const Type *at = receiver_base_type(type); at; at = derefs_to(registry, at)) {
@@ -414,14 +270,6 @@ static Function *find_method_on_chain(TypeRegistry *registry, FunctionRegistry *
     *out_base = receiver_base_type(type);
     return NULL;
 }
-
-static bool type_accepts(TypeRegistry *registry, const Type *to, const Type *from);
-static bool accepts_by_borrowing(const Type *to, const Type *from);
-static bool reads_as_a_view(TypeRegistry *registry, const Type *to, const Type *from);
-static bool lends_by_pointer(const Type *to, const Type *from);
-static bool borrow_into(ResolverState *state, ASTExpr *expr, const Type *destination, Span span);
-static void adjust_derefs(ResolverState *state, Adjustment *adjustment, const Type *from, unsigned int count);
-static void mark_implicit_move(ResolverState *state, ASTExpr *value, const Type *destination, Span span);
 
 /* The arguments the source wrote, which an indexing spells as the one between its brackets. A
  * receiver is not among them, being held beside the call rather than written as an argument. */
@@ -459,8 +307,6 @@ static void check_call_args(ResolverState *state, ASTExprList *args, const Type 
         check_call_arg(state, args->data[i], params[i], i + 1);
     }
 }
-
-static bool unsizes_to_a_slice(const Type *to, const Type *from);
 
 typedef struct {
     size_t derefs;
@@ -578,7 +424,6 @@ static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr);
 
 /* A generic instantiating itself at an ever-larger type would collect without end. */
 static void resolve_func_body(ResolverState *state, ASTStmt *stmt);
-static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span);
 
 /* Matches a declared parameter type against an argument's, binding each type parameter it reaches. */
 static bool infer_type_args(const Type *declared, const Type *actual, TypeArg *args, size_t owed) {
@@ -692,13 +537,6 @@ static bool infer_call_args(ResolverState *state, ASTExpr *expr, Function *funct
     }
 
     return true;
-}
-
-/* Type arguments a call names itself; only a plain call can, a method call's target having nowhere for them.
- */
-/* The type a value parameter and an array length both have, which is the only one they can have. */
-static const Type *i32_type(ResolverState *state) {
-    return type_registry_get_primitive(state->global->types, TYPE_I32);
 }
 
 static bool take_written_type_args(ResolverState *state, ASTExpr *expr, Function *generic,
@@ -1066,152 +904,6 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     fact_set_type(state->facts, expr, method->signature.return_type);
 }
 
-static bool reads_as_a_view(TypeRegistry *registry, const Type *to, const Type *from) {
-    const Type *view = type_registry_deref_of(registry, from);
-
-    return view && type_kind(to) == TYPE_REF && view == type_pointee(to);
-}
-
-static const Type *derefs_to(TypeRegistry *registry, const Type *type) {
-    return type_registry_deref_of(registry, type);
-}
-
-static bool lends_by_pointer(const Type *to, const Type *from) {
-    return type_kind(to) == TYPE_REF && type_is_indirect(from) && type_pointee(to) == type_pointee(from);
-}
-
-static bool accepts_by_borrowing(const Type *to, const Type *from) {
-    return to != from && type_kind(to) == TYPE_REF && type_pointee(to) == from;
-}
-
-/* An array reaches a '&slice<T>' by handing over where it starts and how many it holds. */
-static bool unsizes_to_a_slice(const Type *to, const Type *from) {
-    if (type_kind(to) != TYPE_REF || type_kind(type_pointee(to)) != TYPE_SLICE) {
-        return false;
-    }
-
-    while (type_is_indirect(from)) {
-        from = type_pointee(from);
-    }
-
-    return type_kind(from) == TYPE_ARRAY && type_array_element(from) == type_slice_element(type_pointee(to));
-}
-
-static bool type_accepts(TypeRegistry *registry, const Type *to, const Type *from) {
-    if (to == from) {
-        return true;
-    }
-
-    if (unsizes_to_a_slice(to, from)) {
-        return true;
-    }
-
-    if (accepts_by_borrowing(to, from)) {
-        return true;
-    }
-
-    for (const Type *at = from;; at = type_pointee(at)) {
-        if (reads_as_a_view(registry, to, at) || lends_by_pointer(to, at)) {
-            return true;
-        }
-
-        if (!type_is_indirect(at)) {
-            return false;
-        }
-    }
-}
-
-/* Records the dereferences a coercion applies, naming the type each one reaches. */
-static void adjust_derefs(ResolverState *state, Adjustment *adjustment, const Type *from,
-                          unsigned int count) {
-    adjustment->derefs = count;
-    adjustment->deref_types = count ? arena_alloc(state->global->arena, count * sizeof(const Type *)) : NULL;
-
-    for (unsigned int i = 0; i < count; i++) {
-        from = type_pointee(from);
-        adjustment->deref_types[i] = from;
-    }
-}
-
-static bool unsize_into(ResolverState *state, ASTExpr *expr, const Type *destination, Span span) {
-    const Type *array = fact_type_of(state->facts, expr);
-    unsigned int derefs = 0;
-
-    while (type_is_indirect(array)) {
-        array = type_pointee(array);
-        derefs++;
-    }
-
-    if (!is_addressable(state, expr)) {
-        diag_error(state->global->diagnostics, GAB_ERR_TYPE, span,
-                   "cannot borrow a temporary; bind it to a variable first");
-        return false;
-    }
-
-    Symbol *addressed = fact_root_local(state->facts, expr);
-
-    if (addressed) {
-        addressed->pinned = true;
-    }
-
-    Adjustment adjustment = {.kind = ADJUST_UNSIZE,
-                             .to = destination,
-                             .length = type_array_length_is_known(array) ? type_array_length(array) : 1};
-
-    adjust_derefs(state, &adjustment, fact_type_of(state->facts, expr), derefs);
-    fact_set_adjustment(state->facts, expr, adjustment);
-
-    return true;
-}
-
-static bool borrow_into(ResolverState *state, ASTExpr *expr, const Type *destination, Span span) {
-    const Type *from = fact_type_of(state->facts, expr);
-
-    if (unsizes_to_a_slice(destination, from)) {
-        return unsize_into(state, expr, destination, span);
-    }
-
-    const Type *at = from;
-    unsigned int derefs = 0;
-
-    while (type_is_indirect(at) && type_pointee(destination) != type_pointee(at) &&
-           type_pointee(destination) != at) {
-        at = type_pointee(at);
-        derefs++;
-    }
-
-    if (!accepts_by_borrowing(destination, at)) {
-        /* The dereferences alone reach what the destination takes, so they stand as the coercion. */
-        if (derefs > 0) {
-            Adjustment adjustment = {.kind = ADJUST_NONE, .to = at};
-
-            adjust_derefs(state, &adjustment, from, derefs);
-            fact_set_adjustment(state->facts, expr, adjustment);
-        }
-
-        return true;
-    }
-
-    if (!is_addressable(state, expr)) {
-        diag_error(state->global->diagnostics, GAB_ERR_TYPE, span,
-                   "cannot borrow a temporary; bind it to a variable first");
-        return false;
-    }
-
-    Symbol *addressed = fact_root_local(state->facts, expr);
-
-    if (addressed) {
-        addressed->pinned = true;
-    }
-
-    Adjustment adjustment = {.kind = ADJUST_BORROW, .to = destination};
-
-    adjust_derefs(state, &adjustment, from, derefs);
-    fact_set_adjustment(state->facts, expr, adjustment);
-
-    return true;
-}
-
 /* Listing every kind rather than the ones that answer true, so a kind added later must be placed here. */
 bool is_integer_type(const Type *t) {
     switch (type_kind(t)) {
@@ -1251,22 +943,6 @@ static bool is_string_type(TypeRegistry *registry, const Type *t) {
 
 static bool is_comparable_type(TypeRegistry *registry, const Type *t) {
     return is_numeric_type(t) || is_boolean_type(t) || is_string_type(registry, t);
-}
-
-static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span);
-
-static StructDecl *element_completes_a_cycle(ResolverState *state, const Type *type);
-static void report_containment_cycle(ResolverState *state, StructDecl *closes_on, Span span);
-
-static bool reject_unsized(ResolverState *state, const Type *type, Span span, const char *held_as) {
-    if (!type || type_is_sized(type)) {
-        return false;
-    }
-
-    diag_error(state->global->diagnostics, GAB_ERR_TYPE, span,
-               "nothing holds a '%s', so it cannot be %s; write '&%s'", type_name(state, type), held_as,
-               type_name(state, type));
-    return true;
 }
 
 static bool bin_op_accepts(ResolverState *state, BinOp op, const Type *type, Span span) {
@@ -1927,314 +1603,6 @@ static const Type *resolve_expr(ResolverState *state, ASTExpr *expr, const Type 
     return type;
 }
 
-static void mark_implicit_move(ResolverState *state, ASTExpr *value, const Type *destination, Span span) {
-    if (!value || is_error_type(fact_type_of(state->facts, value))) {
-        return;
-    }
-
-    if (type_registry_copies(state->global->types, fact_type_of(state->facts, value))) {
-        return;
-    }
-
-    if (destination && !type_registry_owns(state->global->types, destination)) {
-        return;
-    }
-
-    if (value->kind == EXPR_FIELD) {
-        diag_error(state->global->diagnostics, GAB_ERR_LIFETIME, span,
-                   "a field cannot be given up on its own; bind the whole struct instead");
-        return;
-    }
-
-    if (value->kind == EXPR_INDEX) {
-        diag_error(state->global->diagnostics, GAB_ERR_LIFETIME, span,
-                   "an element cannot be given up on its own; bind the whole array instead");
-        return;
-    }
-
-    if (value->kind != EXPR_VARIABLE || !fact_use_of(state->facts, value) ||
-        fact_use_of(state->facts, value)->kind != SYMBOL_VAR) {
-        return;
-    }
-
-    fact_set_moves(state->facts, value, true);
-}
-
-/* An element must be sized and non-recursive wherever a run of it is laid out. */
-static const Type *resolve_element_type(ResolverState *state, TypeExpr *expr, Span span,
-                                        const char *held_as) {
-    const Type *element = resolve_type_expr(state, expr, span);
-
-    if (is_error_type(element)) {
-        return NULL;
-    }
-
-    if (type_has_param(element)) {
-        return element;
-    }
-
-    if (reject_unsized(state, element, span, held_as)) {
-        return NULL;
-    }
-
-    StructDecl *cycle = element_completes_a_cycle(state, element);
-
-    if (cycle) {
-        report_containment_cycle(state, cycle, span);
-        return NULL;
-    }
-
-    if (type_registry_size_of(state->global->types, element) == 0) {
-        diag_error(state->global->diagnostics, GAB_ERR_TYPE, span, "%s must have a size", held_as);
-        return NULL;
-    }
-
-    return element;
-}
-
-/* Which kind of parameter a bound declares, which its syntax alone says: nothing here is resolved, so
- * this answers before the parameters are in scope and their bounds can be. 'N: i32' declares a value
- * parameter, as Rust spells 'const N: usize'; any other bound names an interface. */
-static BoundKind bound_kind_of(const TypeRegistry *registry, StringPool *strings, const TypeExpr *bound) {
-    if (!bound) {
-        return BOUND_NONE;
-    }
-
-    return bound->kind == TYPE_EXPR_NAME &&
-                   string_from_ref(strings, bound->name) == type_registry_names(registry)->i32
-               ? BOUND_VALUE
-               : BOUND_INTERFACE;
-}
-
-static bool bind_type_param(TypeRegistry *registry, Scope *params, String *name, size_t index,
-                            BoundKind kind) {
-    if (kind == BOUND_VALUE) {
-        return scope_bind_const(params, name, (TypeConst){.kind = CONST_PARAM, .param = index});
-    }
-
-    return scope_bind_type_param(params, name, type_registry_param(registry, index));
-}
-
-/* A length is written as a literal, or named as the value parameter a generic declaration takes. */
-static bool resolve_array_length(ResolverState *state, TypeExpr *expr, Span span, TypeArg *out) {
-    if (expr->kind == TYPE_EXPR_CONST) {
-        Constant length = constant_int(i32_type(state), expr->constant);
-
-        *out = (TypeArg){.kind = TYPE_ARG_CONST, .constant = {.kind = CONST_VALUE, .value = length}};
-        return true;
-    }
-
-    if (expr->kind == TYPE_EXPR_NAME) {
-        Scope *scope = resolver_expr_scope(state, expr->name);
-        Symbol *symbol = resolver_resolve_name(state, scope, resolver_expr_member(state, expr->name));
-
-        if (symbol && symbol->kind == SYMBOL_CONST) {
-            *out = (TypeArg){.kind = TYPE_ARG_CONST, .constant = symbol->constant};
-            return true;
-        }
-    }
-
-    diag_error(state->global->diagnostics, GAB_ERR_TYPE, span,
-               "an array's length is a literal or a value parameter, as 'array<i32, 3>'");
-    return false;
-}
-
-static const Type *resolve_array_type(ResolverState *state, TypeExpr *expr, Span span) {
-    TypeRegistry *registry = state->global->types;
-
-    if (expr->apply.args.size != 2) {
-        diag_error(state->global->diagnostics, GAB_ERR_TYPE, span,
-                   "'array' takes an element and a length, as 'array<i32, 3>'");
-        return resolver_error_type(state);
-    }
-
-    const Type *element = resolve_element_type(state, expr->apply.args.data[0], span, "an array's element");
-
-    TypeArg length;
-
-    if (!element || !resolve_array_length(state, expr->apply.args.data[1], span, &length)) {
-        return resolver_error_type(state);
-    }
-
-    if (length.constant.kind == CONST_PARAM) {
-        return type_registry_array_with(registry, element, length);
-    }
-
-    if (length.constant.value.as_int <= 0) {
-        diag_error(state->global->diagnostics, GAB_ERR_TYPE, span,
-                   "an array's length must be positive, not %d", length.constant.value.as_int);
-        return resolver_error_type(state);
-    }
-
-    return type_registry_array_with(registry, element, length);
-}
-
-static const Type *resolve_slice_type(ResolverState *state, TypeExpr *expr, Span span) {
-    if (expr->apply.args.size != 1 || expr->apply.args.data[0]->kind == TYPE_EXPR_CONST) {
-        diag_error(state->global->diagnostics, GAB_ERR_TYPE, span,
-                   "'slice' takes one element type, as 'slice<int>'");
-        return resolver_error_type(state);
-    }
-
-    const Type *element = resolve_element_type(state, expr->apply.args.data[0], span, "a slice's element");
-
-    if (!element) {
-        return resolver_error_type(state);
-    }
-
-    return type_registry_slice_of(state->global->types, element);
-}
-
-/* A raw run names where elements start and nothing more: no length, and nothing it owns. */
-static const Type *resolve_raw_type(ResolverState *state, TypeExpr *expr, Span span) {
-    if (expr->apply.args.size != 1 || expr->apply.args.data[0]->kind == TYPE_EXPR_CONST) {
-        diag_error(state->global->diagnostics, GAB_ERR_TYPE, span,
-                   "'raw' takes one element type, as 'raw<i32>'");
-        return resolver_error_type(state);
-    }
-
-    const Type *element = resolve_element_type(state, expr->apply.args.data[0], span, "a raw run's element");
-
-    if (!element) {
-        return resolver_error_type(state);
-    }
-
-    return type_registry_raw_of(state->global->types, element);
-}
-
-static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) {
-    if (!expr) {
-        return NULL;
-    }
-
-    TypeRegistry *registry = state->global->types;
-
-    switch (expr->kind) {
-    case TYPE_EXPR_BOX:
-    case TYPE_EXPR_REF: {
-        const Type *inner = resolve_type_expr(state, expr->indirect.inner, span);
-
-        if (is_error_type(inner)) {
-            return resolver_error_type(state);
-        }
-
-        return expr->kind == TYPE_EXPR_REF ? type_registry_ref_to(registry, inner)
-                                           : type_registry_box_to(registry, inner);
-    }
-
-    case TYPE_EXPR_APPLY: {
-        if (names_the_same(state, expr->apply.base->name, resolver_names(state)->array)) {
-            return resolve_array_type(state, expr, span);
-        }
-
-        if (names_the_same(state, expr->apply.base->name, resolver_names(state)->slice)) {
-            return resolve_slice_type(state, expr, span);
-        }
-
-        if (names_the_same(state, expr->apply.base->name, resolver_names(state)->raw)) {
-            return resolve_raw_type(state, expr, span);
-        }
-
-        Scope *base_scope = resolver_expr_scope(state, expr->apply.base->name);
-
-        String *base_name = base_scope ? resolver_expr_member(state, expr->apply.base->name) : NULL;
-
-        Symbol *base_symbol = base_name ? resolver_resolve_name(state, base_scope, base_name) : NULL;
-
-        const TypeDecl *base_decl =
-            base_symbol && base_symbol->kind == SYMBOL_TYPE_DECL ? base_symbol->type_decl : NULL;
-        const Type *base = symbol_type(registry, base_symbol);
-
-        if (!base_symbol) {
-            char *name = string_ref_to_cstr(expr->apply.base->name);
-            diag_error(state->global->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", name);
-            free(name);
-
-            return resolver_error_type(state);
-        }
-
-        if (base_decl) {
-            if (expr->apply.args.size != base_decl->param_count) {
-                diag_error(state->global->diagnostics, GAB_ERR_TYPE, span,
-                           "'%s' takes %zu type argument(s), not %zu", base_decl->id.name->data,
-                           base_decl->param_count, expr->apply.args.size);
-                return resolver_error_type(state);
-            }
-
-            const Type *args[GAB_MAX_TYPE_PARAMS];
-
-            for (size_t i = 0; i < expr->apply.args.size; i++) {
-                args[i] = resolve_type_expr(state, expr->apply.args.data[i], span);
-
-                if (is_error_type(args[i])) {
-                    return resolver_error_type(state);
-                }
-
-                if (type_has_param(args[i])) {
-                    continue;
-                }
-
-                if (reject_unsized(state, args[i], span, "a type argument")) {
-                    return resolver_error_type(state);
-                }
-
-                StructDecl *cycle = element_completes_a_cycle(state, args[i]);
-
-                if (cycle) {
-                    report_containment_cycle(state, cycle, span);
-                    return resolver_error_type(state);
-                }
-            }
-
-            return type_registry_apply(registry, base_decl, args, expr->apply.args.size);
-        }
-
-        diag_error(state->global->diagnostics, GAB_ERR_TYPE, span, "%s does not take a type argument",
-                   type_name(state, base));
-
-        return resolver_error_type(state);
-    }
-
-    case TYPE_EXPR_CONST:
-        diag_error(state->global->diagnostics, GAB_ERR_TYPE, span,
-                   "a length is an argument to 'array', not a type");
-        return resolver_error_type(state);
-
-    case TYPE_EXPR_NAME:
-        break;
-    }
-
-    Scope *scope = resolver_expr_scope(state, expr->name);
-
-    Symbol *symbol = resolver_resolve_name(state, scope, resolver_expr_member(state, expr->name));
-
-    const Type *type = symbol_type(registry, symbol);
-
-    if (type) {
-        return type;
-    }
-
-    if (symbol && symbol->kind == SYMBOL_TYPE_DECL) {
-        diag_error(state->global->diagnostics, GAB_ERR_TYPE, span, "'%s' takes %zu type argument(s), not 0",
-                   symbol->type_decl->id.name->data, symbol->type_decl->param_count);
-
-        return resolver_error_type(state);
-    }
-
-    if (resolver_intern(state, expr->name) == resolver_names(state)->self) {
-        diag_error(state->global->diagnostics, GAB_ERR_NAME, span,
-                   "'Self' names the type an 'impl' block is for, and there is none here");
-
-        return resolver_error_type(state);
-    }
-
-    char *name_text = string_ref_to_cstr(expr->name);
-    diag_error(state->global->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", name_text);
-    free(name_text);
-
-    return resolver_error_type(state);
-}
-
 static void resolve_stmt(ResolverState *state, ASTStmt *stmt);
 
 static StructDecl *decl_held_by_value(ResolverState *state, const Type *type) {
@@ -2324,7 +1692,7 @@ static size_t resolving_index_of(ResolverState *state, const StructDecl *decl) {
     return i;
 }
 
-static StructDecl *element_completes_a_cycle(ResolverState *state, const Type *type) {
+StructDecl *element_completes_a_cycle(ResolverState *state, const Type *type) {
     StructDecl *decl = decl_held_by_value(state, type);
 
     if (!decl) {
@@ -2340,7 +1708,7 @@ static StructDecl *element_completes_a_cycle(ResolverState *state, const Type *t
     return NULL;
 }
 
-static void report_containment_cycle(ResolverState *state, StructDecl *closes_on, Span span) {
+void report_containment_cycle(ResolverState *state, StructDecl *closes_on, Span span) {
     char path[256];
     size_t written = 0;
 
