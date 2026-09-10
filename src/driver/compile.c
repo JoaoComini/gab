@@ -127,7 +127,7 @@ bool gab_module_name(const char *source, Arena *arena, StringPool *strings, char
         return false;
     }
 
-    snprintf(out, capacity, "%.*s", (int)file->module_name.length, file->module_name.data);
+    snprintf(out, capacity, "%s", file->module_name->name->data);
 
     return true;
 }
@@ -222,8 +222,7 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
     }
 
     if (ok) {
-        snprintf(out->module_name, sizeof(out->module_name), "%.*s", (int)declaring->name.length,
-                 declaring->name.data);
+        snprintf(out->module_name, sizeof(out->module_name), "%s", declaring->name->name->data);
     }
 
     if (ok && request->interface) {
@@ -238,7 +237,7 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
 
         if (written) {
             char module[128];
-            snprintf(module, sizeof(module), "%.*s", (int)declaring->name.length, declaring->name.data);
+            snprintf(module, sizeof(module), "%s", declaring->name->name->data);
 
             char symbol[512];
             gab_interface_symbol(symbol, sizeof(symbol), module, gab_interface_digest(written));

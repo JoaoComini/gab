@@ -5,20 +5,17 @@
 #include "ast/type_expr.h"
 #include "memory/arena.h"
 #include "scope.h"
+#include "string/string.h"
 #include "string/string_ref.h"
 #include "type/type.h"
 #include "util/list.h"
 
 typedef struct ASTField {
-    StringRef name;
+    ASTIdent *name;
     TypeExpr *type_expr;
-
-    Span span;
-
-    Symbol *binding;
 } ASTField;
 
-ASTField *ast_field_create(Arena *arena, Span span, StringRef name, TypeExpr *type_expr);
+ASTField *ast_field_create(Arena *arena, ASTIdent *name, TypeExpr *type_expr);
 
 GAB_LIST(ASTFieldList, ast_field_list, ASTField *);
 
@@ -47,11 +44,9 @@ typedef struct {
 } ASTExprStmt;
 
 typedef struct {
-    StringRef name;
+    ASTIdent *name;
     TypeExpr *type_expr;
     ASTExpr *initializer;
-
-    Symbol *binding;
 } ASTVarDecl;
 
 /* What was written before 'func'. Syntax, not a conclusion: what these mean for a symbol is decided
@@ -66,7 +61,7 @@ typedef enum {
 } FuncSyntax;
 
 typedef struct {
-    StringRef name;
+    ASTIdent *name;
 
     TypeExpr *owner;
 
@@ -74,38 +69,32 @@ typedef struct {
     ASTFieldList params;
     struct ASTStmt *body;
 
-    StringRef type_params[GAB_MAX_TYPE_PARAMS];
+    ASTIdent *type_params[GAB_MAX_TYPE_PARAMS];
 
     /* The interface each type parameter is bounded by, null where it is unbounded. */
     TypeExpr *type_param_bounds[GAB_MAX_TYPE_PARAMS];
     size_t type_param_count;
 
-    Function *function;
-
     /* A set of FuncSyntax. */
     unsigned syntax;
-
-    bool declared;
 } ASTFuncDecl;
 
 typedef struct {
-    StringRef name;
+    ASTIdent *name;
     ASTFieldList fields;
 
-    StringRef params[GAB_MAX_TYPE_PARAMS];
+    ASTIdent *params[GAB_MAX_TYPE_PARAMS];
     size_t param_count;
 
     /* The compiler supplies what this type means, which only a name it knows may claim. */
     bool intrinsic;
-
-    bool declared;
 } ASTStructDecl;
 
 typedef struct {
-    StringRef name;
+    ASTIdent *name;
     ASTStmtList members;
 
-    StringRef params[GAB_MAX_TYPE_PARAMS];
+    ASTIdent *params[GAB_MAX_TYPE_PARAMS];
     size_t param_count;
 } ASTInterfaceDecl;
 
@@ -113,8 +102,7 @@ typedef struct {
     TypeExpr *type;
     ASTStmtList members;
 
-    StringRef interface_name;
-    Span interface_span;
+    ASTIdent *interface_name;
 
     /* The arguments the 'as' clause applies to the interface, empty where it names none. */
     TypeExprList interface_args;
@@ -122,7 +110,7 @@ typedef struct {
     /* The bound written on each parameter the block declares, which says whether it takes a value. */
     TypeExpr *param_bounds[GAB_MAX_TYPE_PARAMS];
 
-    StringRef param_names[GAB_MAX_TYPE_PARAMS];
+    ASTIdent *param_names[GAB_MAX_TYPE_PARAMS];
     size_t param_count;
 } ASTImplStmt;
 
@@ -148,8 +136,6 @@ typedef struct {
     ASTExpr *condition;
     struct ASTStmt *post;
     struct ASTStmt *body;
-
-    struct Scope *scope;
 } ASTForStmt;
 
 typedef struct {
@@ -158,8 +144,6 @@ typedef struct {
 
 typedef struct {
     ASTStmtList list;
-
-    struct Scope *scope;
 } ASTBlockStmt;
 
 typedef struct {
@@ -189,11 +173,11 @@ typedef struct ASTStmt {
 } ASTStmt;
 
 ASTStmt *ast_expr_stmt_create(Arena *arena, Span span, ASTExpr *value);
-ASTStmt *ast_var_decl_stmt_create(Arena *arena, Span span, StringRef name, TypeExpr *type,
+ASTStmt *ast_var_decl_stmt_create(Arena *arena, Span span, ASTIdent *name, TypeExpr *type,
                                   ASTExpr *initializer);
-ASTStmt *ast_func_decl_stmt_create(Arena *arena, Span span, StringRef name, TypeExpr *return_type,
+ASTStmt *ast_func_decl_stmt_create(Arena *arena, Span span, ASTIdent *name, TypeExpr *return_type,
                                    ASTFieldList params, ASTStmt *body);
-ASTStmt *ast_struct_decl_stmt_create(Arena *arena, Span span, StringRef name, const StringRef *params,
+ASTStmt *ast_struct_decl_stmt_create(Arena *arena, Span span, ASTIdent *name, ASTIdent *const *params,
                                      size_t param_count, ASTFieldList fields, bool intrinsic);
 ASTStmt *ast_assign_stmt_create(Arena *arena, Span span, ASTExpr *target, ASTExpr *value);
 ASTStmt *ast_compound_assign_stmt_create(Arena *arena, Span span, ASTExpr *target, BinOp op, ASTExpr *value);
@@ -203,7 +187,7 @@ ASTStmt *ast_for_stmt_create(Arena *arena, Span span, ASTStmt *init, ASTExpr *co
                              ASTStmt *body);
 ASTStmt *ast_jump_stmt_create(Arena *arena, Span span, bool is_break);
 ASTStmt *ast_impl_stmt_create(Arena *arena, Span span, TypeExpr *type, ASTStmtList members);
-ASTStmt *ast_interface_decl_stmt_create(Arena *arena, Span span, StringRef name, ASTStmtList members);
+ASTStmt *ast_interface_decl_stmt_create(Arena *arena, Span span, ASTIdent *name, ASTStmtList members);
 ASTStmt *ast_block_stmt_create(Arena *arena, Span span, ASTStmtList list);
 ASTStmt *ast_return_stmt_create(Arena *arena, Span span, ASTExpr *result);
 

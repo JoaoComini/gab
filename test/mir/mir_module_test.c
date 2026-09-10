@@ -11,8 +11,9 @@ static void resolving_a_unit_lowers_every_function(void) {
     Scope *scope = scope_create_kind(ctx.arena, ctx.global, SCOPE_MODULE);
     ASTModule *unit = ast_module_create(ctx.arena);
     MIRModule *mir_unit = NULL;
+    ResolvedModule *resolved = NULL;
 
-    assert(test_resolve_ir(&ctx, scope, &unit, &mir_unit, NULL,
+    assert(test_resolve_ir(&ctx, scope, &unit, &mir_unit, &resolved,
                            "func one(): i32 { return 1; }\n"
                            "func two(): i32 { return 2; }\n"));
 
@@ -20,7 +21,7 @@ static void resolving_a_unit_lowers_every_function(void) {
         ASTStmt *stmt = ast_module_statements(unit)[0].data[i];
 
         if (stmt && stmt->kind == STMT_FUNC_DECL && stmt->func_decl.body) {
-            assert(mir_module_lookup(mir_unit, stmt->func_decl.function));
+            assert(mir_module_lookup(mir_unit, fact_function_of(&resolved->facts, stmt)));
         }
     }
 
@@ -51,16 +52,19 @@ static void a_lowered_body_carries_the_function_it_came_from(void) {
     Scope *scope = scope_create_kind(ctx.arena, ctx.global, SCOPE_MODULE);
     ASTModule *unit = ast_module_create(ctx.arena);
     MIRModule *mir_unit = NULL;
+    ResolvedModule *resolved = NULL;
 
-    assert(test_resolve_ir(&ctx, scope, &unit, &mir_unit, NULL, "func one(a: i32): i32 { return a; }\n"));
+    assert(
+        test_resolve_ir(&ctx, scope, &unit, &mir_unit, &resolved, "func one(a: i32): i32 { return a; }\n"));
 
     for (size_t i = 0; i < ast_module_statements(unit)[0].size; i++) {
         ASTStmt *stmt = ast_module_statements(unit)[0].data[i];
 
         if (stmt && stmt->kind == STMT_FUNC_DECL && stmt->func_decl.body) {
-            MIRFunction *ir = mir_module_lookup(mir_unit, stmt->func_decl.function);
+            Function *function = fact_function_of(&resolved->facts, stmt);
+            MIRFunction *ir = mir_module_lookup(mir_unit, function);
 
-            assert(ir->function == stmt->func_decl.function);
+            assert(ir->function == function);
             assert(ir->param_count == 1);
         }
     }

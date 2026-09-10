@@ -4,4 +4,4 @@ func f(): i32 {
 }
 
 // error
-// :3:12: name error: undeclared variable 'i'
+// :3:12: name error: undeclared name 'i'

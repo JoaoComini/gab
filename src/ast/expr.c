@@ -23,15 +23,33 @@ ASTExpr *ast_bin_op_expr_create(Arena *arena, Span span, ASTExpr *left, BinOp op
     return node;
 }
 
-ASTExpr *ast_variable_expr_create(Arena *arena, Span span, StringRef name) {
+ASTIdent *ast_ident_create(Arena *arena, StringPool *strings, Span span, StringRef name) {
+    ASTIdent *ident = arena_alloc(arena, sizeof(ASTIdent));
+    ident->name = string_from_ref(strings, name);
+    ident->span = span;
+
+    return ident;
+}
+
+ASTExpr *ast_name_expr_create(Arena *arena, Span span, ASTIdent *name) {
     ASTExpr *node = ast_expr_create(arena, span);
-    node->kind = EXPR_VARIABLE;
-    node->var.name = name;
-    node->var.owner_type_expr = NULL;
+    node->kind = EXPR_NAME;
+    node->name.name = name;
+    node->name.owner_type_expr = NULL;
     return node;
 }
 
-ASTExpr *ast_builtin_expr_create(Arena *arena, Span span, StringRef name, TypeExpr *type_expr) {
+ASTExpr *ast_qualified_expr_create(Arena *arena, Span span, ASTIdent *qualifier, ASTIdent *name,
+                                   TypeExpr *owner_type_expr) {
+    ASTExpr *node = ast_expr_create(arena, span);
+    node->kind = EXPR_QUALIFIED;
+    node->qualified.qualifier = qualifier;
+    node->qualified.name = name;
+    node->qualified.owner_type_expr = owner_type_expr;
+    return node;
+}
+
+ASTExpr *ast_builtin_expr_create(Arena *arena, Span span, ASTIdent *name, TypeExpr *type_expr) {
     ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_BUILTIN;
     node->builtin.name = name;
@@ -47,7 +65,7 @@ ASTExpr *ast_call_expr_create(Arena *arena, Span span, ASTExpr *target, ASTExprL
     return node;
 }
 
-ASTExpr *ast_field_expr_create(Arena *arena, Span span, ASTExpr *target, StringRef name) {
+ASTExpr *ast_field_expr_create(Arena *arena, Span span, ASTExpr *target, ASTIdent *name) {
     ASTExpr *node = ast_expr_create(arena, span);
     node->kind = EXPR_FIELD;
     node->field.target = target;

@@ -58,8 +58,9 @@ BoundKind bound_kind_of(const TypeRegistry *registry, StringPool *strings, const
         return BOUND_NONE;
     }
 
-    return bound->kind == TYPE_EXPR_NAME &&
-                   string_from_ref(strings, bound->name) == type_registry_names(registry)->i32
+    (void)strings;
+
+    return bound->kind == TYPE_EXPR_NAME && bound->name->name == type_registry_names(registry)->i32
                ? BOUND_VALUE
                : BOUND_INTERFACE;
 }
@@ -82,8 +83,8 @@ static bool resolve_array_length(ResolverState *state, TypeExpr *expr, Span span
     }
 
     if (expr->kind == TYPE_EXPR_NAME) {
-        Scope *scope = resolver_expr_scope(state, expr->name);
-        Symbol *symbol = resolver_resolve_name(state, scope, resolver_expr_member(state, expr->name));
+        Scope *scope = resolver_type_expr_scope(state, expr);
+        Symbol *symbol = resolver_resolve_name(state, scope, resolver_type_expr_member(state, expr));
 
         if (symbol && symbol->kind == SYMBOL_CONST) {
             *out = (TypeArg){.kind = TYPE_ARG_CONST, .constant = symbol->constant};
@@ -180,21 +181,21 @@ const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) {
     }
 
     case TYPE_EXPR_APPLY: {
-        if (names_the_same(state, expr->apply.base->name, resolver_names(state)->array)) {
+        if (expr->apply.base->name->name == resolver_names(state)->array) {
             return resolve_array_type(state, expr, span);
         }
 
-        if (names_the_same(state, expr->apply.base->name, resolver_names(state)->slice)) {
+        if (expr->apply.base->name->name == resolver_names(state)->slice) {
             return resolve_slice_type(state, expr, span);
         }
 
-        if (names_the_same(state, expr->apply.base->name, resolver_names(state)->raw)) {
+        if (expr->apply.base->name->name == resolver_names(state)->raw) {
             return resolve_raw_type(state, expr, span);
         }
 
-        Scope *base_scope = resolver_expr_scope(state, expr->apply.base->name);
+        Scope *base_scope = resolver_type_expr_scope(state, expr->apply.base);
 
-        String *base_name = base_scope ? resolver_expr_member(state, expr->apply.base->name) : NULL;
+        String *base_name = base_scope ? resolver_type_expr_member(state, expr->apply.base) : NULL;
 
         Symbol *base_symbol = base_name ? resolver_resolve_name(state, base_scope, base_name) : NULL;
 
@@ -203,9 +204,8 @@ const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) {
         const Type *base = symbol_type(registry, base_symbol);
 
         if (!base_symbol) {
-            char *name = string_ref_to_cstr(expr->apply.base->name);
-            diag_error(state->global->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", name);
-            free(name);
+            diag_error(state->global->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'",
+                       expr->apply.base->name->name->data);
 
             return resolver_error_type(state);
         }
@@ -261,9 +261,9 @@ const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) {
         break;
     }
 
-    Scope *scope = resolver_expr_scope(state, expr->name);
+    Scope *scope = resolver_type_expr_scope(state, expr);
 
-    Symbol *symbol = resolver_resolve_name(state, scope, resolver_expr_member(state, expr->name));
+    Symbol *symbol = resolver_resolve_name(state, scope, resolver_type_expr_member(state, expr));
 
     const Type *type = symbol_type(registry, symbol);
 
@@ -278,16 +278,14 @@ const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) {
         return resolver_error_type(state);
     }
 
-    if (resolver_intern(state, expr->name) == resolver_names(state)->self) {
+    if (expr->name->name == resolver_names(state)->self) {
         diag_error(state->global->diagnostics, GAB_ERR_NAME, span,
                    "'Self' names the type an 'impl' block is for, and there is none here");
 
         return resolver_error_type(state);
     }
 
-    char *name_text = string_ref_to_cstr(expr->name);
-    diag_error(state->global->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", name_text);
-    free(name_text);
+    diag_error(state->global->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", expr->name->name->data);
 
     return resolver_error_type(state);
 }

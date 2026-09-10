@@ -30,7 +30,15 @@ static inline bool test_resolve_ir_with(TestContext *ctx, Scope *into, ASTModule
 
     ModulePrivileges privileges = {.intrinsics = declares_intrinsics};
 
-    if (!resolve_module(&resolver, *unit, into, privileges, &resolved)) {
+    /* A module that does not resolve still concluded what it reached, which a test lowering an
+     * unvetted body reads. */
+    bool resolves = resolve_module(&resolver, *unit, into, privileges, &resolved);
+
+    if (out) {
+        *out = resolved;
+    }
+
+    if (!resolves) {
         return false;
     }
 
@@ -39,10 +47,6 @@ static inline bool test_resolve_ir_with(TestContext *ctx, Scope *into, ASTModule
 
     if (mir_unit) {
         *mir_unit = bodies;
-    }
-
-    if (out) {
-        *out = resolved;
     }
 
     return built;

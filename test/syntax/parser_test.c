@@ -173,10 +173,10 @@ static void test_variables() {
     ASTExpr *rhs = expr->bin_op.right;
     assert(rhs->kind == EXPR_BIN_OP);
     assert(rhs->bin_op.op == BIN_OP_MUL);
-    assert(rhs->bin_op.left->kind == EXPR_VARIABLE);
-    assert(string_ref_equals_cstr(rhs->bin_op.left->var.name, "x"));
-    assert(rhs->bin_op.right->kind == EXPR_VARIABLE);
-    assert(string_ref_equals_cstr(rhs->bin_op.right->var.name, "y"));
+    assert(rhs->bin_op.left->kind == EXPR_NAME);
+    assert(strcmp(rhs->bin_op.left->name.name->name->data, "x") == 0);
+    assert(rhs->bin_op.right->kind == EXPR_NAME);
+    assert(strcmp(rhs->bin_op.right->name.name->name->data, "y") == 0);
 
     assert(expr->bin_op.left->kind == EXPR_LITERAL);
     assert(expr->bin_op.left->lit.as_int == 2.0);
@@ -188,7 +188,7 @@ static void test_var_declaration() {
     ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_VAR_DECL);
 
-    assert(string_ref_equals_cstr(stmt->var_decl.name, "x"));
+    assert(strcmp(stmt->var_decl.name->name->data, "x") == 0);
 
     ASTExpr *initializer = stmt->var_decl.initializer;
 
@@ -210,7 +210,7 @@ static void test_var_uninit_declaration() {
     ASTStmt *stmt = func_unwrap(unit).data[0];
     assert(stmt->kind == STMT_VAR_DECL);
 
-    assert(string_ref_equals_cstr(stmt->var_decl.name, "x"));
+    assert(strcmp(stmt->var_decl.name->name->data, "x") == 0);
     assert(stmt->var_decl.initializer == NULL);
 }
 
@@ -223,15 +223,15 @@ static void test_struct_declaration() {
 
     ASTStmt *stmt = ast_module_statements(unit)[0].data[0];
     assert(stmt->kind == STMT_STRUCT_DECL);
-    assert(string_ref_equals_cstr(stmt->struct_decl.name, "Vec3"));
+    assert(strcmp(stmt->struct_decl.name->name->data, "Vec3") == 0);
 
     ASTFieldList fields = stmt->struct_decl.fields;
     assert(fields.size == 3);
 
-    assert(string_ref_equals_cstr(fields.data[0]->name, "x"));
-    assert(string_ref_equals_cstr(fields.data[0]->type_expr->name, "f32"));
-    assert(string_ref_equals_cstr(fields.data[1]->name, "y"));
-    assert(string_ref_equals_cstr(fields.data[2]->name, "z"));
+    assert(strcmp(fields.data[0]->name->name->data, "x") == 0);
+    assert(strcmp(fields.data[0]->type_expr->name->name->data, "f32") == 0);
+    assert(strcmp(fields.data[1]->name->name->data, "y") == 0);
+    assert(strcmp(fields.data[2]->name->name->data, "z") == 0);
 }
 
 static void test_struct_trailing_comma() {
@@ -270,12 +270,12 @@ static void test_func_declaration() {
     ASTStmt *stmt = ast_module_statements(unit)[0].data[0];
     assert(stmt->kind == STMT_FUNC_DECL);
 
-    assert(string_ref_equals_cstr(stmt->func_decl.name, "add"));
-    assert(string_ref_equals_cstr(stmt->func_decl.return_type->name, "i32"));
+    assert(strcmp(stmt->func_decl.name->name->data, "add") == 0);
+    assert(strcmp(stmt->func_decl.return_type->name->name->data, "i32") == 0);
 
     ASTFieldList params = stmt->func_decl.params;
-    assert(string_ref_equals_cstr(params.data[0]->name, "x"));
-    assert(string_ref_equals_cstr(params.data[1]->name, "y"));
+    assert(strcmp(params.data[0]->name->name->data, "x") == 0);
+    assert(strcmp(params.data[1]->name->name->data, "y") == 0);
 
     ASTStmt *body = stmt->func_decl.body;
     assert(body->kind == STMT_BLOCK);
@@ -290,12 +290,12 @@ static void test_unit_func_declaration() {
     ASTStmt *stmt = ast_module_statements(unit)[0].data[0];
     assert(stmt->kind == STMT_FUNC_DECL);
 
-    assert(string_ref_equals_cstr(stmt->func_decl.name, "test"));
+    assert(strcmp(stmt->func_decl.name->name->data, "test") == 0);
     assert(stmt->func_decl.return_type == NULL);
 
     ASTFieldList params = stmt->func_decl.params;
-    assert(string_ref_equals_cstr(params.data[0]->name, "x"));
-    assert(string_ref_equals_cstr(params.data[1]->name, "y"));
+    assert(strcmp(params.data[0]->name->name->data, "x") == 0);
+    assert(strcmp(params.data[1]->name->name->data, "y") == 0);
 
     ASTStmt *body = stmt->func_decl.body;
     assert(body->kind == STMT_BLOCK);
@@ -309,7 +309,7 @@ static void test_no_params_func_declaration() {
 
     ASTStmt *stmt = ast_module_statements(unit)[0].data[0];
     assert(stmt->kind == STMT_FUNC_DECL);
-    assert(string_ref_equals_cstr(stmt->func_decl.name, "test"));
+    assert(strcmp(stmt->func_decl.name->name->data, "test") == 0);
     assert(stmt->func_decl.return_type == NULL);
 
     ASTFieldList params = stmt->func_decl.params;
@@ -326,8 +326,8 @@ static void test_assignment() {
     assert(stmt->kind == STMT_ASSIGN);
 
     ASTExpr *target = stmt->assign.target;
-    assert(target->kind == EXPR_VARIABLE);
-    assert(string_ref_equals_cstr(target->var.name, "x"));
+    assert(target->kind == EXPR_NAME);
+    assert(strcmp(target->name.name->name->data, "x") == 0);
 
     ASTExpr *value = stmt->assign.value;
     assert(value->kind == EXPR_LITERAL);
@@ -395,10 +395,8 @@ static void test_expression_not_assignable() {
 static void test_module_directive() {
     ASTModule *unit = assert_parse("module Player;\nfunc f(): i32 { return 1; }\n");
 
-    assert(unit->name.data);
-    assert(unit->name.length == 6);
-    assert(strncmp(unit->name.data, "Player", 6) == 0);
-    assert(unit->span.line == 1);
+    assert(strcmp(unit->name->name->data, "Player") == 0);
+    assert(unit->name->span.line == 1);
 
     assert(ast_module_statements(unit)[0].size == 1);
 }
@@ -419,7 +417,7 @@ static void test_a_unit_must_name_its_module() {
 static void test_module_directive_alone() {
     ASTModule *unit = assert_parse("module Player;\n");
 
-    assert(unit->name.data);
+    assert(strcmp(unit->name->name->data, "Player") == 0);
     assert(ast_module_statements(unit)[0].size == 0);
 }
 
@@ -531,10 +529,10 @@ static void test_a_type_takes_several_arguments() {
     TypeExpr *apply = ast_module_statements(unit)[0].data[0]->struct_decl.fields.data[0]->type_expr;
 
     assert(apply->kind == TYPE_EXPR_APPLY);
-    assert(string_ref_equals_cstr(apply->apply.base->name, "Map"));
+    assert(strcmp(apply->apply.base->name->name->data, "Map") == 0);
     assert(apply->apply.args.size == 2);
-    assert(string_ref_equals_cstr(apply->apply.args.data[0]->name, "i32"));
-    assert(string_ref_equals_cstr(apply->apply.args.data[1]->name, "f32"));
+    assert(strcmp(apply->apply.args.data[0]->name->name->data, "i32") == 0);
+    assert(strcmp(apply->apply.args.data[1]->name->name->data, "f32") == 0);
 }
 
 static void test_an_argument_may_be_an_application() {
@@ -548,8 +546,8 @@ static void test_an_argument_may_be_an_application() {
     TypeExpr *inner = outer->apply.args.data[0];
 
     assert(inner->kind == TYPE_EXPR_APPLY);
-    assert(string_ref_equals_cstr(inner->apply.base->name, "Vec"));
-    assert(string_ref_equals_cstr(inner->apply.args.data[0]->name, "i32"));
+    assert(strcmp(inner->apply.base->name->name->data, "Vec") == 0);
+    assert(strcmp(inner->apply.args.data[0]->name->name->data, "i32") == 0);
 }
 
 static void test_a_type_is_a_tree() {
@@ -566,8 +564,8 @@ static void test_a_type_is_a_tree() {
 
     TypeExpr *array = box->indirect.inner;
     assert(array->kind == TYPE_EXPR_APPLY);
-    assert(string_ref_equals_cstr(array->apply.base->name, "array"));
-    assert(string_ref_equals_cstr(array->apply.args.data[0]->name, "i32"));
+    assert(strcmp(array->apply.base->name->name->data, "array") == 0);
+    assert(strcmp(array->apply.args.data[0]->name->name->data, "i32") == 0);
     assert(array->apply.args.data[1]->constant == 3);
 }
 

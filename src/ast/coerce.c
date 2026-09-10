@@ -7,7 +7,7 @@
 
 bool is_addressable(ResolverState *state, const ASTExpr *expr) {
     switch (expr->kind) {
-    case EXPR_VARIABLE:
+    case EXPR_NAME:
         return fact_use_of(state->facts, expr) && fact_use_of(state->facts, expr)->kind == SYMBOL_VAR;
     case EXPR_FIELD:
         return is_addressable(state, expr->field.target);
@@ -199,8 +199,9 @@ void mark_implicit_move(ResolverState *state, ASTExpr *value, const Type *destin
         return;
     }
 
-    if (value->kind != EXPR_VARIABLE || !fact_use_of(state->facts, value) ||
-        fact_use_of(state->facts, value)->kind != SYMBOL_VAR) {
+    Symbol *named = fact_use_of(state->facts, value);
+
+    if (!named || named->kind != SYMBOL_VAR) {
         return;
     }
 

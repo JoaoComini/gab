@@ -21,8 +21,6 @@ static MIRFunction *elaborate(Elaborated *out, const char *source, const char *n
 
     assert(test_resolve_ir(&out->ctx, out->scope, &out->unit, NULL, &out->resolved, source));
 
-    size_t length = strlen(name);
-
     for (size_t i = 0; i < ast_module_statements(out->unit)[0].size; i++) {
         ASTStmt *stmt = ast_module_statements(out->unit)[0].data[i];
 
@@ -30,13 +28,13 @@ static MIRFunction *elaborate(Elaborated *out, const char *source, const char *n
             continue;
         }
 
-        if (stmt->func_decl.name.length != length || strncmp(stmt->func_decl.name.data, name, length) != 0) {
+        if (strcmp(stmt->func_decl.name->name->data, name) != 0) {
             continue;
         }
 
-        MIRFunction *ir =
-            mir_build_function(out->ctx.arena, out->ctx.types, &out->resolved->facts,
-                               stmt->func_decl.function, &stmt->func_decl.params, stmt->func_decl.body);
+        MIRFunction *ir = mir_build_function(out->ctx.arena, out->ctx.types, &out->resolved->facts,
+                                             fact_function_of(&out->resolved->facts, stmt),
+                                             &stmt->func_decl.params, stmt->func_decl.body);
 
         mir_drop_elaborate(out->ctx.arena, out->ctx.types, out->ctx.functions, ir);
 

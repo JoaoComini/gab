@@ -21,6 +21,8 @@ typedef enum {
 typedef struct {
     Arena *arena;
 
+    StringPool *strings;
+
     Lexer *lexer;
 
     Token current;
@@ -57,7 +59,7 @@ static ASTExpr *parse_expression(Parser *parser, ExprContext ctx);
 static ASTExpr *parse_primary(Parser *parser);
 static ASTExpr *parse_unary(Parser *parser, ExprContext ctx);
 static ASTExpr *parse_field_expr(Parser *parser, ASTExpr *target);
-static ASTExpr *parse_method_call_expr(Parser *parser, ASTExpr *receiver, StringRef name, Span span);
+static ASTExpr *parse_method_call_expr(Parser *parser, ASTExpr *receiver, ASTIdent *name, Span span);
 static void parser_synchronize(Parser *parser);
 static ASTExpr *parse_precedence(Parser *parser, int min_precedence, ExprContext ctx);
 static int get_precedence(TokenType type);
@@ -70,6 +72,7 @@ static void parser_error(Parser *parser, const char *message);
 static Parser parser_create(Lexer *lexer, Diagnostics *diagnostics) {
     return (Parser){
         .arena = lexer->arena,
+        .strings = lexer->strings,
         .lexer = lexer,
         .diagnostics = diagnostics,
     };
@@ -113,8 +116,7 @@ static void parse_module_directive(Parser *parser, ASTFile *file) {
         return;
     }
 
-    file->module_name = name;
-    file->module_span = span;
+    file->module_name = ast_ident_create(parser->arena, parser->strings, span, name);
 
     if (parser_expect(parser, TOKEN_SEMICOLON, "expected ';' after the module name")) {
         parser_next_token(parser);
@@ -142,7 +144,8 @@ static void parse_import_directive(Parser *parser, ASTFile *file) {
         return;
     }
 
-    ast_import_list_add(&file->imports, (ASTImport){.name = name, .span = span});
+    ast_import_list_add(&file->imports,
+                        (ASTImport){.name = ast_ident_create(parser->arena, parser->strings, span, name)});
 
     if (parser_expect(parser, TOKEN_SEMICOLON, "expected ';' after the module name")) {
         parser_next_token(parser);
@@ -413,7 +416,8 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser, ExprContext ctx) {
         return NULL;
     }
 
-    Token name = parser->current;
+    ASTIdent *name =
+        ast_ident_create(parser->arena, parser->strings, parser_span(parser), parser->current.lexeme);
 
     parser_next_token(parser);
 
@@ -433,7 +437,7 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser, ExprContext ctx) {
             return NULL;
         }
 
-        return ast_var_decl_stmt_create(parser->arena, span, name.lexeme, spec, NULL);
+        return ast_var_decl_stmt_create(parser->arena, span, name, spec, NULL);
     }
 
     if (!parser_expect(parser, TOKEN_ASSIGN, "expected ';' or '='")) {
@@ -451,7 +455,7 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser, ExprContext ctx) {
         return NULL;
     }
 
-    return ast_var_decl_stmt_create(parser->arena, span, name.lexeme, spec, initializer);
+    return ast_var_decl_stmt_create(parser->arena, span, name, spec, initializer);
 }
 
 /* Inside brackets a '{' cannot open a block, so a struct literal is spelled there even in a header. */
@@ -610,8 +614,8 @@ static ASTField *parse_field(Parser *parser, const char *name_message) {
         return NULL;
     }
 
-    Span span = parser_span(parser);
-    StringRef name = parser->current.lexeme;
+    ASTIdent *name =
+        ast_ident_create(parser->arena, parser->strings, parser_span(parser), parser->current.lexeme);
     parser_next_token(parser);
 
     if (!parser_expect(parser, TOKEN_COLON, "expected ':' after name")) {
@@ -625,12 +629,12 @@ static ASTField *parse_field(Parser *parser, const char *name_message) {
         return NULL;
     }
 
-    return ast_field_create(parser->arena, span, name, type);
+    return ast_field_create(parser->arena, name, type);
 }
 
 /* '<T, U>' as a declaration writes: names, each optionally bounded by ': Interface'. */
 typedef struct {
-    StringRef names[GAB_MAX_TYPE_PARAMS];
+    ASTIdent *names[GAB_MAX_TYPE_PARAMS];
     TypeExpr *bounds[GAB_MAX_TYPE_PARAMS];
 
     /* What was written, which may exceed GAB_MAX_TYPE_PARAMS; only that many are stored. */
@@ -658,7 +662,8 @@ static bool parse_type_params(Parser *parser, TypeParams *out, const char *owner
             return false;
         }
 
-        out->names[out->count] = parser->current.lexeme;
+        out->names[out->count] =
+            ast_ident_create(parser->arena, parser->strings, parser_span(parser), parser->current.lexeme);
         parser_next_token(parser);
 
         if (parser->current.type == TOKEN_COLON) {
@@ -752,18 +757,22 @@ static TypeExpr *parse_type_expr(Parser *parser) {
         return NULL;
     }
 
+    Span name_span = parser_span(parser);
     StringRef name = parser->current.lexeme;
     parser_next_token(parser);
 
+    ASTIdent *qualifier = NULL;
+
     if (parser->current.type == TOKEN_COLON_COLON) {
+        qualifier = ast_ident_create(parser->arena, parser->strings, name_span, name);
+
         parser_next_token(parser);
 
         if (!parser_expect(parser, TOKEN_IDENT, "expected a type name after '::'")) {
             return NULL;
         }
 
-        StringRef member = parser->current.lexeme;
-        name.length = (size_t)(member.data - name.data) + member.length;
+        name = parser->current.lexeme;
 
         parser_next_token(parser);
 
@@ -773,7 +782,10 @@ static TypeExpr *parse_type_expr(Parser *parser) {
         }
     }
 
-    TypeExpr *base = type_expr_name(parser->arena, name);
+    TypeExpr *base =
+        type_expr_name(parser->arena, ast_ident_create(parser->arena, parser->strings, name_span, name));
+
+    base->qualifier = qualifier;
 
     TypeExpr *type = base;
 
@@ -797,7 +809,8 @@ static ASTStmt *parse_struct_decl_stmt_at(Parser *parser, bool intrinsic, Span s
         return NULL;
     }
 
-    StringRef name = parser->current.lexeme;
+    ASTIdent *name =
+        ast_ident_create(parser->arena, parser->strings, parser_span(parser), parser->current.lexeme);
     parser_next_token(parser);
 
     TypeParams type_params;
@@ -844,8 +857,9 @@ static ASTStmt *parse_struct_decl_stmt_at(Parser *parser, bool intrinsic, Span s
 
 /* Prepended, so a member's own parameters continue the numbering of the ones its owner declares. */
 /* A bound travels with the name it qualifies, which the owner's parameters displace. */
-static void func_decl_take_type_params(ASTStmt *decl, TypeExprList *params, TypeExpr *const *bounds) {
-    StringRef own[GAB_MAX_TYPE_PARAMS];
+static void func_decl_take_type_params(ASTStmt *decl, ASTIdent *const *params, size_t param_count,
+                                       TypeExpr *const *bounds) {
+    ASTIdent *own[GAB_MAX_TYPE_PARAMS];
     TypeExpr *own_bounds[GAB_MAX_TYPE_PARAMS];
     size_t own_count = decl->func_decl.type_param_count;
 
@@ -856,14 +870,10 @@ static void func_decl_take_type_params(ASTStmt *decl, TypeExprList *params, Type
 
     decl->func_decl.type_param_count = 0;
 
-    for (size_t i = 0; i < params->size && decl->func_decl.type_param_count < GAB_MAX_TYPE_PARAMS; i++) {
-        if (params->data[i]->kind != TYPE_EXPR_NAME) {
-            continue;
-        }
-
+    for (size_t i = 0; i < param_count && decl->func_decl.type_param_count < GAB_MAX_TYPE_PARAMS; i++) {
         size_t at = decl->func_decl.type_param_count++;
 
-        decl->func_decl.type_params[at] = params->data[i]->name;
+        decl->func_decl.type_params[at] = params[i];
         decl->func_decl.type_param_bounds[at] = bounds ? bounds[i] : NULL;
     }
 
@@ -941,19 +951,14 @@ static ASTStmt *parse_func_decl_stmt_at(Parser *parser, bool signature_only, Spa
         return NULL;
     }
 
-    StringRef func_name = parser->current.lexeme;
+    ASTIdent *func_name =
+        ast_ident_create(parser->arena, parser->strings, parser_span(parser), parser->current.lexeme);
     parser_next_token(parser);
 
     TypeParams declared;
 
     if (!parse_type_params(parser, &declared, "a function")) {
         return NULL;
-    }
-
-    TypeExprList type_params = type_expr_list_create(arena_allocator(parser->arena));
-
-    for (size_t i = 0; i < declared.count; i++) {
-        type_expr_list_add(&type_params, type_expr_name(parser->arena, declared.names[i]));
     }
 
     TypeExpr *const *bounds = declared.bounds;
@@ -1016,7 +1021,7 @@ static ASTStmt *parse_func_decl_stmt_at(Parser *parser, bool signature_only, Spa
 
         decl->func_decl.syntax = syntax;
 
-        func_decl_take_type_params(decl, &type_params, bounds);
+        func_decl_take_type_params(decl, declared.names, declared.count, bounds);
 
         return decl;
     }
@@ -1032,7 +1037,7 @@ static ASTStmt *parse_func_decl_stmt_at(Parser *parser, bool signature_only, Spa
 
     decl->func_decl.syntax = syntax;
 
-    func_decl_take_type_params(decl, &type_params, bounds);
+    func_decl_take_type_params(decl, declared.names, declared.count, bounds);
 
     return decl;
 }
@@ -1065,19 +1070,12 @@ static ASTStmt *parse_impl_stmt(Parser *parser) {
         return NULL;
     }
 
-    TypeExprList params = type_expr_list_create(arena_allocator(parser->arena));
-
-    for (size_t i = 0; i < declared.count; i++) {
-        type_expr_list_add(&params, type_expr_name(parser->arena, declared.names[i]));
-    }
-
     TypeExpr *type = parse_type_expr(parser);
     if (!type) {
         return NULL;
     }
 
-    StringRef interface_name = {0};
-    Span interface_span = span;
+    ASTIdent *interface_name = NULL;
     TypeExprList interface_args = type_expr_list_create(arena_allocator(parser->arena));
 
     if (parser->current.type == TOKEN_AS) {
@@ -1087,8 +1085,8 @@ static ASTStmt *parse_impl_stmt(Parser *parser) {
             return NULL;
         }
 
-        interface_name = parser->current.lexeme;
-        interface_span = parser_span(parser);
+        interface_name =
+            ast_ident_create(parser->arena, parser->strings, parser_span(parser), parser->current.lexeme);
 
         parser_next_token(parser);
 
@@ -1129,7 +1127,7 @@ static ASTStmt *parse_impl_stmt(Parser *parser) {
 
         member->func_decl.owner = type;
 
-        func_decl_take_type_params(member, &params, declared.bounds);
+        func_decl_take_type_params(member, declared.names, declared.count, declared.bounds);
 
         if (stmt_needs_terminator(member)) {
             if (!parser_expect(parser, TOKEN_SEMICOLON, "expected ';'")) {
@@ -1154,7 +1152,6 @@ static ASTStmt *parse_impl_stmt(Parser *parser) {
     }
 
     stmt->impl.interface_name = interface_name;
-    stmt->impl.interface_span = interface_span;
     stmt->impl.interface_args = interface_args;
 
     return stmt;
@@ -1169,7 +1166,8 @@ static ASTStmt *parse_interface_decl_stmt(Parser *parser) {
         return NULL;
     }
 
-    StringRef name = parser->current.lexeme;
+    ASTIdent *name =
+        ast_ident_create(parser->arena, parser->strings, parser_span(parser), parser->current.lexeme);
 
     parser_next_token(parser);
 
@@ -1282,7 +1280,7 @@ static ASTStmt *parse_expr_stmt(Parser *parser, ExprContext ctx) {
         return ast_expr_stmt_create(parser->arena, span, expr);
     }
 
-    if (expr->kind != EXPR_VARIABLE && expr->kind != EXPR_FIELD && expr->kind != EXPR_DEREF &&
+    if (expr->kind != EXPR_NAME && expr->kind != EXPR_FIELD && expr->kind != EXPR_DEREF &&
         expr->kind != EXPR_INDEX) {
         parser_error(parser, "expression is not assignable");
         return NULL;
@@ -1333,15 +1331,16 @@ static ASTExpr *parse_field_expr(Parser *parser, ASTExpr *target) {
         return NULL;
     }
 
-    Token name = parser->current;
+    ASTIdent *name =
+        ast_ident_create(parser->arena, parser->strings, parser_span(parser), parser->current.lexeme);
 
     parser_next_token(parser);
 
     if (parser->current.type == TOKEN_LPAREN) {
-        return parse_method_call_expr(parser, target, name.lexeme, span);
+        return parse_method_call_expr(parser, target, name, span);
     }
 
-    return ast_field_expr_create(parser->arena, span, target, name.lexeme);
+    return ast_field_expr_create(parser->arena, span, target, name);
 }
 
 static bool parse_call_args(Parser *parser, ASTExprList *out) {
@@ -1444,7 +1443,7 @@ static bool parser_type_args_precede_a_call(Parser *parser) {
     return parser_type_args_close_with(parser, TOKEN_LPAREN);
 }
 
-static TypeExpr *parse_type_args_for(Parser *parser, StringRef name) {
+static TypeExpr *parse_type_args_for(Parser *parser, ASTIdent *name) {
     TypeExpr *apply = type_expr_apply(parser->arena, type_expr_name(parser->arena, name));
 
     return parse_type_args(parser, &apply->apply.args) ? apply : NULL;
@@ -1458,7 +1457,8 @@ static bool parse_field_inits(Parser *parser, ASTFieldInitList *out) {
             return false;
         }
 
-        StringRef field_name = parser->current.lexeme;
+        ASTIdent *field_name =
+            ast_ident_create(parser->arena, parser->strings, field_span, parser->current.lexeme);
 
         parser_next_token(parser);
 
@@ -1474,7 +1474,7 @@ static bool parse_field_inits(Parser *parser, ASTFieldInitList *out) {
             return false;
         }
 
-        ast_field_init_list_add(out, (ASTFieldInit){.name = field_name, .value = value, .span = field_span});
+        ast_field_init_list_add(out, (ASTFieldInit){.name = field_name, .value = value});
 
         if (parser->current.type != TOKEN_COMMA) {
             break;
@@ -1486,12 +1486,29 @@ static bool parse_field_inits(Parser *parser, ASTFieldInitList *out) {
     return parser_expect(parser, TOKEN_RBRACE, "expected '}' or ',' after a field value");
 }
 
+/* A struct literal names its type as a written one, which a qualified name spells with both halves. */
+static TypeExpr *struct_lit_type_expr(Parser *parser, const ASTExpr *target) {
+    if (target->kind == EXPR_QUALIFIED) {
+        return type_expr_qualified(parser->arena, target->qualified.qualifier, target->qualified.name);
+    }
+
+    return type_expr_name(parser->arena, target->name.name);
+}
+
 static ASTExpr *parse_struct_lit_expr(Parser *parser, ASTExpr *target) {
     Span span = target->span;
-    StringRef name = target->var.name;
 
-    TypeExpr *type_expr = parser->current.type == TOKEN_LESS ? parse_type_args_for(parser, name)
-                                                             : type_expr_name(parser->arena, name);
+    TypeExpr *base = struct_lit_type_expr(parser, target);
+
+    TypeExpr *type_expr = base;
+
+    if (parser->current.type == TOKEN_LESS) {
+        type_expr = type_expr_apply(parser->arena, base);
+
+        if (!parse_type_args(parser, &type_expr->apply.args)) {
+            return NULL;
+        }
+    }
 
     if (!type_expr) {
         return NULL;
@@ -1526,7 +1543,7 @@ static ASTExpr *parse_call_expr(Parser *parser, ASTExpr *target) {
     return ast_call_expr_create(parser->arena, span, target, args);
 }
 
-static ASTExpr *parse_method_call_expr(Parser *parser, ASTExpr *receiver, StringRef name, Span span) {
+static ASTExpr *parse_method_call_expr(Parser *parser, ASTExpr *receiver, ASTIdent *name, Span span) {
     ASTExpr *target = ast_field_expr_create(parser->arena, span, receiver, name);
 
     ASTExprList args;
@@ -1559,7 +1576,7 @@ static ASTExpr *parse_index_expr(Parser *parser, ASTExpr *target) {
 
 /* A '{' after a plain name opens a literal; '<' does only when the type arguments it opens reach one. */
 static bool starts_struct_lit(Parser *parser, const ASTExpr *expr, ExprContext ctx) {
-    if (ctx != EXPR_ANY || expr->kind != EXPR_VARIABLE) {
+    if (ctx != EXPR_ANY || (expr->kind != EXPR_NAME && expr->kind != EXPR_QUALIFIED)) {
         return false;
     }
 
@@ -1739,14 +1756,17 @@ static ASTExpr *parse_primary(Parser *parser) {
         TypeExpr *type_expr = NULL;
 
         if (parser->current.type == TOKEN_LESS) {
-            type_expr = type_expr_apply(parser->arena, type_expr_name(parser->arena, name));
+            type_expr = type_expr_apply(
+                parser->arena,
+                type_expr_name(parser->arena, ast_ident_create(parser->arena, parser->strings, span, name)));
 
             if (!parse_type_args(parser, &type_expr->apply.args)) {
                 return NULL;
             }
         }
 
-        return ast_builtin_expr_create(parser->arena, span, name, type_expr);
+        return ast_builtin_expr_create(
+            parser->arena, span, ast_ident_create(parser->arena, parser->strings, span, name), type_expr);
     }
     case TOKEN_IDENT: {
         Token name = parser->current;
@@ -1758,7 +1778,8 @@ static ASTExpr *parse_primary(Parser *parser) {
 
         if (parser->current.type == TOKEN_LESS &&
             (parser_type_args_precede_colons(parser) || parser_type_args_precede_a_call(parser))) {
-            owner_type_expr = parse_type_args_for(parser, lexeme);
+            owner_type_expr =
+                parse_type_args_for(parser, ast_ident_create(parser->arena, parser->strings, span, lexeme));
 
             if (!owner_type_expr) {
                 return NULL;
@@ -1766,14 +1787,16 @@ static ASTExpr *parse_primary(Parser *parser) {
         }
 
         if (parser->current.type == TOKEN_COLON_COLON) {
+            ASTIdent *qualifier = ast_ident_create(parser->arena, parser->strings, span, lexeme);
+
             parser_next_token(parser);
 
             if (!parser_expect(parser, TOKEN_IDENT, "expected a name after '::'")) {
                 return NULL;
             }
 
-            StringRef member = parser->current.lexeme;
-            lexeme.length = (size_t)(member.data - lexeme.data) + member.length;
+            ASTIdent *member =
+                ast_ident_create(parser->arena, parser->strings, parser_span(parser), parser->current.lexeme);
 
             parser_next_token(parser);
 
@@ -1781,13 +1804,16 @@ static ASTExpr *parse_primary(Parser *parser) {
                 parser_error(parser, "a qualified name has one '::', as 'Module::name'");
                 return NULL;
             }
+
+            return ast_qualified_expr_create(parser->arena, span, qualifier, member, owner_type_expr);
         }
 
-        ASTExpr *variable = ast_variable_expr_create(parser->arena, span, lexeme);
+        ASTExpr *named = ast_name_expr_create(parser->arena, span,
+                                              ast_ident_create(parser->arena, parser->strings, span, lexeme));
 
-        variable->var.owner_type_expr = owner_type_expr;
+        named->name.owner_type_expr = owner_type_expr;
 
-        return variable;
+        return named;
     }
     case TOKEN_LPAREN: {
         parser_next_token(parser);
@@ -1939,12 +1965,11 @@ bool parse_module(const char *const *sources, size_t count, const char *const *n
 
         if (i == 0) {
             module->name = file->module_name;
-            module->span = file->module_span;
-        } else if (!string_ref_equals(module->name, file->module_name)) {
-            diag_error(diagnostics, GAB_ERR_NAME, file->module_span,
-                       "%s declares module '%.*s', which is compiled as part of '%.*s'",
-                       names && names[i] ? names[i] : "this file", (int)file->module_name.length,
-                       file->module_name.data, (int)module->name.length, module->name.data);
+        } else if (module->name->name != file->module_name->name) {
+            diag_error(diagnostics, GAB_ERR_NAME, file->module_name->span,
+                       "%s declares module '%s', which is compiled as part of '%s'",
+                       names && names[i] ? names[i] : "this file", file->module_name->name->data,
+                       module->name->name->data);
             return false;
         }
 

@@ -14,18 +14,17 @@ ASTStmt *ast_expr_stmt_create(Arena *arena, Span span, ASTExpr *value) {
     return stmt;
 }
 
-ASTStmt *ast_var_decl_stmt_create(Arena *arena, Span span, StringRef name, TypeExpr *type_expr,
+ASTStmt *ast_var_decl_stmt_create(Arena *arena, Span span, ASTIdent *name, TypeExpr *type_expr,
                                   ASTExpr *initializer) {
     ASTStmt *stmt = ast_stmt_create(arena, span);
     stmt->kind = STMT_VAR_DECL;
     stmt->var_decl.name = name;
     stmt->var_decl.type_expr = type_expr;
     stmt->var_decl.initializer = initializer;
-    stmt->var_decl.binding = NULL;
     return stmt;
 }
 
-ASTStmt *ast_func_decl_stmt_create(Arena *arena, Span span, StringRef name, TypeExpr *return_type,
+ASTStmt *ast_func_decl_stmt_create(Arena *arena, Span span, ASTIdent *name, TypeExpr *return_type,
                                    ASTFieldList params, ASTStmt *body) {
     ASTStmt *stmt = ast_stmt_create(arena, span);
     stmt->kind = STMT_FUNC_DECL;
@@ -35,13 +34,11 @@ ASTStmt *ast_func_decl_stmt_create(Arena *arena, Span span, StringRef name, Type
     stmt->func_decl.params = params;
     stmt->func_decl.body = body;
     stmt->func_decl.type_param_count = 0;
-    stmt->func_decl.function = NULL;
     stmt->func_decl.syntax = FUNC_SYN_NONE;
-    stmt->func_decl.declared = false;
     return stmt;
 }
 
-ASTStmt *ast_struct_decl_stmt_create(Arena *arena, Span span, StringRef name, const StringRef *params,
+ASTStmt *ast_struct_decl_stmt_create(Arena *arena, Span span, ASTIdent *name, ASTIdent *const *params,
                                      size_t param_count, ASTFieldList fields, bool intrinsic) {
     ASTStmt *stmt = ast_stmt_create(arena, span);
     stmt->kind = STMT_STRUCT_DECL;
@@ -54,7 +51,6 @@ ASTStmt *ast_struct_decl_stmt_create(Arena *arena, Span span, StringRef name, co
         stmt->struct_decl.params[i] = params[i];
     }
 
-    stmt->struct_decl.declared = false;
     return stmt;
 }
 
@@ -66,7 +62,7 @@ ASTStmt *ast_impl_stmt_create(Arena *arena, Span span, TypeExpr *type, ASTStmtLi
     return stmt;
 }
 
-ASTStmt *ast_interface_decl_stmt_create(Arena *arena, Span span, StringRef name, ASTStmtList members) {
+ASTStmt *ast_interface_decl_stmt_create(Arena *arena, Span span, ASTIdent *name, ASTStmtList members) {
     ASTStmt *stmt = ast_stmt_create(arena, span);
     stmt->kind = STMT_INTERFACE_DECL;
     stmt->interface_decl.name = name;
@@ -109,7 +105,6 @@ ASTStmt *ast_for_stmt_create(Arena *arena, Span span, ASTStmt *init, ASTExpr *co
     stmt->forstmt.condition = condition;
     stmt->forstmt.post = post;
     stmt->forstmt.body = body;
-    stmt->forstmt.scope = NULL;
     return stmt;
 }
 
@@ -124,7 +119,6 @@ ASTStmt *ast_block_stmt_create(Arena *arena, Span span, ASTStmtList list) {
     ASTStmt *stmt = ast_stmt_create(arena, span);
     stmt->kind = STMT_BLOCK;
     stmt->block.list = list;
-    stmt->block.scope = NULL;
     return stmt;
 }
 
@@ -135,12 +129,10 @@ ASTStmt *ast_return_stmt_create(Arena *arena, Span span, ASTExpr *result) {
     return stmt;
 }
 
-ASTField *ast_field_create(Arena *arena, Span span, StringRef name, TypeExpr *type_expr) {
+ASTField *ast_field_create(Arena *arena, ASTIdent *name, TypeExpr *type_expr) {
     ASTField *field = arena_alloc(arena, sizeof(ASTField));
-    field->span = span;
     field->name = name;
     field->type_expr = type_expr;
-    field->binding = NULL;
 
     return field;
 }

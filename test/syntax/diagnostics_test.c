@@ -111,7 +111,7 @@ static void test_poison_suppresses_cascades() {
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
     assert(diagnostic->kind == GAB_ERR_NAME);
-    assert(strcmp(diagnostic->message, "undeclared variable 'undefined_var'") == 0);
+    assert(strcmp(diagnostic->message, "undeclared name 'undefined_var'") == 0);
 
     test_context_free(&ctx);
 }
@@ -124,8 +124,8 @@ static void test_reports_multiple_semantic_errors() {
     compile(&ctx, "func test() { let a: i32 = first; let b: i32 = second; }");
 
     assert(diagnostics_count(diagnostics) == 2);
-    assert(strcmp(diagnostics_get(diagnostics, 0)->message, "undeclared variable 'first'") == 0);
-    assert(strcmp(diagnostics_get(diagnostics, 1)->message, "undeclared variable 'second'") == 0);
+    assert(strcmp(diagnostics_get(diagnostics, 0)->message, "undeclared name 'first'") == 0);
+    assert(strcmp(diagnostics_get(diagnostics, 1)->message, "undeclared name 'second'") == 0);
 
     test_context_free(&ctx);
 }
@@ -675,7 +675,7 @@ static void test_spans_track_lines_and_columns() {
     assert(diagnostics_count(diagnostics) == 1);
 
     const Diagnostic *diagnostic = diagnostics_get(diagnostics, 0);
-    assert(strcmp(diagnostic->message, "undeclared variable 'nope'") == 0);
+    assert(strcmp(diagnostic->message, "undeclared name 'nope'") == 0);
     assert(diagnostic->span.line == 4);
     assert(diagnostic->span.column == 18);
 

@@ -292,7 +292,7 @@ static Place lower_indexed_place(Lowering *lowering, ASTExpr *target, ASTExpr *i
 /* An lvalue's path, built by descending it; a base the IR has no place for is evaluated as a value. */
 static Place lower_place(Lowering *lowering, ASTExpr *expr) {
     switch (expr->kind) {
-    case EXPR_VARIABLE: {
+    case EXPR_NAME: {
         Symbol *binding = fact_use_of(lowering->facts, expr);
         MIRValueId base = local_value(lowering, binding);
 
@@ -658,7 +658,7 @@ static void lower_struct_lit_into(Lowering *lowering, ASTExpr *expr, Place base)
                                  .place = field,
                                  .args = lower_args(lowering, &value, 1),
                                  .arg_count = 1,
-                                 .span = init->span});
+                                 .span = init->name->span});
     }
 }
 
@@ -795,7 +795,7 @@ static MIRValueId lower_unadjusted(Lowering *lowering, ASTExpr *expr) {
     case EXPR_BUILTIN:
         return lowering->caller_location;
 
-    case EXPR_VARIABLE: {
+    case EXPR_NAME: {
         MIRValueId value = local_value(lowering, fact_use_of(lowering->facts, expr));
 
         /* A moving read leaves the place holding nothing, so it cannot name the local directly. */
@@ -958,15 +958,17 @@ static void lower_store(Lowering *lowering, ASTExpr *target, MIRValueId value, c
 static void lower_var_decl(Lowering *lowering, ASTStmt *stmt) {
     ASTVarDecl *decl = &stmt->var_decl;
 
-    MIRValueId local = mir_value_create(lowering->ir, decl->binding ? decl->binding->var.type : NULL,
-                                        decl->binding, stmt->span);
+    Symbol *binding = fact_def_of(lowering->facts, decl->name);
 
-    bind_local(lowering, decl->binding, local);
+    MIRValueId local =
+        mir_value_create(lowering->ir, binding ? binding->var.type : NULL, binding, stmt->span);
+
+    bind_local(lowering, binding, local);
 
     emit(lowering, (MIRInst){.op = MIR_STORAGE_LIVE,
-                             .type = decl->binding ? decl->binding->var.type : NULL,
+                             .type = binding ? binding->var.type : NULL,
                              .result = MIR_NO_VALUE,
-                             .place = mir_place_of(local, decl->binding),
+                             .place = mir_place_of(local, binding),
                              .span = stmt->span});
 
     if (!decl->initializer) {
@@ -974,7 +976,7 @@ static void lower_var_decl(Lowering *lowering, ASTStmt *stmt) {
     }
 
     if (decl->initializer->kind == EXPR_STRUCT_LIT) {
-        Place place = mir_place_of(local, decl->binding);
+        Place place = mir_place_of(local, binding);
 
         /* The local holds a value from here, whichever of its fields the literal went on to fill. */
         emit(lowering, (MIRInst){.op = MIR_STORAGE_INIT,
@@ -992,7 +994,7 @@ static void lower_var_decl(Lowering *lowering, ASTStmt *stmt) {
     emit(lowering, (MIRInst){.op = MIR_STORE,
                              .type = fact_type_of(lowering->facts, decl->initializer),
                              .result = MIR_NO_VALUE,
-                             .place = mir_place_of(local, decl->binding),
+                             .place = mir_place_of(local, binding),
                              .args = lower_args(lowering, &value, 1),
                              .arg_count = 1,
                              .span = stmt->span});
@@ -1260,10 +1262,10 @@ MIRFunction *mir_build_function(Arena *arena, TypeRegistry *registry, const Fact
     ir->params = arena_alloc(arena, (ir->param_count + 1) * sizeof(MIRValueId));
 
     for (size_t i = 0; i < declared; i++) {
-        Symbol *binding = params->data[i]->binding;
+        Symbol *binding = fact_def_of(facts, params->data[i]->name);
 
         MIRValueId value =
-            mir_value_create(ir, binding ? binding->var.type : NULL, binding, params->data[i]->span);
+            mir_value_create(ir, binding ? binding->var.type : NULL, binding, params->data[i]->name->span);
 
         ir->params[i] = value;
 

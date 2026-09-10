@@ -6,7 +6,8 @@ void facts_init(Facts *facts, Arena *arena) {
     Allocator allocator = arena_allocator(arena);
 
     expr_fact_init_alloc(&facts->exprs, allocator, FACTS_INITIAL_CAPACITY);
-    stmt_fact_init_alloc(&facts->returns, allocator, FACTS_INITIAL_CAPACITY);
+    stmt_fact_init_alloc(&facts->stmts, allocator, FACTS_INITIAL_CAPACITY);
+    def_fact_init_alloc(&facts->defs, allocator, FACTS_INITIAL_CAPACITY);
 }
 
 /* The record for a node, created empty where resolution has concluded nothing about it yet. */
@@ -55,15 +56,41 @@ void fact_set_initialized_field(Facts *facts, const ASTExpr *value, size_t field
     fact_mut(facts, value)->initialized_field = field;
 }
 
+static StmtFact *stmt_fact_mut(Facts *facts, const ASTStmt *stmt) {
+    StmtFact *fact = stmt_fact_lookup(&facts->stmts, stmt);
+
+    return fact ? fact : stmt_fact_insert(&facts->stmts, stmt, (StmtFact){0});
+}
+
 void fact_set_return_type(Facts *facts, const ASTStmt *stmt, const Type *type) {
-    const Type **slot = stmt_fact_lookup(&facts->returns, stmt);
+    stmt_fact_mut(facts, stmt)->return_type = type;
+}
+
+void fact_set_function(Facts *facts, const ASTStmt *stmt, Function *function) {
+    stmt_fact_mut(facts, stmt)->function = function;
+}
+
+void fact_set_def(Facts *facts, const ASTIdent *name, Symbol *binding) {
+    Symbol **slot = def_fact_lookup(&facts->defs, name);
 
     if (slot) {
-        *slot = type;
+        *slot = binding;
         return;
     }
 
-    stmt_fact_insert(&facts->returns, stmt, type);
+    def_fact_insert(&facts->defs, name, binding);
+}
+
+Function *fact_function_of(const Facts *facts, const ASTStmt *stmt) {
+    const StmtFact *fact = stmt_fact_lookup((StmtFactMap *)&facts->stmts, stmt);
+
+    return fact ? fact->function : NULL;
+}
+
+Symbol *fact_def_of(const Facts *facts, const ASTIdent *name) {
+    Symbol **slot = def_fact_lookup((DefMap *)&facts->defs, name);
+
+    return slot ? *slot : NULL;
 }
 
 bool fact_constant_of(const Facts *facts, const ASTExpr *expr, Constant *out) {
@@ -135,15 +162,15 @@ const Type *fact_adjusted_type_of(const Facts *facts, const ASTExpr *expr) {
 }
 
 const Type *fact_return_type_of(const Facts *facts, const ASTStmt *stmt) {
-    const Type **type = stmt_fact_lookup((StmtTypeMap *)&facts->returns, stmt);
+    const StmtFact *fact = stmt_fact_lookup((StmtFactMap *)&facts->stmts, stmt);
 
-    return type ? *type : NULL;
+    return fact ? fact->return_type : NULL;
 }
 
 Symbol *fact_root_local(const Facts *facts, const ASTExpr *expr) {
     while (expr) {
         switch (expr->kind) {
-        case EXPR_VARIABLE:
+        case EXPR_NAME:
             return fact_use_of(facts, expr);
         case EXPR_FIELD:
             expr = expr->field.target;

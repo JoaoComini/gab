@@ -84,9 +84,7 @@ static bool compile_all(const char *const *sources, size_t count, const char *ob
         }
 
         for (size_t j = 0; j < file->imports.size; j++) {
-            char name[128];
-            snprintf(name, sizeof(name), "%.*s", (int)file->imports.data[j].name.length,
-                     file->imports.data[j].name.data);
+            const char *name = file->imports.data[j].name->name->data;
 
             if (strcmp(name, GAB_CORE_MODULE) == 0 || dependency_count == 16) {
                 continue;

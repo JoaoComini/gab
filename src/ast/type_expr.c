@@ -10,9 +10,16 @@ static TypeExpr *type_expr_create(Arena *arena, TypeExprKind kind) {
     return expr;
 }
 
-TypeExpr *type_expr_name(Arena *arena, StringRef name) {
+TypeExpr *type_expr_name(Arena *arena, ASTIdent *name) {
     TypeExpr *expr = type_expr_create(arena, TYPE_EXPR_NAME);
     expr->name = name;
+
+    return expr;
+}
+
+TypeExpr *type_expr_qualified(Arena *arena, ASTIdent *qualifier, ASTIdent *name) {
+    TypeExpr *expr = type_expr_name(arena, name);
+    expr->qualifier = qualifier;
 
     return expr;
 }

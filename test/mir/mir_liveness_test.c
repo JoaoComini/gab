@@ -28,7 +28,8 @@ static void lower(Lowered *lowered, const char *source) {
         if (stmt && stmt->kind == STMT_FUNC_DECL && stmt->func_decl.body) {
             lowered->ir =
                 mir_build_function(lowered->ctx.arena, lowered->ctx.types, &lowered->resolved->facts,
-                                   stmt->func_decl.function, &stmt->func_decl.params, stmt->func_decl.body);
+                                   fact_function_of(&lowered->resolved->facts, stmt), &stmt->func_decl.params,
+                                   stmt->func_decl.body);
             return;
         }
     }

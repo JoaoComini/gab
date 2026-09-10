@@ -11,6 +11,7 @@
 #include "function_registry.h"
 #include "scope.h"
 #include "type/type_registry.h"
+#include "util/hash_map.h"
 
 /* What a file may name: the modules it imports, and the core, which every file reaches without
  * stating it. One per file, so a name one file reaches is not a name its siblings do. */
@@ -18,6 +19,13 @@ typedef struct {
     Module **modules;
     size_t count;
 } Visible;
+
+/* A statement a declaration pass has already read, so resolving one in a body declares it and
+ * resolving a top-level one does not declare it twice. */
+#define declared_hash(key) ((size_t)(key) >> 4)
+#define declared_key_equals(key, other) ((key) == (other))
+
+GAB_HASH_MAP(DeclaredSet, declared, const ASTStmt *, bool)
 
 typedef struct StructDecl {
     ASTStmt *stmt;
@@ -107,14 +115,23 @@ typedef struct ResolverState {
 
     StructDeclList struct_decls;
     StructDeclList resolving;
+
+    DeclaredSet declared;
 } ResolverState;
+
+/* Records that a declaration pass read this statement; true where it already had. */
+static inline bool resolver_mark_declared(ResolverState *state, const ASTStmt *stmt) {
+    if (declared_lookup(&state->declared, stmt)) {
+        return true;
+    }
+
+    declared_insert(&state->declared, stmt, true);
+
+    return false;
+}
 
 static inline const Type *resolver_error_type(const ResolverState *state) {
     return type_registry_error_type(state->global->types);
-}
-
-static inline String *resolver_intern(const ResolverState *state, StringRef ref) {
-    return string_from_ref(state->global->strings, ref);
 }
 
 static inline bool is_error_type(const Type *type) { return !type || type_kind(type) == TYPE_ERROR; }
@@ -164,11 +181,13 @@ bool bind_type_param(TypeRegistry *registry, Scope *params, String *name, size_t
 
 /* What a name denotes here, and where a name qualified by a module resolves through. Supplied by
  * the pass that declares, since what a file may name is what it read. */
-Scope *resolver_expr_scope(ResolverState *state, StringRef name);
-String *resolver_expr_member(ResolverState *state, StringRef name);
+Scope *resolver_qualifier_scope(ResolverState *state, const ASTIdent *qualifier);
+
+/* Where a written type resolves, and the name it ends at: its qualifier where it has one. */
+Scope *resolver_type_expr_scope(ResolverState *state, const TypeExpr *expr);
+String *resolver_type_expr_member(ResolverState *state, const TypeExpr *expr);
 Symbol *resolver_resolve_name(ResolverState *state, Scope *scope, String *name);
 const KnownNames *resolver_names(ResolverState *state);
-bool names_the_same(ResolverState *state, StringRef ref, const String *known);
 bool reject_self_as_name(ResolverState *state, String *name, Span span);
 
 /* Whether an element would close a containment cycle, and how that cycle is reported. */

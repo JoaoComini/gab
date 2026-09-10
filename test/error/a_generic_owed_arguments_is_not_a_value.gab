@@ -6,5 +6,5 @@ func as_a_conversion(): i32 { return Holder(1); }
 
 // error
 // :3:36: type error: 'Holder' takes 1 type argument(s), not 0
-// :3:36: name error: undeclared variable 'Holder::get'
+// :3:36: name error: undeclared name 'Holder::get'
 // :5:38: type error: this expression is not callable

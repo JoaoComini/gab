@@ -14,7 +14,11 @@ static void print_type(FILE *out, const TypeExpr *type) {
 
     switch (type->kind) {
     case TYPE_EXPR_NAME:
-        fprintf(out, "%.*s", (int)type->name.length, type->name.data);
+        if (type->qualifier) {
+            fprintf(out, "%s::", type->qualifier->name->data);
+        }
+
+        fprintf(out, "%s", type->name->name->data);
         return;
 
     case TYPE_EXPR_REF:
@@ -49,7 +53,7 @@ static void print_type(FILE *out, const TypeExpr *type) {
 }
 
 /* The parameters a declaration takes, with the bound each was written with. */
-static void print_params(FILE *out, const StringRef *names, TypeExpr *const *bounds, size_t count) {
+static void print_params(FILE *out, ASTIdent *const *names, TypeExpr *const *bounds, size_t count) {
     if (!count) {
         return;
     }
@@ -61,7 +65,7 @@ static void print_params(FILE *out, const StringRef *names, TypeExpr *const *bou
             fprintf(out, ", ");
         }
 
-        fprintf(out, "%.*s", (int)names[i].length, names[i].data);
+        fprintf(out, "%s", names[i]->name->data);
 
         if (bounds && bounds[i]) {
             fprintf(out, ": ");
@@ -102,7 +106,7 @@ static void print_func(FILE *out, const Facts *facts, const ASTFuncDecl *func, c
         fprintf(out, "extern ");
     }
 
-    fprintf(out, "func %.*s", (int)func->name.length, func->name.data);
+    fprintf(out, "func %s", func->name->name->data);
 
     /* A member's own parameters follow the ones its block gave it, which the block already states. */
     print_params(out, func->type_params + inherited, func->type_param_bounds + inherited,
@@ -117,7 +121,7 @@ static void print_func(FILE *out, const Facts *facts, const ASTFuncDecl *func, c
             fprintf(out, ", ");
         }
 
-        fprintf(out, "%.*s: ", (int)param->name.length, param->name.data);
+        fprintf(out, "%s: ", param->name->name->data);
         print_type(out, param->type_expr);
     }
 
@@ -228,18 +232,29 @@ static void print_expr(FILE *out, const Facts *facts, const ASTExpr *expr) {
         fputc(')', out);
         return;
 
-    case EXPR_VARIABLE:
-        if (expr->var.owner_type_expr) {
-            print_type(out, expr->var.owner_type_expr);
-            fprintf(out, "::");
+    /* The arguments applied to it are held as a written type of its own name, which states both. */
+    case EXPR_NAME:
+        if (expr->name.owner_type_expr) {
+            print_type(out, expr->name.owner_type_expr);
+            return;
         }
 
-        fprintf(out, "%.*s", (int)expr->var.name.length, expr->var.name.data);
+        fprintf(out, "%s", expr->name.name->name->data);
+        return;
+
+    case EXPR_QUALIFIED:
+        if (expr->qualified.owner_type_expr) {
+            print_type(out, expr->qualified.owner_type_expr);
+        } else {
+            fprintf(out, "%s", expr->qualified.qualifier->name->data);
+        }
+
+        fprintf(out, "::%s", expr->qualified.name->name->data);
         return;
 
     /* The arguments are held as an application of the builtin's own name, which is written once. */
     case EXPR_BUILTIN:
-        fprintf(out, "@%.*s", (int)expr->builtin.name.length, expr->builtin.name.data);
+        fprintf(out, "@%s", expr->builtin.name->name->data);
 
         if (expr->builtin.type_expr && expr->builtin.type_expr->kind == TYPE_EXPR_APPLY) {
             fputc('<', out);
@@ -260,8 +275,8 @@ static void print_expr(FILE *out, const Facts *facts, const ASTExpr *expr) {
     case EXPR_CALL: {
         /* A conversion names a type where a call names a function, so the type alone is written. */
         if (fact_call_kind(facts, expr) == CALL_CONVERSION && expr->call.target &&
-            expr->call.target->kind == EXPR_VARIABLE && expr->call.target->var.owner_type_expr) {
-            print_type(out, expr->call.target->var.owner_type_expr);
+            expr->call.target->kind == EXPR_NAME && expr->call.target->name.owner_type_expr) {
+            print_type(out, expr->call.target->name.owner_type_expr);
             print_args(out, facts, &expr->call.args, 0);
             return;
         }
@@ -273,7 +288,7 @@ static void print_expr(FILE *out, const Facts *facts, const ASTExpr *expr) {
 
     case EXPR_FIELD:
         print_expr(out, facts, expr->field.target);
-        fprintf(out, ".%.*s", (int)expr->field.name.length, expr->field.name.data);
+        fprintf(out, ".%s", expr->field.name->name->data);
         return;
 
     case EXPR_INDEX:
@@ -333,7 +348,7 @@ static void print_expr(FILE *out, const Facts *facts, const ASTExpr *expr) {
                 fprintf(out, ", ");
             }
 
-            fprintf(out, "%.*s: ", (int)field->name.length, field->name.data);
+            fprintf(out, "%s: ", field->name->name->data);
             print_expr(out, facts, field->value);
         }
 
@@ -389,7 +404,7 @@ static void print_for_header(FILE *out, const Facts *facts, const ASTForStmt *lo
         if (loop->init->kind == STMT_VAR_DECL) {
             const ASTVarDecl *decl = &loop->init->var_decl;
 
-            fprintf(out, "let %.*s", (int)decl->name.length, decl->name.data);
+            fprintf(out, "let %s", decl->name->name->data);
 
             if (decl->type_expr) {
                 fprintf(out, ": ");
@@ -431,7 +446,7 @@ static void print_body_stmt(FILE *out, const Facts *facts, const ASTStmt *stmt, 
     case STMT_VAR_DECL: {
         const ASTVarDecl *decl = &stmt->var_decl;
 
-        fprintf(out, "let %.*s", (int)decl->name.length, decl->name.data);
+        fprintf(out, "let %s", decl->name->name->data);
 
         if (decl->type_expr) {
             fprintf(out, ": ");
@@ -544,15 +559,14 @@ static void print_stmt(FILE *out, const Facts *facts, const ASTStmt *stmt) {
     case STMT_STRUCT_DECL: {
         const ASTStructDecl *decl = &stmt->struct_decl;
 
-        fprintf(out, "%sstruct %.*s", decl->intrinsic ? "intrinsic " : "", (int)decl->name.length,
-                decl->name.data);
+        fprintf(out, "%sstruct %s", decl->intrinsic ? "intrinsic " : "", decl->name->name->data);
         print_params(out, decl->params, NULL, decl->param_count);
         fprintf(out, " {\n");
 
         for (size_t i = 0; i < decl->fields.size; i++) {
             const ASTField *field = decl->fields.data[i];
 
-            fprintf(out, "    %.*s: ", (int)field->name.length, field->name.data);
+            fprintf(out, "    %s: ", field->name->name->data);
             print_type(out, field->type_expr);
             fprintf(out, ",\n");
         }
@@ -564,7 +578,7 @@ static void print_stmt(FILE *out, const Facts *facts, const ASTStmt *stmt) {
     case STMT_INTERFACE_DECL: {
         const ASTInterfaceDecl *decl = &stmt->interface_decl;
 
-        fprintf(out, "interface %.*s", (int)decl->name.length, decl->name.data);
+        fprintf(out, "interface %s", decl->name->name->data);
         print_params(out, decl->params, NULL, decl->param_count);
         fprintf(out, " {\n");
 
@@ -584,8 +598,8 @@ static void print_stmt(FILE *out, const Facts *facts, const ASTStmt *stmt) {
         fputc(' ', out);
         print_type(out, impl->type);
 
-        if (impl->interface_name.length) {
-            fprintf(out, " as %.*s", (int)impl->interface_name.length, impl->interface_name.data);
+        if (impl->interface_name) {
+            fprintf(out, " as %s", impl->interface_name->name->data);
 
             if (impl->interface_args.size) {
                 fputc('<', out);
@@ -640,12 +654,12 @@ void gab_interface_symbol(char *out, size_t capacity, const char *module, uint64
     snprintf(out, capacity, "gab.iface.%s.%016llx", module, (unsigned long long)digest);
 }
 
-static bool import_stated_before(const ASTModule *module, size_t file, size_t index, StringRef name) {
+static bool import_stated_before(const ASTModule *module, size_t file, size_t index, const String *name) {
     for (size_t f = 0; f <= file; f++) {
         const ASTImportList *imports = &module->files.data[f]->imports;
 
         for (size_t i = 0; i < (f == file ? index : imports->size); i++) {
-            if (string_ref_equals(imports->data[i].name, name)) {
+            if (imports->data[i].name->name == name) {
                 return true;
             }
         }
@@ -655,7 +669,7 @@ static bool import_stated_before(const ASTModule *module, size_t file, size_t in
 }
 
 void gab_interface_print(const ASTModule *module, const Facts *facts, FILE *out) {
-    fprintf(out, "module %.*s;\n", (int)module->name.length, module->name.data);
+    fprintf(out, "module %s;\n", module->name->name->data);
 
     /* What this module imports, so linking against it reaches the objects its bodies call into. An
      * interface states the module, so a name any of its files imports is stated once. */
@@ -663,10 +677,10 @@ void gab_interface_print(const ASTModule *module, const Facts *facts, FILE *out)
         const ASTImportList *imports = &module->files.data[f]->imports;
 
         for (size_t i = 0; i < imports->size; i++) {
-            StringRef name = imports->data[i].name;
+            const String *name = imports->data[i].name->name;
 
             if (!import_stated_before(module, f, i, name)) {
-                fprintf(out, "import %.*s;\n", (int)name.length, name.data);
+                fprintf(out, "import %s;\n", name->data);
             }
         }
     }

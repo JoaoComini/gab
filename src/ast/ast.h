@@ -1,14 +1,14 @@
 #ifndef GAB_AST_H
 #define GAB_AST_H
 
+#include "ast/ident.h"
 #include "ast/stmt.h"
 #include "memory/arena.h"
 #include "string/string_ref.h"
 #include "util/list.h"
 
 typedef struct {
-    StringRef name;
-    Span span;
+    ASTIdent *name;
 } ASTImport;
 
 GAB_LIST(ASTImportList, ast_import_list, ASTImport)
@@ -19,8 +19,7 @@ typedef struct ASTFile {
 
     ASTImportList imports;
 
-    StringRef module_name;
-    Span module_span;
+    ASTIdent *module_name;
 } ASTFile;
 
 GAB_LIST(ASTFileList, ast_file_list, ASTFile *)
@@ -31,8 +30,7 @@ typedef struct ASTModule {
 
     ASTFileList files;
 
-    StringRef name;
-    Span span;
+    ASTIdent *name;
 } ASTModule;
 
 ASTModule *ast_module_create(Arena *arena);

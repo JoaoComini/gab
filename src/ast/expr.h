@@ -1,6 +1,7 @@
 #ifndef GAB_AST_EXPR_H
 #define GAB_AST_EXPR_H
 
+#include "ast/ident.h"
 #include "ast/type_expr.h"
 #include "decl.h"
 #include "diagnostics.h"
@@ -38,7 +39,12 @@ TypeKind literal_type_kind(LiteralKind kind);
 typedef enum {
     EXPR_LITERAL,
     EXPR_BIN_OP,
-    EXPR_VARIABLE,
+    /* A name the source wrote, which resolution decides names a value, a function or a type. */
+    EXPR_NAME,
+
+    /* 'X::y', whose qualifier names a module or the type owning an associated function. */
+    EXPR_QUALIFIED,
+
     EXPR_CALL,
     EXPR_FIELD,
     EXPR_ADDR_OF,
@@ -79,9 +85,8 @@ typedef struct ASTExpr ASTExpr;
 GAB_LIST(ASTExprList, ast_expr_list, ASTExpr *)
 
 typedef struct {
-    StringRef name;
+    ASTIdent *name;
     ASTExpr *value;
-    Span span;
 } ASTFieldInit;
 
 GAB_LIST(ASTFieldInitList, ast_field_init_list, ASTFieldInit)
@@ -99,13 +104,23 @@ typedef struct ASTExpr {
         } bin_op;
 
         struct {
-            StringRef name;
+            ASTIdent *name;
 
+            /* 'f<T>(x)', where the name is applied to arguments before it is called. */
             TypeExpr *owner_type_expr;
-        } var;
+        } name;
+
+        /* Which of the two the qualifier names is decided by resolution, since the syntax is one. */
+        struct {
+            ASTIdent *qualifier;
+            ASTIdent *name;
+
+            /* 'X<T>::y', where the qualifier is a type applied to arguments. */
+            TypeExpr *owner_type_expr;
+        } qualified;
 
         struct {
-            StringRef name;
+            ASTIdent *name;
 
             /* What '@size_of<T>()' measures; none for a builtin that takes no type. */
             TypeExpr *type_expr;
@@ -132,7 +147,7 @@ typedef struct ASTExpr {
 
         struct {
             ASTExpr *target;
-            StringRef name;
+            ASTIdent *name;
         } field;
 
         struct {
@@ -149,10 +164,12 @@ typedef struct ASTExpr {
 
 ASTExpr *ast_literal_expr_create(Arena *arena, Span span, Literal value);
 ASTExpr *ast_bin_op_expr_create(Arena *arena, Span span, ASTExpr *left, BinOp op, ASTExpr *right);
-ASTExpr *ast_variable_expr_create(Arena *arena, Span span, StringRef name);
-ASTExpr *ast_builtin_expr_create(Arena *arena, Span span, StringRef name, TypeExpr *type_expr);
+ASTExpr *ast_name_expr_create(Arena *arena, Span span, ASTIdent *name);
+ASTExpr *ast_qualified_expr_create(Arena *arena, Span span, ASTIdent *qualifier, ASTIdent *name,
+                                   TypeExpr *owner_type_expr);
+ASTExpr *ast_builtin_expr_create(Arena *arena, Span span, ASTIdent *name, TypeExpr *type_expr);
 ASTExpr *ast_call_expr_create(Arena *arena, Span span, ASTExpr *target, ASTExprList args);
-ASTExpr *ast_field_expr_create(Arena *arena, Span span, ASTExpr *target, StringRef name);
+ASTExpr *ast_field_expr_create(Arena *arena, Span span, ASTExpr *target, ASTIdent *name);
 ASTExpr *ast_addr_of_expr_create(Arena *arena, Span span, ASTExpr *target);
 ASTExpr *ast_deref_expr_create(Arena *arena, Span span, ASTExpr *target);
 ASTExpr *ast_neg_expr_create(Arena *arena, Span span, ASTExpr *target);

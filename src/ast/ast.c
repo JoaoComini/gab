@@ -4,8 +4,7 @@ ASTModule *ast_module_create(Arena *arena) {
     ASTModule *module = arena_alloc(arena, sizeof(ASTModule));
     module->arena = arena;
     module->files = ast_file_list_create(arena_allocator(arena));
-    module->name = (StringRef){.data = NULL, .length = 0};
-    module->span = (Span){0};
+    module->name = NULL;
 
     return module;
 }
@@ -14,8 +13,7 @@ ASTFile *ast_file_create(Arena *arena) {
     ASTFile *file = arena_alloc(arena, sizeof(ASTFile));
     file->statements = ast_stmt_list_create(arena_allocator(arena));
     file->imports = ast_import_list_create(arena_allocator(arena));
-    file->module_name = (StringRef){.data = NULL, .length = 0};
-    file->module_span = (Span){0};
+    file->module_name = NULL;
 
     return file;
 }

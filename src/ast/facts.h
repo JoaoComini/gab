@@ -16,6 +16,9 @@
 #define stmt_fact_hash(key) expr_fact_hash(key)
 #define stmt_fact_key_equals(key, other) ((key) == (other))
 
+#define def_fact_hash(key) expr_fact_hash(key)
+#define def_fact_key_equals(key, other) ((key) == (other))
+
 /* What a call names, which its target's resolution decides: a function to call, or a type to convert to. */
 typedef enum {
     CALL_FUNCTION,
@@ -83,14 +86,30 @@ typedef struct {
     bool has_constant;
 } ExprFact;
 
+/* Everything resolution concluded about one statement, held as one record for the same reason an
+ * expression's is. */
+typedef struct {
+    /* The type the function this statement declares was declared to give back. */
+    const Type *return_type;
+
+    /* The function a declaration declares. */
+    Function *function;
+} StmtFact;
+
 GAB_HASH_MAP(ExprFactMap, expr_fact, const ASTExpr *, ExprFact)
-GAB_HASH_MAP(StmtTypeMap, stmt_fact, const ASTStmt *, const Type *)
+GAB_HASH_MAP(StmtFactMap, stmt_fact, const ASTStmt *, StmtFact)
+
+/* What a name the source declares was bound to. Keyed on the name rather than what contains it, so
+ * a parameter and a variable are one kind of answer. */
+GAB_HASH_MAP(DefMap, def_fact, const ASTIdent *, Symbol *)
 
 /* What resolution concluded about each node, which only what it hands on can read. */
 typedef struct Facts {
     ExprFactMap exprs;
 
-    StmtTypeMap returns;
+    StmtFactMap stmts;
+
+    DefMap defs;
 } Facts;
 
 void facts_init(Facts *facts, Arena *arena);
@@ -105,6 +124,10 @@ void fact_set_constant(Facts *facts, const ASTExpr *expr, Constant constant);
 void fact_set_field(Facts *facts, const ASTExpr *expr, size_t field);
 void fact_set_initialized_field(Facts *facts, const ASTExpr *value, size_t field);
 void fact_set_return_type(Facts *facts, const ASTStmt *stmt, const Type *type);
+void fact_set_function(Facts *facts, const ASTStmt *stmt, Function *function);
+
+/* Records what a declared name was bound to, which is what a use of it resolves to. */
+void fact_set_def(Facts *facts, const ASTIdent *name, Symbol *binding);
 
 /* Everything concluded about one expression, or nothing where resolution reached none of it. */
 const ExprFact *fact_of(const Facts *facts, const ASTExpr *expr);
@@ -132,6 +155,12 @@ size_t fact_initialized_field_of(const Facts *facts, const ASTExpr *value);
 /* The type a value has once its coercion is applied, which is its own where it has none. */
 const Type *fact_adjusted_type_of(const Facts *facts, const ASTExpr *expr);
 const Type *fact_return_type_of(const Facts *facts, const ASTStmt *stmt);
+
+/* The function a declaration declares, or null where it declared none. */
+Function *fact_function_of(const Facts *facts, const ASTStmt *stmt);
+
+/* What a declared name was bound to, or null where nothing was. */
+Symbol *fact_def_of(const Facts *facts, const ASTIdent *name);
 
 /* The local a place expression ultimately reads, or NULL where it does not name one. */
 Symbol *fact_root_local(const Facts *facts, const ASTExpr *expr);

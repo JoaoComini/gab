@@ -32,7 +32,8 @@ static MIRFunction *lower_first_function(Lowered *lowered, const char *source) {
         }
 
         return mir_build_function(lowered->ctx.arena, lowered->ctx.types, &lowered->resolved->facts,
-                                  stmt->func_decl.function, &stmt->func_decl.params, stmt->func_decl.body);
+                                  fact_function_of(&lowered->resolved->facts, stmt), &stmt->func_decl.params,
+                                  stmt->func_decl.body);
     }
 
     assert(false && "the unit declares no function with a body");
@@ -243,8 +244,6 @@ static MIRFunction *lower_named_function(Lowered *lowered, const char *source, c
 
     assert(ok);
 
-    size_t length = strlen(name);
-
     for (size_t i = 0; i < ast_module_statements(lowered->unit)[0].size; i++) {
         ASTStmt *stmt = ast_module_statements(lowered->unit)[0].data[i];
 
@@ -252,12 +251,13 @@ static MIRFunction *lower_named_function(Lowered *lowered, const char *source, c
             continue;
         }
 
-        if (stmt->func_decl.name.length != length || strncmp(stmt->func_decl.name.data, name, length) != 0) {
+        if (strcmp(stmt->func_decl.name->name->data, name) != 0) {
             continue;
         }
 
         return mir_build_function(lowered->ctx.arena, lowered->ctx.types, &lowered->resolved->facts,
-                                  stmt->func_decl.function, &stmt->func_decl.params, stmt->func_decl.body);
+                                  fact_function_of(&lowered->resolved->facts, stmt), &stmt->func_decl.params,
+                                  stmt->func_decl.body);
     }
 
     assert(false && "the unit declares no such function");
@@ -498,8 +498,9 @@ static void a_jump_outside_a_loop_emits_no_terminator(void) {
 
     assert(decl);
 
-    MIRFunction *ir = mir_build_function(ctx.arena, ctx.types, &resolved->facts, decl->func_decl.function,
-                                         &decl->func_decl.params, decl->func_decl.body);
+    MIRFunction *ir =
+        mir_build_function(ctx.arena, ctx.types, &resolved->facts, fact_function_of(&resolved->facts, decl),
+                           &decl->func_decl.params, decl->func_decl.body);
 
     for (size_t b = 0; b < ir->block_count; b++) {
         MIRBlock *block = ir->blocks[b];

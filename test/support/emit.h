@@ -5,6 +5,7 @@
 #include "mir/mir_fold.h"
 #include "string/string_ref.h"
 #include "support/run.h"
+#include <string.h>
 
 #include <assert.h>
 
@@ -40,11 +41,11 @@ static inline TestEmission test_lower_ir_named(const char *source, const char *n
             continue;
         }
 
-        if (name && !string_ref_equals_cstr(stmt->func_decl.name, name)) {
+        if (name && strcmp(stmt->func_decl.name->name->data, name) != 0) {
             continue;
         }
 
-        emission.ir = mir_module_lookup(emission.mir_unit, stmt->func_decl.function);
+        emission.ir = mir_module_lookup(emission.mir_unit, fact_function_of(&emission.resolved->facts, stmt));
 
         break;
     }
