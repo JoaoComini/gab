@@ -1935,11 +1935,9 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
     }
 
     FuncDecl *decl = arena_alloc(state->global->arena, sizeof(FuncDecl));
-    const String *decl_module = (stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) ? NULL : state->module_name;
-    const String *decl_owner = (stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) ? NULL : type_name_of(owner);
 
     *decl = (FuncDecl){
-        .id = {.module = decl_module, .owner = decl_owner, .name = name},
+        .id = {.module = state->module_name, .owner = type_name_of(owner), .name = name},
         .linkage = linkage_of(&stmt->func_decl),
         .modifiers = modifiers_of(&stmt->func_decl),
         .location_type = location_type_of(state, &stmt->func_decl),
@@ -1959,11 +1957,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         }
     }
 
-    Function *func = arena_alloc(state->global->arena, sizeof(Function));
-    *func = (Function){
-        .decl = decl,
-        .signature = decl->signature,
-    };
+    Function *func = function_registry_instance(state->global->functions, decl, NULL, 0);
 
     fact_set_function(state->facts, stmt, func);
 
@@ -2419,9 +2413,7 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
         record_param_bounds(state, decl);
     }
 
-    Function *func = arena_alloc(state->global->arena, sizeof(Function));
-
-    *func = (Function){.decl = decl, .signature = decl->signature};
+    Function *func = function_registry_instance(state->global->functions, decl, NULL, 0);
 
     fact_set_function(state->facts, stmt, func);
 

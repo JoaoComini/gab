@@ -186,6 +186,10 @@ Symbol *scope_bind_func_against(Scope *scope, Scope *against, String *name, Func
 
 FuncSignature func_signature_instantiate(TypeRegistry *registry, Arena *arena, const FuncSignature *generic,
                                          const TypeArg *args, size_t arg_count) {
+    if (arg_count == 0) {
+        return *generic;
+    }
+
     FuncSignature out = {
         .return_type = type_registry_substitute(registry, generic->return_type, args, arg_count),
     };
