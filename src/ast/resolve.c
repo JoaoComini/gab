@@ -2569,6 +2569,13 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         break;
     }
     case STMT_VAR_DECL: {
+        if (state->env.scope->kind != SCOPE_LOCAL) {
+            diag_error(
+                state->global->diagnostics, GAB_ERR_TYPE, stmt->span,
+                "a variable is declared in a function body, and a module declares no state of its own");
+            break;
+        }
+
         const Type *declared =
             stmt->var_decl.type_expr ? resolve_type_expr(state, stmt->var_decl.type_expr, stmt->span) : NULL;
 
@@ -2617,14 +2624,6 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         } else if (stmt->var_decl.initializer) {
             type = fact_type_of(state->facts, stmt->var_decl.initializer);
         } else {
-            type = resolver_error_type(state);
-        }
-
-        if (state->env.scope->kind != SCOPE_LOCAL && type_registry_owns(state->global->types, type)) {
-            diag_error(state->global->diagnostics, GAB_ERR_TYPE, stmt->span,
-                       "a top-level variable may not own, since no scope closes to free it; %s belongs in a "
-                       "function body",
-                       type_name(state, type));
             type = resolver_error_type(state);
         }
 
@@ -2826,6 +2825,142 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
     }
 }
 
+/* What a file may name and where its declarations land, held for every phase: a name one file
+ * reaches is not a name its siblings do. */
+typedef struct {
+    ASTModule *module;
+
+    Scope **scopes;
+    Visible *visible;
+} Files;
+
+/* Enters the file a phase is reading, so a lookup in it reaches what that file imports. */
+static void resolver_enter_file(ResolverState *state, const Files *files, size_t f) {
+    state->env.file = files->module->files.data[f];
+    state->env.visible = &files->visible[f];
+    state->env.scope = files->scopes[f];
+    state->env.declaring = state->module_scope;
+}
+
+/* A scope per file, with the modules it imports bound in it. */
+static Files collect_files(const Resolver *resolver, ResolverState *state, ASTModule *module) {
+    Arena *arena = state->global->arena;
+
+    Files files = {
+        .module = module,
+        .scopes = arena_alloc(arena, module->files.size * sizeof(Scope *)),
+        .visible = arena_alloc(arena, module->files.size * sizeof(Visible)),
+    };
+
+    for (size_t f = 0; f < module->files.size; f++) {
+        files.scopes[f] = arena_alloc(arena, sizeof(Scope));
+        scope_init_kind(files.scopes[f], arena, state->module_scope, SCOPE_FILE);
+
+        /* An import binds the module in this file, so what it declares is reached by an ordinary
+         * lookup rather than by asking which modules this compilation happens to have read. */
+        const ASTImportList *imports = &module->files.data[f]->imports;
+
+        files.visible[f] = (Visible){
+            .modules = arena_alloc(arena, (imports->size + 1) * sizeof(Module *)),
+        };
+
+        for (size_t i = 0; i < imports->size; i++) {
+            String *name = imports->data[i].name->name;
+
+            Module **imported = resolver->modules ? module_map_lookup(resolver->modules, name) : NULL;
+
+            if (!imported) {
+                continue;
+            }
+
+            if (!scope_bind_module(files.scopes[f], name, *imported)) {
+                diag_error(state->global->diagnostics, GAB_ERR_NAME, imports->data[i].name->span,
+                           "'%s' is already declared in this file", name->data);
+            }
+
+            files.visible[f].modules[files.visible[f].count++] = *imported;
+        }
+
+        /* Last, so a name the file imports is the one it means where the core declares it too. */
+        if (resolver->core) {
+            files.visible[f].modules[files.visible[f].count++] = resolver->core;
+        }
+    }
+
+    return files;
+}
+
+/* Every file declares its types before any file resolves, so a declaration is visible across the
+ * module however the files were ordered. */
+static void declare_types(ResolverState *state, const Files *files) {
+    for (size_t f = 0; f < files->module->files.size; f++) {
+        resolver_enter_file(state, files, f);
+
+        const ASTStmtList *statements = &state->env.file->statements;
+
+        for (size_t i = 0; i < statements->size; i++) {
+            ASTStmt *stmt = statements->data[i];
+
+            if (!stmt) {
+                continue;
+            }
+
+            if (stmt->kind == STMT_INTERFACE_DECL) {
+                declare_interface(state, stmt);
+            }
+
+            if (stmt->kind == STMT_STRUCT_DECL) {
+                declare_struct(state, stmt);
+            }
+        }
+    }
+}
+
+/* A field's type may name what any file declared, so the fields resolve once every type is bound. */
+static void resolve_type_bodies(ResolverState *state) {
+    for (size_t i = 0; i < state->struct_decls.size; i++) {
+        resolve_struct_fields(state, state->struct_decls.data[i]);
+    }
+}
+
+/* Signatures, which a body resolved after them may name whichever file wrote it. */
+static void declare_functions(ResolverState *state, const Files *files) {
+    for (size_t f = 0; f < files->module->files.size; f++) {
+        resolver_enter_file(state, files, f);
+
+        const ASTStmtList *statements = &state->env.file->statements;
+
+        for (size_t i = 0; i < statements->size; i++) {
+            ASTStmt *stmt = statements->data[i];
+
+            if (!stmt) {
+                continue;
+            }
+
+            if (stmt->kind == STMT_FUNC_DECL) {
+                declare_func(state, stmt);
+            }
+
+            if (stmt->kind == STMT_IMPL) {
+                declare_impl(state, stmt);
+            }
+        }
+    }
+}
+
+/* Bodies, which every declaration the module makes is already visible to. */
+static void resolve_bodies(ResolverState *state, const Files *files) {
+    for (size_t f = 0; f < files->module->files.size; f++) {
+        resolver_enter_file(state, files, f);
+
+        const ASTStmtList *statements = &state->env.file->statements;
+
+        for (size_t i = 0; i < statements->size; i++) {
+            resolve_stmt(state, statements->data[i]);
+        }
+    }
+}
+
 bool resolve_module(const Resolver *resolver, ASTModule *module, Scope *into, ModulePrivileges privileges,
                     ResolvedModule **out) {
     Arena *compile_arena = resolver->arena;
@@ -2879,132 +3014,12 @@ bool resolve_module(const Resolver *resolver, ASTModule *module, Scope *into, Mo
 
     size_t errors_before = diagnostics_count(diagnostics);
 
-    /* A scope for each file, held for every pass: what a file imports is bound in it, so a name one
-     * file reaches is not a name its siblings do. */
-    Scope **file_scopes = arena_alloc(compile_arena, module->files.size * sizeof(Scope *));
+    Files files = collect_files(resolver, &state, module);
 
-    Visible *visible = arena_alloc(compile_arena, module->files.size * sizeof(Visible));
-
-    for (size_t f = 0; f < module->files.size; f++) {
-        file_scopes[f] = arena_alloc(compile_arena, sizeof(Scope));
-        scope_init_kind(file_scopes[f], compile_arena, module_scope, SCOPE_FILE);
-
-        /* An import binds the module in this file, so what it declares is reached by an ordinary
-         * lookup rather than by asking which modules this compilation happens to have read. */
-        const ASTImportList *imports = &module->files.data[f]->imports;
-
-        visible[f] = (Visible){
-            .modules = arena_alloc(compile_arena, (imports->size + 1) * sizeof(Module *)),
-        };
-
-        for (size_t i = 0; i < imports->size; i++) {
-            String *name = imports->data[i].name->name;
-
-            Module **imported = resolver->modules ? module_map_lookup(resolver->modules, name) : NULL;
-
-            if (!imported) {
-                continue;
-            }
-
-            if (!scope_bind_module(file_scopes[f], name, *imported)) {
-                diag_error(diagnostics, GAB_ERR_NAME, imports->data[i].name->span,
-                           "'%s' is already declared in this file", name->data);
-            }
-
-            visible[f].modules[visible[f].count++] = *imported;
-        }
-
-        /* Last, so a name the file imports is the one it means where the core declares it too. */
-        if (resolver->core) {
-            visible[f].modules[visible[f].count++] = resolver->core;
-        }
-    }
-
-    /* Every file declares before any file resolves, so a declaration is visible across the module
-     * however the files were ordered. */
-    for (size_t f = 0; f < module->files.size; f++) {
-        state.env.file = module->files.data[f];
-        state.env.visible = &visible[f];
-        state.env.scope = file_scopes[f];
-
-        for (size_t i = 0; i < state.env.file->statements.size; i++) {
-            ASTStmt *stmt = state.env.file->statements.data[i];
-
-            state.env.declaring = module_scope;
-
-            if (stmt && stmt->kind == STMT_INTERFACE_DECL) {
-                declare_interface(&state, stmt);
-            }
-
-            if (stmt && stmt->kind == STMT_STRUCT_DECL) {
-                declare_struct(&state, stmt);
-            }
-        }
-    }
-
-    for (size_t i = 0; i < state.struct_decls.size; i++) {
-        resolve_struct_fields(&state, state.struct_decls.data[i]);
-    }
-
-    for (size_t f = 0; f < module->files.size; f++) {
-        state.env.file = module->files.data[f];
-        state.env.visible = &visible[f];
-        state.env.scope = file_scopes[f];
-
-        for (size_t i = 0; i < state.env.file->statements.size; i++) {
-            ASTStmt *stmt = state.env.file->statements.data[i];
-
-            state.env.declaring = module_scope;
-
-            if (stmt && stmt->kind == STMT_FUNC_DECL) {
-                declare_func(&state, stmt);
-            }
-
-            if (stmt && stmt->kind == STMT_IMPL) {
-                declare_impl(&state, stmt);
-            }
-        }
-    }
-
-    for (size_t f = 0; f < module->files.size; f++) {
-        state.env.file = module->files.data[f];
-        state.env.visible = &visible[f];
-        state.env.scope = file_scopes[f];
-
-        for (size_t i = 0; i < state.env.file->statements.size; i++) {
-            state.env.declaring = module_scope;
-
-            resolve_stmt(&state, state.env.file->statements.data[i]);
-        }
-    }
-
-    /* What a script runs is a body like any other, gathered from the statements the unit holds so it
-     * lowers and emits the same way. A declaration is not something it runs, so it stays behind. */
-    ASTStmtList top_level = ast_stmt_list_create(arena_allocator(state.global->arena));
-
-    for (size_t f = 0; f < module->files.size; f++) {
-        const ASTFile *file = module->files.data[f];
-
-        for (size_t i = 0; i < file->statements.size; i++) {
-            ASTStmt *stmt = file->statements.data[i];
-
-            if (!stmt || stmt->kind == STMT_FUNC_DECL || stmt->kind == STMT_STRUCT_DECL ||
-                stmt->kind == STMT_INTERFACE_DECL || stmt->kind == STMT_IMPL) {
-                continue;
-            }
-
-            ast_stmt_list_add(&top_level, stmt);
-        }
-    }
-
-    if (top_level.size > 0 && diagnostics_count(diagnostics) == 0) {
-        ASTStmt *body = ast_block_stmt_create(state.global->arena, (Span){0}, top_level);
-
-        pending_body_list_add(&state.work->bodies, (PendingBody){.registry = state.global->types,
-                                                                 .body = body,
-                                                                 .param_fields = NULL,
-                                                                 .function = NULL});
-    }
+    declare_types(&state, &files);
+    resolve_type_bodies(&state);
+    declare_functions(&state, &files);
+    resolve_bodies(&state, &files);
 
     struct_decl_list_free(&state.struct_decls);
     struct_decl_list_free(&state.resolving);

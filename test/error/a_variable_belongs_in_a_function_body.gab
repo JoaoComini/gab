@@ -1,0 +1,4 @@
+let x: i32 = 3;
+
+// error
+// :1:1: type error: a variable is declared in a function body, and a module declares no state of its own

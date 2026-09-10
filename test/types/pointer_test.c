@@ -126,14 +126,14 @@ static void test_ref_pointers_are_interned() {
 
     Scope *declared = test_resolve(&ctx, scope, &unit,
                                    "struct Node { n: i32 }\n"
-                                   "let a: &Node;\n"
-                                   "let b: &Node;\n");
+                                   "struct Holder { a: &Node, b: &Node }\n");
     assert(declared);
 
-    Symbol *a = scope_lookup(declared, string_from_cstr(&ctx.strings, "a"));
-    Symbol *b = scope_lookup(declared, string_from_cstr(&ctx.strings, "b"));
+    const Type *a = field_type(&ctx, declared, "Holder", "a");
+    const Type *b = field_type(&ctx, declared, "Holder", "b");
 
-    assert(a->var.type == b->var.type);
+    assert(a && b);
+    assert(a == b);
 
     test_context_free(&ctx);
 }

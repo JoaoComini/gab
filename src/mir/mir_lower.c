@@ -1252,11 +1252,11 @@ MIRFunction *mir_build_function(Arena *arena, TypeRegistry *registry, const Fact
                          .break_target = MIR_NO_BLOCK,
                          .continue_target = MIR_NO_BLOCK};
 
-    size_t declared = params ? params->size : 0;
+    size_t declared = params->size;
 
     /* A 'caller' function takes the line of its call as a parameter no declaration writes, which is
      * what '@caller()' in its body answers with. */
-    bool takes_caller_line = function && (function->decl->modifiers & FUNC_MOD_CALLER) != 0;
+    bool takes_caller_line = (function->decl->modifiers & FUNC_MOD_CALLER) != 0;
 
     ir->param_count = declared + (takes_caller_line ? 1 : 0);
     ir->params = arena_alloc(arena, (ir->param_count + 1) * sizeof(MIRValueId));

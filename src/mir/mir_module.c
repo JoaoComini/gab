@@ -15,7 +15,7 @@ void mir_module_add(MIRModule *unit, Function *function, MIRFunction *ir) {
 }
 
 MIRFunction *mir_module_lookup_id(const MIRModule *unit, InstanceId id) {
-    /* A body no declaration names, such as what a script runs, is held but never looked up. */
+    /* A record standing for no declaration matches nothing, rather than the first unset id held. */
     if (!decl_id_is_set(id.decl)) {
         return NULL;
     }
