@@ -10,9 +10,11 @@
 
 /* A body resolution gathered, with what it needs to lower and to answer for its moves and borrows. */
 typedef struct {
-    TypeRegistry *registry;
     ASTStmt *body;
+
+    /* Where each parameter's name is, which is what its binding is keyed on. */
     const ASTFieldList *param_fields;
+
     Function *function;
 } PendingBody;
 

@@ -1,0 +1,11 @@
+struct Owner { v: *i32 }
+
+func sink<T>(a: T): i32 { return 0; }
+
+func twice<T>(a: T): i32 {
+    sink<T>(a);
+    return sink<T>(a);
+}
+
+// error
+// :7:20: lifetime error: this was moved out of and no longer holds a value

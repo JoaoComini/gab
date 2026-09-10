@@ -8,7 +8,7 @@ struct Pair<A, B> { a: A, b: B }
 struct Node { n: i32 }
 
 impl<T> Holder<T> {
-    func get(self: &Self): T { return self.value; }
+    func get(self: &Self): &T { return self.value; }
 }
 
 func identity<T>(value: T): T { return value; }
@@ -25,7 +25,7 @@ func run(): i32 {
     let h = Holder<i32> { value: 7 };
 
     assert(h.value == 7);
-    assert(h.get() == 7);
+    assert(*h.get() == 7);
 
     let p = Pair<i32, bool> { a: 3, b: true };
 

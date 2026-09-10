@@ -531,6 +531,11 @@ bool type_registry_owns(TypeRegistry *registry, const Type *type) {
     case TYPE_SLICE:
         return false;
 
+    /* What an argument will be is not known here, and one that owns must not be given away twice, so
+     * a parameter answers as the argument that would own does. */
+    case TYPE_PARAM:
+        return true;
+
     default:
         break;
     }
@@ -609,6 +614,11 @@ bool type_registry_copies(TypeRegistry *registry, const Type *type) {
     case TYPE_STR:
     case TYPE_SLICE:
         return true;
+
+    /* What an argument will be is not known here, so a parameter answers as the argument that owns
+     * does: given away rather than copied. */
+    case TYPE_PARAM:
+        return false;
 
     default:
         break;

@@ -50,9 +50,9 @@ static void a_generic_instance_names_what_it_was_given(void) {
     char *text = emitted_named(&emission,
                                "struct Holder<T> { value: T }\n"
                                "impl<T> Holder<T> {\n"
-                               "    func get(self: &Self): T { return self.value; }\n"
+                               "    func get(self: &Self): &T { return self.value; }\n"
                                "}\n"
-                               "func f(h: &Holder<i32>): i32 { return h.get(); }\n",
+                               "func f(h: &Holder<i32>): i32 { return *h.get(); }\n",
                                "f");
 
     assert(strstr(text, "@\"test.Holder$i32.get\""));

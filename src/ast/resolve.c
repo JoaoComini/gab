@@ -2547,10 +2547,8 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
     resolve_stmt(state, stmt->func_decl.body);
 
     if (diagnostics_count(state->global->diagnostics) == errors_before) {
-        PendingBody body = {.registry = state->global->types,
-                            .body = stmt->func_decl.body,
-                            .param_fields = &stmt->func_decl.params,
-                            .function = signature};
+        PendingBody body = {
+            .body = stmt->func_decl.body, .param_fields = &stmt->func_decl.params, .function = signature};
 
         pending_body_list_add(&state->work->bodies, body);
     }

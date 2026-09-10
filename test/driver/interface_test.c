@@ -103,14 +103,14 @@ static void an_interface_states_the_same_thing_when_read_back(void) {
 /* A generic is instantiated by whoever names it, so what it declares must carry the body to instantiate. */
 static void an_interface_carries_the_body_of_a_generic(void) {
     char *text = interface_of("struct Pair<T> { a: T, b: T }\n"
-                              "func first<T>(p: &Pair<T>, take: bool): T {\n"
+                              "func first<T>(p: &Pair<T>, take: bool): &T {\n"
                               "    if take { return p.a; }\n"
                               "    for let i: i32 = 0; i < 2; i = i + 1 { }\n"
                               "    return p.b;\n"
                               "}\n"
                               "func plain(x: i32): i32 { return x + 1; }\n");
 
-    assert(strstr(text, "func first<T>(p: &Pair<T>, take: bool): T {"));
+    assert(strstr(text, "func first<T>(p: &Pair<T>, take: bool): &T {"));
     assert(strstr(text, "return p.a;"));
 
     /* One the declaring unit compiled is linked against rather than instantiated again. */

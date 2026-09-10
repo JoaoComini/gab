@@ -525,7 +525,7 @@ static void an_imported_generic_method_is_instantiated_where_it_is_named(void) {
     snprintf(interface, sizeof(interface), "%s/holder.gabi", GAB_TEST_SCRATCH);
 
     assert(compile("module holder;\nstruct Box<T> { value: T }\n"
-                   "impl<T> Box<T> {\n    func get(self: &Self): T { return self.value; }\n}\n",
+                   "impl<T> Box<T> {\n    func get(self: &Self): &T { return self.value; }\n}\n",
                    object, interface, NULL));
 
     char user[512];
@@ -533,7 +533,7 @@ static void an_imported_generic_method_is_instantiated_where_it_is_named(void) {
 
     assert(compile("module use;\nimport holder;\n"
                    "func main(): i32 { let b: holder::Box<i32> = holder::Box<i32> { value: 3 };\n"
-                   "                   return b.get(); }\n",
+                   "                   return *b.get(); }\n",
                    user, NULL, GAB_TEST_SCRATCH));
 
     char binary[512];

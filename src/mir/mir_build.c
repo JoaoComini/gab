@@ -72,7 +72,7 @@ bool mir_build(Arena *arena, ResolvedModule *resolved, MIRModule *imported, MIRM
     for (size_t i = 0; i < work->bodies.size; i++) {
         PendingBody *body = &work->bodies.data[i];
 
-        lowered[i] = mir_build_function(arena, body->registry, &resolved->facts, body->function,
+        lowered[i] = mir_build_function(arena, resolved->registry, &resolved->facts, body->function,
                                         body->param_fields, body->body);
 
         mir_module_add(bodies, body->function, lowered[i]);
@@ -108,13 +108,12 @@ bool mir_build(Arena *arena, ResolvedModule *resolved, MIRModule *imported, MIRM
     }
 
     for (size_t i = 0; i < work->bodies.size; i++) {
-        mir_borrowck(arena, work->bodies.data[i].registry, lowered[i], diagnostics,
-                     work->bodies.data[i].function, false);
+        mir_borrowck(arena, resolved->registry, lowered[i], diagnostics, work->bodies.data[i].function,
+                     false);
     }
 
     for (size_t i = 0; i < work->bodies.size; i++) {
-        mir_borrowck(arena, work->bodies.data[i].registry, lowered[i], diagnostics,
-                     work->bodies.data[i].function, true);
+        mir_borrowck(arena, resolved->registry, lowered[i], diagnostics, work->bodies.data[i].function, true);
     }
 
     *out = bodies;
