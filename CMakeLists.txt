@@ -111,7 +111,7 @@ target_link_libraries(gabc PRIVATE gab)
 # is the same archive an installation would ship, rather than something the test suite builds.
 add_custom_command(
     OUTPUT ${GAB_LIB_DIR}/core.o
-    COMMAND gabc --core -o ${GAB_LIB_DIR}/core.o ${CMAKE_SOURCE_DIR}/lib/core.gab
+    COMMAND gabc -c --core --out-dir ${GAB_LIB_DIR} ${CMAKE_SOURCE_DIR}/lib/core.gab
     DEPENDS gabc ${CMAKE_SOURCE_DIR}/lib/core.gab
     COMMENT "Compiling the core"
 )
@@ -124,7 +124,7 @@ set_target_properties(core PROPERTIES LINKER_LANGUAGE C ARCHIVE_OUTPUT_DIRECTORY
 # way: a user's test file names 'testing' without knowing where it lives.
 add_custom_command(
     OUTPUT ${GAB_LIB_DIR}/testing.o
-    COMMAND gabc -c -o ${GAB_LIB_DIR}/testing.o ${CMAKE_SOURCE_DIR}/lib/std/testing.gab
+    COMMAND gabc -c --out-dir ${GAB_LIB_DIR} ${CMAKE_SOURCE_DIR}/lib/std/testing.gab
     DEPENDS gabc core ${CMAKE_SOURCE_DIR}/lib/std/testing.gab
     COMMENT "Compiling the standard modules"
 )

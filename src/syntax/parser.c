@@ -149,9 +149,7 @@ static void parse_import_directive(Parser *parser, ASTFile *file) {
     }
 }
 
-static bool parser_parse(Parser *parser, ASTFile *file) {
-    size_t errors_before = diagnostics_count(parser->diagnostics);
-
+static void parser_parse_header(Parser *parser, ASTFile *file) {
     parser_next_token(parser);
 
     if (parser->current.type == TOKEN_MODULE) {
@@ -164,6 +162,12 @@ static bool parser_parse(Parser *parser, ASTFile *file) {
     while (parser->current.type == TOKEN_IMPORT) {
         parse_import_directive(parser, file);
     }
+}
+
+static bool parser_parse(Parser *parser, ASTFile *file) {
+    size_t errors_before = diagnostics_count(parser->diagnostics);
+
+    parser_parse_header(parser, file);
 
     while (parser->current.type != TOKEN_EOF) {
         if (parser->current.type == TOKEN_SEMICOLON) {
@@ -1895,6 +1899,25 @@ bool parse_file(const char *source, Arena *arena, StringPool *strings, ASTFile *
     ASTFile *file = ast_file_create(arena);
 
     if (!parser_parse(&parser, file)) {
+        return false;
+    }
+
+    *out = file;
+
+    return true;
+}
+
+bool parse_header(const char *source, Arena *arena, StringPool *strings, ASTFile **out,
+                  Diagnostics *diagnostics) {
+    Lexer lexer = lexer_create(source, arena, strings, diagnostics);
+    Parser parser = parser_create(&lexer, diagnostics);
+    ASTFile *file = ast_file_create(arena);
+
+    size_t errors_before = diagnostics_count(diagnostics);
+
+    parser_parse_header(&parser, file);
+
+    if (diagnostics_count(diagnostics) > errors_before) {
         return false;
     }
 

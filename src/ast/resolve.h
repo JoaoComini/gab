@@ -46,6 +46,10 @@ typedef struct {
     /* What this compilation has read, which is what an import in it may name. */
     ModuleMap *modules;
 
+    /* The core, which every file of every module reaches without importing it. Null in the one
+     * compilation that writes it. */
+    Module *core;
+
     Diagnostics *diagnostics;
 } Resolver;
 

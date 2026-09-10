@@ -160,10 +160,14 @@ or in `../lib/gab` once installed.
 ## Compiling a program
 
 ```sh
-gabc -o hello hello.gab      # compile and link an executable
-gabc -c -o hello.o hello.gab # compile only, writing hello.gabi beside it
+gabc hello.gab     # compile and link, writing hello and hello.o
+gabc -c hello.gab  # compile only, writing hello.o and hello.gabi
 ./hello
 ```
+
+Every artifact is named for the module the source declares, so `module hello;`
+gives `hello`. `--out-dir` says where they are written, and `-o` names the
+executable where its module's name will not do.
 
 A program is an ordinary native binary: there is no host API and nothing loads a
 unit at runtime. `extern "C" func puts(s: &u8): i32;` declares a C function, and
@@ -178,13 +182,18 @@ it imports is visible in that file alone, so each file states the modules it
 names:
 
 ```sh
-gabc -c -o lib.o lib.gab            # module lib, writing lib.gabi
-gabc -o app app.gab -L .            # app.gab says 'import lib;'
+gabc -c lib.gab                     # module lib, writing lib.o and lib.gabi
+gabc app.gab --import lib=lib.gabi  # app.gab says 'import lib;'
 ```
 
-`-L` names a directory of interfaces; the compiler also looks beside the source
-and beside itself, so a module installed in `lib/gab` needs no flag. Each import
-is resolved from the interface alone, and the object beside it is linked in.
+`--import` names the interface a module is read from: the compiler is given
+every file it reads and looks for none. A module reached only through another is
+named too, after whatever it imports, since an interface states the modules its
+declarations mention. The core is the exception, found beside the compiler as
+`import` never states it.
+
+Each import is resolved from the interface alone, and the object beside it is
+linked in.
 
 ## Testing
 

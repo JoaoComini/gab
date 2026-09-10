@@ -14,6 +14,11 @@
 #define GAB_TEST_COMPILER "gabc"
 #endif
 
+/* What a case imports, which the compiler is given rather than goes looking for. */
+#ifndef GAB_TEST_TESTING_INTERFACE
+#define GAB_TEST_TESTING_INTERFACE "testing.gabi"
+#endif
+
 /* The entry point every case links against, which counts its checks. */
 #ifndef GAB_TEST_HARNESS
 #define GAB_TEST_HARNESS ""
@@ -56,8 +61,8 @@ static int run_file(const char *directory, const char *name) {
     snprintf(binary, sizeof(binary), "%s/%s.run", GAB_TEST_SCRATCH, name);
 
     char command[2048];
-    /* 'testing' is found beside the compiler, as any installed module is. */
-    snprintf(command, sizeof(command), "%s -o %s %s %s", GAB_TEST_COMPILER, binary, path, GAB_TEST_HARNESS);
+    snprintf(command, sizeof(command), "%s -o %s --out-dir %s --import testing=%s %s %s", GAB_TEST_COMPILER,
+             binary, GAB_TEST_SCRATCH, GAB_TEST_TESTING_INTERFACE, path, GAB_TEST_HARNESS);
 
     int failed = system(command) != 0;
 

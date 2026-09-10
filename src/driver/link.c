@@ -88,28 +88,6 @@ static bool readable(const char *path) {
     return true;
 }
 
-bool gab_find_interface(const GabSearchPath *path, const char *module, char *out, size_t capacity) {
-    for (size_t i = 0; i < path->count; i++) {
-        snprintf(out, capacity, "%s/%s.gabi", path->directories[i], module);
-
-        if (readable(out)) {
-            return true;
-        }
-    }
-
-    if (path->source_directory) {
-        snprintf(out, capacity, "%s/%s.gabi", path->source_directory, module);
-
-        if (readable(out)) {
-            return true;
-        }
-    }
-
-    snprintf(out, capacity, "%s/%s.gabi", gab_libdir(), module);
-
-    return readable(out);
-}
-
 void gab_object_beside(const char *interface, char *out, size_t capacity) {
     size_t length = strlen(interface);
 

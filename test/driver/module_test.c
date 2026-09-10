@@ -2,6 +2,7 @@
 #include "driver/compile.h"
 #include "driver/interface.h"
 #include "driver/link.h"
+#include "syntax/parser.h"
 
 #include "support/run.h"
 
@@ -39,6 +40,9 @@ static char *read_file(const char *path) {
     return text;
 }
 
+/* What a compilation is given: every interface it reads, named. A test states a directory rather than
+ * each import, so the module a source names is read from '<search>/<module>.gabi' as a build would
+ * have passed it. */
 static bool compile_all(const char *const *sources, size_t count, const char *object, const char *interface,
                         const char *search) {
     Arena *arena = arena_create(4096);
@@ -46,11 +50,64 @@ static bool compile_all(const char *const *sources, size_t count, const char *ob
     Diagnostics diagnostics;
     diagnostics_init(&diagnostics, arena, "a test");
 
-    const char *directories[1];
-    size_t directory_count = 0;
+    StringPool strings;
+    string_pool_init(&strings, arena);
 
-    if (search) {
-        directories[directory_count++] = search;
+    GabDependency dependencies[16];
+    size_t dependency_count = 0;
+
+    char *texts[16] = {0};
+
+    bool ok = true;
+
+    /* The core, which every compilation but its own reads. */
+    char core[512];
+    snprintf(core, sizeof(core), "%s/%s.gabi", gab_libdir(), GAB_CORE_MODULE);
+
+    texts[dependency_count] = gab_interface_read(core);
+
+    if (!texts[dependency_count]) {
+        ok = false;
+    } else {
+        dependencies[dependency_count] =
+            (GabDependency){.name = GAB_CORE_MODULE, .text = texts[dependency_count], .direct = true};
+        dependency_count++;
+    }
+
+    /* Each import every source states, read in the order stated: an interface names what it states,
+     * so a test lists a module after whatever it imports. */
+    for (size_t i = 0; ok && search && i < count; i++) {
+        ASTFile *file = NULL;
+
+        if (!parse_header(sources[i], arena, &strings, &file, &diagnostics)) {
+            continue;
+        }
+
+        for (size_t j = 0; j < file->imports.size; j++) {
+            char name[128];
+            snprintf(name, sizeof(name), "%.*s", (int)file->imports.data[j].name.length,
+                     file->imports.data[j].name.data);
+
+            if (strcmp(name, GAB_CORE_MODULE) == 0 || dependency_count == 16) {
+                continue;
+            }
+
+            char path[512];
+            snprintf(path, sizeof(path), "%s/%s.gabi", search, name);
+
+            texts[dependency_count] = gab_interface_read(path);
+
+            if (!texts[dependency_count]) {
+                continue;
+            }
+
+            static char names[16][128];
+            snprintf(names[dependency_count], sizeof(names[0]), "%s", name);
+
+            dependencies[dependency_count] = (GabDependency){
+                .name = names[dependency_count], .text = texts[dependency_count], .direct = true};
+            dependency_count++;
+        }
     }
 
     GabCompile request = {
@@ -58,16 +115,19 @@ static bool compile_all(const char *const *sources, size_t count, const char *ob
         .source_count = count,
         .object = object,
         .interface = interface,
-        .search = directories,
-        .search_count = directory_count,
+        .dependencies = dependencies,
+        .dependency_count = dependency_count,
     };
 
-    char resolved[8][512];
+    GabCompiled compiled = {0};
 
-    GabCompiled compiled = {.resolved = {.objects = resolved, .capacity = 8}};
+    ok = ok && gab_compile(&request, &compiled, &diagnostics);
 
-    bool ok = gab_compile(&request, &compiled, &diagnostics);
+    for (size_t i = 0; i < dependency_count; i++) {
+        free(texts[i]);
+    }
 
+    string_pool_free(&strings);
     diagnostics_free(&diagnostics);
     arena_destroy(arena);
 
@@ -207,52 +267,6 @@ static void an_interface_states_an_import_once(void) {
     free(written);
 }
 
-/* More imports than the caller sized for is an error, not an object the link silently goes without. */
-static void an_import_past_what_the_link_holds_is_an_error(void) {
-    char object[512];
-    char interface[512];
-
-    for (int i = 0; i < 3; i++) {
-        char source[256];
-
-        snprintf(object, sizeof(object), "%s/many%d.o", GAB_TEST_SCRATCH, i);
-        snprintf(interface, sizeof(interface), "%s/many%d.gabi", GAB_TEST_SCRATCH, i);
-        snprintf(source, sizeof(source), "module many%d;\nfunc value(): i32 { return %d; }\n", i, i);
-
-        assert(compile(source, object, interface, NULL));
-    }
-
-    const char *source = "module use;\nimport many0;\nimport many1;\nimport many2;\n"
-                         "func main(): i32 { return many0::value(); }\n";
-
-    char user[512];
-    snprintf(user, sizeof(user), "%s/many_use.o", GAB_TEST_SCRATCH);
-
-    Arena *arena = arena_create(4096);
-
-    Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, arena, "a test");
-
-    const char *directories[1] = {GAB_TEST_SCRATCH};
-
-    GabCompile request = {
-        .sources = (const char *const[]){source},
-        .source_count = 1,
-        .object = user,
-        .search = directories,
-        .search_count = 1,
-    };
-
-    char objects[2][512];
-
-    GabCompiled compiled = {.resolved = {.objects = objects, .capacity = 2}};
-
-    assert(!gab_compile(&request, &compiled, &diagnostics));
-
-    diagnostics_free(&diagnostics);
-    arena_destroy(arena);
-}
-
 /* What a file declares is the module's, so a sibling names it without an import. */
 static void a_declaration_is_named_across_the_files_of_its_module(void) {
     char object[512];
@@ -273,35 +287,6 @@ static void a_name_two_files_declare_is_declared_twice(void) {
                             "module collide;\nfunc same(): i32 { return 2; }\n"};
 
     assert(!compile_all(parts, 2, object, NULL, NULL));
-}
-
-/* The prelude declares into the global scope, so naming it as an import would declare it twice. */
-static void the_prelude_is_not_imported(void) {
-    char object[512];
-    snprintf(object, sizeof(object), "%s/imports_core.o", GAB_TEST_SCRATCH);
-
-    Arena *arena = arena_create(4096);
-
-    Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, arena, "a test");
-
-    GabCompile request = {
-        .sources = (const char *const[]){"module use;\nimport core;\nfunc main(): i32 { return 0; }\n"},
-        .source_count = 1,
-        .object = object,
-    };
-
-    char objects[8][512];
-
-    GabCompiled compiled = {.resolved = {.objects = objects, .capacity = 8}};
-
-    assert(!gab_compile(&request, &compiled, &diagnostics));
-
-    assert(diagnostics_count(&diagnostics) == 1);
-    assert(strstr(diagnostics_get(&diagnostics, 0)->message, "without importing it"));
-
-    diagnostics_free(&diagnostics);
-    arena_destroy(arena);
 }
 
 /* The prelude declares into the global scope, which a module's own declaration shadows. */
@@ -329,6 +314,110 @@ static void a_declaration_does_not_take_the_name_of_an_import(void) {
 
     assert(!compile("module use;\nimport taken;\nfunc taken(): i32 { return 1; }\n", user, NULL,
                     GAB_TEST_SCRATCH));
+}
+
+/* A module imported directly and reached through another as well is still one this module may name. */
+static void an_import_is_read_before_whoever_imports_it(void) {
+    char object[512];
+    char interface[512];
+
+    snprintf(object, sizeof(object), "%s/deep.o", GAB_TEST_SCRATCH);
+    snprintf(interface, sizeof(interface), "%s/deep.gabi", GAB_TEST_SCRATCH);
+
+    assert(compile("module deep;\nstruct Cell { value: i32 }\n", object, interface, NULL));
+
+    snprintf(object, sizeof(object), "%s/middle.o", GAB_TEST_SCRATCH);
+    snprintf(interface, sizeof(interface), "%s/middle.gabi", GAB_TEST_SCRATCH);
+
+    assert(compile("module middle;\nimport deep;\nfunc hold(): deep::Cell { return deep::Cell{value: 7}; }\n",
+                   object, interface, GAB_TEST_SCRATCH));
+
+    char user[512];
+    snprintf(user, sizeof(user), "%s/deep_use.o", GAB_TEST_SCRATCH);
+
+    assert(compile("module use;\nimport middle;\n"
+                   "func main(): i32 { return middle::hold().value; }\n",
+                   user, NULL, GAB_TEST_SCRATCH));
+}
+
+static void a_module_that_imports_itself_is_an_error(void) {
+    char object[512];
+    char interface[512];
+
+    snprintf(object, sizeof(object), "%s/loop.o", GAB_TEST_SCRATCH);
+    snprintf(interface, sizeof(interface), "%s/loop.gabi", GAB_TEST_SCRATCH);
+
+    assert(compile("module loop;\nfunc value(): i32 { return 1; }\n", object, interface, NULL));
+
+    /* Restated so the interface imports itself, which no compilation of the source could write. */
+    write_file(interface, "module loop;\nimport loop;\nfunc value(): i32;\n");
+
+    char user[512];
+    snprintf(user, sizeof(user), "%s/loop_use.o", GAB_TEST_SCRATCH);
+
+    assert(!compile("module use;\nimport loop;\nfunc main(): i32 { return loop::value(); }\n", user, NULL,
+                    GAB_TEST_SCRATCH));
+}
+
+/* A name is qualified by the module that declares it, so one module's name does not reach another's. */
+/* A field's type resolves from the file that wrote it, so it names what that file imports. */
+static void a_field_type_names_what_its_own_file_imports(void) {
+    char object[512];
+    char interface[512];
+
+    snprintf(object, sizeof(object), "%s/shapes.o", GAB_TEST_SCRATCH);
+    snprintf(interface, sizeof(interface), "%s/shapes.gabi", GAB_TEST_SCRATCH);
+
+    assert(compile("module shapes;\nstruct Point { x: i32, y: i32 }\n", object, interface, NULL));
+
+    char user[512];
+    snprintf(user, sizeof(user), "%s/field_import.o", GAB_TEST_SCRATCH);
+
+    const char *parts[2] = {"module holder;\nimport shapes;\nstruct Holder { at: Point }\n",
+                            "module holder;\nfunc main(): i32 { return 0; }\n"};
+
+    assert(compile_all(parts, 2, user, NULL, GAB_TEST_SCRATCH));
+}
+
+static void a_qualifier_names_the_module_that_declares_it(void) {
+    char object[512];
+    char interface[512];
+
+    snprintf(object, sizeof(object), "%s/holds.o", GAB_TEST_SCRATCH);
+    snprintf(interface, sizeof(interface), "%s/holds.gabi", GAB_TEST_SCRATCH);
+
+    assert(compile("module holds;\nfunc helper(): i32 { return 5; }\n", object, interface, NULL));
+
+    char user[512];
+    snprintf(user, sizeof(user), "%s/qualifies.o", GAB_TEST_SCRATCH);
+
+    assert(!compile("module qualifies;\nimport holds;\n"
+                    "func main(): i32 { return qualifies::helper(); }\n",
+                    user, NULL, GAB_TEST_SCRATCH));
+}
+
+static void a_direct_import_reached_through_another_is_still_named(void) {
+    char object[512];
+    char interface[512];
+
+    snprintf(object, sizeof(object), "%s/under.o", GAB_TEST_SCRATCH);
+    snprintf(interface, sizeof(interface), "%s/under.gabi", GAB_TEST_SCRATCH);
+
+    assert(compile("module under;\nfunc value(): i32 { return 5; }\n", object, interface, NULL));
+
+    snprintf(object, sizeof(object), "%s/over.o", GAB_TEST_SCRATCH);
+    snprintf(interface, sizeof(interface), "%s/over.gabi", GAB_TEST_SCRATCH);
+
+    assert(compile("module over;\nimport under;\nfunc via(): i32 { return under::value(); }\n", object,
+                   interface, GAB_TEST_SCRATCH));
+
+    char user[512];
+    snprintf(user, sizeof(user), "%s/both_use.o", GAB_TEST_SCRATCH);
+
+    /* 'over' is read first and states 'under', which this module imports for itself. */
+    assert(compile("module use;\nimport over;\nimport under;\n"
+                   "func main(): i32 { return over::via() + under::value(); }\n",
+                   user, NULL, GAB_TEST_SCRATCH));
 }
 
 /* An interface and the object it was compiled from name each other, so a stale pair cannot be linked. */
@@ -370,67 +459,6 @@ static void a_stale_interface_does_not_link(void) {
     snprintf(binary, sizeof(binary), "%s/module_test_stale_user", GAB_TEST_SCRATCH);
 
     assert(!gab_link(user, "u", (const char *const[]){object}, 1, binary));
-}
-
-/* A module reached only through another is linked too, which the interface's imports are what state. */
-static void an_import_of_an_import_is_linked(void) {
-    char deep[512];
-    char deep_interface[512];
-
-    snprintf(deep, sizeof(deep), "%s/deep.o", GAB_TEST_SCRATCH);
-    snprintf(deep_interface, sizeof(deep_interface), "%s/deep.gabi", GAB_TEST_SCRATCH);
-
-    assert(compile("module deep;\nfunc bottom(): i32 { return 4; }\n", deep, deep_interface, NULL));
-
-    char middle[512];
-    char middle_interface[512];
-
-    snprintf(middle, sizeof(middle), "%s/middle.o", GAB_TEST_SCRATCH);
-    snprintf(middle_interface, sizeof(middle_interface), "%s/middle.gabi", GAB_TEST_SCRATCH);
-
-    assert(compile("module middle;\nimport deep;\nfunc up(): i32 { return deep::bottom(); }\n", middle,
-                   middle_interface, GAB_TEST_SCRATCH));
-
-    char *stated = gab_interface_read(middle_interface);
-
-    assert(stated);
-    assert(strstr(stated, "import deep;"));
-
-    free(stated);
-
-    char top[512];
-    snprintf(top, sizeof(top), "%s/top.o", GAB_TEST_SCRATCH);
-
-    GabCompile request = {
-        .sources =
-            (const char *const[]){"module top;\nimport middle;\nfunc main(): i32 { return middle::up(); }\n"},
-        .source_count = 1,
-        .object = top,
-        .search = (const char *const[]){GAB_TEST_SCRATCH},
-        .search_count = 1};
-
-    Arena *arena = arena_create(4096);
-
-    Diagnostics diagnostics;
-    diagnostics_init(&diagnostics, arena, "a test");
-
-    char objects[8][512];
-
-    GabCompiled compiled = {.resolved = {.objects = objects, .capacity = 8}};
-
-    assert(gab_compile(&request, &compiled, &diagnostics));
-
-    /* 'deep' is named by nothing this module wrote, and compiling it still reached the object. */
-    bool reached = false;
-
-    for (size_t i = 0; i < compiled.resolved.count; i++) {
-        reached = reached || strstr(compiled.resolved.objects[i], "deep.o") != NULL;
-    }
-
-    assert(reached);
-
-    diagnostics_free(&diagnostics);
-    arena_destroy(arena);
 }
 
 /* Nothing was compiled for arguments the declaring unit never saw, so a reader instantiates the body
@@ -640,16 +668,17 @@ int main(void) {
     an_import_is_named_only_in_the_file_that_imports_it();
     a_field_names_a_type_its_own_file_imports();
     an_interface_states_an_import_once();
-    an_import_past_what_the_link_holds_is_an_error();
     a_declaration_is_named_across_the_files_of_its_module();
     a_name_two_files_declare_is_declared_twice();
-    the_prelude_is_not_imported();
     a_module_declares_a_name_the_prelude_holds();
     a_declaration_does_not_take_the_name_of_an_import();
+    a_field_type_names_what_its_own_file_imports();
+    a_qualifier_names_the_module_that_declares_it();
+    a_direct_import_reached_through_another_is_still_named();
+    a_module_that_imports_itself_is_an_error();
     a_stale_interface_does_not_link();
     a_module_is_written_across_the_files_it_is_compiled_from();
     every_file_of_a_module_declares_that_module();
-    an_import_of_an_import_is_linked();
 
     printf("module tests passed\n");
 

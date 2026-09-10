@@ -2,31 +2,33 @@
 #define GAB_DRIVER_COMPILE_H
 
 #include "diagnostics.h"
+#include "memory/arena.h"
+#include "string/string_pool.h"
 
 #include <stddef.h>
 
 #include <stdbool.h>
 
-/* The objects a link needs beside the one compiled: one for each interface an import resolved to. */
+/* One module this compilation reads rather than compiles: what it declares, as the interface text a
+ * caller found and read. A direct import is one the source may name; the rest are read so that what
+ * they declare can be resolved against, and linked. */
 typedef struct {
-    char (*objects)[512];
-    size_t count;
-    size_t capacity;
-} GabResolvedObjects;
+    const char *name;
+    const char *text;
+
+    bool direct;
+} GabDependency;
 
 /* What a compilation concluded that its caller cannot know: the module the source named, which an
- * entry point must call into, and the objects its imports resolved to. */
+ * entry point must call into. */
 typedef struct {
     char module_name[64];
-
-    GabResolvedObjects resolved;
 } GabCompiled;
 
-/* One compilation: source text in, a native object out. The prelude is compiled by the same call that
- * compiles a program, distinguished only by whether it may declare methods on the primitives. */
+/* One compilation: source text in, a native object out. Every file it reads is named here; the
+ * compilation itself opens nothing but the object it writes, so what a module depends on is settled
+ * before it starts rather than discovered while it runs. */
 typedef struct {
-    const char *module;
-
     /* The files this module is written across, resolved together as one unit. */
     const char *const *sources;
     size_t source_count;
@@ -39,21 +41,22 @@ typedef struct {
     /* Where the declarations a later compilation reads are written. */
     const char *interface;
 
-    /* The prelude declares 'impl str' and 'impl<T> slice<T>', which a program may not; it is also the
-     * one compilation that does not read the prelude, being what writes it. */
-    bool declares_intrinsics;
+    /* What this module imports, in the order it reads them: an interface names the modules it states,
+     * so those come before it. The core is one of these, which the caller finds rather than names. */
+    const GabDependency *dependencies;
+    size_t dependency_count;
 
-    /* The directory holding the source, which an interface is looked for in before the compiler's own. */
-    const char *source_directory;
-
-    /* Where an interface the source imports is looked for, before the source's own directory. */
-    const char *const *search;
-    size_t search_count;
+    /* True in the one compilation that writes the core, which reads none and may declare intrinsics. */
+    bool writes_core;
 } GabCompile;
 
+/* The module 'source' declares, written into 'out': what every artifact of a compilation is named for,
+ * which its caller reads before compiling so that what it writes is known before it runs. */
+bool gab_module_name(const char *source, Arena *arena, StringPool *strings, char *out, size_t capacity,
+                     Diagnostics *diagnostics);
+
 /* False where the source does not compile, having reported why to 'diagnostics'. What the compilation
- * concluded is written to 'out', whose 'resolved' the caller sizes: an import past that capacity is an
- * error rather than an object the link silently goes without. */
+ * concluded is written to 'out'. */
 bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagnostics);
 
 #endif

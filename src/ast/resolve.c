@@ -15,6 +15,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* What a file may name: the modules it imports, and the core, which every file reaches without
+ * stating it. One per file, so a name one file reaches is not a name its siblings do. */
+typedef struct {
+    Module **modules;
+    size_t count;
+} Visible;
+
 typedef struct StructDecl {
     ASTStmt *stmt;
 
@@ -26,8 +33,10 @@ typedef struct StructDecl {
     Scope *file_scope;
 
     /* Fields resolve after every file has declared, so the struct carries the file whose imports its
-     * field types may name. */
+     * field types may name, and what that file may name. */
     const ASTFile *file;
+
+    const Visible *visible;
 
     String *name;
 
@@ -52,18 +61,17 @@ typedef struct {
 typedef struct ResolverState {
     Arena *compile_arena;
 
-    Scope *global_scope;
-
     /* One compilation's, shared by every module in it: a scope names things, and does not own them. */
     TypeRegistry *types;
     FunctionRegistry *functions;
     StringPool *strings;
     Scope *current_scope;
 
-    ModuleMap *modules;
-
     /* The file being resolved, whose imports are the ones its statements may name. */
     const ASTFile *file;
+
+    /* The modules that file may name, which is what an unqualified name reaches past this module. */
+    const Visible *visible;
 
     /* Where this module's declarations land, which every file of it declares into. */
     Scope *module_scope;
@@ -91,8 +99,6 @@ typedef struct ResolverState {
 
     Diagnostics *diagnostics;
 } ResolverState;
-
-static Arena *resolver_owner_arena(ResolverState *state) { return state->global_scope->arena; }
 
 static const Type *resolver_error_type(ResolverState *state) {
     return type_registry_error_type(state->types);
@@ -156,13 +162,14 @@ static Scope *resolver_declaring_scope(ResolverState *state) {
     return state->declaring ? state->declaring : state->current_scope;
 }
 
+static const Type *resolver_location_type(ResolverState *state);
+
 static const Type *location_type_of(ResolverState *state, const ASTFuncDecl *decl) {
     if (!(decl->syntax & FUNC_SYN_CALLER)) {
         return NULL;
     }
 
-    return scope_type_lookup(state->types, state->current_scope,
-                             string_from_cstr(state->strings, GAB_LOCATION_TYPE));
+    return resolver_location_type(state);
 }
 
 static unsigned modifiers_of(const ASTFuncDecl *decl) {
@@ -190,26 +197,15 @@ static Scope *resolver_expr_scope(ResolverState *state, StringRef name) {
     return bound && bound->kind == SYMBOL_MODULE ? bound->module->scope : NULL;
 }
 
-/* The scope of the import at 'index' in this file, or null where it names nothing this compilation
- * read: walking these is how an unqualified name reaches what an import declares. */
-static Scope *resolver_import_scope(ResolverState *state, size_t index) {
-    String *module = string_from_ref(state->strings, state->file->imports.data[index].name);
-
-    Symbol *bound = scope_lookup(state->current_scope, module);
-
-    return bound && bound->kind == SYMBOL_MODULE ? bound->module->scope : NULL;
-}
-
-/* A name an import declares, which an unqualified use reaches once this unit declares none itself. */
-static Symbol *resolver_imported_binding(ResolverState *state, String *name) {
-    if (!state->modules) {
+/* A name a module this file may name declares, which an unqualified use reaches once this unit
+ * declares none itself. The core is last, so a name the file imports is the one it means. */
+static Symbol *file_lookup(const ResolverState *state, String *name) {
+    if (!state->visible) {
         return NULL;
     }
 
-    for (size_t i = 0; i < state->file->imports.size; i++) {
-        Scope *imported = resolver_import_scope(state, i);
-
-        Symbol *found = imported ? scope_lookup(imported, name) : NULL;
+    for (size_t i = 0; i < state->visible->count; i++) {
+        Symbol *found = scope_lookup(state->visible->modules[i]->scope, name);
 
         if (found) {
             return found;
@@ -222,21 +218,21 @@ static Symbol *resolver_imported_binding(ResolverState *state, String *name) {
 static Symbol *resolver_resolve_name(ResolverState *state, Scope *scope, String *name) {
     Symbol *found = scope ? scope_lookup(scope, name) : NULL;
 
-    if (found || scope != state->current_scope) {
+    /* A name qualified by a module is that module's, so what this file imports does not answer it. */
+    if (found) {
         return found;
     }
 
-    for (size_t i = 0; i < state->file->imports.size; i++) {
-        Scope *imported = resolver_import_scope(state, i);
+    return file_lookup(state, name);
+}
 
-        Symbol *reached = imported ? scope_lookup(imported, name) : NULL;
+/* What '@caller()' answers with, which the prelude declares and every file reaches by importing it. */
+static const Type *resolver_location_type(ResolverState *state) {
+    String *name = string_from_cstr(state->strings, GAB_LOCATION_TYPE);
 
-        if (reached) {
-            return reached;
-        }
-    }
+    Symbol *found = resolver_resolve_name(state, state->current_scope, name);
 
-    return NULL;
+    return found ? symbol_type(state->types, found) : NULL;
 }
 
 /* The interface a name denotes, or null where it denotes something else or nothing. */
@@ -251,15 +247,7 @@ static InterfaceDecl *resolver_lookup_interface(ResolverState *state, String *na
         return found;
     }
 
-    for (size_t i = 0; i < state->file->imports.size; i++) {
-        Scope *imported = resolver_import_scope(state, i);
-
-        if (imported && (found = interface_of(scope_lookup(imported, name)))) {
-            return found;
-        }
-    }
-
-    return NULL;
+    return interface_of(file_lookup(state, name));
 }
 
 static String *resolver_expr_member(ResolverState *state, StringRef name) {
@@ -824,7 +812,7 @@ static Function *interface_method_for(ResolverState *state, const InterfaceDecl 
         substitutions[i + 1] = args[i];
     }
 
-    Arena *arena = resolver_owner_arena(state);
+    Arena *arena = state->compile_arena;
 
     /* Substituted away, so the result is concrete however generic the signature it came from was. */
     FuncDecl *decl = arena_alloc(arena, sizeof(FuncDecl));
@@ -1444,8 +1432,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
                 break;
             }
 
-            const Type *location = scope_type_lookup(state->types, state->current_scope,
-                                                     string_from_cstr(state->strings, GAB_LOCATION_TYPE));
+            const Type *location = resolver_location_type(state);
 
             if (!location) {
                 diag_error(state->diagnostics, GAB_ERR_NAME, expr->span,
@@ -1498,7 +1485,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
         Symbol *entry = scope_lookup(state->current_scope, sought);
 
         if (!entry) {
-            entry = resolver_imported_binding(state, sought);
+            entry = file_lookup(state, sought);
         }
 
         if (entry) {
@@ -2317,7 +2304,7 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
 
     size_t param_count = stmt->struct_decl.param_count;
 
-    TypeDecl *declared = arena_alloc(resolver_owner_arena(state), sizeof(TypeDecl));
+    TypeDecl *declared = arena_alloc(state->compile_arena, sizeof(TypeDecl));
 
     *declared = (TypeDecl){
         .id = {.module = state->module_name, .name = struct_name},
@@ -2326,13 +2313,14 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
 
     scope_bind_type_decl(resolver_declaring_scope(state), struct_name, declared);
 
-    StructDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(StructDecl));
+    StructDecl *decl = arena_alloc(state->compile_arena, sizeof(StructDecl));
 
     *decl = (StructDecl){
         .stmt = stmt,
         .scope = resolver_declaring_scope(state),
         .file_scope = state->current_scope,
         .file = state->file,
+        .visible = state->visible,
         .name = struct_name,
         .decl = declared,
         .fields_demanded = false,
@@ -2413,10 +2401,12 @@ static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
 
     Scope *enclosing = state->current_scope;
     const ASTFile *naming = state->file;
+    const Visible *naming_visible = state->visible;
 
     state->file = decl->file;
+    state->visible = decl->visible;
 
-    Scope *params = scope_create(resolver_owner_arena(state), decl->file_scope);
+    Scope *params = scope_create(state->compile_arena, decl->file_scope);
 
     for (size_t i = 0; i < stmt->struct_decl.param_count; i++) {
         String *param_name = resolver_intern(state, stmt->struct_decl.params[i]);
@@ -2435,7 +2425,7 @@ static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
 
     size_t field_count = stmt->struct_decl.fields.size;
     TypeField *fields =
-        field_count ? arena_alloc(resolver_owner_arena(state), field_count * sizeof(TypeField)) : NULL;
+        field_count ? arena_alloc(state->compile_arena, field_count * sizeof(TypeField)) : NULL;
 
     bool poisoned = false;
     size_t resolved = 0;
@@ -2492,6 +2482,7 @@ static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
 
     state->current_scope = enclosing;
     state->file = naming;
+    state->visible = naming_visible;
 
     state->resolving.size--;
 
@@ -2548,7 +2539,7 @@ static void enter_owner_scope(ResolverState *state, TypeExpr *owner, TypeExpr *c
     }
 
     Scope *enclosing = state->current_scope;
-    Scope *params = scope_create(resolver_owner_arena(state), enclosing);
+    Scope *params = scope_create(state->compile_arena, enclosing);
 
     if (owner->kind == TYPE_EXPR_APPLY) {
         for (size_t i = 0; i < owner->apply.args.size; i++) {
@@ -2675,7 +2666,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
 
     String *name = resolver_intern(state, stmt->func_decl.name);
 
-    FuncDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(FuncDecl));
+    FuncDecl *decl = arena_alloc(state->compile_arena, sizeof(FuncDecl));
     const String *decl_module = (stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) ? NULL : state->module_name;
     const String *decl_owner = (stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) ? NULL : type_name_of(owner);
 
@@ -2691,7 +2682,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
     size_t param_count = stmt->func_decl.params.size;
 
     if (param_count > 0) {
-        decl->signature.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(const Type *));
+        decl->signature.params = arena_alloc(state->compile_arena, param_count * sizeof(const Type *));
         decl->signature.param_count = param_count;
 
         for (size_t i = 0; i < param_count; i++) {
@@ -2700,7 +2691,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         }
     }
 
-    Function *func = arena_alloc(resolver_owner_arena(state), sizeof(Function));
+    Function *func = arena_alloc(state->compile_arena, sizeof(Function));
     *func = (Function){
         .decl = decl,
         .signature = decl->signature,
@@ -2743,7 +2734,7 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
     size_t count = stmt->interface_decl.members.size;
     size_t param_count = stmt->interface_decl.param_count;
 
-    Arena *arena = resolver_owner_arena(state);
+    Arena *arena = state->compile_arena;
 
     /* 'Self' is parameter 0 and the interface's own follow it, so one substitution serves both. */
     Scope *enclosing = state->current_scope;
@@ -3087,7 +3078,7 @@ static void record_param_bounds(ResolverState *state, FuncDecl *decl) {
         return;
     }
 
-    Arena *arena = resolver_owner_arena(state);
+    Arena *arena = state->compile_arena;
 
     TypeParamBound *bounds = arena_alloc(arena, GAB_MAX_TYPE_PARAMS * sizeof(TypeParamBound));
 
@@ -3111,7 +3102,7 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
     Scope *enclosing = state->current_scope;
 
     if (stmt->func_decl.type_param_count > 0) {
-        Scope *params = scope_create(resolver_owner_arena(state), enclosing);
+        Scope *params = scope_create(state->compile_arena, enclosing);
 
         for (size_t i = 0; i < stmt->func_decl.type_param_count; i++) {
             String *param_name = resolver_intern(state, stmt->func_decl.type_params[i]);
@@ -3181,7 +3172,7 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
     size_t param_count = stmt->func_decl.params.size;
 
     if (decl && param_count > 0) {
-        decl->signature.params = arena_alloc(resolver_owner_arena(state), param_count * sizeof(const Type *));
+        decl->signature.params = arena_alloc(state->compile_arena, param_count * sizeof(const Type *));
         decl->signature.param_count = param_count;
 
         for (size_t i = 0; i < param_count; i++) {
@@ -3573,13 +3564,11 @@ bool resolve_module(const Resolver *resolver, ASTModule *module, Scope *into, Mo
 
     ResolverState state = {
         .compile_arena = compile_arena,
-        .global_scope = resolver->global,
         .types = resolver->types,
         .functions = resolver->functions,
         .strings = resolver->strings,
         .current_scope = module_scope,
         .module_scope = module_scope,
-        .modules = resolver->modules,
         .file = module->files.size ? module->files.data[0] : ast_file_create(compile_arena),
         .module_name = module->name.data ? string_from_ref(resolver->strings, module->name) : NULL,
         .declares_intrinsics = privileges.intrinsics,
@@ -3600,6 +3589,8 @@ bool resolve_module(const Resolver *resolver, ASTModule *module, Scope *into, Mo
      * file reaches is not a name its siblings do. */
     Scope **file_scopes = arena_alloc(compile_arena, module->files.size * sizeof(Scope *));
 
+    Visible *visible = arena_alloc(compile_arena, module->files.size * sizeof(Visible));
+
     for (size_t f = 0; f < module->files.size; f++) {
         file_scopes[f] = arena_alloc(compile_arena, sizeof(Scope));
         scope_init_kind(file_scopes[f], compile_arena, module_scope, SCOPE_FILE);
@@ -3607,6 +3598,10 @@ bool resolve_module(const Resolver *resolver, ASTModule *module, Scope *into, Mo
         /* An import binds the module in this file, so what it declares is reached by an ordinary
          * lookup rather than by asking which modules this compilation happens to have read. */
         const ASTImportList *imports = &module->files.data[f]->imports;
+
+        visible[f] = (Visible){
+            .modules = arena_alloc(compile_arena, (imports->size + 1) * sizeof(Module *)),
+        };
 
         for (size_t i = 0; i < imports->size; i++) {
             String *name = string_from_ref(resolver->strings, imports->data[i].name);
@@ -3621,6 +3616,13 @@ bool resolve_module(const Resolver *resolver, ASTModule *module, Scope *into, Mo
                 diag_error(diagnostics, GAB_ERR_NAME, imports->data[i].span,
                            "'%s' is already declared in this file", name->data);
             }
+
+            visible[f].modules[visible[f].count++] = *imported;
+        }
+
+        /* Last, so a name the file imports is the one it means where the core declares it too. */
+        if (resolver->core) {
+            visible[f].modules[visible[f].count++] = resolver->core;
         }
     }
 
@@ -3628,6 +3630,7 @@ bool resolve_module(const Resolver *resolver, ASTModule *module, Scope *into, Mo
      * however the files were ordered. */
     for (size_t f = 0; f < module->files.size; f++) {
         state.file = module->files.data[f];
+        state.visible = &visible[f];
         state.current_scope = file_scopes[f];
 
         for (size_t i = 0; i < state.file->statements.size; i++) {
@@ -3651,6 +3654,7 @@ bool resolve_module(const Resolver *resolver, ASTModule *module, Scope *into, Mo
 
     for (size_t f = 0; f < module->files.size; f++) {
         state.file = module->files.data[f];
+        state.visible = &visible[f];
         state.current_scope = file_scopes[f];
 
         for (size_t i = 0; i < state.file->statements.size; i++) {
@@ -3670,6 +3674,7 @@ bool resolve_module(const Resolver *resolver, ASTModule *module, Scope *into, Mo
 
     for (size_t f = 0; f < module->files.size; f++) {
         state.file = module->files.data[f];
+        state.visible = &visible[f];
         state.current_scope = file_scopes[f];
 
         for (size_t i = 0; i < state.file->statements.size; i++) {

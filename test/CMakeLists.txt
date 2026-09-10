@@ -85,6 +85,7 @@ gab_test_binary(run_test run_test.c)
 
 target_compile_options(run_test PRIVATE
     -DGAB_TEST_COMPILER="$<TARGET_FILE:gabc>"
+    -DGAB_TEST_TESTING_INTERFACE="${GAB_LIB_DIR}/testing.gabi"
     -DGAB_TEST_HARNESS="${CMAKE_CURRENT_SOURCE_DIR}/support/harness.c")
 
 # The suite drives the compiler as a program, which is what links a case against the core.

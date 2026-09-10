@@ -41,8 +41,8 @@ static void keep_templates(const Compilation *compilation, const MIRModule *bodi
 
 /* What an interface declares, resolved into a scope of its own so a symbol keeps the module that
  * defines it. Nothing is emitted: the bodies live in the object beside it. */
-static bool compile_declarations(const Compilation *compilation, const char *text, bool is_prelude,
-                                 Module **into) {
+
+static bool compile_declarations(const Compilation *compilation, const char *text, Module **into) {
     ASTModule *module = NULL;
 
     const char *sources[1] = {text};
@@ -58,10 +58,8 @@ static bool compile_declarations(const Compilation *compilation, const char *tex
      * one declares what its source was allowed to. */
     ModulePrivileges privileges = {.intrinsics = true};
 
-    /* The prelude's names are the language's own, so they land where a primitive's do. */
-    Scope *into_scope = is_prelude ? compilation->resolver.global
-                                   : scope_create_kind(compilation->resolver.arena,
-                                                       compilation->resolver.global, SCOPE_MODULE);
+    Scope *into_scope =
+        scope_create_kind(compilation->resolver.arena, compilation->resolver.global, SCOPE_MODULE);
 
     if (!resolve_module(&compilation->resolver, module, into_scope, privileges, &resolved)) {
         return false;
@@ -82,7 +80,7 @@ static bool compile_declarations(const Compilation *compilation, const char *tex
 }
 
 /* This module's source, resolved and lowered into 'out'. Only source someone wrote is held to what a
- * program may declare; 'declares_intrinsics' is what the prelude is granted. What the interface states
+ * program may declare; 'declares_intrinsics' is what the core is granted. What the interface states
  * a body as is what was written, which only resolution's facts recover, so they are left in 'facts'. */
 static bool compile_module(const Compilation *compilation, ASTModule *module, Scope *into,
                            ModulePrivileges privileges, LLVMUnit *out, const Facts **facts) {
@@ -121,6 +119,19 @@ static bool compile_module(const Compilation *compilation, ASTModule *module, Sc
     return true;
 }
 
+bool gab_module_name(const char *source, Arena *arena, StringPool *strings, char *out, size_t capacity,
+                     Diagnostics *diagnostics) {
+    ASTFile *file = NULL;
+
+    if (!parse_header(source, arena, strings, &file, diagnostics)) {
+        return false;
+    }
+
+    snprintf(out, capacity, "%.*s", (int)file->module_name.length, file->module_name.data);
+
+    return true;
+}
+
 bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagnostics) {
     Arena *arena = arena_create(GAB_COMPILE_BLOCK_SIZE);
 
@@ -137,29 +148,7 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
 
     LLVMUnit *unit = llvm_unit_open(arena);
 
-    char *interface = NULL;
-
-    /* The prelude is a module like any other; this compilation reads its declarations unless it is
-     * the one writing them. */
-    bool declares_prelude = request->declares_intrinsics;
-
-    if (!declares_prelude) {
-        /* A program reads what the prelude declares, never the source those declarations came from. */
-        char path[PATH_MAX];
-        snprintf(path, sizeof(path), "%s/%s.gabi", gab_libdir(), GAB_CORE_MODULE);
-
-        interface = gab_interface_read(path);
-
-        if (!interface) {
-            diag_error(diagnostics, GAB_ERR_NAME, (Span){0, 0}, "the core is not installed: no %s", path);
-
-            llvm_unit_close(unit);
-            string_pool_free(&strings);
-            arena_destroy(arena);
-
-            return false;
-        }
-    }
+    bool declares_core = request->writes_core;
 
     ModuleMap *modules = module_map_create_alloc(arena_allocator(arena), 8);
 
@@ -175,8 +164,8 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
                 .diagnostics = diagnostics,
             },
 
-        /* Every generic the prelude and the imports declare, which this module instantiates from
-         * rather than links. */
+        /* Every generic the core and the imports declare, which this module instantiates from rather
+         * than links. */
         .generics = mir_module_create(arena),
     };
 
@@ -184,150 +173,50 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
 
     bool ok = true;
 
-    /* The prelude declares into the global scope, so what it states is reached the way a primitive's
-     * name is: by an ordinary walk, without an import and without a scope of its own. */
-    if (!declares_prelude) {
-        Module *prelude = NULL;
-
-        ok = compile_declarations(&compilation, interface, true, &prelude);
-    }
-
-    /* Each import is its own compilation: its declarations land in a scope of their own, which this
-     * module then names, so a symbol keeps the module that defines it rather than taking this one's. */
     if (ok && !parse_module(request->sources, request->source_count, request->names, arena, &strings,
                             &declaring, diagnostics)) {
         ok = false;
     }
 
-    if (ok) {
-        GabSearchPath path = {.directories = request->search,
-                              .count = request->search_count,
-                              .source_directory = request->source_directory};
+    /* Each dependency is its own compilation: its declarations land in a scope of their own, which
+     * this module then names, so a symbol keeps the module that defines it rather than taking this
+     * one's. They arrive in an order that puts an import before whoever imports it. */
+    for (size_t i = 0; ok && i < request->dependency_count; i++) {
+        const GabDependency *dependency = &request->dependencies[i];
 
-        /* The list grows as interfaces are read: an import's imports are linked too, though nothing
-         * here names them. */
-        ASTImportList reached = ast_import_list_create(arena_allocator(arena));
+        Module *imported = NULL;
 
-        for (size_t f = 0; f < declaring->files.size; f++) {
-            const ASTImportList *written = &declaring->files.data[f]->imports;
+        ok = compile_declarations(&compilation, dependency->text, &imported);
 
-            for (size_t i = 0; i < written->size; i++) {
-                ast_import_list_add(&reached, written->data[i]);
-            }
+        if (!ok) {
+            break;
         }
 
-        /* What the module itself imports, ahead of what reading those interfaces appended: only a
-         * direct import is a scope this unit may name. */
-        size_t direct = reached.size;
-
-        for (size_t i = 0; ok && i < reached.size; i++) {
-            StringRef named = reached.data[i].name;
-
-            /* The prelude declares into the global scope, so importing it would declare it twice. */
-            if (string_ref_equals_cstr(named, GAB_CORE_MODULE)) {
-                diag_error(diagnostics, GAB_ERR_NAME, reached.data[i].span,
-                           "'%s' is what every module names without importing it", GAB_CORE_MODULE);
-                ok = false;
-                break;
-            }
-
-            bool seen = false;
-
-            for (size_t j = 0; j < i; j++) {
-                seen = seen || string_ref_equals(reached.data[j].name, named);
-            }
-
-            if (seen) {
-                continue;
-            }
-
-            char module[128];
-            snprintf(module, sizeof(module), "%.*s", (int)named.length, named.data);
-
-            char found[512];
-
-            if (!gab_find_interface(&path, module, found, sizeof(found))) {
-                diag_error(diagnostics, GAB_ERR_NAME, reached.data[i].span,
-                           "no interface for '%s' on the search path", module);
-                ok = false;
-                break;
-            }
-
-            char *read = gab_interface_read(found);
-
-            /* Held for as long as the names parsed out of it, which point into the text rather than
-             * copying out of it: an import's own imports join the list this loop is still walking. */
-            char *text = NULL;
-
-            if (read) {
-                size_t length = strlen(read);
-
-                text = arena_alloc(arena, length + 1);
-                memcpy(text, read, length + 1);
-
-                free(read);
-            }
-
-            if (!text) {
-                diag_error(diagnostics, GAB_ERR_NAME, reached.data[i].span,
-                           "the interface for '%s' could not be read", module);
-                ok = false;
-                break;
-            }
-
-            ASTFile *stated = NULL;
-
-            /* Read for what it imports, which the diagnostics of a failed parse have already named. */
-            Diagnostics quiet;
-            diagnostics_init(&quiet, arena, found);
-
-            if (parse_file(text, arena, &strings, &stated, &quiet)) {
-                for (size_t j = 0; j < stated->imports.size; j++) {
-                    ast_import_list_add(&reached, stated->imports.data[j]);
-                }
-            }
-
-            diagnostics_free(&quiet);
-
-            Module *imported = NULL;
-
-            ok = compile_declarations(&compilation, text, false, &imported);
-
-            if (ok) {
-                if (i < direct) {
-                    module_map_insert(modules, string_from_cstr(&strings, module), imported);
-                }
-
-                char symbol[512];
-                gab_interface_symbol(symbol, sizeof(symbol), module, gab_interface_digest(text));
-
-                llvm_unit_requires(unit, symbol);
-
-                /* The object beside it is what the link needs, which the caller could not have known. */
-                if (out->resolved.count < out->resolved.capacity) {
-                    gab_object_beside(found, out->resolved.objects[out->resolved.count],
-                                      sizeof(out->resolved.objects[0]));
-                    out->resolved.count++;
-                } else {
-                    diag_error(diagnostics, GAB_ERR_NAME, reached.data[i].span,
-                               "'%s' is more than the %zu imports this compilation can link", module,
-                               out->resolved.capacity);
-                    ok = false;
-                }
-            }
-
-            /* What was parsed from this text names it still: an import's own imports were added to the
-             * list, and the names they carry point into it rather than copying out of it. */
+        /* Only a direct import is a module this one may name; the rest are read to be resolved
+         * against and linked. */
+        if (dependency->direct) {
+            module_map_insert(modules, string_from_cstr(&strings, dependency->name), imported);
         }
+
+        /* Every file below reaches the core without importing it, this compilation's own and every
+         * interface it goes on to read. */
+        if (strcmp(dependency->name, GAB_CORE_MODULE) == 0) {
+            compilation.resolver.core = imported;
+        }
+
+        char symbol[512];
+        gab_interface_symbol(symbol, sizeof(symbol), dependency->name,
+                             gab_interface_digest(dependency->text));
+
+        llvm_unit_requires(unit, symbol);
     }
 
     const Facts *facts = NULL;
 
     if (ok) {
-        ModulePrivileges privileges = {.intrinsics = request->declares_intrinsics};
+        ModulePrivileges privileges = {.intrinsics = declares_core};
 
-        /* The prelude's names are the language's own, so they land where a primitive's do. */
-        Scope *into = declares_prelude ? scope : scope_create_kind(arena, scope, SCOPE_MODULE);
+        Scope *into = scope_create_kind(arena, scope, SCOPE_MODULE);
 
         ok = compile_module(&compilation, declaring, into, privileges, unit, &facts);
     }
@@ -370,8 +259,6 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
     }
 
     llvm_unit_close(unit);
-
-    free(interface);
 
     string_pool_free(&strings);
     arena_destroy(arena);
