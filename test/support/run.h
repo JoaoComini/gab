@@ -18,7 +18,7 @@
 /* The prelude declares methods on the primitives, which only a compilation given permission may do. */
 static inline bool test_resolve_ir_with(TestContext *ctx, Scope *scope, ASTModule **unit,
                                         MIRModule **mir_unit, ResolvedModule **out, const char *source,
-                                        bool allow_primitive_impls) {
+                                        bool declares_intrinsics) {
     if (!parse_module((const char *const[]){test_in_a_module(source)}, 1, NULL, ctx->arena, &ctx->strings,
                       unit, &ctx->diagnostics)) {
         return false;
@@ -26,8 +26,7 @@ static inline bool test_resolve_ir_with(TestContext *ctx, Scope *scope, ASTModul
 
     ResolvedModule *resolved;
 
-    if (!resolve_module(ctx->arena, *unit, scope, NULL, allow_primitive_impls, &resolved,
-                        &ctx->diagnostics)) {
+    if (!resolve_module(ctx->arena, *unit, scope, NULL, declares_intrinsics, &resolved, &ctx->diagnostics)) {
         return false;
     }
 

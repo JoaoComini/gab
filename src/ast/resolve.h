@@ -21,9 +21,11 @@ typedef struct ResolvedModule {
     FunctionRegistry *functions;
 } ResolvedModule;
 
-/* False where the module does not resolve, so what it concluded exists only once it holds together. */
+/* False where the module does not resolve, so what it concluded exists only once it holds together.
+ * 'declares_intrinsics' admits the intrinsics and the methods on primitives that the prelude declares
+ * and a program may not, which an interface restating them is read with. */
 bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope,
-                    ModuleScopeMap *module_scopes, bool allow_primitive_impls, ResolvedModule **out,
+                    ModuleScopeMap *module_scopes, bool declares_intrinsics, ResolvedModule **out,
                     Diagnostics *diagnostics);
 
 #endif

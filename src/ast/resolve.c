@@ -56,7 +56,7 @@ typedef struct ResolverState {
 
     String *module_name;
 
-    bool allow_primitive_impls;
+    bool declares_intrinsics;
 
     FuncContext func_context;
 
@@ -2305,7 +2305,7 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
     String *struct_name = resolver_intern(state, stmt->struct_decl.name);
 
     if (stmt->struct_decl.intrinsic) {
-        if (!state->allow_primitive_impls) {
+        if (!state->declares_intrinsics) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                        "an intrinsic struct is given its meaning by the compiler, so only its core "
                        "library declares one");
@@ -2626,7 +2626,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
 
     bool owner_is_primitive = type_is_primitive(owner);
 
-    if (owner_is_primitive && !is_host && !state->allow_primitive_impls) {
+    if (owner_is_primitive && !is_host && !state->declares_intrinsics) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                    "a function on %s is declared by its core library, which is where its body belongs",
                    type_name(state, owner));
@@ -2634,7 +2634,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
     }
 
     /* Only the core library declares one, and only where the compiler has a lowering to match it. */
-    if ((stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) && !state->allow_primitive_impls) {
+    if ((stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) && !state->declares_intrinsics) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                    "an intrinsic is lowered by the compiler, so only its core library declares one");
         return;
@@ -2652,7 +2652,7 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         }
     }
 
-    if (owner_is_primitive && !state->allow_primitive_impls) {
+    if (owner_is_primitive && !state->declares_intrinsics) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                    "a function on %s is declared by the runtime's core library", type_name(state, owner));
         return;
@@ -3568,7 +3568,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
 }
 
 bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope,
-                    ModuleScopeMap *module_scopes, bool allow_primitive_impls, ResolvedModule **out,
+                    ModuleScopeMap *module_scopes, bool declares_intrinsics, ResolvedModule **out,
                     Diagnostics *diagnostics) {
     ResolvedModule *resolved = arena_alloc(compile_arena, sizeof(ResolvedModule));
 
@@ -3586,7 +3586,7 @@ bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope
         .module_scopes = module_scopes,
         .file = module->files.size ? module->files.data[0] : ast_file_create(compile_arena),
         .module_name = module->name.data ? string_from_ref(global_scope->strings, module->name) : NULL,
-        .allow_primitive_impls = allow_primitive_impls,
+        .declares_intrinsics = declares_intrinsics,
         .func_context =
             {
                 .return_type = NULL,

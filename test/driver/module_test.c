@@ -62,7 +62,11 @@ static bool compile_all(const char *const *sources, size_t count, const char *ob
         .search_count = directory_count,
     };
 
-    bool ok = gab_compile(&request, &diagnostics);
+    char resolved[8][512];
+
+    GabCompiled compiled = {.resolved = {.objects = resolved, .capacity = 8}};
+
+    bool ok = gab_compile(&request, &compiled, &diagnostics);
 
     diagnostics_free(&diagnostics);
     arena_destroy(arena);
@@ -203,6 +207,52 @@ static void an_interface_states_an_import_once(void) {
     free(written);
 }
 
+/* More imports than the caller sized for is an error, not an object the link silently goes without. */
+static void an_import_past_what_the_link_holds_is_an_error(void) {
+    char object[512];
+    char interface[512];
+
+    for (int i = 0; i < 3; i++) {
+        char source[256];
+
+        snprintf(object, sizeof(object), "%s/many%d.o", GAB_TEST_SCRATCH, i);
+        snprintf(interface, sizeof(interface), "%s/many%d.gabi", GAB_TEST_SCRATCH, i);
+        snprintf(source, sizeof(source), "module many%d;\nfunc value(): i32 { return %d; }\n", i, i);
+
+        assert(compile(source, object, interface, NULL));
+    }
+
+    const char *source = "module use;\nimport many0;\nimport many1;\nimport many2;\n"
+                         "func main(): i32 { return many0::value(); }\n";
+
+    char user[512];
+    snprintf(user, sizeof(user), "%s/many_use.o", GAB_TEST_SCRATCH);
+
+    Arena *arena = arena_create(4096);
+
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, arena, "a test");
+
+    const char *directories[1] = {GAB_TEST_SCRATCH};
+
+    GabCompile request = {
+        .sources = (const char *const[]){source},
+        .source_count = 1,
+        .object = user,
+        .search = directories,
+        .search_count = 1,
+    };
+
+    char objects[2][512];
+
+    GabCompiled compiled = {.resolved = {.objects = objects, .capacity = 2}};
+
+    assert(!gab_compile(&request, &compiled, &diagnostics));
+
+    diagnostics_free(&diagnostics);
+    arena_destroy(arena);
+}
+
 /* An interface and the object it was compiled from name each other, so a stale pair cannot be linked. */
 static void a_stale_interface_does_not_link(void) {
     char object[512];
@@ -286,13 +336,17 @@ static void an_import_of_an_import_is_linked(void) {
     Diagnostics diagnostics;
     diagnostics_init(&diagnostics, arena, "a test");
 
-    assert(gab_compile(&request, &diagnostics));
+    char objects[8][512];
 
-    /* 'deep' is named by nothing this unit wrote, and compiling it still reached the object. */
+    GabCompiled compiled = {.resolved = {.objects = objects, .capacity = 8}};
+
+    assert(gab_compile(&request, &compiled, &diagnostics));
+
+    /* 'deep' is named by nothing this module wrote, and compiling it still reached the object. */
     bool reached = false;
 
-    for (size_t i = 0; i < request.resolved_count; i++) {
-        reached = reached || strstr(request.resolved[i], "deep.o") != NULL;
+    for (size_t i = 0; i < compiled.resolved.count; i++) {
+        reached = reached || strstr(compiled.resolved.objects[i], "deep.o") != NULL;
     }
 
     assert(reached);
@@ -504,6 +558,7 @@ int main(void) {
     an_import_is_named_only_in_the_file_that_imports_it();
     a_field_names_a_type_its_own_file_imports();
     an_interface_states_an_import_once();
+    an_import_past_what_the_link_holds_is_an_error();
     a_stale_interface_does_not_link();
     a_module_is_written_across_the_files_it_is_compiled_from();
     every_file_of_a_module_declares_that_module();

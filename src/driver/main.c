@@ -114,6 +114,10 @@ int main(int argc, char **argv) {
         snprintf(interface, sizeof(interface), "%.*s.gabi", (int)strlen(output) - 2, output);
     }
 
+    char resolved[8][512];
+
+    GabCompiled compiled = {.resolved = {.objects = resolved, .capacity = 8}};
+
     GabCompile request = {
         .module = path_count ? paths[0] : NULL,
         .sources = sources,
@@ -121,24 +125,24 @@ int main(int argc, char **argv) {
         .names = paths,
         .object = compile_only ? output : scratch,
         .interface = interface[0] ? interface : NULL,
-        .allow_primitive_impls = is_prelude,
+        .declares_intrinsics = is_prelude,
         .search = search,
         .search_count = search_count,
         .source_directory = directory,
     };
 
-    bool ok = gab_compile(&request, &diagnostics);
+    bool ok = gab_compile(&request, &compiled, &diagnostics);
 
     if (!ok) {
         diagnostics_print(&diagnostics, stderr);
     }
 
     if (ok && !compile_only) {
-        for (size_t i = 0; i < request.resolved_count && extra_count < 16; i++) {
-            extra[extra_count++] = request.resolved[i];
+        for (size_t i = 0; i < compiled.resolved.count && extra_count < 16; i++) {
+            extra[extra_count++] = compiled.resolved.objects[i];
         }
 
-        ok = gab_link(request.object, request.module_name, extra, extra_count, output);
+        ok = gab_link(request.object, compiled.module_name, extra, extra_count, output);
 
         if (!ok) {
             fprintf(stderr, "gabc: %s: the object did not link\n", output);

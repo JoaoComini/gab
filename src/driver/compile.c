@@ -20,56 +20,83 @@
 
 #define GAB_COMPILE_BLOCK_SIZE 4096
 
-static bool compile_unit(Arena *arena, StringPool *strings, Scope *scope, ModuleScopeMap *modules,
-                         const char *const *sources, size_t source_count, bool allow_primitive_impls,
-                         LLVMUnit *out, Diagnostics *diagnostics, char *module_name, size_t module_capacity,
-                         ASTModule **out_ast, const char *const *names, ASTModule *parsed,
-                         MIRModule *generics, const Facts **out_facts) {
-    ASTModule *ast = parsed;
+/* What every stage of one compilation shares: the storage it allocates from, the scope its
+ * declarations land in, and the generics a later module instantiates from. */
+typedef struct {
+    Arena *arena;
+    StringPool *strings;
 
-    if (!ast && !parse_module(sources, source_count, names, arena, strings, &ast, diagnostics)) {
+    Scope *global;
+    ModuleScopeMap *modules;
+
+    MIRModule *generics;
+
+    Diagnostics *diagnostics;
+} Compilation;
+
+/* A generic's body is what a reader instantiates, so it is kept where every later module finds it. */
+static void keep_templates(const Compilation *compilation, const MIRModule *bodies) {
+    for (size_t i = 0; i < bodies->entries.size; i++) {
+        MIRFunction *ir = bodies->entries.data[i].ir;
+
+        if (ir && mir_function_is_template(ir)) {
+            mir_module_add(compilation->generics, bodies->entries.data[i].function, ir);
+        }
+    }
+}
+
+/* What an interface declares, resolved into a scope of its own so a symbol keeps the module that
+ * defines it. Nothing is emitted: the bodies live in the object beside it. */
+static bool compile_declarations(const Compilation *compilation, const char *text, Scope *into) {
+    ASTModule *module = NULL;
+
+    const char *sources[1] = {text};
+
+    if (!parse_module(sources, 1, NULL, compilation->arena, compilation->strings, &module,
+                      compilation->diagnostics)) {
         return false;
-    }
-
-    if (out_ast) {
-        *out_ast = ast;
-    }
-
-    if (module_name) {
-        snprintf(module_name, module_capacity, "%.*s", (int)ast->name.length, ast->name.data);
     }
 
     ResolvedModule *resolved = NULL;
 
-    if (!resolve_module(arena, ast, scope, modules, allow_primitive_impls, &resolved, diagnostics)) {
+    /* An interface restates the declarations it was written from, intrinsics included, so re-reading
+     * one declares what its source was allowed to. */
+    if (!resolve_module(compilation->arena, module, into, NULL, true, &resolved, compilation->diagnostics)) {
         return false;
-    }
-
-    /* What the interface states a body as is what was written, which only resolution's facts recover. */
-    if (out_facts) {
-        *out_facts = &resolved->facts;
     }
 
     MIRModule *bodies = NULL;
 
-    if (!mir_build(arena, resolved, generics, &bodies, diagnostics)) {
+    if (!mir_build(compilation->arena, resolved, compilation->generics, &bodies, compilation->diagnostics)) {
         return false;
     }
 
-    /* A generic's body is what a reader instantiates, so it is kept where every later unit can find it. */
-    if (generics) {
-        for (size_t i = 0; i < bodies->entries.size; i++) {
-            MIRFunction *ir = bodies->entries.data[i].ir;
+    keep_templates(compilation, bodies);
 
-            if (ir && mir_function_is_template(ir)) {
-                mir_module_add(generics, bodies->entries.data[i].function, ir);
-            }
-        }
+    return true;
+}
+
+/* This module's source, resolved and lowered into 'out'. Only source someone wrote is held to what a
+ * program may declare; 'declares_intrinsics' is what the prelude is granted. What the interface states
+ * a body as is what was written, which only resolution's facts recover, so they are left in 'facts'. */
+static bool compile_module(const Compilation *compilation, ASTModule *module, bool declares_intrinsics,
+                           LLVMUnit *out, const Facts **facts) {
+    ResolvedModule *resolved = NULL;
+
+    if (!resolve_module(compilation->arena, module, compilation->global, compilation->modules,
+                        declares_intrinsics, &resolved, compilation->diagnostics)) {
+        return false;
     }
 
-    if (!out) {
-        return true;
+    *facts = &resolved->facts;
+
+    MIRModule *bodies = NULL;
+
+    if (!mir_build(compilation->arena, resolved, compilation->generics, &bodies, compilation->diagnostics)) {
+        return false;
     }
+
+    keep_templates(compilation, bodies);
 
     for (size_t i = 0; i < bodies->entries.size; i++) {
         MIRFunction *ir = bodies->entries.data[i].ir;
@@ -79,8 +106,9 @@ static bool compile_unit(Arena *arena, StringPool *strings, Scope *scope, Module
             continue;
         }
 
-        mir_fold(arena, ir);
-        mir_drop_elaborate(arena, scope->type_registry, scope->functions, ir);
+        mir_fold(compilation->arena, ir);
+        mir_drop_elaborate(compilation->arena, compilation->global->type_registry,
+                           compilation->global->functions, ir);
 
         llvm_unit_add(out, ir);
     }
@@ -88,7 +116,7 @@ static bool compile_unit(Arena *arena, StringPool *strings, Scope *scope, Module
     return true;
 }
 
-bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
+bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagnostics) {
     Arena *arena = arena_create(GAB_COMPILE_BLOCK_SIZE);
 
     StringPool strings;
@@ -100,11 +128,9 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
 
     char *interface = NULL;
 
-    const Facts *facts = NULL;
-
     /* The prelude is a module like any other; this compilation reads its declarations unless it is
      * the one writing them. */
-    bool declares_prelude = request->allow_primitive_impls;
+    bool declares_prelude = request->declares_intrinsics;
 
     if (!declares_prelude) {
         /* A program reads what the prelude declares, never the source those declarations came from. */
@@ -126,19 +152,25 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
 
     ModuleScopeMap *modules = module_scope_map_create_alloc(arena_allocator(arena), 8);
 
-    /* Every generic the prelude and the imports declare, which this module instantiates from rather
-     * than links. */
-    MIRModule *generics = mir_module_create(arena);
+    Compilation compilation = {
+        .arena = arena,
+        .strings = &strings,
+        .global = scope,
+        .modules = modules,
+
+        /* Every generic the prelude and the imports declare, which this module instantiates from
+         * rather than links. */
+        .generics = mir_module_create(arena),
+
+        .diagnostics = diagnostics,
+    };
 
     ASTModule *declaring = NULL;
 
     bool ok = true;
 
     if (!declares_prelude) {
-        const char *sources[1] = {interface};
-
-        ok = compile_unit(arena, &strings, scope, NULL, sources, 1, true, NULL, diagnostics, NULL, 0, NULL,
-                          NULL, NULL, generics, NULL);
+        ok = compile_declarations(&compilation, interface, scope);
     }
 
     module_scope_map_insert(modules, string_from_cstr(&strings, GAB_CORE_MODULE), scope);
@@ -235,10 +267,7 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
             Scope *imported = arena_alloc(arena, sizeof(Scope));
             scope_init_module(imported, arena, &strings, scope);
 
-            const char *one[1] = {text};
-
-            ok = compile_unit(arena, &strings, imported, NULL, one, 1, true, NULL, diagnostics, NULL, 0, NULL,
-                              NULL, NULL, generics, NULL);
+            ok = compile_declarations(&compilation, text, imported);
 
             if (ok) {
                 if (i < direct) {
@@ -251,10 +280,15 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
                 llvm_unit_requires(unit, symbol);
 
                 /* The object beside it is what the link needs, which the caller could not have known. */
-                if (request->resolved_count < 8) {
-                    gab_object_beside(found, request->resolved[request->resolved_count],
-                                      sizeof(request->resolved[0]));
-                    request->resolved_count++;
+                if (out->resolved.count < out->resolved.capacity) {
+                    gab_object_beside(found, out->resolved.objects[out->resolved.count],
+                                      sizeof(out->resolved.objects[0]));
+                    out->resolved.count++;
+                } else {
+                    diag_error(diagnostics, GAB_ERR_NAME, reached.data[i].span,
+                               "'%s' is more than the %zu imports this compilation can link", module,
+                               out->resolved.capacity);
+                    ok = false;
                 }
             }
 
@@ -263,10 +297,15 @@ bool gab_compile(GabCompile *request, Diagnostics *diagnostics) {
         }
     }
 
+    const Facts *facts = NULL;
+
     if (ok) {
-        ok = compile_unit(arena, &strings, scope, modules, request->sources, request->source_count,
-                          request->allow_primitive_impls, unit, diagnostics, request->module_name,
-                          sizeof(request->module_name), NULL, request->names, declaring, generics, &facts);
+        ok = compile_module(&compilation, declaring, request->declares_intrinsics, unit, &facts);
+    }
+
+    if (ok) {
+        snprintf(out->module_name, sizeof(out->module_name), "%.*s", (int)declaring->name.length,
+                 declaring->name.data);
     }
 
     if (ok && request->interface) {
