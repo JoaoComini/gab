@@ -24,11 +24,20 @@ typedef struct ResolvedModule {
     FunctionRegistry *functions;
 } ResolvedModule;
 
-/* False where the module does not resolve, so what it concluded exists only once it holds together.
- * 'declares_intrinsics' admits the intrinsics and the methods on primitives that the prelude declares
- * and a program may not, which an interface restating them is read with. */
+/* What a module is granted beyond what a program may declare. */
+typedef struct {
+    /* The intrinsics and the methods on primitives that the prelude declares and a program may not,
+     * which an interface restating them is read with. */
+    bool intrinsics;
+
+    /* Declares into the global scope rather than a scope of its own: the prelude is the language's own
+     * vocabulary, so its names are reached the way a primitive's are, without an import. */
+    bool global;
+} ModulePrivileges;
+
+/* False where the module does not resolve, so what it concluded exists only once it holds together. */
 bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope,
-                    ModuleScopeMap *module_scopes, bool declares_intrinsics, ResolvedModule **out,
+                    ModuleScopeMap *module_scopes, ModulePrivileges privileges, ResolvedModule **out,
                     Diagnostics *diagnostics);
 
 #endif

@@ -123,13 +123,7 @@ TypeBinding *scope_type_lookup_declaring(Scope *scope, String *name) {
 }
 
 bool scope_declares_type(Scope *scope, String *name) {
-    for (Scope *s = scope; s; s = s->parent) {
-        if (type_map_lookup(s->types, name)) {
-            return true;
-        }
-    }
-
-    return false;
+    return scope_type_lookup_declaring(scope, name) != NULL;
 }
 
 Binding *scope_binding_lookup_declaring(Scope *scope, String *name) {

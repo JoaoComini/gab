@@ -26,7 +26,10 @@ static inline bool test_resolve_ir_with(TestContext *ctx, Scope *scope, ASTModul
 
     ResolvedModule *resolved;
 
-    if (!resolve_module(ctx->arena, *unit, scope, NULL, declares_intrinsics, &resolved, &ctx->diagnostics)) {
+    /* The prelude declares into the global scope, as the compilation reading it does. */
+    ModulePrivileges privileges = {.intrinsics = declares_intrinsics, .global = declares_intrinsics};
+
+    if (!resolve_module(ctx->arena, *unit, scope, NULL, privileges, &resolved, &ctx->diagnostics)) {
         return false;
     }
 
@@ -60,9 +63,9 @@ static inline Scope *test_resolve(TestContext *ctx, Scope *global, ASTModule **u
     return resolved->scope;
 }
 
-/* A scope holding the core, which declares what 'len', 'as_bytes' and '[]' resolve through. It is read
- * from the interface a compilation reads, so what a test resolves against is what 'gabc' hands a
- * program rather than a second reading of the core's source. */
+/* A global scope the core has declared into, which is what 'len', 'as_bytes' and '[]' resolve through.
+ * It is read from the interface a compilation reads, so what a test resolves against is what 'gabc'
+ * hands a program rather than a second reading of the core's source. */
 static inline Scope *test_scope_with_core(TestContext *ctx, ModuleScopeMap **out_modules) {
     Scope *scope = scope_create(ctx->arena, &ctx->strings, NULL);
 
@@ -81,8 +84,8 @@ static inline Scope *test_scope_with_core(TestContext *ctx, ModuleScopeMap **out
 
     free(core);
 
+    /* Holds what a test imports; the core is not among them, having declared into 'scope' itself. */
     ModuleScopeMap *modules = module_scope_map_create_alloc(arena_allocator(ctx->arena), 8);
-    module_scope_map_insert(modules, string_from_cstr(&ctx->strings, GAB_CORE_MODULE), resolved->scope);
 
     if (out_modules) {
         *out_modules = modules;

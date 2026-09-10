@@ -147,34 +147,13 @@ static Scope *resolver_declaring_scope(ResolverState *state) {
     return state->declaring ? state->declaring : state->current_scope;
 }
 
-/* Where the prelude declared, which every module names without importing it. */
-static Scope *resolver_prelude_scope(ResolverState *state) {
-    if (!state->module_scopes) {
-        return NULL;
-    }
-
-    Scope **prelude = module_scope_map_lookup(
-        state->module_scopes, string_from_cstr(state->current_scope->strings, GAB_CORE_MODULE));
-
-    return prelude ? *prelude : NULL;
-}
-
-/* A type the prelude declares, which is named without an import as its methods on a primitive are. */
-static const Type *resolver_prelude_type(ResolverState *state, const char *name) {
-    Scope *prelude = resolver_prelude_scope(state);
-
-    return prelude ? scope_type_lookup(prelude, string_from_cstr(prelude->strings, name)) : NULL;
-}
-
 static const Type *location_type_of(ResolverState *state, const ASTFuncDecl *decl) {
     if (!(decl->syntax & FUNC_SYN_CALLER)) {
         return NULL;
     }
 
-    const Type *declared = scope_type_lookup(
-        state->current_scope, string_from_cstr(state->current_scope->strings, GAB_LOCATION_TYPE));
-
-    return declared ? declared : resolver_prelude_type(state, GAB_LOCATION_TYPE);
+    return scope_type_lookup(state->current_scope,
+                             string_from_cstr(state->current_scope->strings, GAB_LOCATION_TYPE));
 }
 
 static unsigned modifiers_of(const ASTFuncDecl *decl) {
@@ -224,17 +203,6 @@ static Binding *resolver_imported_binding(ResolverState *state, String *name) {
         return NULL;
     }
 
-    /* The prelude is named without an import, as the methods it declares on a primitive are. */
-    Scope *prelude = resolver_prelude_scope(state);
-
-    if (prelude && prelude != state->current_scope) {
-        Binding *found = scope_binding_lookup(prelude, name);
-
-        if (found) {
-            return found;
-        }
-    }
-
     for (size_t i = 0; i < state->file->imports.size; i++) {
         String *module = string_from_ref(state->current_scope->strings, state->file->imports.data[i].name);
 
@@ -261,17 +229,6 @@ static Resolution resolver_resolve_name(ResolverState *state, Scope *scope, Stri
         return resolution;
     }
 
-    /* The prelude is named without an import, as the methods it declares on a primitive are. */
-    Scope *prelude = resolver_prelude_scope(state);
-
-    if (prelude && prelude != scope) {
-        Resolution found = scope_resolve(prelude, name);
-
-        if (found.kind != RESOLUTION_NONE) {
-            return found;
-        }
-    }
-
     for (size_t i = 0; i < state->file->imports.size; i++) {
         String *module = string_from_ref(state->current_scope->strings, state->file->imports.data[i].name);
 
@@ -291,17 +248,10 @@ static Resolution resolver_resolve_name(ResolverState *state, Scope *scope, Stri
     return resolution;
 }
 
-/* The prelude's interfaces are named without an import, as the methods it declares on a primitive are. */
 static InterfaceDecl *resolver_lookup_interface(ResolverState *state, String *name) {
     InterfaceDecl *found = scope_interface_lookup(state->current_scope, name);
 
     if (found || !state->module_scopes) {
-        return found;
-    }
-
-    Scope *prelude = resolver_prelude_scope(state);
-
-    if (prelude && (found = scope_interface_lookup(prelude, name))) {
         return found;
     }
 
@@ -1510,10 +1460,6 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
 
             const Type *location = scope_type_lookup(
                 state->current_scope, string_from_cstr(state->current_scope->strings, GAB_LOCATION_TYPE));
-
-            if (!location) {
-                location = resolver_prelude_type(state, GAB_LOCATION_TYPE);
-            }
 
             if (!location) {
                 diag_error(state->diagnostics, GAB_ERR_NAME, expr->span,
@@ -3631,12 +3577,16 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
 }
 
 bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope,
-                    ModuleScopeMap *module_scopes, bool declares_intrinsics, ResolvedModule **out,
+                    ModuleScopeMap *module_scopes, ModulePrivileges privileges, ResolvedModule **out,
                     Diagnostics *diagnostics) {
-    /* A module declares into a scope of its own, so what it declares does not land among the
-     * primitives every module shares. */
-    Scope *module_scope = arena_alloc(compile_arena, sizeof(Scope));
-    scope_init_kind(module_scope, compile_arena, global_scope->strings, global_scope, SCOPE_MODULE);
+    /* A module declares into a scope of its own, so what it declares does not land among the names
+     * every module shares. The prelude is those names, so it declares into the global scope itself. */
+    Scope *module_scope = global_scope;
+
+    if (!privileges.global) {
+        module_scope = arena_alloc(compile_arena, sizeof(Scope));
+        scope_init_kind(module_scope, compile_arena, global_scope->strings, global_scope, SCOPE_MODULE);
+    }
 
     ResolvedModule *resolved = arena_alloc(compile_arena, sizeof(ResolvedModule));
 
@@ -3656,7 +3606,7 @@ bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope
         .module_scopes = module_scopes,
         .file = module->files.size ? module->files.data[0] : ast_file_create(compile_arena),
         .module_name = module->name.data ? string_from_ref(global_scope->strings, module->name) : NULL,
-        .declares_intrinsics = declares_intrinsics,
+        .declares_intrinsics = privileges.intrinsics,
         .func_context =
             {
                 .return_type = NULL,

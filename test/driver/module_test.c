@@ -275,6 +275,45 @@ static void a_name_two_files_declare_is_declared_twice(void) {
     assert(!compile_all(parts, 2, object, NULL, NULL));
 }
 
+/* The prelude declares into the global scope, so naming it as an import would declare it twice. */
+static void the_prelude_is_not_imported(void) {
+    char object[512];
+    snprintf(object, sizeof(object), "%s/imports_core.o", GAB_TEST_SCRATCH);
+
+    Arena *arena = arena_create(4096);
+
+    Diagnostics diagnostics;
+    diagnostics_init(&diagnostics, arena, "a test");
+
+    GabCompile request = {
+        .sources = (const char *const[]){"module use;\nimport core;\nfunc main(): i32 { return 0; }\n"},
+        .source_count = 1,
+        .object = object,
+    };
+
+    char objects[8][512];
+
+    GabCompiled compiled = {.resolved = {.objects = objects, .capacity = 8}};
+
+    assert(!gab_compile(&request, &compiled, &diagnostics));
+
+    assert(diagnostics_count(&diagnostics) == 1);
+    assert(strstr(diagnostics_get(&diagnostics, 0)->message, "without importing it"));
+
+    diagnostics_free(&diagnostics);
+    arena_destroy(arena);
+}
+
+/* The prelude declares into the global scope, which a module's own declaration shadows. */
+static void a_module_declares_a_name_the_prelude_holds(void) {
+    char object[512];
+    snprintf(object, sizeof(object), "%s/shadows.o", GAB_TEST_SCRATCH);
+
+    assert(compile("module shadows;\nstruct Location { x: i32, }\n"
+                   "func main(): i32 { let l = Location { x: 5 }; return l.x; }\n",
+                   object, NULL, NULL));
+}
+
 /* An interface and the object it was compiled from name each other, so a stale pair cannot be linked. */
 static void a_stale_interface_does_not_link(void) {
     char object[512];
@@ -583,6 +622,8 @@ int main(void) {
     an_import_past_what_the_link_holds_is_an_error();
     a_declaration_is_named_across_the_files_of_its_module();
     a_name_two_files_declare_is_declared_twice();
+    the_prelude_is_not_imported();
+    a_module_declares_a_name_the_prelude_holds();
     a_stale_interface_does_not_link();
     a_module_is_written_across_the_files_it_is_compiled_from();
     every_file_of_a_module_declares_that_module();

@@ -47,7 +47,8 @@ static void keep_templates(const Compilation *compilation, const MIRModule *bodi
 
 /* What an interface declares, resolved into a scope of its own so a symbol keeps the module that
  * defines it. Nothing is emitted: the bodies live in the object beside it. */
-static bool compile_declarations(const Compilation *compilation, const char *text, Scope **into) {
+static bool compile_declarations(const Compilation *compilation, const char *text, bool is_prelude,
+                                 Scope **into) {
     ASTModule *module = NULL;
 
     const char *sources[1] = {text};
@@ -62,7 +63,9 @@ static bool compile_declarations(const Compilation *compilation, const char *tex
     /* An interface restates the declarations it was written from, intrinsics included, so re-reading
      * one declares what its source was allowed to. It names the prelude as its source did, so the
      * scopes are what a '@caller()' in it resolves 'Location' through. */
-    if (!resolve_module(compilation->arena, module, compilation->global, compilation->modules, true,
+    ModulePrivileges privileges = {.intrinsics = true, .global = is_prelude};
+
+    if (!resolve_module(compilation->arena, module, compilation->global, compilation->modules, privileges,
                         &resolved, compilation->diagnostics)) {
         return false;
     }
@@ -83,12 +86,12 @@ static bool compile_declarations(const Compilation *compilation, const char *tex
 /* This module's source, resolved and lowered into 'out'. Only source someone wrote is held to what a
  * program may declare; 'declares_intrinsics' is what the prelude is granted. What the interface states
  * a body as is what was written, which only resolution's facts recover, so they are left in 'facts'. */
-static bool compile_module(const Compilation *compilation, ASTModule *module, bool declares_intrinsics,
+static bool compile_module(const Compilation *compilation, ASTModule *module, ModulePrivileges privileges,
                            LLVMUnit *out, const Facts **facts) {
     ResolvedModule *resolved = NULL;
 
-    if (!resolve_module(compilation->arena, module, compilation->global, compilation->modules,
-                        declares_intrinsics, &resolved, compilation->diagnostics)) {
+    if (!resolve_module(compilation->arena, module, compilation->global, compilation->modules, privileges,
+                        &resolved, compilation->diagnostics)) {
         return false;
     }
 
@@ -173,15 +176,13 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
 
     bool ok = true;
 
-    /* Where the prelude declared, which every module names without importing it. The prelude itself
-     * declares into its own scope like any module, so what it writes is what a program later reads. */
-    Scope *prelude = scope;
-
+    /* The prelude declares into the global scope, so what it states is reached the way a primitive's
+     * name is: by an ordinary walk, without an import and without a scope of its own. */
     if (!declares_prelude) {
-        ok = compile_declarations(&compilation, interface, &prelude);
-    }
+        Scope *prelude = NULL;
 
-    module_scope_map_insert(modules, string_from_cstr(&strings, GAB_CORE_MODULE), prelude);
+        ok = compile_declarations(&compilation, interface, true, &prelude);
+    }
 
     /* Each import is its own compilation: its declarations land in a scope of their own, which this
      * module then names, so a symbol keeps the module that defines it rather than taking this one's. */
@@ -213,6 +214,14 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
 
         for (size_t i = 0; ok && i < reached.size; i++) {
             StringRef named = reached.data[i].name;
+
+            /* The prelude declares into the global scope, so importing it would declare it twice. */
+            if (string_ref_equals_cstr(named, GAB_CORE_MODULE)) {
+                diag_error(diagnostics, GAB_ERR_NAME, reached.data[i].span,
+                           "'%s' is what every module names without importing it", GAB_CORE_MODULE);
+                ok = false;
+                break;
+            }
 
             bool seen = false;
 
@@ -274,7 +283,7 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
 
             Scope *imported = NULL;
 
-            ok = compile_declarations(&compilation, text, &imported);
+            ok = compile_declarations(&compilation, text, false, &imported);
 
             if (ok) {
                 if (i < direct) {
@@ -307,7 +316,10 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
     const Facts *facts = NULL;
 
     if (ok) {
-        ok = compile_module(&compilation, declaring, request->declares_intrinsics, unit, &facts);
+        ModulePrivileges privileges = {.intrinsics = request->declares_intrinsics,
+                                       .global = request->declares_intrinsics};
+
+        ok = compile_module(&compilation, declaring, privileges, unit, &facts);
     }
 
     if (ok) {

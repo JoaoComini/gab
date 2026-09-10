@@ -25,7 +25,7 @@ static void compile(TestContext *ctx, const char *source) {
 
     if (parse_module((const char *const[]){test_in_a_module(source)}, 1, NULL, ctx->arena, &ctx->strings,
                      &unit, diagnostics) &&
-        resolve_module(arena, unit, &global_scope, NULL, false, &resolved, diagnostics)) {
+        resolve_module(arena, unit, &global_scope, NULL, (ModulePrivileges){0}, &resolved, diagnostics)) {
         mir_build(arena, resolved, NULL, &mir_unit, diagnostics);
     }
 }
@@ -356,15 +356,15 @@ static void test_reports_duplicate_struct_name() {
     test_context_free(&ctx);
 }
 
-static void test_rejects_shadowing_a_builtin() {
+/* A name an outer scope declares is one a module may declare its own, primitives included. */
+static void test_a_module_may_declare_a_name_an_outer_scope_holds() {
     TestContext ctx;
     test_context_init(&ctx);
     Diagnostics *diagnostics = &ctx.diagnostics;
 
     compile(&ctx, "struct i32 { x: f32 }");
 
-    assert(diagnostics_count(diagnostics) == 1);
-    assert(strcmp(diagnostics_get(diagnostics, 0)->message, "type 'i32' is already declared") == 0);
+    assert(diagnostics_count(diagnostics) == 0);
 
     test_context_free(&ctx);
 }
@@ -841,7 +841,7 @@ int main(void) {
     test_reports_mismatched_field_assignment();
     test_reports_duplicate_field();
     test_reports_duplicate_struct_name();
-    test_rejects_shadowing_a_builtin();
+    test_a_module_may_declare_a_name_an_outer_scope_holds();
     test_reports_self_referential_struct();
     test_reports_mutual_containment_cycle();
     test_an_array_is_named_by_its_shape();
