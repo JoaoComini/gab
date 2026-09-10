@@ -62,10 +62,6 @@ static StmtFact *stmt_fact_mut(Facts *facts, const ASTStmt *stmt) {
     return fact ? fact : stmt_fact_insert(&facts->stmts, stmt, (StmtFact){0});
 }
 
-void fact_set_return_type(Facts *facts, const ASTStmt *stmt, const Type *type) {
-    stmt_fact_mut(facts, stmt)->return_type = type;
-}
-
 void fact_set_function(Facts *facts, const ASTStmt *stmt, Function *function) {
     stmt_fact_mut(facts, stmt)->function = function;
 }
@@ -159,12 +155,6 @@ const Type *fact_adjusted_type_of(const Facts *facts, const ASTExpr *expr) {
     }
 
     return fact->adjustment.to ? fact->adjustment.to : fact->type;
-}
-
-const Type *fact_return_type_of(const Facts *facts, const ASTStmt *stmt) {
-    const StmtFact *fact = stmt_fact_lookup((StmtFactMap *)&facts->stmts, stmt);
-
-    return fact ? fact->return_type : NULL;
 }
 
 Symbol *fact_root_local(const Facts *facts, const ASTExpr *expr) {

@@ -1992,8 +1992,6 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         return_type = resolver_error_type(state);
     }
 
-    fact_set_return_type(state->facts, stmt, return_type);
-
     String *name = stmt->func_decl.name->name;
 
     FuncDecl *decl = arena_alloc(state->global->arena, sizeof(FuncDecl));
@@ -2027,13 +2025,13 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         .signature = decl->signature,
     };
 
+    fact_set_function(state->facts, stmt, func);
+
     if (!function_registry_declare_owned(state->global->functions, owner, func)) {
         diag_error(state->global->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' already has a function '%s'",
                    type_name_of(owner)->data, name->data);
         return;
     }
-
-    fact_set_function(state->facts, stmt, func);
 
     if (stmt->func_decl.type_param_count > 0) {
         enter_param_bounds(state, stmt);
@@ -2452,8 +2450,6 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
 
     const Type *func_return_type = resolve_type_expr(state, stmt->func_decl.return_type, stmt->span);
 
-    fact_set_return_type(state->facts, stmt, func_return_type);
-
     String *declared_name = func_name->name;
 
     if (reject_self_as_name(state, declared_name, func_name->span)) {
@@ -2461,41 +2457,21 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
         return;
     }
 
-    Symbol *declared = scope_decl_func_against(resolver_declaring_scope(state), state->env.scope,
-                                               declared_name, func_return_type);
+    /* Built from what the declaration states, before the name is bound: a name already taken costs
+     * the binding, and leaves the body a signature to be checked against. */
+    FuncDecl *decl = arena_alloc(state->global->arena, sizeof(FuncDecl));
 
-    if (!declared) {
-        diag_error(state->global->diagnostics, GAB_ERR_NAME, func_name->span,
-                   "'%s' is already declared in this scope", declared_name->data);
-    }
-
-    Function *func = declared ? declared->func : NULL;
-
-    fact_set_function(state->facts, stmt, func);
-
-    FuncDecl *decl = func ? (FuncDecl *)func->decl : NULL;
-
-    if (decl) {
-        if (stmt->func_decl.type_param_count > 0) {
-            record_param_bounds(state, decl);
-        }
-
-        decl->linkage = linkage_of(&stmt->func_decl);
-        decl->modifiers = modifiers_of(&stmt->func_decl);
-        decl->location_type = location_type_of(state, &stmt->func_decl);
-
-        decl->id.module = state->module_name;
-
-        /* A C body links to the name as spelled, which is the name its id carries; the module still
-         * qualifies the id, since two modules may each declare the same foreign function. */
-        if (decl->linkage == LINKAGE_C) {
-            decl->id.name = declared_name;
-        }
-    }
+    *decl = (FuncDecl){
+        .id = {.module = state->module_name, .name = declared_name},
+        .linkage = linkage_of(&stmt->func_decl),
+        .modifiers = modifiers_of(&stmt->func_decl),
+        .location_type = location_type_of(state, &stmt->func_decl),
+        .signature = {.return_type = func_return_type},
+    };
 
     size_t param_count = stmt->func_decl.params.size;
 
-    if (decl && param_count > 0) {
+    if (param_count > 0) {
         decl->signature.params = arena_alloc(state->global->arena, param_count * sizeof(const Type *));
         decl->signature.param_count = param_count;
 
@@ -2505,16 +2481,27 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
             decl->signature.params[i] =
                 resolve_param_type_in(state, param, stmt->func_decl.type_param_count > 0);
         }
-
-        func->signature = decl->signature;
     }
 
-    if (decl && stmt->func_decl.type_param_count > 0) {
+    if (stmt->func_decl.type_param_count > 0) {
         decl->type_param_count = stmt->func_decl.type_param_count;
 
-        if (stmt->func_decl.body) {
-            check_abstract_body(state, stmt);
-        }
+        record_param_bounds(state, decl);
+    }
+
+    Function *func = arena_alloc(state->global->arena, sizeof(Function));
+
+    *func = (Function){.decl = decl, .signature = decl->signature};
+
+    fact_set_function(state->facts, stmt, func);
+
+    if (!scope_bind_func_against(resolver_declaring_scope(state), state->env.scope, declared_name, func)) {
+        diag_error(state->global->diagnostics, GAB_ERR_NAME, func_name->span,
+                   "'%s' is already declared in this scope", declared_name->data);
+    }
+
+    if (stmt->func_decl.type_param_count > 0 && stmt->func_decl.body) {
+        check_abstract_body(state, stmt);
     }
 
     state->env = saved;
@@ -2523,6 +2510,7 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
 static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
     size_t errors_before = diagnostics_count(state->global->diagnostics);
 
+    /* Every declaration builds one, whether or not its name could be bound. */
     Function *signature = fact_function_of(state->facts, stmt);
 
     Env saved = state->env;
@@ -2534,10 +2522,9 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
 
         String *param_name = param->name->name;
 
-        /* The signature resolved this already, so resolving it again would report its errors twice. */
-        const Type *param_type = signature && i < signature->signature.param_count
-                                     ? signature->signature.params[i]
-                                     : resolve_type_expr(state, param->type_expr, param->name->span);
+        /* Resolved once, where the declaration built the signature; resolving it again here would
+         * report its errors twice. */
+        const Type *param_type = signature->signature.params[i];
 
         if (reject_self_as_name(state, param_name, param->name->span)) {
             continue;
@@ -2554,7 +2541,7 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
         fact_set_def(state->facts, param->name, binding);
     }
 
-    state->env.func.return_type = fact_return_type_of(state->facts, stmt);
+    state->env.func.return_type = signature->signature.return_type;
     state->env.func.is_caller = (stmt->func_decl.syntax & FUNC_SYN_CALLER) != 0;
 
     resolve_stmt(state, stmt->func_decl.body);

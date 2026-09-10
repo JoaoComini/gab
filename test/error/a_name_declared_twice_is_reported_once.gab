@@ -1,0 +1,6 @@
+func f(a: i32): i32 { return a; }
+
+func f(a: i32): i32 { return a + 1; }
+
+// error
+// :3:6: name error: 'f' is already declared in this scope

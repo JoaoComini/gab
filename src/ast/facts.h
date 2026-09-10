@@ -89,9 +89,6 @@ typedef struct {
 /* Everything resolution concluded about one statement, held as one record for the same reason an
  * expression's is. */
 typedef struct {
-    /* The type the function this statement declares was declared to give back. */
-    const Type *return_type;
-
     /* The function a declaration declares. */
     Function *function;
 } StmtFact;
@@ -123,7 +120,6 @@ void fact_set_call_kind(Facts *facts, const ASTExpr *expr, CallKind kind);
 void fact_set_constant(Facts *facts, const ASTExpr *expr, Constant constant);
 void fact_set_field(Facts *facts, const ASTExpr *expr, size_t field);
 void fact_set_initialized_field(Facts *facts, const ASTExpr *value, size_t field);
-void fact_set_return_type(Facts *facts, const ASTStmt *stmt, const Type *type);
 void fact_set_function(Facts *facts, const ASTStmt *stmt, Function *function);
 
 /* Records what a declared name was bound to, which is what a use of it resolves to. */
@@ -154,8 +150,6 @@ size_t fact_initialized_field_of(const Facts *facts, const ASTExpr *value);
 
 /* The type a value has once its coercion is applied, which is its own where it has none. */
 const Type *fact_adjusted_type_of(const Facts *facts, const ASTExpr *expr);
-const Type *fact_return_type_of(const Facts *facts, const ASTStmt *stmt);
-
 /* The function a declaration declares, or null where it declared none. */
 Function *fact_function_of(const Facts *facts, const ASTStmt *stmt);
 

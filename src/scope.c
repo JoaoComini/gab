@@ -175,11 +175,7 @@ Symbol *scope_decl_var_against(Scope *scope, Scope *against, String *name, const
     return declared ? *declared : NULL;
 }
 
-Symbol *scope_decl_func(Scope *scope, String *name, const Type *return_type) {
-    return scope_decl_func_against(scope, scope, name, return_type);
-}
-
-Symbol *scope_decl_func_against(Scope *scope, Scope *against, String *name, const Type *return_type) {
+Symbol *scope_bind_func_against(Scope *scope, Scope *against, String *name, Function *function) {
     if (scope_lookup_declaring(against, name)) {
         return NULL;
     }
@@ -188,18 +184,7 @@ Symbol *scope_decl_func_against(Scope *scope, Scope *against, String *name, cons
 
     symbol->kind = SYMBOL_FUNC;
     symbol->pinned = false;
-
-    FuncDecl *func_decl = arena_alloc(scope->arena, sizeof(FuncDecl));
-
-    *func_decl = (FuncDecl){
-        .id = {.name = name}, .linkage = LINKAGE_INTERNAL, .signature = {.return_type = return_type}};
-
-    symbol->func = arena_alloc(scope->arena, sizeof(Function));
-
-    *symbol->func = (Function){
-        .decl = func_decl,
-        .signature = func_decl->signature,
-    };
+    symbol->func = function;
 
     Symbol **declared = symbol_table_insert(scope->symbols, name, symbol);
 

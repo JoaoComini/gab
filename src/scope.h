@@ -146,12 +146,14 @@ bool scope_bind_type_decl(Scope *scope, String *name, const TypeDecl *decl);
 bool scope_bind_interface(Scope *scope, String *name, InterfaceDecl *interface);
 bool scope_bind_module(Scope *scope, String *name, Module *module);
 
+/* Binds a function the caller built, rejecting a name 'against' already binds. What the declaration
+ * states is the function's own, so a name already taken costs the binding and not the signature. */
+Symbol *scope_bind_func_against(Scope *scope, Scope *against, String *name, Function *function);
+
 /* Declares into 'scope', rejecting a name 'against' already binds: a module's declaration is checked
  * from the file that writes it, so it collides with what that file imports as well. */
 Symbol *scope_decl_var_against(Scope *scope, Scope *against, String *name, const Type *type);
-Symbol *scope_decl_func_against(Scope *scope, Scope *against, String *name, const Type *return_type);
 
 Symbol *scope_decl_var(Scope *scope, String *name, const Type *type);
-Symbol *scope_decl_func(Scope *scope, String *name, const Type *return_type);
 
 #endif

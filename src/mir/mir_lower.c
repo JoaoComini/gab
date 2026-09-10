@@ -1264,8 +1264,9 @@ MIRFunction *mir_build_function(Arena *arena, TypeRegistry *registry, const Fact
     for (size_t i = 0; i < declared; i++) {
         Symbol *binding = fact_def_of(facts, params->data[i]->name);
 
+        /* What the parameter takes is its signature's, which is what the body was checked against. */
         MIRValueId value =
-            mir_value_create(ir, binding ? binding->var.type : NULL, binding, params->data[i]->name->span);
+            mir_value_create(ir, function->signature.params[i], binding, params->data[i]->name->span);
 
         ir->params[i] = value;
 
