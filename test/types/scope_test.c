@@ -1,5 +1,5 @@
-#include "memory/arena.h"
 #include "decl.h"
+#include "memory/arena.h"
 #include "scope.h"
 #include "string/string.h"
 #include "support/test_context.h"
@@ -34,6 +34,39 @@ static void test_var_declaration() {
     assert(found == sym);
 }
 
+/* A module's declarations are its files', so a redeclaration in one file collides with the other's. */
+static void a_name_a_module_declares_collides_across_its_files() {
+    Scope *global = scope_create(arena, &ctx.strings, NULL);
+
+    Scope *module = scope_create(arena, &ctx.strings, global);
+    scope_init_kind(module, arena, &ctx.strings, global, SCOPE_MODULE);
+
+    Scope *file = scope_create(arena, &ctx.strings, module);
+    scope_init_kind(file, arena, &ctx.strings, module, SCOPE_FILE);
+
+    String *name = string_from_cstr(&ctx.strings, "shared");
+    const Type *type = type_registry_get_primitive(global->type_registry, TYPE_I32);
+
+    assert(scope_decl_var(module, name, type));
+    assert(!scope_decl_var(file, name, type));
+}
+
+/* An 'impl' names what its own module declares, so the walk stops where the module does. */
+static void a_type_lookup_that_declares_stops_at_the_module() {
+    Scope *global = scope_create(arena, &ctx.strings, NULL);
+
+    Scope *module = scope_create(arena, &ctx.strings, global);
+    scope_init_kind(module, arena, &ctx.strings, global, SCOPE_MODULE);
+
+    Scope *file = scope_create(arena, &ctx.strings, module);
+    scope_init_kind(file, arena, &ctx.strings, module, SCOPE_FILE);
+
+    String *i32 = string_from_cstr(&ctx.strings, "i32");
+
+    assert(scope_type_lookup(file, i32));
+    assert(!scope_type_lookup_declaring(file, i32));
+}
+
 static void test_shadowing() {
     Scope *parent = scope_create(arena, &ctx.strings, NULL);
 
@@ -60,6 +93,8 @@ int main(void) {
     test_create_and_free();
     test_nested_scopes();
     test_var_declaration();
+    a_name_a_module_declares_collides_across_its_files();
+    a_type_lookup_that_declares_stops_at_the_module();
     test_shadowing();
 
     test_context_free(&ctx);

@@ -12,7 +12,7 @@ static DeclId method_id(TestContext *ctx, const char *source, const char *type, 
     bool ok = test_resolve_ir(ctx, scope, &unit, NULL, &resolved, source);
     assert(ok);
 
-    const Type *owner = scope_type_lookup(scope, string_from_cstr(&ctx->strings, type));
+    const Type *owner = scope_type_lookup(resolved->scope, string_from_cstr(&ctx->strings, type));
     assert(owner);
 
     Function *found =

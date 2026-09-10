@@ -49,8 +49,15 @@ static inline bool test_resolve_ir(TestContext *ctx, Scope *scope, ASTModule **u
     return test_resolve_ir_with(ctx, scope, unit, mir_unit, out, source, false);
 }
 
-static inline bool test_resolve(TestContext *ctx, Scope *scope, ASTModule **unit, const char *source) {
-    return test_resolve_ir(ctx, scope, unit, NULL, NULL, source);
+/* Resolves into a module scope under 'global', which is where what the source declares is found. */
+static inline Scope *test_resolve(TestContext *ctx, Scope *global, ASTModule **unit, const char *source) {
+    ResolvedModule *resolved = NULL;
+
+    if (!test_resolve_ir(ctx, global, unit, NULL, &resolved, source)) {
+        return NULL;
+    }
+
+    return resolved->scope;
 }
 
 /* A scope holding the core, which declares what 'len', 'as_bytes' and '[]' resolve through. It is read
@@ -75,7 +82,7 @@ static inline Scope *test_scope_with_core(TestContext *ctx, ModuleScopeMap **out
     free(core);
 
     ModuleScopeMap *modules = module_scope_map_create_alloc(arena_allocator(ctx->arena), 8);
-    module_scope_map_insert(modules, string_from_cstr(&ctx->strings, GAB_CORE_MODULE), scope);
+    module_scope_map_insert(modules, string_from_cstr(&ctx->strings, GAB_CORE_MODULE), resolved->scope);
 
     if (out_modules) {
         *out_modules = modules;

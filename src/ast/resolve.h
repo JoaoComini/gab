@@ -14,6 +14,9 @@
 typedef struct ResolvedModule {
     ASTModule *module;
 
+    /* Where this module's declarations landed, which is what another module names it through. */
+    Scope *scope;
+
     Facts facts;
     PendingBodies work;
 

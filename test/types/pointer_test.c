@@ -29,19 +29,19 @@ static void test_pointer_types_are_interned() {
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
     ASTModule *unit;
 
-    bool ok = test_resolve(&ctx, scope, &unit,
-                           "struct Player { health: i32 }\n"
-                           "struct Holder { p: *Player, q: *Player }\n");
-    assert(ok);
+    Scope *declared = test_resolve(&ctx, scope, &unit,
+                                   "struct Player { health: i32 }\n"
+                                   "struct Holder { p: *Player, q: *Player }\n");
+    assert(declared);
 
-    const Type *p = field_type(&ctx, scope, "Holder", "p");
-    const Type *q = field_type(&ctx, scope, "Holder", "q");
+    const Type *p = field_type(&ctx, declared, "Holder", "p");
+    const Type *q = field_type(&ctx, declared, "Holder", "q");
 
     assert(p && q);
     assert(p == q);
     assert(type_is_indirect(p));
 
-    const Type *player = scope_type_lookup(scope, string_from_cstr(&ctx.strings, "Player"));
+    const Type *player = scope_type_lookup(declared, string_from_cstr(&ctx.strings, "Player"));
     assert(type_pointee(p) == player);
 
     test_context_free(&ctx);
@@ -54,14 +54,14 @@ static void test_pointer_depth_nests() {
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
     ASTModule *unit;
 
-    bool ok = test_resolve(&ctx, scope, &unit, "struct Holder { p: *i32, q: **i32 }\n");
-    assert(ok);
+    Scope *declared = test_resolve(&ctx, scope, &unit, "struct Holder { p: *i32, q: **i32 }\n");
+    assert(declared);
 
-    const Type *p = field_type(&ctx, scope, "Holder", "p");
-    const Type *q = field_type(&ctx, scope, "Holder", "q");
+    const Type *p = field_type(&ctx, declared, "Holder", "p");
+    const Type *q = field_type(&ctx, declared, "Holder", "q");
 
     assert(type_pointee(q) == p);
-    assert(type_pointee(p) == scope_type_lookup(scope, string_from_cstr(&ctx.strings, "i32")));
+    assert(type_pointee(p) == scope_type_lookup(declared, string_from_cstr(&ctx.strings, "i32")));
 
     test_context_free(&ctx);
 }
@@ -73,13 +73,13 @@ static void test_pointer_is_a_word() {
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
     ASTModule *unit;
 
-    bool ok = test_resolve(&ctx, scope, &unit,
-                           "struct Big { a: i32, b: i32, c: i32, d: i32 }\n"
-                           "struct Holder { p: *Big, q: *bool }\n");
-    assert(ok);
+    Scope *declared = test_resolve(&ctx, scope, &unit,
+                                   "struct Big { a: i32, b: i32, c: i32, d: i32 }\n"
+                                   "struct Holder { p: *Big, q: *bool }\n");
+    assert(declared);
 
-    const Type *p = field_type(&ctx, scope, "Holder", "p");
-    const Type *q = field_type(&ctx, scope, "Holder", "q");
+    const Type *p = field_type(&ctx, declared, "Holder", "p");
+    const Type *q = field_type(&ctx, declared, "Holder", "q");
 
     TypeRegistry *registry = scope->type_registry;
 
@@ -98,13 +98,13 @@ static void test_ref_is_a_distinct_type() {
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
     ASTModule *unit;
 
-    bool ok = test_resolve(&ctx, scope, &unit,
-                           "struct Node { n: i32 }\n"
-                           "struct Holder { o: *Node, b: &Node }\n");
-    assert(ok);
+    Scope *declared = test_resolve(&ctx, scope, &unit,
+                                   "struct Node { n: i32 }\n"
+                                   "struct Holder { o: *Node, b: &Node }\n");
+    assert(declared);
 
-    const Type *owning = field_type(&ctx, scope, "Holder", "o");
-    const Type *borrow = field_type(&ctx, scope, "Holder", "b");
+    const Type *owning = field_type(&ctx, declared, "Holder", "o");
+    const Type *borrow = field_type(&ctx, declared, "Holder", "b");
 
     assert(owning && borrow);
     assert(owning != borrow);
@@ -124,14 +124,14 @@ static void test_ref_pointers_are_interned() {
     Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
     ASTModule *unit;
 
-    bool ok = test_resolve(&ctx, scope, &unit,
-                           "struct Node { n: i32 }\n"
-                           "let a: &Node;\n"
-                           "let b: &Node;\n");
-    assert(ok);
+    Scope *declared = test_resolve(&ctx, scope, &unit,
+                                   "struct Node { n: i32 }\n"
+                                   "let a: &Node;\n"
+                                   "let b: &Node;\n");
+    assert(declared);
 
-    Binding *a = scope_binding_lookup(scope, string_from_cstr(&ctx.strings, "a"));
-    Binding *b = scope_binding_lookup(scope, string_from_cstr(&ctx.strings, "b"));
+    Binding *a = scope_binding_lookup(declared, string_from_cstr(&ctx.strings, "a"));
+    Binding *b = scope_binding_lookup(declared, string_from_cstr(&ctx.strings, "b"));
 
     assert(a->var.type == b->var.type);
 

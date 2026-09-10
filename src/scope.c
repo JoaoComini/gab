@@ -14,7 +14,7 @@ Scope *scope_create(Arena *arena, StringPool *strings, Scope *parent) {
 }
 
 void scope_init(Scope *scope, Arena *arena, StringPool *strings, Scope *parent) {
-    scope_init_at_depth(scope, arena, strings, parent, parent ? parent->depth + 1 : 0);
+    scope_init_kind(scope, arena, strings, parent, parent ? SCOPE_LOCAL : SCOPE_GLOBAL);
 }
 
 static void scope_declare_primitives(Scope *scope) {
@@ -30,15 +30,14 @@ static void scope_declare_primitives(Scope *scope) {
     }
 }
 
-void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope *parent, int depth) {
+void scope_init_kind(Scope *scope, Arena *arena, StringPool *strings, Scope *parent, ScopeKind kind) {
     scope->arena = arena;
     scope->strings = strings;
     scope->bindings = binding_table_create_alloc(arena_allocator(arena), BINDING_TABLE_INITIAL_CAPACITY);
     scope->types = type_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     scope->interfaces = interface_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     scope->parent = parent;
-    scope->depth = depth;
-    scope->declares_module = false;
+    scope->kind = kind;
 
     if (parent && parent->type_registry) {
         scope->type_registry = parent->type_registry;
@@ -51,34 +50,6 @@ void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope 
     scope->type_registry = type_registry_create(arena, &names);
     scope->functions = function_registry_create(arena, scope->type_registry);
     scope_declare_primitives(scope);
-}
-
-void scope_init_module(Scope *scope, Arena *arena, StringPool *strings, Scope *parent) {
-    assert(parent && "a module scope hangs off the root scope");
-
-    scope_init_at_depth(scope, arena, strings, parent, 0);
-
-    scope->declares_module = true;
-}
-
-void scope_init_staging(Scope *scope, Arena *arena, StringPool *strings, Scope *target) {
-    assert(target && "a staging scope stands in for a scope that exists");
-
-    scope_init_at_depth(scope, arena, strings, target, target->depth);
-
-    scope->declares_module = target->declares_module;
-}
-
-void scope_merge_staged(Scope *target, Scope *staged) {
-    GAB_HASH_MAP_FOR_EACH(staged->bindings, entry) {
-        binding_table_insert(target->bindings, entry->key, entry->value);
-    }
-
-    GAB_HASH_MAP_FOR_EACH(staged->types, entry) { type_map_insert(target->types, entry->key, entry->value); }
-
-    GAB_HASH_MAP_FOR_EACH(staged->interfaces, entry) {
-        interface_map_insert(target->interfaces, entry->key, entry->value);
-    }
 }
 
 Binding *scope_binding_lookup(Scope *scope, String *name) {
@@ -134,15 +105,21 @@ const Type *resolution_type(TypeRegistry *registry, Resolution resolution) {
     }
 }
 
-TypeBinding *scope_binding_lookup_local(Scope *scope, String *name) {
-    TypeBinding *bound = type_map_lookup(scope->types, name);
+TypeBinding *scope_type_lookup_declaring(Scope *scope, String *name) {
+    for (Scope *s = scope; s; s = s->parent) {
+        TypeBinding *bound = type_map_lookup(s->types, name);
 
-    /* A staging scope stands in for the module scope beneath it, so both name what this module declares. */
-    if (!bound && scope->parent && scope->depth == scope->parent->depth) {
-        return type_map_lookup(scope->parent->types, name);
+        if (bound) {
+            return bound;
+        }
+
+        /* A module's own declarations, so the walk stops where this module does. */
+        if (s->kind == SCOPE_MODULE) {
+            return NULL;
+        }
     }
 
-    return bound;
+    return NULL;
 }
 
 bool scope_declares_type(Scope *scope, String *name) {
@@ -163,7 +140,8 @@ Binding *scope_binding_lookup_declaring(Scope *scope, String *name) {
             return *entry;
         }
 
-        if (!s->declares_module || !s->parent || !s->parent->declares_module) {
+        /* A module's bindings and its files', which are what a redeclaration would collide with. */
+        if (s->kind != SCOPE_FILE || !s->parent) {
             return NULL;
         }
     }
@@ -232,7 +210,6 @@ Binding *scope_decl_var(Scope *scope, String *name, const Type *type) {
 
     Binding *sym = arena_alloc(scope->arena, sizeof(Binding));
     sym->kind = BINDING_VAR;
-    sym->scope_depth = scope->depth;
     sym->pinned = false;
     sym->var.type = type;
 
@@ -251,7 +228,6 @@ Binding *scope_decl_func(Scope *scope, String *name, const Type *return_type) {
 
     Binding *binding = arena_alloc(scope->arena, sizeof(Binding));
     binding->kind = BINDING_FUNC;
-    binding->scope_depth = scope->depth;
     binding->pinned = false;
 
     FuncDecl *func_decl = arena_alloc(scope->arena, sizeof(FuncDecl));

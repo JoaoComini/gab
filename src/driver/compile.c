@@ -47,7 +47,7 @@ static void keep_templates(const Compilation *compilation, const MIRModule *bodi
 
 /* What an interface declares, resolved into a scope of its own so a symbol keeps the module that
  * defines it. Nothing is emitted: the bodies live in the object beside it. */
-static bool compile_declarations(const Compilation *compilation, const char *text, Scope *into) {
+static bool compile_declarations(const Compilation *compilation, const char *text, Scope **into) {
     ASTModule *module = NULL;
 
     const char *sources[1] = {text};
@@ -60,10 +60,14 @@ static bool compile_declarations(const Compilation *compilation, const char *tex
     ResolvedModule *resolved = NULL;
 
     /* An interface restates the declarations it was written from, intrinsics included, so re-reading
-     * one declares what its source was allowed to. */
-    if (!resolve_module(compilation->arena, module, into, NULL, true, &resolved, compilation->diagnostics)) {
+     * one declares what its source was allowed to. It names the prelude as its source did, so the
+     * scopes are what a '@caller()' in it resolves 'Location' through. */
+    if (!resolve_module(compilation->arena, module, compilation->global, compilation->modules, true,
+                        &resolved, compilation->diagnostics)) {
         return false;
     }
+
+    *into = resolved->scope;
 
     MIRModule *bodies = NULL;
 
@@ -169,11 +173,15 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
 
     bool ok = true;
 
+    /* Where the prelude declared, which every module names without importing it. The prelude itself
+     * declares into its own scope like any module, so what it writes is what a program later reads. */
+    Scope *prelude = scope;
+
     if (!declares_prelude) {
-        ok = compile_declarations(&compilation, interface, scope);
+        ok = compile_declarations(&compilation, interface, &prelude);
     }
 
-    module_scope_map_insert(modules, string_from_cstr(&strings, GAB_CORE_MODULE), scope);
+    module_scope_map_insert(modules, string_from_cstr(&strings, GAB_CORE_MODULE), prelude);
 
     /* Each import is its own compilation: its declarations land in a scope of their own, which this
      * module then names, so a symbol keeps the module that defines it rather than taking this one's. */
@@ -264,10 +272,9 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
 
             diagnostics_free(&quiet);
 
-            Scope *imported = arena_alloc(arena, sizeof(Scope));
-            scope_init_module(imported, arena, &strings, scope);
+            Scope *imported = NULL;
 
-            ok = compile_declarations(&compilation, text, imported);
+            ok = compile_declarations(&compilation, text, &imported);
 
             if (ok) {
                 if (i < direct) {

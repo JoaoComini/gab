@@ -49,7 +49,7 @@ static const Type *resolve_struct(TestContext *ctx, const char *source, const ch
         *out_registry = global_scope.type_registry;
     }
 
-    ResolvedModule *resolved;
+    ResolvedModule *resolved = NULL;
 
     if (parse_module((const char *const[]){test_in_a_module(source)}, 1, NULL, ctx->arena, &ctx->strings,
                      &unit, &ctx->diagnostics)) {
@@ -62,7 +62,7 @@ static const Type *resolve_struct(TestContext *ctx, const char *source, const ch
 
     assert(!diagnostics_has_errors(&ctx->diagnostics));
 
-    return scope_type_lookup(&global_scope, string_from_cstr(&ctx->strings, name));
+    return scope_type_lookup(resolved->scope, string_from_cstr(&ctx->strings, name));
 }
 
 static size_t offset_of(TestContext *ctx, TypeRegistry *registry, const Type *type, const char *field) {
@@ -208,7 +208,7 @@ static void test_unknown_field_type_is_not_registered() {
 
     assert(diagnostics_count(&ctx.diagnostics) == 1);
 
-    assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "Broken")) == NULL);
+    assert(scope_type_lookup(resolved->scope, string_from_cstr(&ctx.strings, "Broken")) == NULL);
 
     test_context_free(&ctx);
 }
@@ -369,8 +369,8 @@ static void test_a_failed_field_poisons_what_holds_it() {
     parse_module((const char *const[]){source}, 1, NULL, ctx.arena, &ctx.strings, &unit, &ctx.diagnostics);
     resolve_module(ctx.arena, unit, &global_scope, NULL, false, &resolved, &ctx.diagnostics);
 
-    assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "A")) == NULL);
-    assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "B")) == NULL);
+    assert(scope_type_lookup(resolved->scope, string_from_cstr(&ctx.strings, "A")) == NULL);
+    assert(scope_type_lookup(resolved->scope, string_from_cstr(&ctx.strings, "B")) == NULL);
 
     test_context_free(&ctx);
 }
@@ -425,7 +425,7 @@ static void test_rejects_an_array_of_the_struct_declaring_it() {
     assert(diagnostics_count(&ctx.diagnostics) == 1);
     assert(strcmp(diagnostics_get(&ctx.diagnostics, 0)->message,
                   "struct 'A' cannot contain itself: 'A' contains 'A'") == 0);
-    assert(scope_type_lookup(&global_scope, string_from_cstr(&ctx.strings, "A")) == NULL);
+    assert(scope_type_lookup(resolved->scope, string_from_cstr(&ctx.strings, "A")) == NULL);
 
     test_context_free(&ctx);
 }

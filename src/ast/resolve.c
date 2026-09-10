@@ -54,6 +54,13 @@ typedef struct ResolverState {
     /* The file being resolved, whose imports are the ones its statements may name. */
     const ASTFile *file;
 
+    /* Where this module's declarations land, which every file of it declares into. */
+    Scope *module_scope;
+
+    /* Where a declaration being resolved belongs, which is the module while a top-level statement is
+     * read: a scope binding type parameters stands between it and the file, and binds none of them. */
+    Scope *declaring;
+
     String *module_name;
 
     bool declares_intrinsics;
@@ -134,13 +141,40 @@ static Linkage linkage_of(const ASTFuncDecl *decl) {
 }
 
 /* The syntax that survives resolution, which the rest of the compiler reads instead of the tokens. */
+/* Where a declaration belongs: what a file declares is the module's, however many files write it, so
+ * only what a file imports stays with the file. */
+static Scope *resolver_declaring_scope(ResolverState *state) {
+    return state->declaring ? state->declaring : state->current_scope;
+}
+
+/* Where the prelude declared, which every module names without importing it. */
+static Scope *resolver_prelude_scope(ResolverState *state) {
+    if (!state->module_scopes) {
+        return NULL;
+    }
+
+    Scope **prelude = module_scope_map_lookup(
+        state->module_scopes, string_from_cstr(state->current_scope->strings, GAB_CORE_MODULE));
+
+    return prelude ? *prelude : NULL;
+}
+
+/* A type the prelude declares, which is named without an import as its methods on a primitive are. */
+static const Type *resolver_prelude_type(ResolverState *state, const char *name) {
+    Scope *prelude = resolver_prelude_scope(state);
+
+    return prelude ? scope_type_lookup(prelude, string_from_cstr(prelude->strings, name)) : NULL;
+}
+
 static const Type *location_type_of(ResolverState *state, const ASTFuncDecl *decl) {
     if (!(decl->syntax & FUNC_SYN_CALLER)) {
         return NULL;
     }
 
-    return scope_type_lookup(state->current_scope,
-                             string_from_cstr(state->current_scope->strings, GAB_LOCATION_TYPE));
+    const Type *declared = scope_type_lookup(
+        state->current_scope, string_from_cstr(state->current_scope->strings, GAB_LOCATION_TYPE));
+
+    return declared ? declared : resolver_prelude_type(state, GAB_LOCATION_TYPE);
 }
 
 static unsigned modifiers_of(const ASTFuncDecl *decl) {
@@ -190,6 +224,17 @@ static Binding *resolver_imported_binding(ResolverState *state, String *name) {
         return NULL;
     }
 
+    /* The prelude is named without an import, as the methods it declares on a primitive are. */
+    Scope *prelude = resolver_prelude_scope(state);
+
+    if (prelude && prelude != state->current_scope) {
+        Binding *found = scope_binding_lookup(prelude, name);
+
+        if (found) {
+            return found;
+        }
+    }
+
     for (size_t i = 0; i < state->file->imports.size; i++) {
         String *module = string_from_ref(state->current_scope->strings, state->file->imports.data[i].name);
 
@@ -214,6 +259,17 @@ static Resolution resolver_resolve_name(ResolverState *state, Scope *scope, Stri
 
     if (resolution.kind != RESOLUTION_NONE || scope != state->current_scope || !state->module_scopes) {
         return resolution;
+    }
+
+    /* The prelude is named without an import, as the methods it declares on a primitive are. */
+    Scope *prelude = resolver_prelude_scope(state);
+
+    if (prelude && prelude != scope) {
+        Resolution found = scope_resolve(prelude, name);
+
+        if (found.kind != RESOLUTION_NONE) {
+            return found;
+        }
     }
 
     for (size_t i = 0; i < state->file->imports.size; i++) {
@@ -243,10 +299,9 @@ static InterfaceDecl *resolver_lookup_interface(ResolverState *state, String *na
         return found;
     }
 
-    Scope **prelude = module_scope_map_lookup(
-        state->module_scopes, string_from_cstr(state->current_scope->strings, GAB_CORE_MODULE));
+    Scope *prelude = resolver_prelude_scope(state);
 
-    if (prelude && (found = scope_interface_lookup(*prelude, name))) {
+    if (prelude && (found = scope_interface_lookup(prelude, name))) {
         return found;
     }
 
@@ -336,6 +391,9 @@ static const char *type_name(ResolverState *state, const Type *type) {
 static void resolver_enter_scope(ResolverState *state) {
     state->current_scope =
         scope_create(state->compile_arena, state->current_scope->strings, state->current_scope);
+
+    /* Inside a body a declaration is a local, so it belongs where it is written. */
+    state->declaring = NULL;
 }
 
 static void resolver_exit_scope(ResolverState *state) { state->current_scope = state->current_scope->parent; }
@@ -1454,6 +1512,10 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
                 state->current_scope, string_from_cstr(state->current_scope->strings, GAB_LOCATION_TYPE));
 
             if (!location) {
+                location = resolver_prelude_type(state, GAB_LOCATION_TYPE);
+            }
+
+            if (!location) {
                 diag_error(state->diagnostics, GAB_ERR_NAME, expr->span,
                            "the core declares no '%s', which '@caller()' answers with", GAB_LOCATION_TYPE);
 
@@ -2338,13 +2400,13 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
         .param_count = param_count,
     };
 
-    scope_bind_decl(state->current_scope, struct_name, declared);
+    scope_bind_decl(resolver_declaring_scope(state), struct_name, declared);
 
     StructDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(StructDecl));
 
     *decl = (StructDecl){
         .stmt = stmt,
-        .scope = state->current_scope,
+        .scope = resolver_declaring_scope(state),
         .file = state->file,
         .name = struct_name,
         .decl = declared,
@@ -2667,8 +2729,9 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         }
 
         /* A scope keys its bindings on a mutable name, though a lookup only ever hashes one. */
-        TypeBinding *bound =
-            type_name_of(owner) ? scope_binding_lookup_local(declaring, (String *)type_name_of(owner)) : NULL;
+        TypeBinding *bound = type_name_of(owner)
+                                 ? scope_type_lookup_declaring(declaring, (String *)type_name_of(owner))
+                                 : NULL;
 
         if (!bound || bound->decl != type_decl(owner)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
@@ -2820,7 +2883,7 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
         .param_count = param_count,
     };
 
-    scope_bind_interface(state->current_scope, name, interface);
+    scope_bind_interface(resolver_declaring_scope(state), name, interface);
 }
 
 /* An interface's method is supplied by the block implementing it, so an inherent one does not answer for it.
@@ -3161,7 +3224,7 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
         return;
     }
 
-    Binding *declared = scope_decl_func(enclosing, declared_name, func_return_type);
+    Binding *declared = scope_decl_func(resolver_declaring_scope(state), declared_name, func_return_type);
 
     if (!declared) {
         char *name = string_ref_to_cstr(func_name);
@@ -3347,7 +3410,7 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
             type = resolver_error_type(state);
         }
 
-        if (state->current_scope == state->global_scope &&
+        if (state->current_scope->kind != SCOPE_LOCAL &&
             type_registry_owns(state->current_scope->type_registry, type)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                        "a top-level variable may not own, since no scope closes to free it; %s belongs in a "
@@ -3356,10 +3419,10 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
             type = resolver_error_type(state);
         }
 
-        Binding *var =
-            reject_self_as_name(state, resolver_intern(state, stmt->var_decl.name), stmt->span)
-                ? NULL
-                : scope_decl_var(state->current_scope, resolver_intern(state, stmt->var_decl.name), type);
+        Binding *var = reject_self_as_name(state, resolver_intern(state, stmt->var_decl.name), stmt->span)
+                           ? NULL
+                           : scope_decl_var(resolver_declaring_scope(state),
+                                            resolver_intern(state, stmt->var_decl.name), type);
 
         if (!var) {
             char *name = string_ref_to_cstr(stmt->var_decl.name);
@@ -3570,9 +3633,15 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
 bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope,
                     ModuleScopeMap *module_scopes, bool declares_intrinsics, ResolvedModule **out,
                     Diagnostics *diagnostics) {
+    /* A module declares into a scope of its own, so what it declares does not land among the
+     * primitives every module shares. */
+    Scope *module_scope = arena_alloc(compile_arena, sizeof(Scope));
+    scope_init_kind(module_scope, compile_arena, global_scope->strings, global_scope, SCOPE_MODULE);
+
     ResolvedModule *resolved = arena_alloc(compile_arena, sizeof(ResolvedModule));
 
     resolved->module = module;
+    resolved->scope = module_scope;
     resolved->work = pending_bodies_create(compile_arena);
     resolved->registry = global_scope->type_registry;
     resolved->functions = global_scope->functions;
@@ -3582,7 +3651,8 @@ bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope
     ResolverState state = {
         .compile_arena = compile_arena,
         .global_scope = global_scope,
-        .current_scope = global_scope,
+        .current_scope = module_scope,
+        .module_scope = module_scope,
         .module_scopes = module_scopes,
         .file = module->files.size ? module->files.data[0] : ast_file_create(compile_arena),
         .module_name = module->name.data ? string_from_ref(global_scope->strings, module->name) : NULL,
@@ -3600,13 +3670,25 @@ bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope
 
     size_t errors_before = diagnostics_count(diagnostics);
 
+    /* A scope for each file, held for every pass: what a file imports is bound in it, so a name one
+     * file reaches is not a name its siblings do. */
+    Scope **file_scopes = arena_alloc(compile_arena, module->files.size * sizeof(Scope *));
+
+    for (size_t f = 0; f < module->files.size; f++) {
+        file_scopes[f] = arena_alloc(compile_arena, sizeof(Scope));
+        scope_init_kind(file_scopes[f], compile_arena, global_scope->strings, module_scope, SCOPE_FILE);
+    }
+
     /* Every file declares before any file resolves, so a declaration is visible across the module
      * however the files were ordered. */
     for (size_t f = 0; f < module->files.size; f++) {
         state.file = module->files.data[f];
+        state.current_scope = file_scopes[f];
 
         for (size_t i = 0; i < state.file->statements.size; i++) {
             ASTStmt *stmt = state.file->statements.data[i];
+
+            state.declaring = module_scope;
 
             if (stmt && stmt->kind == STMT_INTERFACE_DECL) {
                 declare_interface(&state, stmt);
@@ -3624,9 +3706,12 @@ bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope
 
     for (size_t f = 0; f < module->files.size; f++) {
         state.file = module->files.data[f];
+        state.current_scope = file_scopes[f];
 
         for (size_t i = 0; i < state.file->statements.size; i++) {
             ASTStmt *stmt = state.file->statements.data[i];
+
+            state.declaring = module_scope;
 
             if (stmt && stmt->kind == STMT_FUNC_DECL) {
                 declare_func(&state, stmt);
@@ -3640,8 +3725,11 @@ bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope
 
     for (size_t f = 0; f < module->files.size; f++) {
         state.file = module->files.data[f];
+        state.current_scope = file_scopes[f];
 
         for (size_t i = 0; i < state.file->statements.size; i++) {
+            state.declaring = module_scope;
+
             resolve_stmt(&state, state.file->statements.data[i]);
         }
     }

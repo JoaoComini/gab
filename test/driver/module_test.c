@@ -253,6 +253,28 @@ static void an_import_past_what_the_link_holds_is_an_error(void) {
     arena_destroy(arena);
 }
 
+/* What a file declares is the module's, so a sibling names it without an import. */
+static void a_declaration_is_named_across_the_files_of_its_module(void) {
+    char object[512];
+    snprintf(object, sizeof(object), "%s/across.o", GAB_TEST_SCRATCH);
+
+    const char *parts[2] = {"module across;\nfunc one(): i32 { return 1; }\n",
+                            "module across;\nfunc two(): i32 { return one() + 1; }\n"};
+
+    assert(compile_all(parts, 2, object, NULL, NULL));
+}
+
+/* A module and its files are one namespace, so a name one file declares collides with the other's. */
+static void a_name_two_files_declare_is_declared_twice(void) {
+    char object[512];
+    snprintf(object, sizeof(object), "%s/collide.o", GAB_TEST_SCRATCH);
+
+    const char *parts[2] = {"module collide;\nfunc same(): i32 { return 1; }\n",
+                            "module collide;\nfunc same(): i32 { return 2; }\n"};
+
+    assert(!compile_all(parts, 2, object, NULL, NULL));
+}
+
 /* An interface and the object it was compiled from name each other, so a stale pair cannot be linked. */
 static void a_stale_interface_does_not_link(void) {
     char object[512];
@@ -458,7 +480,7 @@ static void read_source(Reading *reading, TestContext *ctx, const char *source) 
 }
 
 static DeclId method_id_in(Reading *reading, TestContext *ctx, const char *type, const char *method) {
-    const Type *owner = scope_type_lookup(reading->scope, string_from_cstr(&ctx->strings, type));
+    const Type *owner = scope_type_lookup(reading->resolved->scope, string_from_cstr(&ctx->strings, type));
 
     assert(owner);
 
@@ -472,7 +494,7 @@ static DeclId method_id_in(Reading *reading, TestContext *ctx, const char *type,
 }
 
 static DeclId type_id_in(Reading *reading, TestContext *ctx, const char *name) {
-    const Type *type = scope_type_lookup(reading->scope, string_from_cstr(&ctx->strings, name));
+    const Type *type = scope_type_lookup(reading->resolved->scope, string_from_cstr(&ctx->strings, name));
 
     assert(type);
     assert(decl_id_is_set(type_decl(type)->id));
@@ -559,6 +581,8 @@ int main(void) {
     a_field_names_a_type_its_own_file_imports();
     an_interface_states_an_import_once();
     an_import_past_what_the_link_holds_is_an_error();
+    a_declaration_is_named_across_the_files_of_its_module();
+    a_name_two_files_declare_is_declared_twice();
     a_stale_interface_does_not_link();
     a_module_is_written_across_the_files_it_is_compiled_from();
     every_file_of_a_module_declares_that_module();

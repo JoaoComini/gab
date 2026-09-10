@@ -46,8 +46,6 @@ typedef enum {
 typedef struct Binding {
     BindingKind kind;
 
-    int scope_depth;
-
     bool pinned;
 
     union {
@@ -64,6 +62,15 @@ typedef struct Binding {
 
 GAB_HASH_MAP(BindingTable, binding_table, String *, Binding *);
 
+/* What a scope stands for, which decides how far a lookup walks and what may be declared in it.
+ * Global holds the primitives, and every module hangs off it: Global -> Module -> File -> Local. */
+typedef enum {
+    SCOPE_GLOBAL,
+    SCOPE_MODULE,
+    SCOPE_FILE,
+    SCOPE_LOCAL,
+} ScopeKind;
+
 typedef struct Scope {
     Arena *arena;
 
@@ -79,9 +86,8 @@ typedef struct Scope {
     StringPool *strings;
 
     struct Scope *parent;
-    int depth;
 
-    bool declares_module;
+    ScopeKind kind;
 } Scope;
 
 /* The struct the core declares for a source position, which '@caller()' answers with. */
@@ -89,12 +95,12 @@ typedef struct Scope {
 
 #define GAB_STD_MODULE "std"
 
+/* A local scope under 'parent', or the global one where it is null. */
 Scope *scope_create(Arena *arena, StringPool *strings, Scope *parent);
 void scope_init(Scope *scope, Arena *arena, StringPool *strings, Scope *parent);
 
-void scope_init_at_depth(Scope *scope, Arena *arena, StringPool *strings, Scope *parent, int depth);
-
-void scope_init_module(Scope *scope, Arena *arena, StringPool *strings, Scope *parent);
+/* A scope of a given kind, which a lookup treats by what it stands for rather than by how deep it is. */
+void scope_init_kind(Scope *scope, Arena *arena, StringPool *strings, Scope *parent, ScopeKind kind);
 
 typedef enum {
     RESOLUTION_NONE,
@@ -125,7 +131,9 @@ Binding *scope_binding_lookup(Scope *scope, String *name);
 
 const Type *scope_type_lookup(Scope *scope, String *name);
 
-TypeBinding *scope_binding_lookup_local(Scope *scope, String *name);
+/* A type this module declares, which is what an 'impl' may name: a type reached through an import
+ * belongs to the module that declared it. */
+TypeBinding *scope_type_lookup_declaring(Scope *scope, String *name);
 
 bool scope_declares_type(Scope *scope, String *name);
 Binding *scope_binding_lookup_declaring(Scope *scope, String *name);
@@ -141,10 +149,6 @@ bool scope_bind_decl(Scope *scope, String *name, const TypeDecl *decl);
 bool scope_bind_interface(Scope *scope, String *name, InterfaceDecl *interface);
 
 InterfaceDecl *scope_interface_lookup(Scope *scope, String *name);
-
-void scope_init_staging(Scope *scope, Arena *arena, StringPool *strings, Scope *target);
-
-void scope_merge_staged(Scope *target, Scope *staged);
 
 Binding *scope_decl_var(Scope *scope, String *name, const Type *type);
 Binding *scope_decl_func(Scope *scope, String *name, const Type *return_type);
