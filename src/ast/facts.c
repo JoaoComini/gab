@@ -5,87 +5,115 @@
 void facts_init(Facts *facts, Arena *arena) {
     Allocator allocator = arena_allocator(arena);
 
-    expr_fact_init_alloc(&facts->types, allocator, FACTS_INITIAL_CAPACITY);
-    expr_bind_init_alloc(&facts->uses, allocator, FACTS_INITIAL_CAPACITY);
-    expr_callee_init_alloc(&facts->callees, allocator, FACTS_INITIAL_CAPACITY);
-    expr_move_init_alloc(&facts->moves, allocator, FACTS_INITIAL_CAPACITY);
-    expr_adjust_init_alloc(&facts->adjustments, allocator, FACTS_INITIAL_CAPACITY);
-    expr_call_init_alloc(&facts->calls, allocator, FACTS_INITIAL_CAPACITY);
-    expr_const_init_alloc(&facts->constants, allocator, FACTS_INITIAL_CAPACITY);
+    expr_fact_init_alloc(&facts->exprs, allocator, FACTS_INITIAL_CAPACITY);
     stmt_fact_init_alloc(&facts->returns, allocator, FACTS_INITIAL_CAPACITY);
 }
 
-#define FACT_SETTER(fn, alias, map, KeyType, ValueType)                                                      \
-    void fn(Facts *facts, KeyType key, ValueType value) {                                                    \
-        ValueType *slot = alias##_lookup(&facts->map, key);                                                  \
-                                                                                                             \
-        if (slot) {                                                                                          \
-            *slot = value;                                                                                   \
-            return;                                                                                          \
-        }                                                                                                    \
-                                                                                                             \
-        alias##_insert(&facts->map, key, value);                                                             \
+/* The record for a node, created empty where resolution has concluded nothing about it yet. */
+static ExprFact *fact_mut(Facts *facts, const ASTExpr *expr) {
+    ExprFact *fact = expr_fact_lookup(&facts->exprs, expr);
+
+    return fact ? fact : expr_fact_insert(&facts->exprs, expr, (ExprFact){0});
+}
+
+const ExprFact *fact_of(const Facts *facts, const ASTExpr *expr) {
+    return expr_fact_lookup((ExprFactMap *)&facts->exprs, expr);
+}
+
+void fact_set_type(Facts *facts, const ASTExpr *expr, const Type *type) {
+    fact_mut(facts, expr)->type = type;
+}
+
+void fact_set_use(Facts *facts, const ASTExpr *expr, Symbol *binding) {
+    fact_mut(facts, expr)->use = binding;
+}
+
+void fact_set_callee(Facts *facts, const ASTExpr *expr, Function *callee) {
+    fact_mut(facts, expr)->callee = callee;
+}
+
+void fact_set_moves(Facts *facts, const ASTExpr *expr, bool moves) { fact_mut(facts, expr)->moves = moves; }
+
+void fact_set_adjustment(Facts *facts, const ASTExpr *expr, Adjustment adjustment) {
+    fact_mut(facts, expr)->adjustment = adjustment;
+}
+
+void fact_set_call_kind(Facts *facts, const ASTExpr *expr, CallKind kind) {
+    fact_mut(facts, expr)->call = kind;
+}
+
+void fact_set_constant(Facts *facts, const ASTExpr *expr, Constant constant) {
+    ExprFact *fact = fact_mut(facts, expr);
+
+    fact->constant = constant;
+    fact->has_constant = true;
+}
+
+void fact_set_return_type(Facts *facts, const ASTStmt *stmt, const Type *type) {
+    const Type **slot = stmt_fact_lookup(&facts->returns, stmt);
+
+    if (slot) {
+        *slot = type;
+        return;
     }
 
-FACT_SETTER(fact_set_type, expr_fact, types, const ASTExpr *, const Type *)
-FACT_SETTER(fact_set_use, expr_bind, uses, const ASTExpr *, Symbol *)
-FACT_SETTER(fact_set_callee, expr_callee, callees, const ASTExpr *, Function *)
-FACT_SETTER(fact_set_moves, expr_move, moves, const ASTExpr *, bool)
-FACT_SETTER(fact_set_adjustment, expr_adjust, adjustments, const ASTExpr *, Adjustment)
-FACT_SETTER(fact_set_call_kind, expr_call, calls, const ASTExpr *, CallKind)
-FACT_SETTER(fact_set_constant, expr_const, constants, const ASTExpr *, Constant)
-FACT_SETTER(fact_set_return_type, stmt_fact, returns, const ASTStmt *, const Type *)
+    stmt_fact_insert(&facts->returns, stmt, type);
+}
 
 bool fact_constant_of(const Facts *facts, const ASTExpr *expr, Constant *out) {
-    Constant *constant = expr_const_lookup((ExprConstMap *)&facts->constants, expr);
+    const ExprFact *fact = fact_of(facts, expr);
 
-    if (constant && out) {
-        *out = *constant;
+    if (fact && fact->has_constant && out) {
+        *out = fact->constant;
     }
 
-    return constant != NULL;
+    return fact && fact->has_constant;
 }
 
 const Type *fact_type_of(const Facts *facts, const ASTExpr *expr) {
-    const Type **type = expr_fact_lookup((ExprTypeMap *)&facts->types, expr);
+    const ExprFact *fact = fact_of(facts, expr);
 
-    return type ? *type : NULL;
+    return fact ? fact->type : NULL;
 }
 
 Symbol *fact_use_of(const Facts *facts, const ASTExpr *expr) {
-    Symbol **binding = expr_bind_lookup((ExprBindMap *)&facts->uses, expr);
+    const ExprFact *fact = fact_of(facts, expr);
 
-    return binding ? *binding : NULL;
+    return fact ? fact->use : NULL;
 }
 
 Function *fact_callee_of(const Facts *facts, const ASTExpr *expr) {
-    Function **callee = expr_callee_lookup((ExprCalleeMap *)&facts->callees, expr);
+    const ExprFact *fact = fact_of(facts, expr);
 
-    return callee ? *callee : NULL;
+    return fact ? fact->callee : NULL;
 }
 
 bool fact_moves(const Facts *facts, const ASTExpr *expr) {
-    bool *moves = expr_move_lookup((ExprMoveMap *)&facts->moves, expr);
+    const ExprFact *fact = fact_of(facts, expr);
 
-    return moves ? *moves : false;
+    return fact ? fact->moves : false;
 }
 
 CallKind fact_call_kind(const Facts *facts, const ASTExpr *expr) {
-    CallKind *kind = expr_call_lookup((ExprCallMap *)&facts->calls, expr);
+    const ExprFact *fact = fact_of(facts, expr);
 
-    return kind ? *kind : CALL_FUNCTION;
+    return fact ? fact->call : CALL_FUNCTION;
 }
 
 Adjustment fact_adjustment(const Facts *facts, const ASTExpr *expr) {
-    Adjustment *adjustment = expr_adjust_lookup((ExprAdjustMap *)&facts->adjustments, expr);
+    const ExprFact *fact = fact_of(facts, expr);
 
-    return adjustment ? *adjustment : (Adjustment){.kind = ADJUST_NONE};
+    return fact ? fact->adjustment : (Adjustment){.kind = ADJUST_NONE};
 }
 
 const Type *fact_adjusted_type_of(const Facts *facts, const ASTExpr *expr) {
-    Adjustment *adjustment = expr_adjust_lookup((ExprAdjustMap *)&facts->adjustments, expr);
+    const ExprFact *fact = fact_of(facts, expr);
 
-    return adjustment && adjustment->to ? adjustment->to : fact_type_of(facts, expr);
+    if (!fact) {
+        return NULL;
+    }
+
+    return fact->adjustment.to ? fact->adjustment.to : fact->type;
 }
 
 const Type *fact_return_type_of(const Facts *facts, const ASTStmt *stmt) {

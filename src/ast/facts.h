@@ -13,33 +13,8 @@
 #define expr_fact_hash(key) ((size_t)(key) >> 4)
 #define expr_fact_key_equals(key, other) ((key) == (other))
 
-#define expr_bind_hash(key) expr_fact_hash(key)
-#define expr_bind_key_equals(key, other) ((key) == (other))
-
-#define expr_callee_hash(key) expr_fact_hash(key)
-#define expr_callee_key_equals(key, other) ((key) == (other))
-
-#define expr_move_hash(key) expr_fact_hash(key)
-#define expr_move_key_equals(key, other) ((key) == (other))
-
-#define expr_call_hash(key) expr_fact_hash(key)
-#define expr_call_key_equals(key, other) ((key) == (other))
-
-#define expr_const_hash(key) expr_fact_hash(key)
-#define expr_const_key_equals(key, other) ((key) == (other))
-
-#define expr_adjust_hash(key) expr_fact_hash(key)
-#define expr_adjust_key_equals(key, other) ((key) == (other))
-
 #define stmt_fact_hash(key) expr_fact_hash(key)
 #define stmt_fact_key_equals(key, other) ((key) == (other))
-
-GAB_HASH_MAP(ExprTypeMap, expr_fact, const ASTExpr *, const Type *)
-GAB_HASH_MAP(ExprBindMap, expr_bind, const ASTExpr *, Symbol *)
-GAB_HASH_MAP(ExprCalleeMap, expr_callee, const ASTExpr *, Function *)
-GAB_HASH_MAP(ExprMoveMap, expr_move, const ASTExpr *, bool)
-GAB_HASH_MAP(ExprConstMap, expr_const, const ASTExpr *, Constant)
-GAB_HASH_MAP(StmtTypeMap, stmt_fact, const ASTStmt *, const Type *)
 
 /* What a call names, which its target's resolution decides: a function to call, or a type to convert to. */
 typedef enum {
@@ -78,20 +53,35 @@ typedef struct {
     };
 } Adjustment;
 
-GAB_HASH_MAP(ExprAdjustMap, expr_adjust, const ASTExpr *, Adjustment)
-GAB_HASH_MAP(ExprCallMap, expr_call, const ASTExpr *, CallKind)
+/* Everything resolution concluded about one expression. One record rather than a map per question,
+ * so a stage asking two of them pays for one lookup. */
+typedef struct {
+    const Type *type;
+
+    /* What a name denotes, where it denotes a binding. */
+    Symbol *use;
+
+    /* The function a call names, which a specialization has already been applied to. */
+    Function *callee;
+
+    Adjustment adjustment;
+
+    /* What the expression was found to be worth, where resolution could answer it outright. */
+    Constant constant;
+
+    CallKind call;
+
+    bool moves;
+
+    bool has_constant;
+} ExprFact;
+
+GAB_HASH_MAP(ExprFactMap, expr_fact, const ASTExpr *, ExprFact)
+GAB_HASH_MAP(StmtTypeMap, stmt_fact, const ASTStmt *, const Type *)
 
 /* What resolution concluded about each node, which only what it hands on can read. */
 typedef struct Facts {
-    ExprTypeMap types;
-    ExprBindMap uses;
-    ExprCalleeMap callees;
-    ExprMoveMap moves;
-    ExprAdjustMap adjustments;
-    ExprCallMap calls;
-
-    /* What an expression was found to be worth, where resolution could answer it outright. */
-    ExprConstMap constants;
+    ExprFactMap exprs;
 
     StmtTypeMap returns;
 } Facts;
@@ -106,6 +96,9 @@ void fact_set_adjustment(Facts *facts, const ASTExpr *expr, Adjustment adjustmen
 void fact_set_call_kind(Facts *facts, const ASTExpr *expr, CallKind kind);
 void fact_set_constant(Facts *facts, const ASTExpr *expr, Constant constant);
 void fact_set_return_type(Facts *facts, const ASTStmt *stmt, const Type *type);
+
+/* Everything concluded about one expression, or nothing where resolution reached none of it. */
+const ExprFact *fact_of(const Facts *facts, const ASTExpr *expr);
 
 const Type *fact_type_of(const Facts *facts, const ASTExpr *expr);
 Symbol *fact_use_of(const Facts *facts, const ASTExpr *expr);
