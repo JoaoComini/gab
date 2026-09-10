@@ -13,6 +13,7 @@
 typedef struct ASTStmt ASTStmt;
 
 typedef struct Function Function;
+typedef struct FuncDecl FuncDecl;
 
 typedef enum {
     LINKAGE_INTERNAL,
@@ -52,7 +53,7 @@ typedef struct IntrinsicLowering {
 typedef struct InterfaceDecl {
     DeclId id;
 
-    Function *const *methods;
+    const FuncDecl *const *methods;
     size_t method_count;
 
     size_t param_count;

@@ -631,7 +631,7 @@ static const Type *resolve_param_type_in(ResolverState *state, ASTField *param, 
 
 static Function *interface_method_for(ResolverState *state, const InterfaceDecl *interface, size_t index,
                                       const Type *implementor, const TypeArg *args, size_t arg_count) {
-    const Function *signature = interface->methods[index];
+    const FuncDecl *signature = interface->methods[index];
 
     TypeArg substitutions[GAB_MAX_TYPE_PARAMS];
     substitutions[0] = (TypeArg){.kind = TYPE_ARG_TYPE, .type = implementor};
@@ -643,7 +643,7 @@ static Function *interface_method_for(ResolverState *state, const InterfaceDecl 
     Arena *arena = state->global->arena;
 
     FuncDecl *decl = arena_alloc(arena, sizeof(FuncDecl));
-    *decl = *signature->decl;
+    *decl = *signature;
     decl->type_param_count = 0;
 
     Function *method = arena_alloc(arena, sizeof(Function));
@@ -674,7 +674,7 @@ static Function *bound_method(ResolverState *state, const Type *base, String *na
     const InterfaceRef *bound = &state->env.param_bounds[index].interface;
 
     for (size_t i = 0; i < bound->interface->method_count; i++) {
-        if (bound->interface->methods[i]->decl->id.name != name) {
+        if (bound->interface->methods[i]->id.name != name) {
             continue;
         }
 
@@ -2025,7 +2025,7 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
 
     state->env.scope = params;
 
-    Function **methods = count > 0 ? arena_alloc(arena, count * sizeof(Function *)) : NULL;
+    FuncDecl **methods = count > 0 ? arena_alloc(arena, count * sizeof(FuncDecl *)) : NULL;
 
     for (size_t i = 0; i < count; i++) {
         ASTStmt *signature = stmt->interface_decl.members.data[i];
@@ -2035,11 +2035,6 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
             .id = {.name = signature->func_decl.name->name},
             .linkage = LINKAGE_INTERNAL,
             .type_param_count = param_count + 1,
-        };
-
-        Function *method = arena_alloc(arena, sizeof(Function));
-        *method = (Function){
-            .decl = decl,
             .signature = {.return_type =
                               resolve_type_expr(state, signature->func_decl.return_type, signature->span)},
         };
@@ -2053,11 +2048,11 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
                 types[p] = resolve_param_type_in(state, signature->func_decl.params.data[p], true);
             }
 
-            method->signature.params = types;
-            method->signature.param_count = signature_params;
+            decl->signature.params = types;
+            decl->signature.param_count = signature_params;
         }
 
-        methods[i] = method;
+        methods[i] = decl;
     }
 
     state->env = saved;
@@ -2066,7 +2061,7 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
 
     *interface = (InterfaceDecl){
         .id = {.module = state->module_name, .name = name},
-        .methods = methods,
+        .methods = (const FuncDecl *const *)methods,
         .method_count = count,
         .param_count = param_count,
     };
@@ -2127,7 +2122,7 @@ static void check_conformance(ResolverState *state, ASTStmt *stmt, const Type *i
     }
 
     for (size_t i = 0; i < interface->method_count; i++) {
-        const String *name = interface->methods[i]->decl->id.name;
+        const String *name = interface->methods[i]->id.name;
 
         Function *supplied = block_declares(stmt, name)
                                  ? function_registry_find_owned(state->global->functions, implementor, name)
