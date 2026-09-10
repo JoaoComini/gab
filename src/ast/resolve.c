@@ -573,6 +573,10 @@ static Function *specialize(ResolverState *state, ASTExpr *expr, Function *gener
                             size_t fixed, size_t self_params) {
     size_t owed = generic->decl->type_param_count;
 
+    if (generic->type_arg_count >= owed) {
+        fixed = owed;
+    }
+
     if (owed <= fixed) {
         if (type_args_are_concrete(generic->type_args, generic->type_arg_count)) {
             pending_bodies_instantiate(state->work, generic, state->global->diagnostics);
@@ -640,22 +644,7 @@ static Function *interface_method_for(ResolverState *state, const InterfaceDecl 
         substitutions[i + 1] = args[i];
     }
 
-    Arena *arena = state->global->arena;
-
-    FuncDecl *decl = arena_alloc(arena, sizeof(FuncDecl));
-    *decl = *signature;
-    decl->type_param_count = 0;
-
-    Function *method = arena_alloc(arena, sizeof(Function));
-    *method = (Function){
-        .decl = decl,
-        .signature = func_signature_instantiate(state->global->types, arena, &signature->signature,
-                                                substitutions, arg_count + 1),
-
-        .bound_self = implementor,
-    };
-
-    return method;
+    return function_registry_instance(state->global->functions, signature, substitutions, arg_count + 1);
 }
 
 static Function *bound_method(ResolverState *state, const Type *base, String *name, Span span) {
@@ -2029,6 +2018,8 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
 
     state->env.scope = params;
 
+    InterfaceDecl *interface = arena_alloc(arena, sizeof(InterfaceDecl));
+
     FuncDecl **methods = count > 0 ? arena_alloc(arena, count * sizeof(FuncDecl *)) : NULL;
 
     for (size_t i = 0; i < count; i++) {
@@ -2037,6 +2028,7 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
         FuncDecl *decl = arena_alloc(arena, sizeof(FuncDecl));
         *decl = (FuncDecl){
             .id = {.name = signature->func_decl.name->name},
+            .interface = interface,
             .linkage = LINKAGE_INTERNAL,
             .type_param_count = param_count + 1,
             .signature = {.return_type =
@@ -2060,8 +2052,6 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
     }
 
     state->env = saved;
-
-    InterfaceDecl *interface = arena_alloc(arena, sizeof(InterfaceDecl));
 
     *interface = (InterfaceDecl){
         .id = {.module = state->module_name, .name = name},

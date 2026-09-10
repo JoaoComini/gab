@@ -43,8 +43,8 @@ static Function *subst_callee(Instantiation *in, Function *callee) {
         return callee;
     }
 
-    if (callee->bound_self) {
-        const Type *self = subst_type(in, callee->bound_self);
+    if (callee->decl->interface && callee->type_arg_count > 0) {
+        const Type *self = subst_type(in, callee->type_args[0].type);
 
         Function *owned = function_registry_owned_for(in->functions, self, callee->decl->id.name);
 

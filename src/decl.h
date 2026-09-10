@@ -87,6 +87,8 @@ typedef struct TypeParamBound {
 typedef struct FuncDecl {
     DeclId id;
 
+    const InterfaceDecl *interface;
+
     Linkage linkage;
 
     unsigned modifiers;
@@ -107,8 +109,6 @@ typedef struct Function {
 
     const TypeArg *type_args;
     size_t type_arg_count;
-
-    const Type *bound_self;
 
     uint32_t borrowed_params;
     bool borrowed_params_known;
