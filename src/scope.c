@@ -66,8 +66,7 @@ const Type *symbol_type(TypeRegistry *registry, const Symbol *symbol) {
 
     switch (symbol->kind) {
     case SYMBOL_TYPE:
-    case SYMBOL_TYPE_ARG:
-        return symbol->type_arg.kind == TYPE_ARG_TYPE ? symbol->type_arg.type : NULL;
+        return symbol->type;
 
     /* A generic names a type only once its arguments are given, but one taking none names itself. */
     case SYMBOL_TYPE_DECL:
@@ -133,12 +132,15 @@ static bool scope_bind(Scope *scope, String *name, Symbol shape) {
 bool scope_bind_type(Scope *scope, String *name, const Type *type) {
     assert(type_names_itself(type) && "a nominal name binds to what it declares");
 
-    return scope_bind(scope, name,
-                      (Symbol){.kind = SYMBOL_TYPE, .type_arg = {.kind = TYPE_ARG_TYPE, .type = type}});
+    return scope_bind(scope, name, (Symbol){.kind = SYMBOL_TYPE, .type = type});
 }
 
-bool scope_bind_type_arg(Scope *scope, String *name, TypeArg arg) {
-    return scope_bind(scope, name, (Symbol){.kind = SYMBOL_TYPE_ARG, .type_arg = arg});
+bool scope_bind_type_param(Scope *scope, String *name, const Type *type) {
+    return scope_bind(scope, name, (Symbol){.kind = SYMBOL_TYPE, .type = type});
+}
+
+bool scope_bind_const(Scope *scope, String *name, TypeConst constant) {
+    return scope_bind(scope, name, (Symbol){.kind = SYMBOL_CONST, .constant = constant});
 }
 
 bool scope_bind_type_decl(Scope *scope, String *name, const TypeDecl *decl) {

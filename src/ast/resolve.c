@@ -2046,11 +2046,11 @@ static BoundKind bound_kind_of(const TypeRegistry *registry, StringPool *strings
 
 static bool bind_type_param(TypeRegistry *registry, Scope *params, String *name, size_t index,
                             BoundKind kind) {
-    TypeArg arg = kind == BOUND_VALUE
-                      ? (TypeArg){.kind = TYPE_ARG_CONST, .constant = {.kind = CONST_PARAM, .param = index}}
-                      : (TypeArg){.kind = TYPE_ARG_TYPE, .type = type_registry_param(registry, index)};
+    if (kind == BOUND_VALUE) {
+        return scope_bind_const(params, name, (TypeConst){.kind = CONST_PARAM, .param = index});
+    }
 
-    return scope_bind_type_arg(params, name, arg);
+    return scope_bind_type_param(params, name, type_registry_param(registry, index));
 }
 
 /* A length is written as a literal, or named as the value parameter a generic declaration takes. */
@@ -2066,8 +2066,8 @@ static bool resolve_array_length(ResolverState *state, TypeExpr *expr, Span span
         Scope *scope = resolver_expr_scope(state, expr->name);
         Symbol *symbol = resolver_resolve_name(state, scope, resolver_expr_member(state, expr->name));
 
-        if (symbol && symbol->kind == SYMBOL_TYPE_ARG && symbol->type_arg.kind == TYPE_ARG_CONST) {
-            *out = symbol->type_arg;
+        if (symbol && symbol->kind == SYMBOL_CONST) {
+            *out = (TypeArg){.kind = TYPE_ARG_CONST, .constant = symbol->constant};
             return true;
         }
     }
@@ -2569,8 +2569,7 @@ static void enter_owner_scope(ResolverState *state, TypeExpr *owner, TypeExpr *c
     const Type *self = resolve_type_expr(state, owner, (Span){0});
 
     if (!is_error_type(self)) {
-        scope_bind_type_arg(params, resolver_names(state)->self,
-                            (TypeArg){.kind = TYPE_ARG_TYPE, .type = self});
+        scope_bind_type_param(params, resolver_names(state)->self, self);
     }
 }
 

@@ -38,14 +38,14 @@ typedef enum {
     /* What an import binds, so naming the module is the same lookup as naming anything else. */
     SYMBOL_MODULE,
 
-    /* A type this scope declares, which names itself. */
+    /* A type: one this scope declares, or the parameter standing for one inside a generic. */
     SYMBOL_TYPE,
+
+    /* A value a generic takes rather than a type, such as the 'N' in 'array<T, N>'. */
+    SYMBOL_CONST,
 
     /* A generic's declaration, which names a type only once its arguments are given. */
     SYMBOL_TYPE_DECL,
-
-    /* A type parameter, which stands for a type or for the value 'array<T, N>' takes for its length. */
-    SYMBOL_TYPE_ARG,
 
     SYMBOL_INTERFACE,
 } SymbolKind;
@@ -64,9 +64,11 @@ typedef struct Symbol {
 
         Module *module;
 
-        const TypeDecl *type_decl;
+        const Type *type;
 
-        TypeArg type_arg;
+        TypeConst constant;
+
+        const TypeDecl *type_decl;
 
         InterfaceDecl *interface;
     };
@@ -135,7 +137,11 @@ void scope_withdraw(Scope *scope, String *name);
 
 /* Each binds 'name' to what it names, and answers false where the scope already binds that name. */
 bool scope_bind_type(Scope *scope, String *name, const Type *type);
-bool scope_bind_type_arg(Scope *scope, String *name, TypeArg arg);
+
+/* A generic's parameter: the type standing for one inside its body, or the value it takes instead.
+ * Unlike a declared type, a parameter names nothing of its own until an argument is given for it. */
+bool scope_bind_type_param(Scope *scope, String *name, const Type *type);
+bool scope_bind_const(Scope *scope, String *name, TypeConst constant);
 bool scope_bind_type_decl(Scope *scope, String *name, const TypeDecl *decl);
 bool scope_bind_interface(Scope *scope, String *name, InterfaceDecl *interface);
 bool scope_bind_module(Scope *scope, String *name, Module *module);
