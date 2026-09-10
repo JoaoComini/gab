@@ -49,6 +49,12 @@ void fact_set_constant(Facts *facts, const ASTExpr *expr, Constant constant) {
     fact->has_constant = true;
 }
 
+void fact_set_field(Facts *facts, const ASTExpr *expr, size_t field) { fact_mut(facts, expr)->field = field; }
+
+void fact_set_initialized_field(Facts *facts, const ASTExpr *value, size_t field) {
+    fact_mut(facts, value)->initialized_field = field;
+}
+
 void fact_set_return_type(Facts *facts, const ASTStmt *stmt, const Type *type) {
     const Type **slot = stmt_fact_lookup(&facts->returns, stmt);
 
@@ -98,6 +104,18 @@ CallKind fact_call_kind(const Facts *facts, const ASTExpr *expr) {
     const ExprFact *fact = fact_of(facts, expr);
 
     return fact ? fact->call : CALL_FUNCTION;
+}
+
+size_t fact_field_of(const Facts *facts, const ASTExpr *expr) {
+    const ExprFact *fact = fact_of(facts, expr);
+
+    return fact ? fact->field : 0;
+}
+
+size_t fact_initialized_field_of(const Facts *facts, const ASTExpr *value) {
+    const ExprFact *fact = fact_of(facts, value);
+
+    return fact ? fact->initialized_field : 0;
 }
 
 Adjustment fact_adjustment(const Facts *facts, const ASTExpr *expr) {

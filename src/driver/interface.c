@@ -257,25 +257,12 @@ static void print_expr(FILE *out, const Facts *facts, const ASTExpr *expr) {
 
         return;
 
-    /* Resolution answers a written form with a shape of its own, which is printed as it was written:
-     * what a reader parses must be the source, not the tree the resolver left. */
     case EXPR_CALL: {
-        CallKind kind = fact_call_kind(facts, expr);
-
         /* A conversion names a type where a call names a function, so the type alone is written. */
-        if (kind == CALL_CONVERSION && expr->call.target && expr->call.target->kind == EXPR_VARIABLE &&
-            expr->call.target->var.owner_type_expr) {
+        if (fact_call_kind(facts, expr) == CALL_CONVERSION && expr->call.target &&
+            expr->call.target->kind == EXPR_VARIABLE && expr->call.target->var.owner_type_expr) {
             print_type(out, expr->call.target->var.owner_type_expr);
             print_args(out, facts, &expr->call.args, 0);
-            return;
-        }
-
-        if (kind == CALL_METHOD && expr->call.args.size > 0) {
-            const Function *callee = fact_callee_of(facts, expr);
-
-            print_expr(out, facts, expr->call.args.data[0]);
-            fprintf(out, ".%s", callee ? callee->decl->id.name->data : "");
-            print_args(out, facts, &expr->call.args, 1);
             return;
         }
 
@@ -301,23 +288,10 @@ static void print_expr(FILE *out, const Facts *facts, const ASTExpr *expr) {
         print_expr(out, facts, expr->unary.target);
         return;
 
-    case EXPR_DEREF: {
-        const ASTExpr *inner = expr->unary.target;
-
-        /* 'xs[i]' resolves to the call its element's 'Index' names, and is written back as the index. */
-        if (inner && inner->kind == EXPR_CALL && fact_call_kind(facts, inner) == CALL_INDEX &&
-            inner->call.args.size == 2) {
-            print_expr(out, facts, inner->call.args.data[0]);
-            fputc('[', out);
-            print_expr(out, facts, inner->call.args.data[1]);
-            fputc(']', out);
-            return;
-        }
-
+    case EXPR_DEREF:
         fputc('*', out);
         print_expr(out, facts, expr->unary.target);
         return;
-    }
 
     case EXPR_NEG:
         fprintf(out, "-");

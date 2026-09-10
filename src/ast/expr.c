@@ -52,7 +52,6 @@ ASTExpr *ast_field_expr_create(Arena *arena, Span span, ASTExpr *target, StringR
     node->kind = EXPR_FIELD;
     node->field.target = target;
     node->field.name = name;
-    node->field.index = 0;
     return node;
 }
 

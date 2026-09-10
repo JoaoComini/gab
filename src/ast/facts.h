@@ -69,6 +69,13 @@ typedef struct {
     /* What the expression was found to be worth, where resolution could answer it outright. */
     Constant constant;
 
+    /* Which field of its struct a field access names. */
+    size_t field;
+
+    /* Which field of its struct an initializer fills. An initializer's value is a node of its own,
+     * so it is kept apart from 'field': the same node is both where it names one and fills another. */
+    size_t initialized_field;
+
     CallKind call;
 
     bool moves;
@@ -95,6 +102,8 @@ void fact_set_moves(Facts *facts, const ASTExpr *expr, bool moves);
 void fact_set_adjustment(Facts *facts, const ASTExpr *expr, Adjustment adjustment);
 void fact_set_call_kind(Facts *facts, const ASTExpr *expr, CallKind kind);
 void fact_set_constant(Facts *facts, const ASTExpr *expr, Constant constant);
+void fact_set_field(Facts *facts, const ASTExpr *expr, size_t field);
+void fact_set_initialized_field(Facts *facts, const ASTExpr *value, size_t field);
 void fact_set_return_type(Facts *facts, const ASTStmt *stmt, const Type *type);
 
 /* Everything concluded about one expression, or nothing where resolution reached none of it. */
@@ -113,6 +122,12 @@ Adjustment fact_adjustment(const Facts *facts, const ASTExpr *expr);
 
 /* What a call names; a call resolution rejected never reaches a stage that asks. */
 CallKind fact_call_kind(const Facts *facts, const ASTExpr *expr);
+
+/* Which field of its struct a field access names. */
+size_t fact_field_of(const Facts *facts, const ASTExpr *expr);
+
+/* Which field of its struct an initializer fills. */
+size_t fact_initialized_field_of(const Facts *facts, const ASTExpr *value);
 
 /* The type a value has once its coercion is applied, which is its own where it has none. */
 const Type *fact_adjusted_type_of(const Facts *facts, const ASTExpr *expr);

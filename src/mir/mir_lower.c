@@ -36,6 +36,7 @@ typedef struct {
 } Lowering;
 
 static MIRValueId lower_expr(Lowering *lowering, ASTExpr *expr);
+static MIRValueId lower_call(Lowering *lowering, ASTExpr *expr);
 static void lower_stmt(Lowering *lowering, ASTStmt *stmt);
 static void lower_struct_lit_into(Lowering *lowering, ASTExpr *expr, Place base);
 static MIRValueId lower_location_of(Lowering *lowering, const Type *type, Span span);
@@ -227,6 +228,40 @@ static MIRValueId lower_load_from(Lowering *lowering, Place place, const Type *t
 
 static Place lower_place(Lowering *lowering, ASTExpr *expr);
 
+/* The arguments the source wrote, which an indexing reaches as the one between its brackets. A
+ * receiver is not among them: it is held beside the call and passed ahead of them. */
+static size_t call_arg_count(const ASTExpr *expr) {
+    return expr->kind == EXPR_INDEX ? 1 : expr->call.args.size;
+}
+
+static ASTExpr *call_arg(const ASTExpr *expr, size_t i) {
+    return expr->kind == EXPR_INDEX ? expr->index.index : expr->call.args.data[i];
+}
+
+/* The value a call is written on, which its written form already names: what an indexing indexes,
+ * and what a method call reaches its method through. Null where the call stands on nothing. */
+static ASTExpr *call_receiver(const Lowering *lowering, const ASTExpr *expr) {
+    switch (fact_call_kind(lowering->facts, expr)) {
+    case CALL_INDEX:
+        return expr->index.target;
+    case CALL_METHOD:
+        return expr->call.target->field.target;
+    default:
+        return NULL;
+    }
+}
+
+/* What the call answers with, which an indexing reads through rather than being. */
+static const Type *call_result_type(Lowering *lowering, const ASTExpr *expr) {
+    Function *callee = fact_callee_of(lowering->facts, expr);
+
+    if (expr->kind == EXPR_INDEX) {
+        return callee->signature.return_type;
+    }
+
+    return fact_type_of(lowering->facts, expr);
+}
+
 /* Checks the index against the container, then names the element the check guarantees is there. */
 static Place lower_indexed_place(Lowering *lowering, ASTExpr *target, ASTExpr *index_expr,
                                  const Type *element, Span span) {
@@ -281,7 +316,7 @@ static Place lower_place(Lowering *lowering, ASTExpr *expr) {
 
         return mir_place_project(lowering->ir, place,
                                  (Projection){.kind = PROJ_FIELD,
-                                              .field = {(uint32_t)expr->field.index},
+                                              .field = {(uint32_t)fact_field_of(lowering->facts, expr)},
                                               .type = fact_type_of(lowering->facts, expr)});
     }
 
@@ -294,6 +329,13 @@ static Place lower_place(Lowering *lowering, ASTExpr *expr) {
     }
 
     case EXPR_INDEX:
+        /* Indexing what supplies 'Index' is the call it names, read through what the call lends. */
+        if (fact_call_kind(lowering->facts, expr) == CALL_INDEX) {
+            return mir_place_project(
+                lowering->ir, mir_place_of(lower_call(lowering, expr), NULL),
+                (Projection){.kind = PROJ_DEREF, .type = fact_type_of(lowering->facts, expr)});
+        }
+
         return lower_indexed_place(lowering, expr->index.target, expr->index.index,
                                    fact_type_of(lowering->facts, expr), expr->span);
 
@@ -421,12 +463,11 @@ static MIRValueId lower_bin_op(Lowering *lowering, ASTExpr *expr) {
 /* An intrinsic stands for instructions rather than a body, so the call never survives lowering. */
 static bool lower_intrinsic_call(Lowering *lowering, ASTExpr *expr, MIRValueId *out) {
     Function *callee = fact_callee_of(lowering->facts, expr);
+    ASTExpr *receiver = call_receiver(lowering, expr);
 
-    if (!callee || !(callee->decl->modifiers & FUNC_MOD_INTRINSIC) || expr->call.args.size == 0) {
+    if (!callee || !(callee->decl->modifiers & FUNC_MOD_INTRINSIC) || !receiver) {
         return false;
     }
-
-    ASTExpr *receiver = expr->call.args.data[0];
 
     /* Characters and the bytes naming them are the same address and count, so the view is the value. */
     if (type_is_str_ref(fact_type_of(lowering->facts, receiver))) {
@@ -448,7 +489,7 @@ static bool lower_intrinsic_call(Lowering *lowering, ASTExpr *expr, MIRValueId *
         return true;
     }
 
-    if (expr->call.args.size == 1) {
+    if (call_arg_count(expr) == 0) {
         const Type *base = fact_type_of(lowering->facts, receiver);
 
         while (type_is_indirect(base)) {
@@ -506,15 +547,15 @@ static bool lower_intrinsic_call(Lowering *lowering, ASTExpr *expr, MIRValueId *
                           : type_kind(container) == TYPE_RAW ? type_pointee(container)
                                                              : type_slice_element(container);
 
-    Place place = lower_indexed_place(lowering, receiver, expr->call.args.data[1], element, expr->span);
+    Place place = lower_indexed_place(lowering, receiver, call_arg(expr, 0), element, expr->span);
 
-    MIRValueId result = lower_temp(lowering, fact_type_of(lowering->facts, expr), expr->span);
+    /* The intrinsic lends the element, so what it answers with is the reference, not the element. */
+    const Type *lent = call_result_type(lowering, expr);
 
-    emit(lowering, (MIRInst){.op = MIR_REF,
-                             .type = fact_type_of(lowering->facts, expr),
-                             .result = result,
-                             .place = place,
-                             .span = expr->span});
+    MIRValueId result = lower_temp(lowering, lent, expr->span);
+
+    emit(lowering,
+         (MIRInst){.op = MIR_REF, .type = lent, .result = result, .place = place, .span = expr->span});
 
     *out = result;
 
@@ -523,7 +564,7 @@ static bool lower_intrinsic_call(Lowering *lowering, ASTExpr *expr, MIRValueId *
 
 static MIRValueId lower_call(Lowering *lowering, ASTExpr *expr) {
     /* A builtin's call is the builtin: it names no function and emits no call. */
-    if (expr->call.target && expr->call.target->kind == EXPR_BUILTIN) {
+    if (expr->kind == EXPR_CALL && expr->call.target && expr->call.target->kind == EXPR_BUILTIN) {
         return lower_expr(lowering, expr->call.target);
     }
 
@@ -551,12 +592,20 @@ static MIRValueId lower_call(Lowering *lowering, ASTExpr *expr) {
     /* A 'caller' callee is handed where the call is, which forwards where the caller is itself one. */
     bool passes_line = callee && (callee->decl->modifiers & FUNC_MOD_CALLER);
 
-    size_t count = expr->call.args.size;
+    /* A method's receiver is the argument its declaration takes first, ahead of the written ones. */
+    ASTExpr *receiver = call_receiver(lowering, expr);
+
+    size_t written = call_arg_count(expr);
+    size_t count = written + (receiver ? 1 : 0);
 
     MIROperand *args = mir_args_alloc(lowering->ir, count + (passes_line ? 1 : 0));
 
-    for (size_t i = 0; i < count; i++) {
-        args[i] = mir_operand_value(lower_expr(lowering, expr->call.args.data[i]));
+    if (receiver) {
+        args[0] = mir_operand_value(lower_expr(lowering, receiver));
+    }
+
+    for (size_t i = 0; i < written; i++) {
+        args[i + (receiver ? 1 : 0)] = mir_operand_value(lower_expr(lowering, call_arg(expr, i)));
     }
 
     if (passes_line) {
@@ -569,10 +618,12 @@ static MIRValueId lower_call(Lowering *lowering, ASTExpr *expr) {
         args[count++] = mir_operand_value(location);
     }
 
-    MIRValueId result = lower_temp(lowering, fact_type_of(lowering->facts, expr), expr->span);
+    const Type *answered = call_result_type(lowering, expr);
+
+    MIRValueId result = lower_temp(lowering, answered, expr->span);
 
     emit(lowering, (MIRInst){.op = MIR_CALL,
-                             .type = fact_type_of(lowering->facts, expr),
+                             .type = answered,
                              .result = result,
                              .args = args,
                              .arg_count = count,
@@ -587,10 +638,11 @@ static void lower_struct_lit_into(Lowering *lowering, ASTExpr *expr, Place base)
     for (size_t i = 0; i < expr->struct_lit.fields.size; i++) {
         const ASTFieldInit *init = &expr->struct_lit.fields.data[i];
 
-        Place field = mir_place_project(lowering->ir, base,
-                                        (Projection){.kind = PROJ_FIELD,
-                                                     .field = {(uint32_t)init->index},
-                                                     .type = fact_type_of(lowering->facts, init->value)});
+        Place field = mir_place_project(
+            lowering->ir, base,
+            (Projection){.kind = PROJ_FIELD,
+                         .field = {(uint32_t)fact_initialized_field_of(lowering->facts, init->value)},
+                         .type = fact_type_of(lowering->facts, init->value)});
 
         /* A literal inside a literal fills its own field, so each stays its own tracked place. */
         if (init->value->kind == EXPR_STRUCT_LIT) {

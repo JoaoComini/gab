@@ -82,8 +82,6 @@ typedef struct {
     StringRef name;
     ASTExpr *value;
     Span span;
-
-    size_t index;
 } ASTFieldInit;
 
 GAB_LIST(ASTFieldInitList, ast_field_init_list, ASTFieldInit)
@@ -135,8 +133,6 @@ typedef struct ASTExpr {
         struct {
             ASTExpr *target;
             StringRef name;
-
-            size_t index;
         } field;
 
         struct {

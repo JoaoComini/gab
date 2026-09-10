@@ -411,27 +411,40 @@ static bool borrow_into(ResolverState *state, ASTExpr *expr, const Type *destina
 static void adjust_derefs(ResolverState *state, Adjustment *adjustment, const Type *from, unsigned int count);
 static void mark_implicit_move(ResolverState *state, ASTExpr *value, const Type *destination, Span span);
 
+/* The arguments the source wrote, which an indexing spells as the one between its brackets. A
+ * receiver is not among them, being held beside the call rather than written as an argument. */
+static size_t written_arg_count(const ASTExpr *expr) {
+    return expr->kind == EXPR_INDEX ? 1 : expr->call.args.size;
+}
+
+static ASTExpr *written_arg(const ASTExpr *expr, size_t i) {
+    return expr->kind == EXPR_INDEX ? expr->index.index : expr->call.args.data[i];
+}
+
+/* 'written' is what the source spells; a method's receiver is checked apart from them, so it numbers
+ * the arguments the way they were written rather than the way they are passed. */
+static void check_call_arg(ResolverState *state, ASTExpr *arg, const Type *param_type, size_t written) {
+    if (is_error_type(fact_type_of(state->facts, arg)) || is_error_type(param_type)) {
+        return;
+    }
+
+    if (!type_accepts(state->types, param_type, fact_adjusted_type_of(state->facts, arg))) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, arg->span, "argument %zu is %s, but %s was declared",
+                   written, type_name(state, fact_adjusted_type_of(state->facts, arg)),
+                   type_name(state, param_type));
+        return;
+    }
+
+    if (!borrow_into(state, arg, param_type, arg->span)) {
+        return;
+    }
+
+    mark_implicit_move(state, arg, param_type, arg->span);
+}
+
 static void check_call_args(ResolverState *state, ASTExprList *args, const Type **params) {
     for (size_t i = 0; i < args->size; i++) {
-        ASTExpr *arg = args->data[i];
-        const Type *param_type = params[i];
-
-        if (is_error_type(fact_type_of(state->facts, arg)) || is_error_type(param_type)) {
-            continue;
-        }
-
-        if (!type_accepts(state->types, param_type, fact_adjusted_type_of(state->facts, arg))) {
-            diag_error(state->diagnostics, GAB_ERR_TYPE, arg->span, "argument %zu is %s, but %s was declared",
-                       i + 1, type_name(state, fact_adjusted_type_of(state->facts, arg)),
-                       type_name(state, param_type));
-            continue;
-        }
-
-        if (!borrow_into(state, args->data[i], param_type, arg->span)) {
-            continue;
-        }
-
-        mark_implicit_move(state, args->data[i], param_type, arg->span);
+        check_call_arg(state, args->data[i], params[i], i + 1);
     }
 }
 
@@ -446,40 +459,39 @@ typedef struct {
     int32_t unsize_length;
 } ReceiverAdjustment;
 
-static void lower_method_call(ResolverState *state, Arena *arena, ASTExpr *expr, Function *method,
-                              ReceiverAdjustment adjustment) {
-    ASTExpr *target = expr->call.target;
-
-    ASTExpr *receiver = target->field.target;
-
-    target->field.target = NULL;
-
-    if (adjustment.unsize_length > 0 || adjustment.address_of || adjustment.derefs > 0) {
-        Adjustment coercion = {.kind = adjustment.unsize_length > 0 ? ADJUST_UNSIZE
-                                       : adjustment.address_of      ? ADJUST_BORROW
-                                                                    : ADJUST_NONE,
-                               .to = method->signature.params[0],
-                               .length = adjustment.unsize_length};
-
-        adjust_derefs(state, &coercion, fact_type_of(state->facts, receiver),
-                      (unsigned int)adjustment.derefs);
-
-        if (coercion.kind == ADJUST_NONE) {
-            coercion.to = coercion.deref_types[coercion.derefs - 1];
-        }
-
-        fact_set_adjustment(state->facts, receiver, coercion);
+/* How the receiver reaches the type the method declares, which lowering applies where it emits it. */
+static void record_receiver_adjustment(ResolverState *state, ASTExpr *receiver, const Function *method,
+                                       ReceiverAdjustment adjustment) {
+    if (adjustment.unsize_length == 0 && !adjustment.address_of && adjustment.derefs == 0) {
+        return;
     }
 
-    ASTExprList args = ast_expr_list_create(arena_allocator(arena));
-    ast_expr_list_add(&args, receiver);
+    Adjustment coercion = {.kind = adjustment.unsize_length > 0 ? ADJUST_UNSIZE
+                                   : adjustment.address_of      ? ADJUST_BORROW
+                                                                : ADJUST_NONE,
+                           .to = method->signature.params[0],
+                           .length = adjustment.unsize_length};
 
-    for (size_t i = 0; i < expr->call.args.size; i++) {
-        ast_expr_list_add(&args, expr->call.args.data[i]);
+    adjust_derefs(state, &coercion, fact_type_of(state->facts, receiver), (unsigned int)adjustment.derefs);
+
+    if (coercion.kind == ADJUST_NONE) {
+        coercion.to = coercion.deref_types[coercion.derefs - 1];
     }
 
-    expr->call.target = NULL;
-    expr->call.args = args;
+    fact_set_adjustment(state->facts, receiver, coercion);
+}
+
+/* What the call names, which lowering reads: the receiver stands as the first argument where it is
+ * emitted, and the tree keeps the shape the source was written in. */
+static void resolve_as_method_call(ResolverState *state, ASTExpr *expr, Function *method,
+                                   ReceiverAdjustment adjustment) {
+    ASTExpr *receiver = expr->call.target->field.target;
+
+    record_receiver_adjustment(state, receiver, method, adjustment);
+
+    /* An owning receiver is given away by the call, as an owning parameter is by an argument. */
+    mark_implicit_move(state, receiver, method->signature.params[0], receiver->span);
+
     fact_set_callee(state->facts, expr, method);
     fact_set_call_kind(state->facts, expr, CALL_METHOD);
 }
@@ -639,21 +651,22 @@ static bool infer_call_args(ResolverState *state, ASTExpr *expr, Function *funct
                             size_t fixed, size_t self_params) {
     size_t owed = function->decl->type_param_count;
 
-    if (expr->call.args.size + self_params != function->signature.param_count) {
+    size_t written = written_arg_count(expr);
+
+    if (written + self_params != function->signature.param_count) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "expected %zu argument(s), found %zu",
-                   function->signature.param_count - self_params, expr->call.args.size);
+                   function->signature.param_count - self_params, written);
         return false;
     }
 
-    for (size_t i = 0; i < expr->call.args.size; i++) {
-        resolve_expr(state, expr->call.args.data[i], NULL);
+    for (size_t i = 0; i < written; i++) {
+        const Type *argument = resolve_expr(state, written_arg(expr, i), NULL);
 
-        if (is_error_type(fact_type_of(state->facts, expr->call.args.data[i]))) {
+        if (is_error_type(argument)) {
             return false;
         }
 
-        infer_type_args(function->signature.params[i + self_params],
-                        fact_type_of(state->facts, expr->call.args.data[i]), args, owed);
+        infer_type_args(function->signature.params[i + self_params], argument, args, owed);
     }
 
     for (size_t i = fixed; i < owed; i++) {
@@ -876,55 +889,65 @@ static Function *find_method(ResolverState *state, const Type *receiver, String 
     return method;
 }
 
-/* 'xs[i]' on an implementor of 'Index' is '*xs.index(i)', which the method call path then resolves. */
-static void rewrite_index_as_call(ResolverState *state, ASTExpr *expr) {
-    Arena *arena = state->compile_arena;
+/* 'xs[i]' on an implementor of 'Index' is 'xs.index(i)' read through, which is concluded here rather
+ * than written into the tree: the call the element's 'Index' names is what lowering emits. */
+static const Type *resolve_index_through_interface(ResolverState *state, ASTExpr *expr) {
     Span span = expr->span;
 
     ASTExpr *target = expr->index.target;
-    ASTExpr *index = expr->index.index;
+    const Type *target_type = fact_type_of(state->facts, target);
 
-    ASTExpr *method = ast_field_expr_create(arena, span, target, string_ref_create("index"));
+    String *name = string_from_cstr(state->strings, "index");
 
-    ASTExprList args = ast_expr_list_create(arena_allocator(arena));
-    ast_expr_list_add(&args, index);
+    const Type *base = NULL;
+    Function *method = find_method(state, target_type, name, span, &base);
 
-    ASTExpr *call = ast_call_expr_create(arena, span, method, args);
-
-    expr->kind = EXPR_DEREF;
-    expr->unary.target = call;
-
-    fact_set_call_kind(state->facts, call, CALL_INDEX);
-
-    /* The rewrite is an implementation detail, so a missing method is reported as the missing interface. */
-    size_t errors_before = diagnostics_count(state->diagnostics);
-
-    if (!find_method(state, fact_type_of(state->facts, target), string_from_cstr(state->strings, "index"),
-                     span, NULL)) {
+    /* Reaching the method is an implementation detail, so a missing one is reported as the interface. */
+    if (!method) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, span, "%s is indexed with '[]' by implementing 'Index'",
-                   type_name(state, fact_type_of(state->facts, target)));
-        fact_set_type(state->facts, expr, resolver_error_type(state));
-        return;
+                   type_name(state, target_type));
+        return resolver_error_type(state);
     }
 
-    resolve_expr(state, call, NULL);
+    method = specialize_method_call(state, expr, method, base);
 
-    if (is_error_type(fact_type_of(state->facts, call)) ||
-        diagnostics_count(state->diagnostics) > errors_before) {
-        fact_set_type(state->facts, expr, resolver_error_type(state));
-        return;
+    if (!method) {
+        return resolver_error_type(state);
     }
 
-    if (type_kind(fact_type_of(state->facts, call)) != TYPE_REF) {
+    if (method->signature.param_count != 2) {
+        diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'index' of %s takes %zu argument(s), not one",
+                   type_name(state, target_type), method->signature.param_count);
+        return resolver_error_type(state);
+    }
+
+    ReceiverAdjustment adjustment;
+
+    if (!reconcile_receiver(state, expr, target, method->signature.params[0], target_type, name,
+                            &adjustment)) {
+        return resolver_error_type(state);
+    }
+
+    record_receiver_adjustment(state, target, method, adjustment);
+
+    mark_implicit_move(state, target, method->signature.params[0], target->span);
+
+    check_call_arg(state, expr->index.index, method->signature.params[1], 1);
+
+    fact_set_callee(state->facts, expr, method);
+    fact_set_call_kind(state->facts, expr, CALL_INDEX);
+
+    const Type *lent = method->signature.return_type;
+
+    if (type_kind(lent) != TYPE_REF) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, span,
-                   "'index' of %s returns %s rather than lending an element",
-                   type_name(state, fact_type_of(state->facts, target)),
-                   type_name(state, fact_type_of(state->facts, call)));
-        fact_set_type(state->facts, expr, resolver_error_type(state));
-        return;
+                   "'index' of %s returns %s rather than lending an element", type_name(state, target_type),
+                   type_name(state, lent));
+        return resolver_error_type(state);
     }
 
-    fact_set_type(state->facts, expr, type_pointee(fact_type_of(state->facts, call)));
+    /* The element is read through what 'index' lends, so indexing answers with what it points at. */
+    return type_pointee(lent);
 }
 
 /* A declaration is an intrinsic only where this names one of these, so the two cannot drift. */
@@ -1011,21 +1034,18 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         return;
     }
 
+    resolve_as_method_call(state, expr, method, adjustment);
+
+    /* The receiver stands as parameter zero, so the written arguments answer for the rest. */
+    check_call_args(state, &expr->call.args, method->signature.params + 1);
+
     /* An intrinsic type-checks as the call it is written as, and lowering expands it. */
     if (method->decl->modifiers & FUNC_MOD_INTRINSIC) {
-        lower_method_call(state, state->compile_arena, expr, method, adjustment);
-
-        check_call_args(state, &expr->call.args, method->signature.params);
-
         fact_set_type(state->facts, expr,
                       type_registry_substitute(state->types, method->signature.return_type, type_args(base),
                                                type_arg_count(base)));
         return;
     }
-
-    lower_method_call(state, state->compile_arena, expr, method, adjustment);
-
-    check_call_args(state, &expr->call.args, method->signature.params);
 
     fact_set_type(state->facts, expr, method->signature.return_type);
 }
@@ -1571,8 +1591,7 @@ static const Type *resolve_expr_kind(ResolverState *state, ASTExpr *expr, const 
 
         /* An array indexes inline, against the length its type carries; anything else supplies 'Index'. */
         if (type_kind(target_type) != TYPE_ARRAY) {
-            rewrite_index_as_call(state, expr);
-            return fact_type_of(state->facts, expr);
+            return resolve_index_through_interface(state, expr);
         }
 
         if (index_type != type_registry_get_primitive(state->types, TYPE_I32)) {
@@ -1610,7 +1629,8 @@ static const Type *resolve_expr_kind(ResolverState *state, ASTExpr *expr, const 
             return resolver_error_type(state);
         }
 
-        expr->field.index = (size_t)(field - type_registry_fields_of(state->types, target_type)->fields);
+        fact_set_field(state->facts, expr,
+                       (size_t)(field - type_registry_fields_of(state->types, target_type)->fields));
 
         return field->type;
     }
@@ -1762,7 +1782,7 @@ static const Type *resolve_expr_kind(ResolverState *state, ASTExpr *expr, const 
             }
 
             seen[index] = true;
-            init->index = index;
+            fact_set_initialized_field(state->facts, init->value, index);
 
             const Type *field_type = fields->fields[index].type;
 
