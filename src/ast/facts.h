@@ -3,8 +3,8 @@
 
 #include "ast/expr.h"
 #include "ast/stmt.h"
-#include "decl.h"
 #include "constant.h"
+#include "decl.h"
 #include "memory/arena.h"
 #include "type/type.h"
 #include "util/hash_map.h"
@@ -35,7 +35,7 @@
 #define stmt_fact_key_equals(key, other) ((key) == (other))
 
 GAB_HASH_MAP(ExprTypeMap, expr_fact, const ASTExpr *, const Type *)
-GAB_HASH_MAP(ExprBindMap, expr_bind, const ASTExpr *, Binding *)
+GAB_HASH_MAP(ExprBindMap, expr_bind, const ASTExpr *, Symbol *)
 GAB_HASH_MAP(ExprCalleeMap, expr_callee, const ASTExpr *, Function *)
 GAB_HASH_MAP(ExprMoveMap, expr_move, const ASTExpr *, bool)
 GAB_HASH_MAP(ExprConstMap, expr_const, const ASTExpr *, Constant)
@@ -99,7 +99,7 @@ typedef struct Facts {
 void facts_init(Facts *facts, Arena *arena);
 
 void fact_set_type(Facts *facts, const ASTExpr *expr, const Type *type);
-void fact_set_use(Facts *facts, const ASTExpr *expr, Binding *binding);
+void fact_set_use(Facts *facts, const ASTExpr *expr, Symbol *binding);
 void fact_set_callee(Facts *facts, const ASTExpr *expr, Function *callee);
 void fact_set_moves(Facts *facts, const ASTExpr *expr, bool moves);
 void fact_set_adjustment(Facts *facts, const ASTExpr *expr, Adjustment adjustment);
@@ -108,7 +108,7 @@ void fact_set_constant(Facts *facts, const ASTExpr *expr, Constant constant);
 void fact_set_return_type(Facts *facts, const ASTStmt *stmt, const Type *type);
 
 const Type *fact_type_of(const Facts *facts, const ASTExpr *expr);
-Binding *fact_use_of(const Facts *facts, const ASTExpr *expr);
+Symbol *fact_use_of(const Facts *facts, const ASTExpr *expr);
 Function *fact_callee_of(const Facts *facts, const ASTExpr *expr);
 bool fact_moves(const Facts *facts, const ASTExpr *expr);
 
@@ -126,6 +126,6 @@ const Type *fact_adjusted_type_of(const Facts *facts, const ASTExpr *expr);
 const Type *fact_return_type_of(const Facts *facts, const ASTStmt *stmt);
 
 /* The local a place expression ultimately reads, or NULL where it does not name one. */
-Binding *fact_root_local(const Facts *facts, const ASTExpr *expr);
+Symbol *fact_root_local(const Facts *facts, const ASTExpr *expr);
 
 #endif

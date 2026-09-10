@@ -12,8 +12,8 @@
 #include <stdio.h>
 #include <string.h>
 
-static Binding *lookup(TestContext *ctx, Scope *scope, const char *name) {
-    return scope_binding_lookup(scope, string_from_cstr(&ctx->strings, name));
+static Symbol *lookup(TestContext *ctx, Scope *scope, const char *name) {
+    return scope_lookup(scope, string_from_cstr(&ctx->strings, name));
 }
 
 static const Type *field_type(TestContext *ctx, Scope *scope, const char *struct_name, const char *field) {
@@ -130,8 +130,8 @@ static void test_ref_pointers_are_interned() {
                                    "let b: &Node;\n");
     assert(declared);
 
-    Binding *a = scope_binding_lookup(declared, string_from_cstr(&ctx.strings, "a"));
-    Binding *b = scope_binding_lookup(declared, string_from_cstr(&ctx.strings, "b"));
+    Symbol *a = scope_lookup(declared, string_from_cstr(&ctx.strings, "a"));
+    Symbol *b = scope_lookup(declared, string_from_cstr(&ctx.strings, "b"));
 
     assert(a->var.type == b->var.type);
 

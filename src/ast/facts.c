@@ -28,7 +28,7 @@ void facts_init(Facts *facts, Arena *arena) {
     }
 
 FACT_SETTER(fact_set_type, expr_fact, types, const ASTExpr *, const Type *)
-FACT_SETTER(fact_set_use, expr_bind, uses, const ASTExpr *, Binding *)
+FACT_SETTER(fact_set_use, expr_bind, uses, const ASTExpr *, Symbol *)
 FACT_SETTER(fact_set_callee, expr_callee, callees, const ASTExpr *, Function *)
 FACT_SETTER(fact_set_moves, expr_move, moves, const ASTExpr *, bool)
 FACT_SETTER(fact_set_adjustment, expr_adjust, adjustments, const ASTExpr *, Adjustment)
@@ -52,8 +52,8 @@ const Type *fact_type_of(const Facts *facts, const ASTExpr *expr) {
     return type ? *type : NULL;
 }
 
-Binding *fact_use_of(const Facts *facts, const ASTExpr *expr) {
-    Binding **binding = expr_bind_lookup((ExprBindMap *)&facts->uses, expr);
+Symbol *fact_use_of(const Facts *facts, const ASTExpr *expr) {
+    Symbol **binding = expr_bind_lookup((ExprBindMap *)&facts->uses, expr);
 
     return binding ? *binding : NULL;
 }
@@ -94,7 +94,7 @@ const Type *fact_return_type_of(const Facts *facts, const ASTStmt *stmt) {
     return type ? *type : NULL;
 }
 
-Binding *fact_root_local(const Facts *facts, const ASTExpr *expr) {
+Symbol *fact_root_local(const Facts *facts, const ASTExpr *expr) {
     while (expr) {
         switch (expr->kind) {
         case EXPR_VARIABLE:

@@ -159,7 +159,7 @@ typedef struct {
     size_t projection_count;
 
     /* The local the base names, where it names one; NULL when the base is a computed address. */
-    Binding *binding;
+    Symbol *binding;
 } Place;
 
 /* Whether reading a place leaves it holding its value, which is what makes a read a move. */
@@ -218,7 +218,7 @@ typedef struct {
 typedef struct {
     const Type *type;
 
-    Binding *binding;
+    Symbol *binding;
 
     Span span;
 } MIRValueInfo;
@@ -257,7 +257,7 @@ bool mir_function_is_template(const MIRFunction *ir);
 MIRBlock *mir_block_create(MIRFunction *ir);
 MIRBlock *mir_block_at(const MIRFunction *ir, MIRBlockId id);
 
-MIRValueId mir_value_create(MIRFunction *ir, const Type *type, Binding *binding, Span span);
+MIRValueId mir_value_create(MIRFunction *ir, const Type *type, Symbol *binding, Span span);
 const MIRValueInfo *mir_value_info(const MIRFunction *ir, MIRValueId value);
 
 /* Appends an instruction, returning the one now owned by the block so a caller can fill its payload. */
@@ -265,7 +265,7 @@ MIRInst *mir_emit(MIRFunction *ir, MIRBlock *block, MIRInst inst);
 
 MIROperand *mir_args_alloc(MIRFunction *ir, size_t count);
 
-Place mir_place_of(MIRValueId base, Binding *binding);
+Place mir_place_of(MIRValueId base, Symbol *binding);
 Place mir_place_project(MIRFunction *ir, Place place, Projection projection);
 
 /* The place 'base[index]' names, hopping through a pointer where the container sits behind one. */

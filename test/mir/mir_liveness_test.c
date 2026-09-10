@@ -89,7 +89,7 @@ static void test_a_value_read_on_the_next_turn_is_live_across_the_back_edge(void
     for (size_t i = 0; i < lowered.ir->value_count; i++) {
         const MIRValueInfo *info = mir_value_info(lowered.ir, (MIRValueId){(uint32_t)i});
 
-        if (info->binding && info->binding->kind == BINDING_VAR) {
+        if (info->binding && info->binding->kind == SYMBOL_VAR) {
             counter = (MIRValueId){(uint32_t)i};
         }
     }

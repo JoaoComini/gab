@@ -15,7 +15,7 @@ typedef struct ASTField {
 
     Span span;
 
-    Binding *binding;
+    Symbol *binding;
 } ASTField;
 
 ASTField *ast_field_create(Arena *arena, Span span, StringRef name, TypeExpr *type_expr);
@@ -51,7 +51,7 @@ typedef struct {
     TypeExpr *type_expr;
     ASTExpr *initializer;
 
-    Binding *binding;
+    Symbol *binding;
 } ASTVarDecl;
 
 /* What was written before 'func'. Syntax, not a conclusion: what these mean for a symbol is decided

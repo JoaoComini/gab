@@ -14,23 +14,6 @@ typedef struct Scope Scope;
 
 typedef struct ASTStmt ASTStmt;
 
-typedef struct {
-    /* What the name binds: a type, or the value 'array<T, N>' names for its length. */
-    TypeArg arg;
-
-    const TypeDecl *decl;
-} TypeBinding;
-
-#define type_map_hash(key) (size_t)key
-#define type_map_key_equals(key, other) key == other
-
-GAB_HASH_MAP(TypeMap, type_map, String *, TypeBinding)
-
-#define interface_map_hash(key) (size_t)key
-#define interface_map_key_equals(key, other) key == other
-
-GAB_HASH_MAP(InterfaceMap, interface_map, String *, InterfaceDecl *)
-
 /* A module as another module sees it: what it is called and what it declares. What compiling it
  * concluded is the compiling module's own business, and does not survive into this. */
 typedef struct Module {
@@ -44,18 +27,31 @@ typedef struct Module {
 
 GAB_HASH_MAP(ModuleMap, module_map, String *, Module *)
 
-#define BINDING_TABLE_INITIAL_CAPACITY 8
+#define SYMBOL_TABLE_INITIAL_CAPACITY 8
 
+/* What a name denotes. One table holds them all, so a name means one thing in a scope however it was
+ * declared, and what kind of thing is what the lookup answers with. */
 typedef enum {
-    BINDING_VAR,
-    BINDING_FUNC,
+    SYMBOL_VAR,
+    SYMBOL_FUNC,
 
     /* What an import binds, so naming the module is the same lookup as naming anything else. */
-    BINDING_MODULE,
-} BindingKind;
+    SYMBOL_MODULE,
 
-typedef struct Binding {
-    BindingKind kind;
+    /* A type this scope declares, which names itself. */
+    SYMBOL_TYPE,
+
+    /* A generic's declaration, which names a type only once its arguments are given. */
+    SYMBOL_TYPE_DECL,
+
+    /* A type parameter, which stands for a type or for the value 'array<T, N>' takes for its length. */
+    SYMBOL_TYPE_ARG,
+
+    SYMBOL_INTERFACE,
+} SymbolKind;
+
+typedef struct Symbol {
+    SymbolKind kind;
 
     bool pinned;
 
@@ -67,13 +63,19 @@ typedef struct Binding {
         Function *func;
 
         Module *module;
+
+        const TypeDecl *type_decl;
+
+        TypeArg type_arg;
+
+        InterfaceDecl *interface;
     };
-} Binding;
+} Symbol;
 
-#define binding_table_hash(key) (size_t)key
-#define binding_table_key_equals(key, other) key == other
+#define symbol_table_hash(key) (size_t)key
+#define symbol_table_key_equals(key, other) key == other
 
-GAB_HASH_MAP(BindingTable, binding_table, String *, Binding *);
+GAB_HASH_MAP(SymbolTable, symbol_table, String *, Symbol *);
 
 /* What a scope stands for, which decides how far a lookup walks and what may be declared in it.
  * Global holds the primitives, and every module hangs off it: Global -> Module -> File -> Local. */
@@ -87,10 +89,7 @@ typedef enum {
 typedef struct Scope {
     Arena *arena;
 
-    BindingTable *bindings;
-    TypeMap *types;
-
-    InterfaceMap *interfaces;
+    SymbolTable *symbols;
 
     struct Scope *parent;
 
@@ -113,63 +112,40 @@ Scope *scope_create(Arena *arena, Scope *parent);
 void scope_init_kind(Scope *scope, Arena *arena, Scope *parent, ScopeKind kind);
 Scope *scope_create_kind(Arena *arena, Scope *parent, ScopeKind kind);
 
-typedef enum {
-    RESOLUTION_NONE,
+/* What 'name' denotes here or in an enclosing scope, or null where nothing does. */
+Symbol *scope_lookup(Scope *scope, String *name);
 
-    RESOLUTION_TYPE,
+/* What it denotes in this scope alone, which is what a redeclaration would collide with. */
+Symbol *scope_lookup_local(Scope *scope, String *name);
 
-    RESOLUTION_TYPE_DECL,
+/* The type a symbol names, or null where it names something that is not one. */
+const Type *symbol_type(TypeRegistry *registry, const Symbol *symbol);
 
-    RESOLUTION_VALUE,
-} ResolutionKind;
-
-typedef struct {
-    ResolutionKind kind;
-
-    union {
-        /* A name bound as a generic argument, which is a type unless the declaration takes a value. */
-        TypeArg arg;
-        const TypeDecl *decl;
-        Binding *binding;
-    };
-} Resolution;
-
-Resolution scope_resolve(Scope *scope, String *name);
-
-const Type *resolution_type(TypeRegistry *registry, Resolution resolution);
-
-Binding *scope_binding_lookup(Scope *scope, String *name);
-
+/* The type 'name' denotes, resolved through the scope chain. */
 const Type *scope_type_lookup(TypeRegistry *registry, Scope *scope, String *name);
 
 /* A type this module declares, which is what an 'impl' may name: a type reached through an import
  * belongs to the module that declared it. */
-TypeBinding *scope_type_lookup_declaring(Scope *scope, String *name);
+Symbol *scope_type_lookup_declaring(Scope *scope, String *name);
 
-bool scope_declares_type(Scope *scope, String *name);
-Binding *scope_binding_lookup_declaring(Scope *scope, String *name);
+/* What a declaration would collide with: this scope, and the module's where a file writes into it. */
+Symbol *scope_lookup_declaring(Scope *scope, String *name);
 
-void scope_withdraw_type(Scope *scope, String *name);
+void scope_withdraw(Scope *scope, String *name);
 
+/* Each binds 'name' to what it names, and answers false where the scope already binds that name. */
 bool scope_bind_type(Scope *scope, String *name, const Type *type);
-
-bool scope_bind_argument(Scope *scope, String *name, TypeArg arg);
-
-bool scope_bind_decl(Scope *scope, String *name, const TypeDecl *decl);
-
+bool scope_bind_type_arg(Scope *scope, String *name, TypeArg arg);
+bool scope_bind_type_decl(Scope *scope, String *name, const TypeDecl *decl);
 bool scope_bind_interface(Scope *scope, String *name, InterfaceDecl *interface);
-
-InterfaceDecl *scope_interface_lookup(Scope *scope, String *name);
+bool scope_bind_module(Scope *scope, String *name, Module *module);
 
 /* Declares into 'scope', rejecting a name 'against' already binds: a module's declaration is checked
  * from the file that writes it, so it collides with what that file imports as well. */
-Binding *scope_decl_var_against(Scope *scope, Scope *against, String *name, const Type *type);
-Binding *scope_decl_func_against(Scope *scope, Scope *against, String *name, const Type *return_type);
+Symbol *scope_decl_var_against(Scope *scope, Scope *against, String *name, const Type *type);
+Symbol *scope_decl_func_against(Scope *scope, Scope *against, String *name, const Type *return_type);
 
-Binding *scope_decl_var(Scope *scope, String *name, const Type *type);
-Binding *scope_decl_func(Scope *scope, String *name, const Type *return_type);
-
-/* Binds 'module' under the name this file imports it as; false where the name is already taken. */
-bool scope_bind_module(Scope *scope, String *name, Module *module);
+Symbol *scope_decl_var(Scope *scope, String *name, const Type *type);
+Symbol *scope_decl_func(Scope *scope, String *name, const Type *return_type);
 
 #endif

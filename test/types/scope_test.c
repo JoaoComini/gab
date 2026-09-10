@@ -11,7 +11,7 @@ static Arena *arena = NULL;
 
 static void test_create_and_free() {
     Scope *scope = scope_create(arena, NULL);
-    assert(scope->bindings != NULL);
+    assert(scope->symbols != NULL);
     assert(scope->parent == NULL);
 }
 
@@ -27,10 +27,10 @@ static void test_var_declaration() {
     String *name = string_from_cstr(&ctx.strings, "x");
     const Type *type = type_registry_get_primitive(ctx.types, TYPE_I32);
 
-    Binding *sym = scope_decl_var(scope, name, type);
+    Symbol *sym = scope_decl_var(scope, name, type);
     assert(sym != NULL);
 
-    Binding *found = scope_binding_lookup(scope, name);
+    Symbol *found = scope_lookup(scope, name);
     assert(found == sym);
 }
 
@@ -74,16 +74,16 @@ static void test_shadowing() {
     const Type *i32_type = type_registry_get_primitive(ctx.types, TYPE_I32);
     const Type *f32_type = type_registry_get_primitive(ctx.types, TYPE_F32);
 
-    Binding *parent_sym = scope_decl_var(parent, name, i32_type);
+    Symbol *parent_sym = scope_decl_var(parent, name, i32_type);
 
     Scope *child = scope_create(arena, parent);
 
-    Binding *child_sym = scope_decl_var(child, name, f32_type);
+    Symbol *child_sym = scope_decl_var(child, name, f32_type);
 
-    assert(scope_binding_lookup(child, name) == child_sym);
+    assert(scope_lookup(child, name) == child_sym);
 
     assert(child_sym != parent_sym);
-    assert(scope_binding_lookup(parent, name) == parent_sym);
+    assert(scope_lookup(parent, name) == parent_sym);
 }
 
 int main(void) {

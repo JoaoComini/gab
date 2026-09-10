@@ -14,7 +14,7 @@ typedef struct {
     Arena *arena;
 
     /* The value each local was given, so a variable expression names it rather than looking it up. */
-    Binding **locals;
+    Symbol **locals;
     MIRValueId *local_values;
     size_t local_count;
     size_t local_capacity;
@@ -53,11 +53,11 @@ static MIRInst *emit(Lowering *lowering, MIRInst inst) {
     return mir_emit(lowering->ir, lowering->block, inst);
 }
 
-static void bind_local(Lowering *lowering, Binding *binding, MIRValueId value) {
+static void bind_local(Lowering *lowering, Symbol *binding, MIRValueId value) {
     if (lowering->local_count == lowering->local_capacity) {
         size_t next = lowering->local_capacity == 0 ? 8 : lowering->local_capacity * 2;
 
-        Binding **bindings = arena_alloc(lowering->arena, next * sizeof(Binding *));
+        Symbol **bindings = arena_alloc(lowering->arena, next * sizeof(Symbol *));
         MIRValueId *values = arena_alloc(lowering->arena, next * sizeof(MIRValueId));
 
         for (size_t i = 0; i < lowering->local_count; i++) {
@@ -75,7 +75,7 @@ static void bind_local(Lowering *lowering, Binding *binding, MIRValueId value) {
     lowering->local_count++;
 }
 
-static MIRValueId local_value(Lowering *lowering, const Binding *binding) {
+static MIRValueId local_value(Lowering *lowering, const Symbol *binding) {
     for (size_t i = lowering->local_count; i > 0; i--) {
         if (lowering->locals[i - 1] == binding) {
             return lowering->local_values[i - 1];
@@ -258,7 +258,7 @@ static Place lower_indexed_place(Lowering *lowering, ASTExpr *target, ASTExpr *i
 static Place lower_place(Lowering *lowering, ASTExpr *expr) {
     switch (expr->kind) {
     case EXPR_VARIABLE: {
-        Binding *binding = fact_use_of(lowering->facts, expr);
+        Symbol *binding = fact_use_of(lowering->facts, expr);
         MIRValueId base = local_value(lowering, binding);
 
         if (mir_value_is_none(base)) {
@@ -867,12 +867,12 @@ static void lower_scope_end(Lowering *lowering, size_t enclosing, Span span) {
     while (lowering->local_count > enclosing) {
         size_t at = --lowering->local_count;
 
-        Binding *binding = lowering->locals[at];
+        Symbol *binding = lowering->locals[at];
         MIRValueId value = lowering->local_values[at];
 
         Place place = mir_place_of(value, binding);
 
-        if (binding && binding->kind == BINDING_VAR &&
+        if (binding && binding->kind == SYMBOL_VAR &&
             mir_type_needs_drop(lowering->registry, binding->var.type)) {
             emit(lowering, (MIRInst){.op = MIR_DROP,
                                      .type = binding->var.type,
@@ -1039,9 +1039,9 @@ static void lower_return(Lowering *lowering, ASTStmt *stmt) {
     /* Returning leaves every scope the body opened, so each local it still holds is ended; a
      * parameter that owns what it was given ends with them, since the call handed it over. */
     for (size_t at = lowering->local_count; at > 0; at--) {
-        Binding *binding = lowering->locals[at - 1];
+        Symbol *binding = lowering->locals[at - 1];
 
-        if (!binding || binding->kind != BINDING_VAR ||
+        if (!binding || binding->kind != SYMBOL_VAR ||
             !mir_type_needs_drop(lowering->registry, binding->var.type)) {
             continue;
         }
@@ -1152,9 +1152,9 @@ static void lower_stmt(Lowering *lowering, ASTStmt *stmt) {
     case STMT_JUMP: {
         /* Leaving the loop leaves every scope opened inside it, so those locals end here. */
         for (size_t at = lowering->local_count; at > lowering->loop_local_floor; at--) {
-            Binding *binding = lowering->locals[at - 1];
+            Symbol *binding = lowering->locals[at - 1];
 
-            if (!binding || binding->kind != BINDING_VAR ||
+            if (!binding || binding->kind != SYMBOL_VAR ||
                 !mir_type_needs_drop(lowering->registry, binding->var.type)) {
                 continue;
             }
@@ -1208,7 +1208,7 @@ MIRFunction *mir_build_function(Arena *arena, TypeRegistry *registry, const Fact
     ir->params = arena_alloc(arena, (ir->param_count + 1) * sizeof(MIRValueId));
 
     for (size_t i = 0; i < declared; i++) {
-        Binding *binding = params->data[i]->binding;
+        Symbol *binding = params->data[i]->binding;
 
         MIRValueId value =
             mir_value_create(ir, binding ? binding->var.type : NULL, binding, params->data[i]->span);

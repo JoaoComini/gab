@@ -15,9 +15,7 @@ Scope *scope_create(Arena *arena, Scope *parent) {
 
 void scope_init_kind(Scope *scope, Arena *arena, Scope *parent, ScopeKind kind) {
     scope->arena = arena;
-    scope->bindings = binding_table_create_alloc(arena_allocator(arena), BINDING_TABLE_INITIAL_CAPACITY);
-    scope->types = type_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
-    scope->interfaces = interface_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
+    scope->symbols = symbol_table_create_alloc(arena_allocator(arena), SYMBOL_TABLE_INITIAL_CAPACITY);
     scope->parent = parent;
     scope->kind = kind;
 }
@@ -36,72 +34,61 @@ Scope *global_scope_create(Arena *arena, TypeRegistry *types) {
     for (size_t i = 0; i < sizeof(PRIMITIVES) / sizeof(PRIMITIVES[0]); i++) {
         const Type *type = type_registry_get_primitive(types, PRIMITIVES[i]);
 
-        /* A scope keys its bindings on a mutable name, though binding one only ever hashes it. */
+        /* A scope keys its symbols on a mutable name, though binding one only ever hashes it. */
         scope_bind_type(scope, (String *)type_name_of(type), type);
     }
 
     return scope;
 }
 
-Binding *scope_binding_lookup(Scope *scope, String *name) {
-    while (scope) {
-        Binding **entry = binding_table_lookup(scope->bindings, name);
-        if (entry) {
-            return *entry;
-        }
+Symbol *scope_lookup(Scope *scope, String *name) {
+    for (Scope *s = scope; s; s = s->parent) {
+        Symbol **found = symbol_table_lookup(s->symbols, name);
 
-        scope = scope->parent;
+        if (found) {
+            return *found;
+        }
     }
 
     return NULL;
 }
 
-const Type *scope_type_lookup(TypeRegistry *registry, Scope *scope, String *name) {
-    return scope ? resolution_type(registry, scope_resolve(scope, name)) : NULL;
+Symbol *scope_lookup_local(Scope *scope, String *name) {
+    Symbol **found = symbol_table_lookup(scope->symbols, name);
+
+    return found ? *found : NULL;
 }
 
-Resolution scope_resolve(Scope *scope, String *name) {
-    for (Scope *s = scope; s; s = s->parent) {
-        TypeBinding *bound = type_map_lookup(s->types, name);
-
-        if (bound) {
-            if (!bound->decl) {
-                return (Resolution){.kind = RESOLUTION_TYPE, .arg = bound->arg};
-            }
-
-            return (Resolution){.kind = RESOLUTION_TYPE_DECL, .decl = bound->decl};
-        }
-
-        Binding **binding = binding_table_lookup(s->bindings, name);
-
-        if (binding) {
-            return (Resolution){.kind = RESOLUTION_VALUE, .binding = *binding};
-        }
+const Type *symbol_type(TypeRegistry *registry, const Symbol *symbol) {
+    if (!symbol) {
+        return NULL;
     }
 
-    return (Resolution){.kind = RESOLUTION_NONE};
-}
+    switch (symbol->kind) {
+    case SYMBOL_TYPE:
+    case SYMBOL_TYPE_ARG:
+        return symbol->type_arg.kind == TYPE_ARG_TYPE ? symbol->type_arg.type : NULL;
 
-const Type *resolution_type(TypeRegistry *registry, Resolution resolution) {
-    switch (resolution.kind) {
-    case RESOLUTION_TYPE:
-        return resolution.arg.kind == TYPE_ARG_TYPE ? resolution.arg.type : NULL;
-
-    case RESOLUTION_TYPE_DECL:
-        return resolution.decl->param_count == 0 ? type_registry_apply(registry, resolution.decl, NULL, 0)
-                                                 : NULL;
+    /* A generic names a type only once its arguments are given, but one taking none names itself. */
+    case SYMBOL_TYPE_DECL:
+        return symbol->type_decl->param_count == 0 ? type_registry_apply(registry, symbol->type_decl, NULL, 0)
+                                                   : NULL;
 
     default:
         return NULL;
     }
 }
 
-TypeBinding *scope_type_lookup_declaring(Scope *scope, String *name) {
-    for (Scope *s = scope; s; s = s->parent) {
-        TypeBinding *bound = type_map_lookup(s->types, name);
+const Type *scope_type_lookup(TypeRegistry *registry, Scope *scope, String *name) {
+    return scope ? symbol_type(registry, scope_lookup(scope, name)) : NULL;
+}
 
-        if (bound) {
-            return bound;
+Symbol *scope_type_lookup_declaring(Scope *scope, String *name) {
+    for (Scope *s = scope; s; s = s->parent) {
+        Symbol *found = scope_lookup_local(s, name);
+
+        if (found) {
+            return found;
         }
 
         /* A module's own declarations, so the walk stops where this module does. */
@@ -113,148 +100,108 @@ TypeBinding *scope_type_lookup_declaring(Scope *scope, String *name) {
     return NULL;
 }
 
-bool scope_declares_type(Scope *scope, String *name) {
-    return scope_type_lookup_declaring(scope, name) != NULL;
-}
-
-Binding *scope_binding_lookup_declaring(Scope *scope, String *name) {
+Symbol *scope_lookup_declaring(Scope *scope, String *name) {
     for (Scope *s = scope;; s = s->parent) {
-        Binding **entry = binding_table_lookup(s->bindings, name);
+        Symbol *found = scope_lookup_local(s, name);
 
-        if (entry) {
-            return *entry;
+        if (found) {
+            return found;
         }
 
-        /* A module's bindings and its files', which are what a redeclaration would collide with. */
+        /* A module's symbols and its files', which are what a redeclaration would collide with. */
         if (s->kind != SCOPE_FILE || !s->parent) {
             return NULL;
         }
     }
 }
 
-void scope_withdraw_type(Scope *scope, String *name) { type_map_delete(scope->types, name); }
+void scope_withdraw(Scope *scope, String *name) { symbol_table_delete(scope->symbols, name); }
 
-bool scope_bind_type(Scope *scope, String *name, const Type *type) {
-    if (type_map_lookup(scope->types, name)) {
+/* Binds a symbol of this shape, or answers false where the scope already binds the name. */
+static bool scope_bind(Scope *scope, String *name, Symbol shape) {
+    if (symbol_table_lookup(scope->symbols, name)) {
         return false;
     }
 
-    assert(type_names_itself(type) && "a nominal name binds to what it declares");
+    Symbol *symbol = arena_alloc(scope->arena, sizeof(Symbol));
 
-    type_map_insert(scope->types, name, (TypeBinding){.arg = {.kind = TYPE_ARG_TYPE, .type = type}});
+    *symbol = shape;
 
-    return true;
+    return symbol_table_insert(scope->symbols, name, symbol) != NULL;
 }
 
-bool scope_bind_argument(Scope *scope, String *name, TypeArg arg) {
-    if (type_map_lookup(scope->types, name)) {
-        return false;
-    }
+bool scope_bind_type(Scope *scope, String *name, const Type *type) {
+    assert(type_names_itself(type) && "a nominal name binds to what it declares");
 
-    type_map_insert(scope->types, name, (TypeBinding){.arg = arg});
+    return scope_bind(scope, name,
+                      (Symbol){.kind = SYMBOL_TYPE, .type_arg = {.kind = TYPE_ARG_TYPE, .type = type}});
+}
 
-    return true;
+bool scope_bind_type_arg(Scope *scope, String *name, TypeArg arg) {
+    return scope_bind(scope, name, (Symbol){.kind = SYMBOL_TYPE_ARG, .type_arg = arg});
+}
+
+bool scope_bind_type_decl(Scope *scope, String *name, const TypeDecl *decl) {
+    return scope_bind(scope, name, (Symbol){.kind = SYMBOL_TYPE_DECL, .type_decl = decl});
 }
 
 bool scope_bind_interface(Scope *scope, String *name, InterfaceDecl *interface) {
-    if (interface_map_lookup(scope->interfaces, name)) {
-        return false;
-    }
-
-    interface_map_insert(scope->interfaces, name, interface);
-
-    return true;
-}
-
-InterfaceDecl *scope_interface_lookup(Scope *scope, String *name) {
-    for (Scope *s = scope; s; s = s->parent) {
-        InterfaceDecl **found = interface_map_lookup(s->interfaces, name);
-
-        if (found) {
-            return *found;
-        }
-    }
-
-    return NULL;
-}
-
-bool scope_bind_decl(Scope *scope, String *name, const TypeDecl *decl) {
-    if (type_map_lookup(scope->types, name)) {
-        return false;
-    }
-
-    type_map_insert(scope->types, name, (TypeBinding){.decl = decl});
-
-    return true;
+    return scope_bind(scope, name, (Symbol){.kind = SYMBOL_INTERFACE, .interface = interface});
 }
 
 bool scope_bind_module(Scope *scope, String *name, Module *module) {
-    if (binding_table_lookup(scope->bindings, name)) {
-        return false;
-    }
-
-    Binding *binding = arena_alloc(scope->arena, sizeof(Binding));
-
-    binding->kind = BINDING_MODULE;
-    binding->pinned = false;
-    binding->module = module;
-
-    return binding_table_insert(scope->bindings, name, binding) != NULL;
+    return scope_bind(scope, name, (Symbol){.kind = SYMBOL_MODULE, .module = module});
 }
 
-Binding *scope_decl_var(Scope *scope, String *name, const Type *type) {
+Symbol *scope_decl_var(Scope *scope, String *name, const Type *type) {
     return scope_decl_var_against(scope, scope, name, type);
 }
 
-Binding *scope_decl_var_against(Scope *scope, Scope *against, String *name, const Type *type) {
-    if (scope_binding_lookup_declaring(against, name)) {
+Symbol *scope_decl_var_against(Scope *scope, Scope *against, String *name, const Type *type) {
+    if (scope_lookup_declaring(against, name)) {
         return NULL;
     }
 
-    Binding *sym = arena_alloc(scope->arena, sizeof(Binding));
-    sym->kind = BINDING_VAR;
-    sym->pinned = false;
-    sym->var.type = type;
+    Symbol *symbol = arena_alloc(scope->arena, sizeof(Symbol));
 
-    Binding **decl = binding_table_insert(scope->bindings, name, sym);
-    if (!decl) {
-        return NULL;
-    }
+    symbol->kind = SYMBOL_VAR;
+    symbol->pinned = false;
+    symbol->var.type = type;
 
-    return *decl;
+    Symbol **declared = symbol_table_insert(scope->symbols, name, symbol);
+
+    return declared ? *declared : NULL;
 }
 
-Binding *scope_decl_func(Scope *scope, String *name, const Type *return_type) {
+Symbol *scope_decl_func(Scope *scope, String *name, const Type *return_type) {
     return scope_decl_func_against(scope, scope, name, return_type);
 }
 
-Binding *scope_decl_func_against(Scope *scope, Scope *against, String *name, const Type *return_type) {
-    if (scope_binding_lookup_declaring(against, name)) {
+Symbol *scope_decl_func_against(Scope *scope, Scope *against, String *name, const Type *return_type) {
+    if (scope_lookup_declaring(against, name)) {
         return NULL;
     }
 
-    Binding *binding = arena_alloc(scope->arena, sizeof(Binding));
-    binding->kind = BINDING_FUNC;
-    binding->pinned = false;
+    Symbol *symbol = arena_alloc(scope->arena, sizeof(Symbol));
+
+    symbol->kind = SYMBOL_FUNC;
+    symbol->pinned = false;
 
     FuncDecl *func_decl = arena_alloc(scope->arena, sizeof(FuncDecl));
 
     *func_decl = (FuncDecl){
         .id = {.name = name}, .linkage = LINKAGE_INTERNAL, .signature = {.return_type = return_type}};
 
-    binding->func = arena_alloc(scope->arena, sizeof(Function));
+    symbol->func = arena_alloc(scope->arena, sizeof(Function));
 
-    *binding->func = (Function){
+    *symbol->func = (Function){
         .decl = func_decl,
         .signature = func_decl->signature,
     };
 
-    Binding **decl = binding_table_insert(scope->bindings, name, binding);
-    if (!decl) {
-        return NULL;
-    }
+    Symbol **declared = symbol_table_insert(scope->symbols, name, symbol);
 
-    return *decl;
+    return declared ? *declared : NULL;
 }
 
 FuncSignature func_signature_instantiate(TypeRegistry *registry, Arena *arena, const FuncSignature *generic,

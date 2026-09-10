@@ -32,12 +32,12 @@ static void a_unique_owns_what_it_points_at(void) {
 
     TypeRegistry *registry = ctx.types;
 
-    Resolution declared = scope_resolve(resolved->declared->scope, type_registry_names(registry)->unique);
+    Symbol *declared = scope_lookup(resolved->declared->scope, type_registry_names(registry)->unique);
 
-    assert(declared.kind == RESOLUTION_TYPE_DECL);
+    assert(declared && declared->kind == SYMBOL_TYPE_DECL);
 
     const Type *i32 = type_registry_get_primitive(registry, TYPE_I32);
-    const Type *unique = type_registry_apply(registry, declared.decl, &i32, 1);
+    const Type *unique = type_registry_apply(registry, declared->type_decl, &i32, 1);
     const Type *plain =
         scope_type_lookup(ctx.types, resolved->declared->scope, string_from_cstr(&ctx.strings, "Plain"));
 

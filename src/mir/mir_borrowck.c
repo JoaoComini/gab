@@ -43,7 +43,7 @@ static bool call_result_may_name(const Function *callee, size_t index) {
     return index >= 32 || (callee->borrowed_params & ((uint32_t)1 << index)) != 0;
 }
 
-static Binding *binding_of(const MIRFlow *flow, MIRValueId value) {
+static Symbol *binding_of(const MIRFlow *flow, MIRValueId value) {
     const MIRValueInfo *info = mir_value_info(flow->ir, value);
 
     return info ? info->binding : NULL;

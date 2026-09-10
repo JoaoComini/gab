@@ -50,7 +50,7 @@ MIRBlock *mir_block_at(const MIRFunction *ir, MIRBlockId id) {
     return ir->blocks[id.id];
 }
 
-MIRValueId mir_value_create(MIRFunction *ir, const Type *type, Binding *binding, Span span) {
+MIRValueId mir_value_create(MIRFunction *ir, const Type *type, Symbol *binding, Span span) {
     if (ir->value_count == ir->value_capacity) {
         ir->values =
             mir_grow(ir->arena, ir->values, ir->value_count, &ir->value_capacity, sizeof(MIRValueInfo));
@@ -88,7 +88,7 @@ MIROperand *mir_args_alloc(MIRFunction *ir, size_t count) {
     return arena_alloc(ir->arena, count * sizeof(MIROperand));
 }
 
-Place mir_place_of(MIRValueId base, Binding *binding) { return (Place){.base = base, .binding = binding}; }
+Place mir_place_of(MIRValueId base, Symbol *binding) { return (Place){.base = base, .binding = binding}; }
 
 Place mir_place_project(MIRFunction *ir, Place place, Projection projection) {
     Projection *grown = arena_alloc(ir->arena, (place.projection_count + 1) * sizeof(Projection));

@@ -242,7 +242,7 @@ static void test_a_value_carries_the_binding_it_came_from(void) {
 
     MIRFunction *ir = mir_function_create(arena, NULL, NULL);
 
-    Binding binding = {.kind = BINDING_VAR};
+    Symbol binding = {.kind = SYMBOL_VAR};
 
     MIRValueId value = mir_value_create(ir, NULL, &binding, (Span){.line = 7, .column = 3});
 

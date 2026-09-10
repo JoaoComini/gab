@@ -185,9 +185,9 @@ static Scope *resolver_expr_scope(ResolverState *state, StringRef name) {
         return state->module_scope;
     }
 
-    Binding *bound = scope_binding_lookup(state->current_scope, module_name);
+    Symbol *bound = scope_lookup(state->current_scope, module_name);
 
-    return bound && bound->kind == BINDING_MODULE ? bound->module->scope : NULL;
+    return bound && bound->kind == SYMBOL_MODULE ? bound->module->scope : NULL;
 }
 
 /* The scope of the import at 'index' in this file, or null where it names nothing this compilation
@@ -195,13 +195,13 @@ static Scope *resolver_expr_scope(ResolverState *state, StringRef name) {
 static Scope *resolver_import_scope(ResolverState *state, size_t index) {
     String *module = string_from_ref(state->strings, state->file->imports.data[index].name);
 
-    Binding *bound = scope_binding_lookup(state->current_scope, module);
+    Symbol *bound = scope_lookup(state->current_scope, module);
 
-    return bound && bound->kind == BINDING_MODULE ? bound->module->scope : NULL;
+    return bound && bound->kind == SYMBOL_MODULE ? bound->module->scope : NULL;
 }
 
 /* A name an import declares, which an unqualified use reaches once this unit declares none itself. */
-static Binding *resolver_imported_binding(ResolverState *state, String *name) {
+static Symbol *resolver_imported_binding(ResolverState *state, String *name) {
     if (!state->modules) {
         return NULL;
     }
@@ -209,7 +209,7 @@ static Binding *resolver_imported_binding(ResolverState *state, String *name) {
     for (size_t i = 0; i < state->file->imports.size; i++) {
         Scope *imported = resolver_import_scope(state, i);
 
-        Binding *found = imported ? scope_binding_lookup(imported, name) : NULL;
+        Symbol *found = imported ? scope_lookup(imported, name) : NULL;
 
         if (found) {
             return found;
@@ -219,37 +219,42 @@ static Binding *resolver_imported_binding(ResolverState *state, String *name) {
     return NULL;
 }
 
-static Resolution resolver_resolve_name(ResolverState *state, Scope *scope, String *name) {
-    Resolution resolution = scope ? scope_resolve(scope, name) : (Resolution){0};
+static Symbol *resolver_resolve_name(ResolverState *state, Scope *scope, String *name) {
+    Symbol *found = scope ? scope_lookup(scope, name) : NULL;
 
-    if (resolution.kind != RESOLUTION_NONE || scope != state->current_scope || !state->modules) {
-        return resolution;
-    }
-
-    for (size_t i = 0; i < state->file->imports.size; i++) {
-        Scope *imported = resolver_import_scope(state, i);
-
-        Resolution found = imported ? scope_resolve(imported, name) : (Resolution){0};
-
-        if (found.kind != RESOLUTION_NONE) {
-            return found;
-        }
-    }
-
-    return resolution;
-}
-
-static InterfaceDecl *resolver_lookup_interface(ResolverState *state, String *name) {
-    InterfaceDecl *found = scope_interface_lookup(state->current_scope, name);
-
-    if (found || !state->modules) {
+    if (found || scope != state->current_scope) {
         return found;
     }
 
     for (size_t i = 0; i < state->file->imports.size; i++) {
         Scope *imported = resolver_import_scope(state, i);
 
-        if (imported && (found = scope_interface_lookup(imported, name))) {
+        Symbol *reached = imported ? scope_lookup(imported, name) : NULL;
+
+        if (reached) {
+            return reached;
+        }
+    }
+
+    return NULL;
+}
+
+/* The interface a name denotes, or null where it denotes something else or nothing. */
+static InterfaceDecl *interface_of(const Symbol *symbol) {
+    return symbol && symbol->kind == SYMBOL_INTERFACE ? symbol->interface : NULL;
+}
+
+static InterfaceDecl *resolver_lookup_interface(ResolverState *state, String *name) {
+    InterfaceDecl *found = interface_of(scope_lookup(state->current_scope, name));
+
+    if (found) {
+        return found;
+    }
+
+    for (size_t i = 0; i < state->file->imports.size; i++) {
+        Scope *imported = resolver_import_scope(state, i);
+
+        if (imported && (found = interface_of(scope_lookup(imported, name)))) {
             return found;
         }
     }
@@ -372,7 +377,7 @@ static const char *bin_op_name(BinOp op) {
 static bool is_addressable(ResolverState *state, const ASTExpr *expr) {
     switch (expr->kind) {
     case EXPR_VARIABLE:
-        return fact_use_of(state->facts, expr) && fact_use_of(state->facts, expr)->kind == BINDING_VAR;
+        return fact_use_of(state->facts, expr) && fact_use_of(state->facts, expr)->kind == SYMBOL_VAR;
     case EXPR_FIELD:
         return is_addressable(state, expr->field.target);
     case EXPR_INDEX:
@@ -508,7 +513,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
                 return false;
             }
 
-            Binding *addressed = fact_root_local(state->facts, receiver);
+            Symbol *addressed = fact_root_local(state->facts, receiver);
             if (addressed) {
                 addressed->pinned = true;
             }
@@ -524,7 +529,7 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
                 return false;
             }
 
-            Binding *addressed = fact_root_local(state->facts, receiver);
+            Symbol *addressed = fact_root_local(state->facts, receiver);
 
             if (addressed) {
                 addressed->pinned = true;
@@ -1121,7 +1126,7 @@ static bool unsize_into(ResolverState *state, ASTExpr *expr, const Type *destina
         return false;
     }
 
-    Binding *addressed = fact_root_local(state->facts, expr);
+    Symbol *addressed = fact_root_local(state->facts, expr);
 
     if (addressed) {
         addressed->pinned = true;
@@ -1171,7 +1176,7 @@ static bool borrow_into(ResolverState *state, ASTExpr *expr, const Type *destina
         return false;
     }
 
-    Binding *addressed = fact_root_local(state->facts, expr);
+    Symbol *addressed = fact_root_local(state->facts, expr);
 
     if (addressed) {
         addressed->pinned = true;
@@ -1317,16 +1322,15 @@ static bool bin_op_yields_bool(BinOp op) {
 }
 
 static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
-    Resolution resolution =
-        scope_resolve(state->current_scope, resolver_intern(state, expr->call.target->var.name));
+    Symbol *symbol = scope_lookup(state->current_scope, resolver_intern(state, expr->call.target->var.name));
 
-    const Type *target = resolution_type(state->types, resolution);
+    const Type *target = symbol_type(state->types, symbol);
 
     /* 'raw<i32>(p)' names its target by application, where 'i32(x)' names one that takes no argument;
      * a name that resolves to no type at all is a call rather than a conversion, generic or not. */
     if (expr->call.target->var.owner_type_expr) {
         /* The runs and the arrays name no binding of their own, so what they resolve to is asked for. */
-        bool names_a_type = resolution.kind == RESOLUTION_TYPE || resolution.kind == RESOLUTION_TYPE_DECL ||
+        bool names_a_type = (symbol && (symbol->kind == SYMBOL_TYPE || symbol->kind == SYMBOL_TYPE_DECL)) ||
                             names_the_same(state, expr->call.target->var.name, resolver_names(state)->raw);
 
         if (!names_a_type) {
@@ -1491,14 +1495,14 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
     case EXPR_VARIABLE: {
         String *sought = resolver_intern(state, expr->var.name);
 
-        Binding *entry = scope_binding_lookup(state->current_scope, sought);
+        Symbol *entry = scope_lookup(state->current_scope, sought);
 
         if (!entry) {
             entry = resolver_imported_binding(state, sought);
         }
 
         if (entry) {
-            if (entry->kind == BINDING_FUNC) {
+            if (entry->kind == SYMBOL_FUNC) {
                 fact_set_callee(state->facts, expr, entry->func);
                 break;
             }
@@ -1694,7 +1698,7 @@ static void resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expect
             break;
         }
 
-        Binding *addressed = fact_root_local(state->facts, expr->unary.target);
+        Symbol *addressed = fact_root_local(state->facts, expr->unary.target);
         if (addressed) {
             addressed->pinned = true;
         }
@@ -1987,7 +1991,7 @@ static void mark_implicit_move(ResolverState *state, ASTExpr *value, const Type 
     }
 
     if (value->kind != EXPR_VARIABLE || !fact_use_of(state->facts, value) ||
-        fact_use_of(state->facts, value)->kind != BINDING_VAR) {
+        fact_use_of(state->facts, value)->kind != SYMBOL_VAR) {
         return;
     }
 
@@ -2046,7 +2050,7 @@ static bool bind_type_param(TypeRegistry *registry, Scope *params, String *name,
                       ? (TypeArg){.kind = TYPE_ARG_CONST, .constant = {.kind = CONST_PARAM, .param = index}}
                       : (TypeArg){.kind = TYPE_ARG_TYPE, .type = type_registry_param(registry, index)};
 
-    return scope_bind_argument(params, name, arg);
+    return scope_bind_type_arg(params, name, arg);
 }
 
 /* A length is written as a literal, or named as the value parameter a generic declaration takes. */
@@ -2060,10 +2064,10 @@ static bool resolve_array_length(ResolverState *state, TypeExpr *expr, Span span
 
     if (expr->kind == TYPE_EXPR_NAME) {
         Scope *scope = resolver_expr_scope(state, expr->name);
-        Resolution resolution = resolver_resolve_name(state, scope, resolver_expr_member(state, expr->name));
+        Symbol *symbol = resolver_resolve_name(state, scope, resolver_expr_member(state, expr->name));
 
-        if (resolution.kind == RESOLUTION_TYPE && resolution.arg.kind == TYPE_ARG_CONST) {
-            *out = resolution.arg;
+        if (symbol && symbol->kind == SYMBOL_TYPE_ARG && symbol->type_arg.kind == TYPE_ARG_CONST) {
+            *out = symbol->type_arg;
             return true;
         }
     }
@@ -2171,14 +2175,13 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
 
         String *base_name = base_scope ? resolver_expr_member(state, expr->apply.base->name) : NULL;
 
-        Resolution base_resolution =
-            base_name ? resolver_resolve_name(state, base_scope, base_name) : (Resolution){0};
+        Symbol *base_symbol = base_name ? resolver_resolve_name(state, base_scope, base_name) : NULL;
 
         const TypeDecl *base_decl =
-            base_resolution.kind == RESOLUTION_TYPE_DECL ? base_resolution.decl : NULL;
-        const Type *base = resolution_type(registry, base_resolution);
+            base_symbol && base_symbol->kind == SYMBOL_TYPE_DECL ? base_symbol->type_decl : NULL;
+        const Type *base = symbol_type(registry, base_symbol);
 
-        if (base_resolution.kind == RESOLUTION_NONE) {
+        if (!base_symbol) {
             char *name = string_ref_to_cstr(expr->apply.base->name);
             diag_error(state->diagnostics, GAB_ERR_NAME, span, "unknown type '%s'", name);
             free(name);
@@ -2237,17 +2240,17 @@ static const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span 
 
     Scope *scope = resolver_expr_scope(state, expr->name);
 
-    Resolution resolution = resolver_resolve_name(state, scope, resolver_expr_member(state, expr->name));
+    Symbol *symbol = resolver_resolve_name(state, scope, resolver_expr_member(state, expr->name));
 
-    const Type *type = resolution_type(registry, resolution);
+    const Type *type = symbol_type(registry, symbol);
 
     if (type) {
         return type;
     }
 
-    if (resolution.kind == RESOLUTION_TYPE_DECL) {
+    if (symbol && symbol->kind == SYMBOL_TYPE_DECL) {
         diag_error(state->diagnostics, GAB_ERR_TYPE, span, "'%s' takes %zu type argument(s), not 0",
-                   resolution.decl->id.name->data, resolution.decl->param_count);
+                   symbol->type_decl->id.name->data, symbol->type_decl->param_count);
 
         return resolver_error_type(state);
     }
@@ -2306,7 +2309,7 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
         return NULL;
     }
 
-    if (scope_declares_type(state->current_scope, struct_name)) {
+    if (scope_type_lookup_declaring(state->current_scope, struct_name)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "type '%s' is already declared",
                    struct_name->data);
         return NULL;
@@ -2321,7 +2324,7 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
         .param_count = param_count,
     };
 
-    scope_bind_decl(resolver_declaring_scope(state), struct_name, declared);
+    scope_bind_type_decl(resolver_declaring_scope(state), struct_name, declared);
 
     StructDecl *decl = arena_alloc(resolver_owner_arena(state), sizeof(StructDecl));
 
@@ -2494,7 +2497,7 @@ static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
 
     if (poisoned) {
         decl->poisoned = true;
-        scope_withdraw_type(decl->scope, decl->name);
+        scope_withdraw(decl->scope, decl->name);
         return;
     }
 
@@ -2566,7 +2569,7 @@ static void enter_owner_scope(ResolverState *state, TypeExpr *owner, TypeExpr *c
     const Type *self = resolve_type_expr(state, owner, (Span){0});
 
     if (!is_error_type(self)) {
-        scope_bind_argument(params, resolver_names(state)->self,
+        scope_bind_type_arg(params, resolver_names(state)->self,
                             (TypeArg){.kind = TYPE_ARG_TYPE, .type = self});
     }
 }
@@ -2651,11 +2654,11 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         }
 
         /* A scope keys its bindings on a mutable name, though a lookup only ever hashes one. */
-        TypeBinding *bound = type_name_of(owner)
-                                 ? scope_type_lookup_declaring(declaring, (String *)type_name_of(owner))
-                                 : NULL;
+        Symbol *bound = type_name_of(owner)
+                            ? scope_type_lookup_declaring(declaring, (String *)type_name_of(owner))
+                            : NULL;
 
-        if (!bound || bound->decl != type_decl(owner)) {
+        if (!bound || bound->kind != SYMBOL_TYPE_DECL || bound->type_decl != type_decl(owner)) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, stmt->span,
                        "cannot declare a function on '%s', which this module does not declare",
                        type_name(state, owner));
@@ -2733,8 +2736,7 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
         return;
     }
 
-    if (scope_declares_type(state->current_scope, name) ||
-        scope_interface_lookup(state->current_scope, name)) {
+    if (scope_type_lookup_declaring(state->current_scope, name)) {
         diag_error(state->diagnostics, GAB_ERR_NAME, stmt->span, "'%s' is already declared", name->data);
         return;
     }
@@ -2970,9 +2972,9 @@ static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
     Scope *module_scope = expr->var.owner_type_expr ? NULL : resolver_expr_scope(state, expr->var.name);
 
     if (module_scope) {
-        Binding *entry = scope_binding_lookup(module_scope, resolver_intern(state, member_ref));
+        Symbol *entry = scope_lookup(module_scope, resolver_intern(state, member_ref));
 
-        if (entry && entry->kind == BINDING_FUNC) {
+        if (entry && entry->kind == SYMBOL_FUNC) {
             return entry->func;
         }
     }
@@ -2986,16 +2988,16 @@ static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
             return NULL;
         }
     } else {
-        Resolution resolution =
+        Symbol *symbol =
             resolver_resolve_name(state, state->current_scope, resolver_intern(state, owner_ref));
 
-        if (resolution.kind == RESOLUTION_TYPE_DECL && resolution.decl->param_count > 0) {
+        if (symbol && symbol->kind == SYMBOL_TYPE_DECL && symbol->type_decl->param_count > 0) {
             diag_error(state->diagnostics, GAB_ERR_TYPE, expr->span, "'%s' takes %zu type argument(s), not 0",
-                       resolution.decl->id.name->data, resolution.decl->param_count);
+                       symbol->type_decl->id.name->data, symbol->type_decl->param_count);
             return NULL;
         }
 
-        owner = resolution_type(state->types, resolution);
+        owner = symbol_type(state->types, symbol);
     }
 
     if (!owner) {
@@ -3143,8 +3145,8 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
         return;
     }
 
-    Binding *declared = scope_decl_func_against(resolver_declaring_scope(state), state->current_scope,
-                                                declared_name, func_return_type);
+    Symbol *declared = scope_decl_func_against(resolver_declaring_scope(state), state->current_scope,
+                                               declared_name, func_return_type);
 
     if (!declared) {
         char *name = string_ref_to_cstr(func_name);
@@ -3225,7 +3227,7 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
             continue;
         }
 
-        Binding *binding = scope_decl_var(state->current_scope, param_name, param_type);
+        Symbol *binding = scope_decl_var(state->current_scope, param_name, param_type);
 
         if (!binding) {
             char *name = string_ref_to_cstr(param->name);
@@ -3248,7 +3250,7 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
 
     if (diagnostics_count(state->diagnostics) == errors_before) {
         size_t param_count = stmt->func_decl.params.size;
-        Binding **params = arena_alloc(state->compile_arena, (param_count + 1) * sizeof(Binding *));
+        Symbol **params = arena_alloc(state->compile_arena, (param_count + 1) * sizeof(Symbol *));
         size_t count = 0;
 
         for (size_t i = 0; i < param_count; i++) {
@@ -3337,10 +3339,10 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
             type = resolver_error_type(state);
         }
 
-        Binding *var = reject_self_as_name(state, resolver_intern(state, stmt->var_decl.name), stmt->span)
-                           ? NULL
-                           : scope_decl_var(resolver_declaring_scope(state),
-                                            resolver_intern(state, stmt->var_decl.name), type);
+        Symbol *var = reject_self_as_name(state, resolver_intern(state, stmt->var_decl.name), stmt->span)
+                          ? NULL
+                          : scope_decl_var(resolver_declaring_scope(state),
+                                           resolver_intern(state, stmt->var_decl.name), type);
 
         if (!var) {
             char *name = string_ref_to_cstr(stmt->var_decl.name);
@@ -3411,9 +3413,9 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
             break;
         }
 
-        Binding *target = fact_use_of(state->facts, stmt->assign.target);
+        Symbol *target = fact_use_of(state->facts, stmt->assign.target);
 
-        if (target && target->kind == BINDING_VAR) {
+        if (target && target->kind == SYMBOL_VAR) {
             if (stmt->assign.value->kind == EXPR_VARIABLE &&
                 fact_use_of(state->facts, stmt->assign.value) == target &&
                 !type_registry_copies(state->types, target_type)) {
