@@ -25,16 +25,12 @@ typedef struct {
     TypeRegistry *registry;
     Arena *arena;
 
-    /* What each virtual register holds, indexed by its id. */
     LLVMValueRef *values;
 
-    /* What a slot's storage holds, which a GEP must be given rather than infer from a pointer. */
     LLVMTypeRef *value_types;
 
-    /* Allocas belong at the head of the entry block, wherever the instruction naming one sits. */
     LLVMBuilderRef entry;
 
-    /* One bit of frame per slot whose drop is conditional, kept apart from the registers. */
     LLVMValueRef *flags;
 
     LLVMBasicBlockRef *blocks;
@@ -60,7 +56,6 @@ static LLVMTypeRef llvm_type_of(LLVMEmitter *emitter, const Type *type) {
     case TYPE_REF: {
         LLVMTypeRef pointer = LLVMPointerTypeInContext(emitter->context, 0);
 
-        /* What a run of elements names carries its count beside the address, as its layout states. */
         if (type_metadata_of(type_pointee(type)) == TYPE_META_LENGTH) {
             LLVMTypeRef members[] = {pointer, LLVMInt32TypeInContext(emitter->context)};
 
@@ -91,7 +86,6 @@ static LLVMTypeRef llvm_type_of(LLVMEmitter *emitter, const Type *type) {
     }
 }
 
-/* Frees one object, which the runtime null-checks and whose header carries any nested plan. */
 static LLVMValueRef free_function(LLVMEmitter *emitter, LLVMTypeRef *out_signature) {
     LLVMTypeRef pointer = LLVMPointerTypeInContext(emitter->context, 0);
 
@@ -109,7 +103,6 @@ static LLVMTypeRef trap_signature(LLVMEmitter *emitter) {
     return LLVMFunctionType(LLVMVoidTypeInContext(emitter->context), arguments, 2, false);
 }
 
-/* The core's, so what a failed check does is written in Gab rather than emitted here. */
 #define GAB_TRAP_SYMBOL GAB_CORE_MODULE ".trap"
 
 static LLVMValueRef trap_function(LLVMEmitter *emitter) {
@@ -138,7 +131,6 @@ static LLVMValueRef trap_message(LLVMEmitter *emitter) {
     return LLVMBuildGlobalStringPtr(emitter->builder, GAB_OUT_OF_RANGE, "gab.out_of_range");
 }
 
-/* A slice is a pointer followed by its length, so the length is its second field. */
 static LLVMValueRef slice_length(LLVMEmitter *emitter, MIROperand operand) {
     LLVMTypeRef held = emitter->value_types[operand.value.id];
 
@@ -155,8 +147,6 @@ static LLVMValueRef slice_length(LLVMEmitter *emitter, MIROperand operand) {
 static LLVMValueRef drop_glue_of(LLVMEmitter *emitter, const Type *type);
 static LLVMValueRef callee_value(LLVMEmitter *emitter, const Function *callee, LLVMTypeRef *out_signature);
 
-/* The ending a drop in this body resolved for the type, which names an instance where a generic declares
- * one. Glue is written per type and reached recursively, so it is found by type rather than passed down. */
 static Function *ending_of(LLVMEmitter *emitter, const Type *type) {
     for (size_t b = 0; b < emitter->ir->block_count; b++) {
         const MIRBlock *block = emitter->ir->blocks[b];
@@ -173,13 +163,11 @@ static Function *ending_of(LLVMEmitter *emitter, const Type *type) {
     return function_registry_destructor(emitter->ir->functions, type);
 }
 
-/* What a 'Unique' points at, which is the argument it was instantiated with. */
 static const Type *unique_pointee(const Type *type) {
     return type_arg_count(type) == 1 && type_args(type)[0].kind == TYPE_ARG_TYPE ? type_args(type)[0].type
                                                                                  : NULL;
 }
 
-/* Drops whatever a value of this type owns, reached from its address. */
 static void emit_drop_body(LLVMEmitter *emitter, const Type *type, LLVMValueRef self) {
     LLVMTypeRef pointer = LLVMPointerTypeInContext(emitter->context, 0);
 
@@ -189,7 +177,6 @@ static void emit_drop_body(LLVMEmitter *emitter, const Type *type, LLVMValueRef 
 
         LLVMValueRef owned = LLVMBuildLoad2(emitter->builder, pointer, self, "");
 
-        /* What the object holds ends before the object does, since freeing it loses the way to reach it. */
         const Type *pointee = type_pointee(type);
 
         if (pointee && type_registry_owns(emitter->registry, pointee)) {
@@ -204,9 +191,6 @@ static void emit_drop_body(LLVMEmitter *emitter, const Type *type, LLVMValueRef 
         return;
     }
 
-    /* What a 'Unique' points at ends before the ending it declares runs, which is what gives that ending
-     * the memory to free. Nothing written in the language reaches a value through a run, so this is the
-     * compiler's to emit rather than the core's to say. */
     if (type_registry_is_unique(emitter->registry, type)) {
         const Type *pointee = unique_pointee(type);
 
@@ -222,7 +206,6 @@ static void emit_drop_body(LLVMEmitter *emitter, const Type *type, LLVMValueRef 
         }
     }
 
-    /* Every element of a run is live, so the walk is the whole length rather than a tracked part of it. */
     if (type_kind(type) == TYPE_ARRAY) {
         const Type *element = type_array_element(type);
 
@@ -252,8 +235,6 @@ static void emit_drop_body(LLVMEmitter *emitter, const Type *type, LLVMValueRef 
         return;
     }
 
-    /* What the type does as it ends runs before its fields go, so it still reaches what it holds. The
-     * ending is the one the drop resolved, which names an instance where the declaration is generic. */
     Function *destroy = ending_of(emitter, type);
 
     if (destroy) {
@@ -283,8 +264,6 @@ static void emit_drop_body(LLVMEmitter *emitter, const Type *type, LLVMValueRef 
     }
 }
 
-/* One function per type that owns something, emitted once and called wherever that type is dropped.
- * A named function is what makes a recursive type terminate rather than expanding forever. */
 static LLVMValueRef drop_glue_of(LLVMEmitter *emitter, const Type *type) {
     char name[256];
     snprintf(name, sizeof(name), "drop.%s", llvm_type_symbol(emitter->arena, type));
@@ -323,10 +302,7 @@ static LLVMValueRef drop_glue_of(LLVMEmitter *emitter, const Type *type) {
 
 static LLVMValueRef operand_value(LLVMEmitter *emitter, MIROperand operand);
 
-/* The address a place names, walked from its base through each projection. A base with no storage of
- * its own is a temporary the lowering stores into, which is given a slot the first time it is named. */
 static LLVMValueRef place_address(LLVMEmitter *emitter, const Place *place, LLVMTypeRef *out_type) {
-    /* Storage is what 'value_types' records, so a base carrying only a value is spilled, not reused. */
     if (!emitter->value_types[place->base.id]) {
         const MIRValueInfo *info = mir_value_info(emitter->ir, place->base);
 
@@ -346,7 +322,6 @@ static LLVMValueRef place_address(LLVMEmitter *emitter, const Place *place, LLVM
     LLVMValueRef address = emitter->values[place->base.id];
     LLVMTypeRef type = emitter->value_types[place->base.id];
 
-    /* Whether the address reached is a bare run rather than an aggregate holding one. */
     bool viewed = false;
 
     for (size_t i = 0; i < place->projection_count; i++) {
@@ -357,11 +332,8 @@ static LLVMValueRef place_address(LLVMEmitter *emitter, const Place *place, LLVM
             address = LLVMBuildStructGEP2(emitter->builder, type, address, projection->field.id, "");
             break;
 
-        /* A base that is storage holds the pointer, so it is read; one that is already the pointer is
-         * the address this projection names. */
         case PROJ_DEREF:
             if (type) {
-                /* A view holds its address beside its count, so the pointer is the first of the pair. */
                 if (LLVMGetTypeKind(type) == LLVMStructTypeKind) {
                     address = LLVMBuildStructGEP2(emitter->builder, type, address, 0, "");
                 }
@@ -370,8 +342,6 @@ static LLVMValueRef place_address(LLVMEmitter *emitter, const Place *place, LLVM
                                          address, "");
             }
 
-            /* What a view names is a run with no length in its type, so nothing is stepped over here;
-             * a raw run is that same bare run, stated by the type rather than carried beside it. */
             viewed = type_metadata_of(projection->type) == TYPE_META_LENGTH ||
                      type_kind(projection->type) == TYPE_RAW;
             break;
@@ -379,7 +349,6 @@ static LLVMValueRef place_address(LLVMEmitter *emitter, const Place *place, LLVM
         case PROJ_INDEX: {
             LLVMValueRef index = operand_value(emitter, mir_operand_value(projection->index));
 
-            /* Indexing an aggregate steps over it before selecting; a bare run is stepped through. */
             if (viewed) {
                 address = LLVMBuildGEP2(emitter->builder, llvm_type_of(emitter, projection->type), address,
                                         &index, 1, "");
@@ -408,7 +377,6 @@ static LLVMValueRef place_address(LLVMEmitter *emitter, const Place *place, LLVM
     return address;
 }
 
-/* A local is storage, so reading one as a value loads through it; every other register is the value. */
 static LLVMValueRef operand_value(LLVMEmitter *emitter, MIROperand operand) {
     if (operand.kind == OPERAND_CONST) {
         LLVMTypeRef type = llvm_type_of(emitter, operand.constant.type);
@@ -429,7 +397,6 @@ static LLVMValueRef operand_value(LLVMEmitter *emitter, MIROperand operand) {
     return emitter->values[operand.value.id];
 }
 
-/* Whether an instruction's operands are floating, which the opcode alone does not say. */
 static bool operands_are_float(LLVMEmitter *emitter, const MIRInst *inst) {
     if (inst->arg_count == 0) {
         return false;
@@ -444,7 +411,6 @@ static bool operands_are_float(LLVMEmitter *emitter, const MIRInst *inst) {
     return info && info->type && type_kind(info->type) == TYPE_F32;
 }
 
-/* Whether an instruction's operands count rather than measure, which orders and divides them unsigned. */
 static bool operands_are_unsigned(LLVMEmitter *emitter, const MIRInst *inst) {
     if (inst->arg_count == 0) {
         return false;
@@ -497,7 +463,6 @@ static LLVMRealPredicate real_predicate(CmpPredicate predicate) {
     return LLVMRealOEQ;
 }
 
-/* The signature a callee is reached through, which its declaration states whether or not a body is here. */
 static LLVMTypeRef callee_signature(LLVMEmitter *emitter, const Function *callee) {
     LLVMTypeRef params[GAB_MAX_CALL_ARGS];
 
@@ -508,7 +473,6 @@ static LLVMTypeRef callee_signature(LLVMEmitter *emitter, const Function *callee
         params[i] = llvm_type_of(emitter, callee->signature.params[i]);
     }
 
-    /* A 'caller' function is reached through the location its call passes, which no declaration writes. */
     if ((callee->decl->modifiers & FUNC_MOD_CALLER) && callee->decl->location_type &&
         count < GAB_MAX_CALL_ARGS) {
         params[count++] = llvm_type_of(emitter, callee->decl->location_type);
@@ -520,7 +484,6 @@ static LLVMTypeRef callee_signature(LLVMEmitter *emitter, const Function *callee
     return LLVMFunctionType(returns, params, (unsigned)count, false);
 }
 
-/* A callee is declared once per module, and the linker is what resolves one with no body here. */
 static LLVMValueRef callee_value(LLVMEmitter *emitter, const Function *callee, LLVMTypeRef *out_signature) {
     const char *name = llvm_symbol_of(emitter->arena, callee);
 
@@ -615,7 +578,6 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
                                                   LLVMFloatTypeInContext(emitter->context), "");
         break;
 
-    /* Saturating, since a plain fptosi is undefined out of range and a cast is defined to clamp. */
     case MIR_FTOI: {
         LLVMTypeRef result = LLVMInt32TypeInContext(emitter->context);
         LLVMValueRef operand = operand_value(emitter, inst->args[0]);
@@ -636,7 +598,6 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         values[inst->result.id] = operand_value(emitter, inst->args[0]);
         break;
 
-    /* Text is one global per literal, named beside its length so it reads as any other view does. */
     case MIR_CONST_STR: {
         const String *text = inst->constant.as_string;
 
@@ -653,7 +614,6 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         break;
     }
 
-    /* A run reaches a view by naming where it starts beside how many it holds. */
     case MIR_MAKE_SLICE: {
         LLVMValueRef view = LLVMGetUndef(llvm_type_of(emitter, inst->type));
 
@@ -668,7 +628,6 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         values[inst->result.id] = slice_length(emitter, inst->args[0]);
         break;
 
-    /* Giving a value away empties the slot, so releasing it later frees nothing. */
     case MIR_NULL: {
         LLVMTypeRef held;
         LLVMValueRef address = place_address(emitter, &inst->place, &held);
@@ -685,13 +644,10 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         emitter->value_types[inst->place.base.id] = held;
         values[inst->place.base.id] = LLVMBuildAlloca(emitter->entry, held, "");
 
-        /* A local holds nothing until it is given a value, and reading one is spelled as reading zero.
-         * The store sits where scope opens rather than beside the alloca, so a loop clears each pass. */
         LLVMBuildStore(builder, LLVMConstNull(held), values[inst->place.base.id]);
         break;
     }
 
-    /* A slot's storage ends with its frame, so nothing is emitted for it here. */
     case MIR_STORAGE_DEAD:
     case MIR_STORAGE_INIT:
         break;
@@ -719,7 +675,6 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         break;
     }
 
-    /* An index outside its container ends the program, since there is no frame to unwind to. */
     case MIR_BOUNDS: {
         const Type *container = inst->type;
 
@@ -729,7 +684,6 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         LLVMValueRef length;
 
         if (inst->arg_count > 1) {
-            /* A slice states its own length, which the second operand names. */
             length = slice_length(emitter, inst->args[1]);
         } else {
             length = LLVMConstInt(i32, (unsigned long long)type_array_length(container), false);
@@ -754,12 +708,10 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
             2, "");
         LLVMBuildUnreachable(builder);
 
-        /* What follows the check belongs to the path that passed it. */
         LLVMPositionBuilderAtEnd(builder, ok);
         break;
     }
 
-    /* A flag is one bit of the frame, written where what a slot holds changes. */
     case MIR_DROP_FLAG: {
         LLVMTypeRef held = LLVMInt1TypeInContext(emitter->context);
 
@@ -772,7 +724,6 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         break;
     }
 
-    /* Dropping calls the glue for the type, which reaches whatever that type owns. */
     case MIR_DROP: {
         if (!inst->type || !type_registry_owns(emitter->registry, inst->type)) {
             break;
@@ -784,7 +735,6 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         LLVMTypeRef pointer = LLVMPointerTypeInContext(emitter->context, 0);
         LLVMTypeRef signature = LLVMFunctionType(LLVMVoidTypeInContext(emitter->context), &pointer, 1, false);
 
-        /* A slot whose paths disagree is released only where the flag those paths wrote says it holds. */
         if (!mir_value_is_none(inst->flag) && emitter->flags[inst->flag.id]) {
             LLVMValueRef function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(builder));
 
@@ -808,14 +758,12 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         break;
     }
 
-    /* Allocating is a call the linker resolves, so the emitted object embeds no host pointer. */
     case MIR_BOX: {
         const Type *boxed = inst->type ? type_pointee(inst->type) : NULL;
 
         LLVMTypeRef size_type = LLVMInt64TypeInContext(emitter->context);
         LLVMTypeRef pointer = LLVMPointerTypeInContext(emitter->context, 0);
 
-        /* What a box holds is written before it is read, so the memory it starts in is never seen. */
         LLVMTypeRef signature = LLVMFunctionType(pointer, &size_type, 1, false);
 
         LLVMValueRef box = LLVMGetNamedFunction(emitter->module, "malloc");
@@ -867,8 +815,6 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
 
     case MIR_RETURN:
         if (inst->arg_count == 0) {
-            /* A body whose paths all return still ends with a block nothing reaches, which returns no
-             * value however the signature reads. */
             if (emitter->ir->function->signature.return_type) {
                 LLVMBuildUnreachable(builder);
                 break;
@@ -909,7 +855,6 @@ void llvm_unit_declares(LLVMUnit *unit, const char *symbol) {
 void llvm_unit_requires(LLVMUnit *unit, const char *symbol) {
     LLVMTypeRef byte = LLVMInt8TypeInContext(unit->context);
 
-    /* Referenced from a global rather than a body, so nothing needs to run for the link to check it. */
     LLVMValueRef required = LLVMAddGlobal(unit->module, byte, symbol);
 
     LLVMSetLinkage(required, LLVMExternalLinkage);
@@ -925,7 +870,6 @@ void llvm_unit_requires(LLVMUnit *unit, const char *symbol) {
     LLVMSetLinkage(anchor, LLVMInternalLinkage);
     LLVMSetGlobalConstant(anchor, true);
 
-    /* Kept though nothing reads it, so the reference survives to the link. */
     LLVMSetSection(anchor, ".gab.imports");
 }
 
@@ -953,8 +897,6 @@ void llvm_unit_add(LLVMUnit *unit, const MIRFunction *ir) {
     emitter.values = arena_alloc(arena, (ir->value_count + 1) * sizeof(LLVMValueRef));
     emitter.value_types = arena_alloc(arena, (ir->value_count + 1) * sizeof(LLVMTypeRef));
 
-    /* A null entry is what says a register holds its value rather than storage for one, and what says
-     * a temporary stored into has not been given a slot yet. */
     memset(emitter.values, 0, (ir->value_count + 1) * sizeof(LLVMValueRef));
     memset(emitter.value_types, 0, (ir->value_count + 1) * sizeof(LLVMTypeRef));
 
@@ -977,16 +919,12 @@ void llvm_unit_add(LLVMUnit *unit, const MIRFunction *ir) {
 
     const char *symbol = llvm_symbol_of(arena, ir->function);
 
-    /* A callee declared before its body reached here already has the name, so it is filled in rather
-     * than added a second time. */
     LLVMValueRef function = LLVMGetNamedFunction(unit->module, symbol);
 
     if (!function) {
         function = LLVMAddFunction(unit->module, symbol, signature);
     }
 
-    /* Every reader that names a generic instantiates it, so each states the same body under the same
-     * symbol and the link takes one rather than refusing the pair. */
     if (ir->function->type_arg_count > 0) {
         LLVMSetLinkage(function, LLVMLinkOnceODRLinkage);
     }
@@ -1002,15 +940,11 @@ void llvm_unit_add(LLVMUnit *unit, const MIRFunction *ir) {
         emitter.blocks[ir->blocks[b]->id.id] = LLVMAppendBasicBlockInContext(unit->context, function, label);
     }
 
-    /* Slots live in a block of their own, so one allocated while a later block is being emitted still
-     * runs before every use rather than after that block's terminator. */
     LLVMBasicBlockRef slots = LLVMAppendBasicBlockInContext(unit->context, function, "slots");
 
     emitter.entry = LLVMCreateBuilderInContext(unit->context);
     LLVMPositionBuilderAtEnd(emitter.entry, slots);
 
-    /* A parameter reached through a projection needs an address, which an argument passed by value has
-     * none of, so one that is projected is spilled to a slot of its own. */
     for (size_t i = 0; i < ir->param_count; i++) {
         const MIRValueInfo *info = mir_value_info(ir, ir->params[i]);
 
@@ -1037,7 +971,6 @@ void llvm_unit_add(LLVMUnit *unit, const MIRFunction *ir) {
         }
     }
 
-    /* A malformed body is a compiler bug, and the verifier names it here rather than at link time. */
     LLVMBuildBr(emitter.entry, emitter.blocks[ir->entry.id]);
     LLVMMoveBasicBlockBefore(slots, emitter.blocks[ir->entry.id]);
 
@@ -1045,7 +978,6 @@ void llvm_unit_add(LLVMUnit *unit, const MIRFunction *ir) {
 
     char *invalid = NULL;
 
-    /* The verifier allocates its message whether or not one is asked for, so it is always released. */
     bool verifies = LLVMVerifyModule(unit->module, LLVMReturnStatusAction, &invalid) == 0;
 
     if (!verifies) {

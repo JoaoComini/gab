@@ -15,9 +15,7 @@ typedef struct TypeRegistry TypeRegistry;
 
 typedef struct IntrinsicLowering IntrinsicLowering;
 
-/* Every name the compiler knows, interned once so a site compares pointers rather than characters. */
 typedef struct KnownNames {
-    /* Spelled by the source itself, and fixed by the grammar. */
     String *i32;
     String *f32;
     String *boolean;
@@ -30,8 +28,6 @@ typedef struct KnownNames {
     String *self;
     String *error;
 
-    /* Declared by the core and found by name, so the two drift if either moves alone. */
-    /* The interface an ending is recorded under, which a conformance names by declaration. */
     DeclId destroy_interface;
 
     String *destroy_method;
@@ -40,7 +36,6 @@ typedef struct KnownNames {
     String *len;
     String *as_bytes;
 
-    /* Written as '@name', which the compiler answers rather than binds. */
     String *caller;
     String *size_of;
 } KnownNames;
@@ -53,14 +48,12 @@ typedef struct TypeFieldSpec {
 const Type *type_registry_declare_struct(TypeRegistry *registry, String *name, const TypeFieldSpec *fields,
                                          size_t field_count);
 
-/* False when this type already implements the interface at these arguments, which it may do only once. */
 bool type_registry_declare_conformance(TypeRegistry *registry, const Type *type, DeclId interface,
                                        const TypeArg *args, size_t arg_count);
 
 bool type_registry_conforms(TypeRegistry *registry, const Type *type, DeclId interface, const TypeArg *args,
                             size_t arg_count);
 
-/* Whether the type implements the interface at any arguments, which is what a name alone can ask. */
 bool type_registry_conforms_at_any(TypeRegistry *registry, const Type *type, DeclId interface);
 
 void type_registry_complete(TypeRegistry *registry, const Type *type);
@@ -71,7 +64,6 @@ const TypeField *type_registry_find_field(TypeRegistry *registry, const Type *ty
 
 bool type_registry_owns(TypeRegistry *registry, const Type *type);
 
-/* True when a value of this type names memory it does not own, at any depth. */
 bool type_registry_borrows(TypeRegistry *registry, const Type *type);
 
 bool type_registry_copies(TypeRegistry *registry, const Type *type);
@@ -85,15 +77,11 @@ TypeRegistry *type_registry_create(Arena *arena, const KnownNames *names);
 
 KnownNames known_names(StringPool *strings);
 
-/* The lowering for a call the compiler expands rather than binds, none where the pair names no intrinsic. */
 const IntrinsicLowering *type_registry_intrinsic(const TypeRegistry *registry, const String *owner,
                                                  const String *name);
 
-/* The names the registry was built with, which every site matching one compares against by pointer. */
 const KnownNames *type_registry_names(const TypeRegistry *registry);
 
-/* Whether the type is the owner the compiler writes a drop for, rather than a struct that merely holds a run.
- */
 bool type_registry_is_unique(const TypeRegistry *registry, const Type *type);
 
 void type_registry_destroy(TypeRegistry *registry);
@@ -106,11 +94,8 @@ const Type *type_registry_deref_of(TypeRegistry *registry, const Type *type);
 
 const Type *type_registry_error_type(TypeRegistry *registry);
 
-/* Shared by every array, which is where the conformance all of them have is recorded. */
-
 const Type *type_registry_array_of(TypeRegistry *registry, const Type *element, int32_t length);
 
-/* An array whose length may still be a parameter, as 'array<T, N>' inside a generic declaration. */
 const Type *type_registry_array_with(TypeRegistry *registry, const Type *element, TypeArg length);
 
 const Type *type_registry_slice_of(TypeRegistry *registry, const Type *element);

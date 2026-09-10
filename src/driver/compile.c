@@ -20,15 +20,12 @@
 
 #define GAB_COMPILE_BLOCK_SIZE 4096
 
-/* What every stage of one compilation shares: what resolving a module in it needs, and the generics
- * a later module instantiates from. */
 typedef struct {
     Resolver resolver;
 
     MIRModule *generics;
 } Compilation;
 
-/* A generic's body is what a reader instantiates, so it is kept where every later module finds it. */
 static void keep_templates(const Compilation *compilation, const MIRModule *bodies) {
     for (size_t i = 0; i < bodies->entries.size; i++) {
         MIRFunction *ir = bodies->entries.data[i].ir;
@@ -38,9 +35,6 @@ static void keep_templates(const Compilation *compilation, const MIRModule *bodi
         }
     }
 }
-
-/* What an interface declares, resolved into a scope of its own so a symbol keeps the module that
- * defines it. Nothing is emitted: the bodies live in the object beside it. */
 
 static bool compile_declarations(const Compilation *compilation, const char *text, Module **into) {
     ASTModule *module = NULL;
@@ -54,8 +48,6 @@ static bool compile_declarations(const Compilation *compilation, const char *tex
 
     ResolvedModule *resolved = NULL;
 
-    /* An interface restates the declarations it was written from, intrinsics included, so re-reading
-     * one declares what its source was allowed to. */
     ModulePrivileges privileges = {.intrinsics = true};
 
     Scope *into_scope =
@@ -79,9 +71,6 @@ static bool compile_declarations(const Compilation *compilation, const char *tex
     return true;
 }
 
-/* This module's source, resolved and lowered into 'out'. Only source someone wrote is held to what a
- * program may declare; 'declares_intrinsics' is what the core is granted. What the interface states
- * a body as is what was written, which only resolution's facts recover, so they are left in 'facts'. */
 static bool compile_module(const Compilation *compilation, ASTModule *module, Scope *into,
                            ModulePrivileges privileges, LLVMUnit *out, const Facts **facts) {
     ResolvedModule *resolved = NULL;
@@ -104,7 +93,6 @@ static bool compile_module(const Compilation *compilation, ASTModule *module, Sc
     for (size_t i = 0; i < bodies->entries.size; i++) {
         MIRFunction *ir = bodies->entries.data[i].ir;
 
-        /* A generic's own body stands for its instances, which are emitted in its place. */
         if (!ir || mir_function_is_template(ir)) {
             continue;
         }
@@ -138,7 +126,6 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
     StringPool strings;
     string_pool_init(&strings, arena);
 
-    /* Built before any source is read: what a primitive is called is not something a module states. */
     const KnownNames names = known_names(&strings);
 
     TypeRegistry *types = type_registry_create(arena, &names);
@@ -164,8 +151,6 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
                 .diagnostics = diagnostics,
             },
 
-        /* Every generic the core and the imports declare, which this module instantiates from rather
-         * than links. */
         .generics = mir_module_create(arena),
     };
 
@@ -178,9 +163,6 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
         ok = false;
     }
 
-    /* Each dependency is its own compilation: its declarations land in a scope of their own, which
-     * this module then names, so a symbol keeps the module that defines it rather than taking this
-     * one's. They arrive in an order that puts an import before whoever imports it. */
     for (size_t i = 0; ok && i < request->dependency_count; i++) {
         const GabDependency *dependency = &request->dependencies[i];
 
@@ -192,14 +174,10 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
             break;
         }
 
-        /* Only a direct import is a module this one may name; the rest are read to be resolved
-         * against and linked. */
         if (dependency->direct) {
             module_map_insert(modules, string_from_cstr(&strings, dependency->name), imported);
         }
 
-        /* Every file below reaches the core without importing it, this compilation's own and every
-         * interface it goes on to read. */
         if (strcmp(dependency->name, GAB_CORE_MODULE) == 0) {
             compilation.resolver.core = imported;
         }
@@ -232,7 +210,6 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
             diag_error(diagnostics, GAB_ERR_CODEGEN, (Span){0, 0}, "could not write %s", request->interface);
         }
 
-        /* The object states the interface just written, which its importers require by the same name. */
         char *written = ok ? gab_interface_read(request->interface) : NULL;
 
         if (written) {

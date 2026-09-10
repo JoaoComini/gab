@@ -10,7 +10,6 @@ typedef struct {
     char *buffer;
     size_t capacity;
 
-    /* What the text would have taken, which keeps growing past the buffer so a caller can size one. */
     size_t written;
 
     TypeRegistry *registry;
@@ -76,7 +75,6 @@ static void mir_print_value(MIRPrinter *printer, MIRValueId value) {
     mir_printf(printer, "%%%u", value.id);
 }
 
-/* A constant says what it is, so printing one asks its type rather than the instruction holding it. */
 static void mir_print_constant(MIRPrinter *printer, Constant constant) {
     if (constant_is_float(constant)) {
         mir_printf(printer, "%g", (double)constant.as_float);

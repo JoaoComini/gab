@@ -73,7 +73,6 @@ Function *function_registry_find_owned(FunctionRegistry *registry, const Type *t
     return declared ? *declared : NULL;
 }
 
-/* A signature mentioning no type parameter is one function for every instantiation of its owner. */
 bool function_registry_owned_is_shared(const Function *declaration, const Type *type) {
     if (type_arg_count(type) == 0) {
         return true;
@@ -105,7 +104,6 @@ Function *function_registry_owned_for(FunctionRegistry *registry, const Type *ty
         return declaration;
     }
 
-    /* A method with parameters of its own is specialized at the call, which knows all of them. */
     if (declaration->decl->type_param_count > type_arg_count(type)) {
         return declaration;
     }

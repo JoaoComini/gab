@@ -141,7 +141,6 @@ bool type_arg_equals(TypeArg arg, TypeArg other) {
         return false;
     }
 
-    /* A parameter is compared by its index and a value by its value; the union holds one or the other. */
     return arg.constant.kind == CONST_PARAM ? arg.constant.param == other.constant.param
                                             : constant_equals(arg.constant.value, other.constant.value);
 }
@@ -232,7 +231,6 @@ bool type_is_primitive(const Type *type) {
     }
 }
 
-/* Listing every kind rather than the ones that answer true, so a kind added later must be placed here. */
 bool type_is_integer(const Type *type) {
     if (!type) {
         return false;
@@ -262,7 +260,6 @@ bool type_is_integer(const Type *type) {
     return false;
 }
 
-/* Listing every kind rather than the ones that answer true, so a kind added later must be placed here. */
 bool type_is_unsigned(const Type *type) {
     if (!type) {
         return false;
@@ -325,7 +322,6 @@ TypeMemberKey type_member_key_of(const Type *type, const String *name) {
 InstanceId instance_id_of(DeclId decl, const TypeArg *args, size_t arg_count) {
     InstanceId id = {.decl = decl};
 
-    /* The count is what was stored, so comparing one never reads a slot the arguments did not fill. */
     for (size_t i = 0; i < arg_count && i < GAB_MAX_TYPE_PARAMS; i++) {
         id.args[i] = args[i];
         id.arg_count++;

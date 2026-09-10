@@ -36,7 +36,6 @@ static KnownValue *known_values(Arena *arena, const MIRFunction *ir) {
     return known;
 }
 
-/* What an operand holds: the constant it names outright, or what its value was defined by. */
 static bool known_operand(const KnownValue *known, MIROperand operand, KnownValue *out) {
     if (operand.kind == OPERAND_CONST) {
         *out = (KnownValue){.constant = operand.constant, .known = true};
@@ -83,7 +82,6 @@ static bool fold_not(const KnownValue *operand, MIRInst *inst) {
     return true;
 }
 
-/* A constant no instruction reads is what folding leaves behind, and emitting it would cost a load. */
 static void drop_unread_constants(Arena *arena, MIRFunction *ir) {
     bool *read = arena_alloc(arena, (ir->value_count + 1) * sizeof(bool));
 
@@ -105,7 +103,6 @@ static void drop_unread_constants(Arena *arena, MIRFunction *ir) {
                 }
             }
 
-            /* A place reads its base and every index along its path, which no argument names. */
             if (!mir_op_has_place(inst->op)) {
                 continue;
             }
@@ -144,7 +141,6 @@ static void drop_unread_constants(Arena *arena, MIRFunction *ir) {
     }
 }
 
-/* Division that traps is left for the VM to reach, so a program that divides by zero still fails its run. */
 static bool fold_int_binary(MIROp op, int32_t a, int32_t b, int32_t *out) {
     switch (op) {
     case MIR_ADD:
@@ -196,7 +192,6 @@ static bool fold_binary(const KnownValue *left, const KnownValue *right, MIRInst
     if (constant_is_int(left->constant)) {
         int32_t folded;
 
-        /* This folds signed, so a count's division is left for the backend, which divides it unsigned. */
         if (type_is_unsigned(left->constant.type) && (inst->op == MIR_DIV || inst->op == MIR_MOD)) {
             return false;
         }

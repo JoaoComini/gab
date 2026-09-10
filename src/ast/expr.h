@@ -13,8 +13,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* What the source spelled, before any type exists to describe it; the parser knows this much and the
- * resolver turns it into a type. Only these four can be written, which a 'TypeKind' would not say. */
 typedef enum {
     LITERAL_INT,
     LITERAL_FLOAT,
@@ -33,16 +31,14 @@ typedef struct {
     };
 } Literal;
 
-/* The type a literal of this kind has, which is what the resolver gives the expression holding it. */
 TypeKind literal_type_kind(LiteralKind kind);
 
 typedef enum {
     EXPR_LITERAL,
     EXPR_BIN_OP,
-    /* A name the source wrote, which resolution decides names a value, a function or a type. */
+
     EXPR_NAME,
 
-    /* 'X::y', whose qualifier names a module or the type owning an associated function. */
     EXPR_QUALIFIED,
 
     EXPR_CALL,
@@ -54,7 +50,6 @@ typedef enum {
     EXPR_NOT,
     EXPR_BOX,
 
-    /* A value the compiler supplies, named by the lexeme past '@'. */
     EXPR_BUILTIN,
 
     EXPR_INDEX,
@@ -106,23 +101,19 @@ typedef struct ASTExpr {
         struct {
             ASTIdent *name;
 
-            /* 'f<T>(x)', where the name is applied to arguments before it is called. */
             TypeExpr *owner_type_expr;
         } name;
 
-        /* Which of the two the qualifier names is decided by resolution, since the syntax is one. */
         struct {
             ASTIdent *qualifier;
             ASTIdent *name;
 
-            /* 'X<T>::y', where the qualifier is a type applied to arguments. */
             TypeExpr *owner_type_expr;
         } qualified;
 
         struct {
             ASTIdent *name;
 
-            /* What '@size_of<T>()' measures; none for a builtin that takes no type. */
             TypeExpr *type_expr;
         } builtin;
 

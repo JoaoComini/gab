@@ -21,7 +21,6 @@ typedef struct {
 
     uint32_t returned_params;
 
-    /* Where the walk stands, so a lifetime question can ask what is still read from here. */
     MIRBlockId block;
     size_t index;
 } MIRFlow;
@@ -34,7 +33,6 @@ static void report(MIRFlow *flow, Span span, const char *format, const char *arg
     diag_error(flow->diagnostics, GAB_ERR_LIFETIME, span, format, arg);
 }
 
-/* A call's result may name this argument, either because the callee says so or because nothing does. */
 static bool call_result_may_name(const Function *callee, size_t index) {
     if (!callee || !callee->borrowed_params_known) {
         return true;
@@ -53,7 +51,6 @@ static bool borrows_memory(const MIRFlow *flow, const Type *type) {
     return type && type_registry_borrows(flow->registry, type);
 }
 
-/* The value a place is rooted at, which is what reading or writing through it ultimately touches. */
 static MIRValueId root_of(const Place *place) { return place->base; }
 
 static bool is_parameter(const MIRFlow *flow, MIRValueId value) {
@@ -66,21 +63,18 @@ static bool is_parameter(const MIRFlow *flow, MIRValueId value) {
     return false;
 }
 
-/* The type a value holds, which says whether it borrows and whether it owns. */
 static const Type *type_of(const MIRFlow *flow, MIRValueId value) {
     const MIRValueInfo *info = mir_value_info(flow->ir, value);
 
     return info ? info->type : NULL;
 }
 
-/* Whether a value holds an object this body frees, which is a heap slot. */
 static bool holds_its_own_object(MIRFlow *flow, MIRValueId value) {
     const Type *type = type_of(flow, value);
 
     return type && type_kind(type) == TYPE_BOX;
 }
 
-/* The tracked state a place names, following each field projection into its own slot. */
 static bool slot_of(MIRFlow *flow, const Place *place, MIRSlot *out) {
     MIRValueId root = root_of(place);
 
@@ -107,7 +101,6 @@ static bool slot_of(MIRFlow *flow, const Place *place, MIRSlot *out) {
     return true;
 }
 
-/* Writes 'stored' into the slot a place names, so a field's own state answers apart from its struct. */
 static bool store_into(MIRFlow *flow, const Place *place, size_t depth, MIRSlot stored) {
     MIRValueId root = root_of(place);
 
@@ -138,7 +131,6 @@ static bool store_into(MIRFlow *flow, const Place *place, size_t depth, MIRSlot 
     return true;
 }
 
-/* How many leading projections are fields, which is as deep as a slot can be tracked apart. */
 static size_t tracked_depth(const Place *place) {
     size_t depth = 0;
 
@@ -149,8 +141,6 @@ static size_t tracked_depth(const Place *place) {
     return depth;
 }
 
-/* Whether a place reaches memory beyond the local it starts at, which only a dereference does: an
- * element is storage the root still holds, so what it may be given is what the root's scope bounds. */
 static bool reaches_past_its_root(const Place *place) {
     for (size_t i = 0; i < place->projection_count; i++) {
         if (place->projections[i].kind == PROJ_DEREF) {
@@ -181,7 +171,6 @@ static const MIRInst *definition_of(const MIRFlow *flow, MIRValueId value) {
 
 static void collect_sources(MIRFlow *flow, MIRValueId value, MIRSlot *into);
 
-/* Reading a place borrows from whatever that place's own slot borrows from, or from the local itself. */
 static void collect_place_sources(MIRFlow *flow, const Place *place, MIRSlot *into) {
     MIRValueId root = root_of(place);
 
@@ -189,7 +178,6 @@ static void collect_place_sources(MIRFlow *flow, const Place *place, MIRSlot *in
         return;
     }
 
-    /* A value holding its own object is the source, since dropping it invalidates a borrow of it. */
     if (holds_its_own_object(flow, root)) {
         mir_slot_add_borrow(flow->arena, into, root);
         return;
@@ -207,7 +195,6 @@ static void collect_place_sources(MIRFlow *flow, const Place *place, MIRSlot *in
         mir_slot_add_borrow(flow->arena, into, flat.borrows[i]);
     }
 
-    /* A local holding no borrow of its own is what a borrow of it names. */
     if (flat.borrow_count == 0) {
         mir_slot_add_borrow(flow->arena, into, root);
     }
@@ -216,7 +203,6 @@ static void collect_place_sources(MIRFlow *flow, const Place *place, MIRSlot *in
 static void collect_sources(MIRFlow *flow, MIRValueId value, MIRSlot *into) {
     const MIRInst *inst = definition_of(flow, value);
 
-    /* A value nothing defines is a local or a parameter, whose own slot says what it names. */
     if (!inst) {
         const Type *type = type_of(flow, value);
 
@@ -231,7 +217,6 @@ static void collect_sources(MIRFlow *flow, MIRValueId value, MIRSlot *into) {
             return;
         }
 
-        /* A value names itself where it holds its own object, or where it holds a borrow. */
         if (borrows_memory(flow, type) || holds_its_own_object(flow, value)) {
             mir_slot_add_borrow(flow->arena, into, value);
         }
@@ -245,7 +230,6 @@ static void collect_sources(MIRFlow *flow, MIRValueId value, MIRSlot *into) {
         collect_place_sources(flow, &inst->place, into);
         return;
 
-    /* A view hands over what it is built from, so it names whatever its source names. */
     case MIR_COPY:
     case MIR_MAKE_SLICE:
         for (size_t i = 0; i < inst->arg_count; i++) {
@@ -253,7 +237,6 @@ static void collect_sources(MIRFlow *flow, MIRValueId value, MIRSlot *into) {
         }
         return;
 
-    /* A heap object outlives every scope, so what went into it is not what the box names. */
     case MIR_BOX:
         return;
 
@@ -278,7 +261,6 @@ static void collect_sources(MIRFlow *flow, MIRValueId value, MIRSlot *into) {
     }
 }
 
-/* Whether the place holding a borrow is still read at the point the borrowed local's storage ends. */
 static bool live_where_storage_ends(MIRFlow *flow, MIRValueId source, MIRValueId held_in, MIRFieldId field) {
     for (size_t i = 0; i < flow->ir->block_count; i++) {
         const MIRBlock *block = flow->ir->blocks[i];
@@ -303,7 +285,6 @@ static bool live_where_storage_ends(MIRFlow *flow, MIRValueId source, MIRValueId
     return false;
 }
 
-/* A borrow is safe where every local it names still holds its object wherever the borrow is read. */
 static bool outlives_its_source(MIRFlow *flow, MIRValueId borrow, MIRValueId held_in, bool held_in_field,
                                 MIRFieldId field) {
     MIRSlot sources = {0};
@@ -313,24 +294,20 @@ static bool outlives_its_source(MIRFlow *flow, MIRValueId borrow, MIRValueId hel
     for (size_t i = 0; i < sources.borrow_count; i++) {
         MIRValueId source = sources.borrows[i];
 
-        /* A parameter's object belongs to the caller, so a borrow of it outlives this body. */
         if (is_parameter(flow, source)) {
             continue;
         }
 
         const Type *type = type_of(flow, source);
 
-        /* A heap slot is released by its own drop, which dangling tracks rather than lifetimes. */
         if (type && type_kind(type) == TYPE_BOX) {
             continue;
         }
 
-        /* A returned borrow is read by the caller, past every scope this body closes. */
         if (mir_value_is_none(held_in)) {
             return true;
         }
 
-        /* Otherwise it escapes only where it is still read once its source stops holding. */
         if (live_where_storage_ends(flow, source, held_in, held_in_field ? field : MIR_WHOLE_VALUE)) {
             return true;
         }
@@ -339,7 +316,6 @@ static bool outlives_its_source(MIRFlow *flow, MIRValueId borrow, MIRValueId hel
     return false;
 }
 
-/* What a place holds where the walk stands: initialized, moved out of, dangling, or never given one. */
 static MIRSlotInit state_of(MIRFlow *flow, const Place *place) {
     MIRSlot named;
 
@@ -347,7 +323,6 @@ static MIRSlotInit state_of(MIRFlow *flow, const Place *place) {
         named = mir_state_get(flow->state, root_of(place));
     }
 
-    /* Reading the whole value reads every field, so a field's freed borrow dangles the read. */
     return named.init == MIR_SLOT_INIT ? mir_slot_flattened(flow->arena, &named).init : named.init;
 }
 
@@ -394,7 +369,6 @@ static void flow_inst(MIRFlow *flow, const MIRInst *inst) {
     case MIR_STORAGE_DEAD: {
         MIRValueId root = root_of(&inst->place);
 
-        /* The local's storage is gone, so every borrow still naming it dangles from here. */
         mir_state_invalidate_borrows_of(flow->state, root);
 
         mir_state_set(flow->state, root, (MIRSlot){.init = MIR_SLOT_UNINIT});
@@ -412,7 +386,6 @@ static void flow_inst(MIRFlow *flow, const MIRInst *inst) {
     case MIR_LOAD: {
         check_readable(flow, &inst->place, inst->span);
 
-        /* The result names whatever the place it read names, so a borrow of it reaches the same. */
         MIRSlot loaded = {.init = MIR_SLOT_INIT};
 
         collect_place_sources(flow, &inst->place, &loaded);
@@ -426,7 +399,6 @@ static void flow_inst(MIRFlow *flow, const MIRInst *inst) {
         MIRValueId root = root_of(&inst->place);
         MIRSlot slot = mir_state_get(flow->state, root);
 
-        /* Moving out of a value moves every field with it, so none still answers as initialized. */
         mir_slot_set_all(&slot, MIR_SLOT_MOVED);
 
         mir_state_set(flow->state, root, slot);
@@ -457,8 +429,6 @@ static void flow_inst(MIRFlow *flow, const MIRInst *inst) {
 
         size_t depth = tracked_depth(&inst->place);
 
-        /* Writing through a pointer reaches memory this body does not bound, so the borrow
-         * stored there must outlive every scope rather than merely the place holding it. */
         if (reaches_past_its_root(&inst->place)) {
             if (borrows_memory(flow, type_of(flow, mir_operand_as_value(inst->args[0]))) &&
                 outlives_its_source(flow, mir_operand_as_value(inst->args[0]), MIR_NO_VALUE, false,
@@ -474,14 +444,12 @@ static void flow_inst(MIRFlow *flow, const MIRInst *inst) {
 
         collect_sources(flow, mir_operand_as_value(inst->args[0]), &stored);
 
-        /* Giving a heap slot a new object frees the old one, so borrows of it dangle from here. */
         const Type *type = type_of(flow, root);
 
         if (depth == 0 && type && type_kind(type) == TYPE_BOX) {
             mir_state_invalidate_borrows_of(flow->state, root);
         }
 
-        /* Writing a field gives the value its fields, so each answers apart from the others. */
         if (depth > 0) {
             MIRSlot owner = mir_state_get(flow->state, root);
 
@@ -508,8 +476,6 @@ static void flow_inst(MIRFlow *flow, const MIRInst *inst) {
             mir_state_set(flow->state, root, slot);
         }
 
-        /* A borrow stored into a place must outlive every read of that place, which is the
-         * root's, since a field is read no longer than the value holding it. */
         if (borrows_memory(flow, type_of(flow, mir_operand_as_value(inst->args[0]))) &&
             outlives_its_source(flow, mir_operand_as_value(inst->args[0]), root, depth > 0,
                                 depth > 0 ? inst->place.projections[0].field : MIR_WHOLE_VALUE)) {
@@ -522,7 +488,6 @@ static void flow_inst(MIRFlow *flow, const MIRInst *inst) {
     case MIR_BOX:
     case MIR_MAKE_SLICE:
     case MIR_COPY: {
-        /* Passing a value reads it whole, so a freed borrow in any field dangles the read. */
         for (size_t i = 0; i < inst->arg_count; i++) {
             MIRSlot named = mir_state_get(flow->state, mir_operand_as_value(inst->args[i]));
 
@@ -563,7 +528,6 @@ static void flow_inst(MIRFlow *flow, const MIRInst *inst) {
             }
         }
 
-        /* The value is read here, so a source dropped before this point has already dangled it. */
         MIRSlot returned = mir_state_get(flow->state, mir_operand_as_value(inst->args[0]));
 
         if (returned.init != MIR_SLOT_UNREACHED &&
@@ -572,7 +536,6 @@ static void flow_inst(MIRFlow *flow, const MIRInst *inst) {
             break;
         }
 
-        /* A returned borrow is read by the caller, so nothing this body owns may reach it. */
         if (outlives_its_source(flow, mir_operand_as_value(inst->args[0]), MIR_NO_VALUE, false,
                                 MIR_WHOLE_VALUE)) {
             report(flow, inst->span, "this borrow outlives what it names, so it cannot be returned", NULL);
@@ -605,8 +568,6 @@ void mir_borrowck(Arena *arena, TypeRegistry *registry, MIRFunction *ir, Diagnos
 
     Liveness *liveness = mir_liveness_compute(arena, ir);
 
-    /* Every flow the fixpoint builds besides entries[] is scratch, so it lives on its own arena
-     * where rewinding it can never reclaim entries[]'s own storage. */
     Arena *scratch = arena_create(MIR_FLOW_SCRATCH_ARENA_BLOCK_SIZE);
 
     MIRState *entries = arena_alloc(arena, ir->block_count * sizeof(MIRState));
@@ -631,7 +592,6 @@ void mir_borrowck(Arena *arena, TypeRegistry *registry, MIRFunction *ir, Diagnos
 
         MIRSlot slot = {.init = MIR_SLOT_INIT};
 
-        /* A parameter's object belongs to the caller, so a borrow of it names the parameter itself. */
         if (info && borrows_memory(&flow, info->type)) {
             mir_slot_add_borrow(arena, &slot, ir->params[i]);
         }

@@ -88,7 +88,6 @@ static bool layout_of_scalar(TypeKind kind, size_t *size, size_t *alignment) {
         *alignment = 1;
         return true;
 
-    /* A count of bytes reaches every address, so it is as wide as a pointer on the target. */
     case TYPE_USIZE:
         *size = sizeof(void *);
         *alignment = _Alignof(void *);
@@ -198,7 +197,6 @@ size_t type_registry_align_of(TypeRegistry *registry, const Type *type) {
     return type_registry_layout_of(registry, type)->alignment;
 }
 
-/* An array reads as a slice of its element, which is where the two share their methods. */
 const Type *type_registry_deref_of(TypeRegistry *registry, const Type *type) {
     if (type && type_kind(type) == TYPE_ARRAY) {
         return type_registry_slice_of(registry, type_array_element(type));
@@ -325,7 +323,6 @@ const Type *type_registry_apply(TypeRegistry *registry, const TypeDecl *decl, co
     return type_registry_instantiate(registry, decl, type_args, arg_count);
 }
 
-/* An instantiation owns the arguments it was interned under, since the caller's are on its stack. */
 static Type *intern_applied(TypeRegistry *registry, Type *key, const TypeArg *args, size_t count) {
     key->args = args;
     key->arg_count = count;
@@ -355,7 +352,6 @@ const Type *type_registry_slice_of(TypeRegistry *registry, const Type *element) 
     return intern_applied(registry, &key, &argument, 1);
 }
 
-/* The length is an argument like the element, so a generic one is a parameter rather than a count. */
 const Type *type_registry_array_with(TypeRegistry *registry, const Type *element, TypeArg length) {
     Type key = type_init(TYPE_ARRAY, registry->primitives.array_decl->id.name);
 
@@ -403,7 +399,6 @@ const Type *type_registry_param(TypeRegistry *registry, size_t index) {
     return registry->params[index];
 }
 
-/* A value argument takes the parameter it names; a type argument is rebuilt by the walk below. */
 static TypeArg substitute_arg(TypeArg arg, const TypeArg *args, size_t arg_count) {
     if (arg.kind != TYPE_ARG_CONST || arg.constant.kind != CONST_PARAM) {
         return arg;
@@ -456,7 +451,6 @@ const Type *type_registry_substitute(TypeRegistry *registry, const Type *type, c
     case TYPE_STRUCT: {
         assert(type_decl(type) && "a struct mentioning a parameter is an instantiation");
 
-        /* A caller may hold more arguments than this struct takes, when a method adds its own. */
         assert(type_decl(type)->param_count <= arg_count && "an instantiation is given every argument");
 
         return type_registry_instantiate(registry, type_decl(type), args, type_decl(type)->param_count);
@@ -531,8 +525,6 @@ bool type_registry_owns(TypeRegistry *registry, const Type *type) {
     case TYPE_SLICE:
         return false;
 
-    /* What an argument will be is not known here, and one that owns must not be given away twice, so
-     * a parameter answers as the argument that would own does. */
     case TYPE_PARAM:
         return true;
 
@@ -540,12 +532,10 @@ bool type_registry_owns(TypeRegistry *registry, const Type *type) {
         break;
     }
 
-    /* The compiler writes its drop, so it owns what it points at though the run it holds does not. */
     if (type_registry_is_unique(registry, type)) {
         return true;
     }
 
-    /* An ending of its own is something to run, so the type is one that ends even holding nothing. */
     if (type_registry_conforms(registry, type, registry->names.destroy_interface, NULL, 0)) {
         return true;
     }
@@ -615,8 +605,6 @@ bool type_registry_copies(TypeRegistry *registry, const Type *type) {
     case TYPE_SLICE:
         return true;
 
-    /* What an argument will be is not known here, so a parameter answers as the argument that owns
-     * does: given away rather than copied. */
     case TYPE_PARAM:
         return false;
 
@@ -624,7 +612,6 @@ bool type_registry_copies(TypeRegistry *registry, const Type *type) {
         break;
     }
 
-    /* Exactly one slot owns what it points at, so a second naming the same run would free it twice. */
     if (type_registry_is_unique(registry, type)) {
         return false;
     }

@@ -8,7 +8,6 @@
 
 const KnownNames *resolver_names(ResolverState *state) { return type_registry_names(state->global->types); }
 
-/* 'Self' names the type an impl block is for, so nothing else may take the name. */
 bool reject_self_as_name(ResolverState *state, String *name, Span span) {
     if (name != resolver_names(state)->self) {
         return false;
@@ -20,13 +19,11 @@ bool reject_self_as_name(ResolverState *state, String *name, Span span) {
     return true;
 }
 
-/* What the syntax means for a symbol, which needs the body the syntax does not mention. */
 static Linkage linkage_of(const ASTFuncDecl *decl) {
     if (decl->syntax & FUNC_SYN_FOREIGN) {
         return LINKAGE_C;
     }
 
-    /* An intrinsic is expanded rather than called, so it names no symbol and links to nothing. */
     if (decl->syntax & FUNC_SYN_INTRINSIC) {
         return LINKAGE_INTERNAL;
     }
@@ -34,10 +31,6 @@ static Linkage linkage_of(const ASTFuncDecl *decl) {
     return decl->body ? LINKAGE_INTERNAL : LINKAGE_GAB;
 }
 
-/* A body defined elsewhere is linked against as it was compiled, and arguments the definition never
- * saw compile nothing. A C body is named by what the declaration spells, which states no argument at
- * all, so every parameter it could be reached through leaves two instances one symbol. True where it
- * was reported. */
 static bool reject_generic_without_body(ResolverState *state, const ASTStmt *stmt, const String *name) {
     if (stmt->func_decl.type_param_count == 0 || linkage_of(&stmt->func_decl) == LINKAGE_INTERNAL) {
         return false;
@@ -54,9 +47,6 @@ static bool reject_generic_without_body(ResolverState *state, const ASTStmt *stm
     return true;
 }
 
-/* The syntax that survives resolution, which the rest of the compiler reads instead of the tokens. */
-/* Where a declaration belongs: what a file declares is the module's, however many files write it, so
- * only what a file imports stays with the file. */
 static Scope *resolver_declaring_scope(ResolverState *state) {
     return state->env.declaring ? state->env.declaring : state->env.scope;
 }
@@ -76,9 +66,6 @@ static unsigned modifiers_of(const ASTFuncDecl *decl) {
            (unsigned)((decl->syntax & FUNC_SYN_CALLER) ? FUNC_MOD_CALLER : FUNC_MOD_NONE);
 }
 
-/* What a name qualified by a module resolves through: an import binds the module in this file, so
- * naming it is the lookup any other name is, and one this file did not import is bound nowhere. */
-/* The scope a written type resolves through, which its qualifier names where it has one. */
 Scope *resolver_type_expr_scope(ResolverState *state, const TypeExpr *expr) {
     return expr->qualifier ? resolver_qualifier_scope(state, expr->qualifier) : state->env.scope;
 }
@@ -89,8 +76,6 @@ String *resolver_type_expr_member(ResolverState *state, const TypeExpr *expr) {
     return expr->name->name;
 }
 
-/* The scope a qualifier resolves through: an import binds the module in this file, so naming it is
- * the lookup any other name is, and one this file did not import is bound nowhere. */
 Scope *resolver_qualifier_scope(ResolverState *state, const ASTIdent *qualifier) {
     if (qualifier->name == state->module_name) {
         return state->module_scope;
@@ -101,8 +86,6 @@ Scope *resolver_qualifier_scope(ResolverState *state, const ASTIdent *qualifier)
     return bound && bound->kind == SYMBOL_MODULE ? bound->module->scope : NULL;
 }
 
-/* A name a module this file may name declares, which an unqualified use reaches once this unit
- * declares none itself. The core is last, so a name the file imports is the one it means. */
 static Symbol *file_lookup(const ResolverState *state, String *name) {
     if (!state->env.visible) {
         return NULL;
@@ -122,7 +105,6 @@ static Symbol *file_lookup(const ResolverState *state, String *name) {
 Symbol *resolver_resolve_name(ResolverState *state, Scope *scope, String *name) {
     Symbol *found = scope ? scope_lookup(scope, name) : NULL;
 
-    /* A name qualified by a module is that module's, so what this file imports does not answer it. */
     if (found) {
         return found;
     }
@@ -130,7 +112,6 @@ Symbol *resolver_resolve_name(ResolverState *state, Scope *scope, String *name) 
     return file_lookup(state, name);
 }
 
-/* What '@caller()' answers with, which the prelude declares and every file reaches by importing it. */
 static const Type *resolver_location_type(ResolverState *state) {
     String *name = string_from_cstr(state->global->strings, GAB_LOCATION_TYPE);
 
@@ -139,7 +120,6 @@ static const Type *resolver_location_type(ResolverState *state) {
     return found ? symbol_type(state->global->types, found) : NULL;
 }
 
-/* The interface a name denotes, or null where it denotes something else or nothing. */
 static InterfaceDecl *interface_of(const Symbol *symbol) {
     return symbol && symbol->kind == SYMBOL_INTERFACE ? symbol->interface : NULL;
 }
@@ -197,7 +177,6 @@ const char *type_name(ResolverState *state, const Type *type) {
         return type_name_of(type)->data;
     }
 
-    /* A parameter interns by index and carries no name, so what a declaration called it is not here. */
     if (type_kind(type) == TYPE_PARAM) {
         return "a type parameter";
     }
@@ -215,7 +194,6 @@ const char *type_name(ResolverState *state, const Type *type) {
 static void resolver_enter_scope(ResolverState *state) {
     state->env.scope = scope_create(state->global->arena, state->env.scope);
 
-    /* Inside a body a declaration is a local, so it belongs where it is written. */
     state->env.declaring = NULL;
 }
 
@@ -267,8 +245,6 @@ static Function *find_method_on_chain(TypeRegistry *registry, FunctionRegistry *
     return NULL;
 }
 
-/* The arguments the source wrote, which an indexing spells as the one between its brackets. A
- * receiver is not among them, being held beside the call rather than written as an argument. */
 static size_t written_arg_count(const ASTExpr *expr) {
     return expr->kind == EXPR_INDEX ? 1 : expr->call.args.size;
 }
@@ -277,8 +253,6 @@ static ASTExpr *written_arg(const ASTExpr *expr, size_t i) {
     return expr->kind == EXPR_INDEX ? expr->index.index : expr->call.args.data[i];
 }
 
-/* 'written' is what the source spells; a method's receiver is checked apart from them, so it numbers
- * the arguments the way they were written rather than the way they are passed. */
 static void check_call_arg(ResolverState *state, ASTExpr *arg, const Type *param_type, size_t written) {
     if (is_error_type(fact_type_of(state->facts, arg)) || is_error_type(param_type)) {
         return;
@@ -309,11 +283,9 @@ typedef struct {
 
     bool address_of;
 
-    /* The array the receiver names is handed over as a slice of it, address and length together. */
     int32_t unsize_length;
 } ReceiverAdjustment;
 
-/* How the receiver reaches the type the method declares, which lowering applies where it emits it. */
 static void record_receiver_adjustment(ResolverState *state, ASTExpr *receiver, const Function *method,
                                        ReceiverAdjustment adjustment) {
     if (adjustment.unsize_length == 0 && !adjustment.address_of && adjustment.derefs == 0) {
@@ -335,15 +307,12 @@ static void record_receiver_adjustment(ResolverState *state, ASTExpr *receiver, 
     fact_set_adjustment(state->facts, receiver, coercion);
 }
 
-/* What the call names, which lowering reads: the receiver stands as the first argument where it is
- * emitted, and the tree keeps the shape the source was written in. */
 static void resolve_as_method_call(ResolverState *state, ASTExpr *expr, Function *method,
                                    ReceiverAdjustment adjustment) {
     ASTExpr *receiver = expr->call.target->field.target;
 
     record_receiver_adjustment(state, receiver, method, adjustment);
 
-    /* An owning receiver is given away by the call, as an owning parameter is by an argument. */
     mark_implicit_move(state, receiver, method->signature.params[0], receiver->span);
 
     fact_set_callee(state->facts, expr, method);
@@ -389,7 +358,6 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
                 addressed->pinned = true;
             }
 
-            /* A body checked before its length is fixed emits nothing, so the count it sees is unused. */
             const Type *array = receiver_base_type(at);
 
             *out = (ReceiverAdjustment){.derefs = derefs,
@@ -418,10 +386,8 @@ static bool reconcile_receiver(ResolverState *state, ASTExpr *expr, ASTExpr *rec
 static const Type *resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expected);
 static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr);
 
-/* A generic instantiating itself at an ever-larger type would collect without end. */
 static void resolve_func_body(ResolverState *state, ASTStmt *stmt);
 
-/* Matches a declared parameter type against an argument's, binding each type parameter it reaches. */
 static bool infer_type_args(const Type *declared, const Type *actual, TypeArg *args, size_t owed) {
     if (!declared || !actual || !type_has_param(declared)) {
         return true;
@@ -430,8 +396,6 @@ static bool infer_type_args(const Type *declared, const Type *actual, TypeArg *a
     if (type_kind(declared) == TYPE_PARAM) {
         size_t index = type_param_index(declared);
 
-        /* The first argument to reach a parameter fixes it; a later disagreement is an argument type error.
-         */
         if (index < owed && !type_arg_is_set(args[index])) {
             args[index] = (TypeArg){.kind = TYPE_ARG_TYPE, .type = actual};
         }
@@ -439,11 +403,7 @@ static bool infer_type_args(const Type *declared, const Type *actual, TypeArg *a
         return true;
     }
 
-    /* An argument is lent or dereferenced to reach a borrowing parameter, so match what each finally names.
-     */
     if (type_kind(declared) == TYPE_REF) {
-        /* A borrow reaches what it names, so '&C' takes the pointee rather than binding C to the reference.
-         */
         const Type *from = type_is_indirect(actual) ? type_pointee(actual) : actual;
 
         for (const Type *at = from;; at = type_pointee(at)) {
@@ -489,7 +449,6 @@ static bool infer_type_args(const Type *declared, const Type *actual, TypeArg *a
             continue;
         }
 
-        /* A value argument fixes its parameter the way a type one does, from what the call was given. */
         if (want.constant.kind == CONST_PARAM && want.constant.param < owed &&
             !type_arg_is_set(args[want.constant.param])) {
             args[want.constant.param] = got;
@@ -499,7 +458,6 @@ static bool infer_type_args(const Type *declared, const Type *actual, TypeArg *a
     return true;
 }
 
-/* 'fixed' slots are already known from a receiver; 'self_params' is 1 when parameter zero is one. */
 static bool infer_call_args(ResolverState *state, ASTExpr *expr, Function *function, TypeArg *args,
                             size_t fixed, size_t self_params) {
     size_t owed = function->decl->type_param_count;
@@ -565,7 +523,6 @@ static bool take_written_type_args(ResolverState *state, ASTExpr *expr, Function
     return true;
 }
 
-/* The arguments a receiver's type already fixes, which are the ones its owner declared. */
 static size_t take_receiver_type_args(const Type *receiver, TypeArg *args) {
     size_t fixed = type_arg_count(receiver);
 
@@ -576,7 +533,6 @@ static size_t take_receiver_type_args(const Type *receiver, TypeArg *args) {
     return fixed;
 }
 
-/* A bound is nominal: the argument must say it implements the interface, not merely supply its methods. */
 static bool check_bounds_satisfied(ResolverState *state, ASTExpr *expr, const Function *generic,
                                    const TypeArg *args, size_t owed) {
     const TypeParamBound *bounds = generic->decl->type_param_bounds;
@@ -588,7 +544,6 @@ static bool check_bounds_satisfied(ResolverState *state, ASTExpr *expr, const Fu
     TypeRegistry *registry = state->global->types;
 
     for (size_t i = 0; i < owed && i < GAB_MAX_TYPE_PARAMS; i++) {
-        /* Only a type argument carries a conformance; a value one has no interface to satisfy. */
         if (bounds[i].kind != BOUND_INTERFACE || !type_arg_is_set(args[i]) || args[i].kind != TYPE_ARG_TYPE ||
             type_kind(args[i].type) == TYPE_PARAM) {
             continue;
@@ -618,7 +573,6 @@ static Function *specialize(ResolverState *state, ASTExpr *expr, Function *gener
                             size_t fixed, size_t self_params) {
     size_t owed = generic->decl->type_param_count;
 
-    /* An owner's parameters were fixed before the call, so this already is the instance. */
     if (owed <= fixed) {
         if (type_args_are_concrete(generic->type_args, generic->type_arg_count)) {
             pending_bodies_instantiate(state->work, generic, state->global->diagnostics);
@@ -637,8 +591,6 @@ static Function *specialize(ResolverState *state, ASTExpr *expr, Function *gener
 
     Function *specialized = function_registry_instance(state->global->functions, generic->decl, args, owed);
 
-    /* A call inside a generic's own body names its parameters, which stand for no argument yet; what
-     * that call wants is named again by each instance, with the arguments substituted in. */
     if (!type_args_are_concrete(args, owed)) {
         return specialized;
     }
@@ -655,7 +607,6 @@ static Function *specialize_method_call(ResolverState *state, ASTExpr *expr, Fun
     return specialize(state, expr, method, args, take_receiver_type_args(receiver, args), 1);
 }
 
-/* The type arguments written on a call's target, which either form of a name may carry. */
 static const TypeExpr *written_owner_type(const ASTExpr *target) {
     if (target->kind == EXPR_QUALIFIED) {
         return target->qualified.owner_type_expr;
@@ -678,7 +629,6 @@ static Function *specialize_call(ResolverState *state, ASTExpr *expr, Function *
 
 static const Type *resolve_param_type_in(ResolverState *state, ASTField *param, bool generic);
 
-/* The signature as the implementor sees it: 'Self' and the interface's parameters substituted away. */
 static Function *interface_method_for(ResolverState *state, const InterfaceDecl *interface, size_t index,
                                       const Type *implementor, const TypeArg *args, size_t arg_count) {
     const Function *signature = interface->methods[index];
@@ -692,7 +642,6 @@ static Function *interface_method_for(ResolverState *state, const InterfaceDecl 
 
     Arena *arena = state->global->arena;
 
-    /* Substituted away, so the result is concrete however generic the signature it came from was. */
     FuncDecl *decl = arena_alloc(arena, sizeof(FuncDecl));
     *decl = *signature->decl;
     decl->type_param_count = 0;
@@ -702,14 +651,13 @@ static Function *interface_method_for(ResolverState *state, const InterfaceDecl 
         .decl = decl,
         .signature = func_signature_instantiate(state->global->types, arena, &signature->signature,
                                                 substitutions, arg_count + 1),
-        /* The parameter this stands on, so substituting it finds the implementor's own method. */
+
         .bound_self = implementor,
     };
 
     return method;
 }
 
-/* A parameter's methods are the ones its bound declares, with 'Self' as the parameter itself. */
 static Function *bound_method(ResolverState *state, const Type *base, String *name, Span span) {
     (void)span;
 
@@ -736,7 +684,6 @@ static Function *bound_method(ResolverState *state, const Type *base, String *na
     return NULL;
 }
 
-/* A method is the one the type owns, or the one its bound declares when the type is a parameter. */
 static Function *find_method(ResolverState *state, const Type *receiver, String *name, Span span,
                              const Type **out_base) {
     const Type *base = NULL;
@@ -755,8 +702,6 @@ static Function *find_method(ResolverState *state, const Type *receiver, String 
     return method;
 }
 
-/* 'xs[i]' on an implementor of 'Index' is 'xs.index(i)' read through, which is concluded here rather
- * than written into the tree: the call the element's 'Index' names is what lowering emits. */
 static const Type *resolve_index_through_interface(ResolverState *state, ASTExpr *expr) {
     Span span = expr->span;
 
@@ -768,7 +713,6 @@ static const Type *resolve_index_through_interface(ResolverState *state, ASTExpr
     const Type *base = NULL;
     Function *method = find_method(state, target_type, name, span, &base);
 
-    /* Reaching the method is an implementation detail, so a missing one is reported as the interface. */
     if (!method) {
         diag_error(state->global->diagnostics, GAB_ERR_TYPE, span,
                    "%s is indexed with '[]' by implementing 'Index'", type_name(state, target_type));
@@ -813,11 +757,9 @@ static const Type *resolve_index_through_interface(ResolverState *state, ASTExpr
         return resolver_error_type(state);
     }
 
-    /* The element is read through what 'index' lends, so indexing answers with what it points at. */
     return type_pointee(lent);
 }
 
-/* A declaration is an intrinsic only where this names one of these, so the two cannot drift. */
 static const IntrinsicLowering *intrinsic_for(ResolverState *state, const String *owner, const String *name) {
     return type_registry_intrinsic(state->global->types, owner, name);
 }
@@ -841,7 +783,6 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     Function *method = find_method(state, receiver_type, method_name, expr->span, &base);
 
     if (!method) {
-        /* A parameter's methods are its bound's, so one with no bound has none to name. */
         if (base && type_kind(base) == TYPE_PARAM &&
             state->env.param_bounds[type_param_index(base)].kind != BOUND_INTERFACE) {
             diag_error(state->global->diagnostics, GAB_ERR_NAME, expr->span,
@@ -856,7 +797,6 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
         return;
     }
 
-    /* The ending runs where the value ends, so calling it here would run it twice on that value. */
     if (method == function_registry_destructor(state->global->functions, base)) {
         diag_error(state->global->diagnostics, GAB_ERR_TYPE, expr->span,
                    "'destroy' runs where the value ends, so nothing calls it by hand");
@@ -901,10 +841,8 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
 
     resolve_as_method_call(state, expr, method, adjustment);
 
-    /* The receiver stands as parameter zero, so the written arguments answer for the rest. */
     check_call_args(state, &expr->call.args, method->signature.params + 1);
 
-    /* An intrinsic type-checks as the call it is written as, and lowering expands it. */
     if (method->decl->modifiers & FUNC_MOD_INTRINSIC) {
         fact_set_type(state->facts, expr,
                       type_registry_substitute(state->global->types, method->signature.return_type,
@@ -915,7 +853,6 @@ static void resolve_method_call(ResolverState *state, ASTExpr *expr) {
     fact_set_type(state->facts, expr, method->signature.return_type);
 }
 
-/* Listing every kind rather than the ones that answer true, so a kind added later must be placed here. */
 bool is_integer_type(const Type *t) {
     switch (type_kind(t)) {
     case TYPE_I32:
@@ -1035,10 +972,7 @@ static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
 
     const Type *target = symbol_type(state->global->types, symbol);
 
-    /* 'raw<i32>(p)' names its target by application, where 'i32(x)' names one that takes no argument;
-     * a name that resolves to no type at all is a call rather than a conversion, generic or not. */
     if (expr->call.target->name.owner_type_expr) {
-        /* The runs and the arrays name no binding of their own, so what they resolve to is asked for. */
         bool names_a_type = (symbol && (symbol->kind == SYMBOL_TYPE || symbol->kind == SYMBOL_TYPE_DECL)) ||
                             expr->call.target->name.name->name == resolver_names(state)->raw;
 
@@ -1072,8 +1006,6 @@ static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
         return true;
     }
 
-    /* A run reads as a run of another element: the address is the same, and what it points at is not
-     * checked, which is what makes 'raw' the type that says so. */
     bool reads_as_a_run = type_kind(target) == TYPE_RAW && type_kind(from) == TYPE_RAW;
 
     if (!reads_as_a_run && (!is_numeric_type(target) || !is_numeric_type(from))) {
@@ -1092,7 +1024,6 @@ static const Type *resolve_expr_kind(ResolverState *state, ASTExpr *expr, const 
     case EXPR_BIN_OP: {
         const Type *left_type = resolve_expr(state, expr->bin_op.left, expected);
 
-        /* The left side types the right, so a literal beside a count is that count's width. */
         const Type *right_type = resolve_expr(state, expr->bin_op.right, left_type);
 
         if (is_error_type(left_type) || is_error_type(right_type)) {
@@ -1166,7 +1097,6 @@ static const Type *resolve_expr_kind(ResolverState *state, ASTExpr *expr, const 
 
             const Type *counted = type_registry_get_primitive(state->global->types, TYPE_USIZE);
 
-            /* The size is known here, so it is recorded beside the node rather than measured again. */
             fact_set_constant(
                 state->facts, expr,
                 constant_int(counted, (int32_t)type_registry_size_of(state->global->types, measured)));
@@ -1229,7 +1159,6 @@ static const Type *resolve_expr_kind(ResolverState *state, ASTExpr *expr, const 
             return fact_type_of(state->facts, expr);
         }
 
-        /* A builtin names no function, so what it answers with is what the call is. */
         if (expr->call.target && expr->call.target->kind == EXPR_BUILTIN) {
             resolve_expr(state, expr->call.target, NULL);
 
@@ -1238,7 +1167,6 @@ static const Type *resolve_expr_kind(ResolverState *state, ASTExpr *expr, const 
                            expr->call.target->builtin.name->name->data);
             }
 
-            /* A constant one answers with the constant itself, which the call is worth just as much. */
             Constant answered;
 
             if (fact_constant_of(state->facts, expr->call.target, &answered)) {
@@ -1301,7 +1229,6 @@ static const Type *resolve_expr_kind(ResolverState *state, ASTExpr *expr, const 
             target_type = type_pointee(target_type);
         }
 
-        /* An array indexes inline, against the length its type carries; anything else supplies 'Index'. */
         if (type_kind(target_type) != TYPE_ARRAY) {
             return resolve_index_through_interface(state, expr);
         }
@@ -1587,12 +1514,10 @@ static const Type *resolve_expr_kind(ResolverState *state, ASTExpr *expr, const 
 
         TypeKind kind = literal_type_kind(expr->lit.kind);
 
-        /* A whole number takes the integer type its context asks for, rather than a width of its own. */
         if (expr->lit.kind == LITERAL_INT && expected && is_integer_type(expected)) {
             return expected;
         }
 
-        /* Text is read through a reference, since the unit holds it and the value names where. */
         return kind == TYPE_STR ? type_registry_ref_to(registry, type_registry_get_primitive(registry, kind))
                                 : type_registry_get_primitive(registry, kind);
     }
@@ -1601,7 +1526,6 @@ static const Type *resolve_expr_kind(ResolverState *state, ASTExpr *expr, const 
     }
 }
 
-/* Records what the expression was found to be, so an arm states its answer by returning it. */
 static const Type *resolve_expr(ResolverState *state, ASTExpr *expr, const Type *expected) {
     if (!expr) {
         return NULL;
@@ -1609,7 +1533,6 @@ static const Type *resolve_expr(ResolverState *state, ASTExpr *expr, const Type 
 
     const Type *type = resolve_expr_kind(state, expr, expected);
 
-    /* A name denoting a function concludes no type, and recording none leaves it that way. */
     if (type) {
         fact_set_type(state->facts, expr, type);
     }
@@ -1760,7 +1683,6 @@ static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
     ASTStmt *stmt = decl->stmt;
     TypeDecl *declared = decl->decl;
 
-    /* Fields resolve where the struct was written, which is not where the demand for them came from. */
     Env saved = state->env;
 
     state->env.file = decl->file;
@@ -1866,8 +1788,6 @@ static void layout_struct(ResolverState *state, StructDecl *decl) {
     type_registry_complete(registry, type_registry_apply(registry, decl->decl, NULL, 0));
 }
 
-/* A type parameter has no width until it is substituted, so a generic signature is checked per instantiation.
- */
 static const Type *resolve_param_type_in(ResolverState *state, ASTField *param, bool generic) {
     const Type *type = resolve_type_expr(state, param->type_expr, param->name->span);
 
@@ -1890,7 +1810,6 @@ static bool func_decl_is_generic(const ASTStmt *stmt) {
     return stmt->func_decl.owner && stmt->func_decl.owner->kind == TYPE_EXPR_APPLY;
 }
 
-/* Enters a scope naming the owner's type arguments and 'Self'; the caller restores the one it saved. */
 static void enter_owner_scope(ResolverState *state, TypeExpr *owner, TypeExpr *const *bounds) {
     if (!owner) {
         return;
@@ -1912,7 +1831,6 @@ static void enter_owner_scope(ResolverState *state, TypeExpr *owner, TypeExpr *c
         }
     }
 
-    /* Entered before 'Self' resolves, so on a generic owner it names the type applied to them. */
     state->env.scope = params;
 
     const Type *self = resolve_type_expr(state, owner, (Span){0});
@@ -1922,7 +1840,6 @@ static void enter_owner_scope(ResolverState *state, TypeExpr *owner, TypeExpr *c
     }
 }
 
-/* Continues the owner's numbering, which enter_owner_scope bound at 0..n-1. */
 static void bind_own_type_params(ResolverState *state, ASTStmt *stmt, size_t owner_count) {
     for (size_t i = owner_count; i < stmt->func_decl.type_param_count; i++) {
         String *name = stmt->func_decl.type_params[i]->name;
@@ -1968,7 +1885,6 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
         return;
     }
 
-    /* Only the core library declares one, and only where the compiler has a lowering to match it. */
     if ((stmt->func_decl.syntax & FUNC_SYN_INTRINSIC) && !state->declares_intrinsics) {
         diag_error(state->global->diagnostics, GAB_ERR_TYPE, stmt->span,
                    "an intrinsic is lowered by the compiler, so only its core library declares one");
@@ -2001,7 +1917,6 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
             return;
         }
 
-        /* A scope keys its bindings on a mutable name, though a lookup only ever hashes one. */
         Symbol *bound = type_name_of(owner)
                             ? scope_type_lookup_declaring(declaring, (String *)type_name_of(owner))
                             : NULL;
@@ -2022,8 +1937,6 @@ static void declare_owned_in_scope(ResolverState *state, Scope *declaring, ASTSt
 
     String *name = stmt->func_decl.name->name;
 
-    /* An owner's parameters are the instance's, which name a symbol of their own; only the ones this
-     * function adds have no definition to link against. */
     if (reject_generic_without_body(state, stmt, name)) {
         return;
     }
@@ -2099,7 +2012,6 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
 
     Arena *arena = state->global->arena;
 
-    /* 'Self' is parameter 0 and the interface's own follow it, so one substitution serves both. */
     Env saved = state->env;
     Scope *params = scope_create(arena, state->env.scope);
 
@@ -2162,8 +2074,6 @@ static void declare_interface(ResolverState *state, ASTStmt *stmt) {
     scope_bind_interface(resolver_declaring_scope(state), name, interface);
 }
 
-/* An interface's method is supplied by the block implementing it, so an inherent one does not answer for it.
- */
 static bool block_declares(const ASTStmt *stmt, const String *name) {
     for (size_t i = 0; i < stmt->impl.members.size; i++) {
         const ASTStmt *member = stmt->impl.members.data[i];
@@ -2366,8 +2276,6 @@ static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
         return NULL;
     }
 
-    /* The ending runs where the value ends, so calling it here would run it twice on that value. The
-     * function is still named, so what follows reports nothing further about a name it did resolve. */
     if (found == function_registry_destructor(state->global->functions, owner)) {
         diag_error(state->global->diagnostics, GAB_ERR_TYPE, expr->span,
                    "'destroy' runs where the value ends, so nothing calls it by hand");
@@ -2376,10 +2284,8 @@ static Function *resolve_qualified_func(ResolverState *state, ASTExpr *expr) {
     return found;
 }
 
-/* Checked once with its parameters abstract, which is the body every instantiation substitutes. */
 static void check_abstract_body(ResolverState *state, ASTStmt *stmt) { resolve_func_body(state, stmt); }
 
-/* Each bound names an interface, which the body is checked against before any instantiation. */
 static void enter_param_bounds(ResolverState *state, ASTStmt *stmt) {
     TypeParamBound *bounds = arena_alloc(state->global->arena, GAB_MAX_TYPE_PARAMS * sizeof(TypeParamBound));
 
@@ -2398,7 +2304,6 @@ static void enter_param_bounds(ResolverState *state, ASTStmt *stmt) {
             continue;
         }
 
-        /* A value parameter's bound names its type rather than an interface, so it declares no methods. */
         if (kind == BOUND_VALUE) {
             bounds[i] = (TypeParamBound){
                 .kind = BOUND_VALUE,
@@ -2438,7 +2343,6 @@ static void enter_param_bounds(ResolverState *state, ASTStmt *stmt) {
     }
 }
 
-/* Kept on the declaration so a call site can judge its arguments without the statement. */
 static void record_param_bounds(ResolverState *state, FuncDecl *decl) {
     if (!decl) {
         return;
@@ -2496,8 +2400,6 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
         return;
     }
 
-    /* Built from what the declaration states, before the name is bound: a name already taken costs
-     * the binding, and leaves the body a signature to be checked against. */
     FuncDecl *decl = arena_alloc(state->global->arena, sizeof(FuncDecl));
 
     *decl = (FuncDecl){
@@ -2549,7 +2451,6 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
 static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
     size_t errors_before = diagnostics_count(state->global->diagnostics);
 
-    /* Every declaration builds one, whether or not its name could be bound. */
     Function *signature = fact_function_of(state->facts, stmt);
 
     Env saved = state->env;
@@ -2561,8 +2462,6 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
 
         String *param_name = param->name->name;
 
-        /* Resolved once, where the declaration built the signature; resolving it again here would
-         * report its errors twice. */
         const Type *param_type = signature->signature.params[i];
 
         if (reject_self_as_name(state, param_name, param->name->span)) {
@@ -2851,7 +2750,6 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
         }
 
         if (!poisoned && accepted && actual) {
-            /* Returning gives the value away, so what it names is moved out rather than dropped here. */
             mark_implicit_move(state, stmt->ret.result, expected, stmt->span);
 
             borrow_into(state, stmt->ret.result, expected, stmt->span);
@@ -2862,8 +2760,6 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
     }
 }
 
-/* What a file may name and where its declarations land, held for every phase: a name one file
- * reaches is not a name its siblings do. */
 typedef struct {
     ASTModule *module;
 
@@ -2871,7 +2767,6 @@ typedef struct {
     Visible *visible;
 } Files;
 
-/* Enters the file a phase is reading, so a lookup in it reaches what that file imports. */
 static void resolver_enter_file(ResolverState *state, const Files *files, size_t f) {
     state->env.file = files->module->files.data[f];
     state->env.visible = &files->visible[f];
@@ -2879,7 +2774,6 @@ static void resolver_enter_file(ResolverState *state, const Files *files, size_t
     state->env.declaring = state->module_scope;
 }
 
-/* A scope per file, with the modules it imports bound in it. */
 static Files collect_files(const Resolver *resolver, ResolverState *state, ASTModule *module) {
     Arena *arena = state->global->arena;
 
@@ -2893,8 +2787,6 @@ static Files collect_files(const Resolver *resolver, ResolverState *state, ASTMo
         files.scopes[f] = arena_alloc(arena, sizeof(Scope));
         scope_init_kind(files.scopes[f], arena, state->module_scope, SCOPE_FILE);
 
-        /* An import binds the module in this file, so what it declares is reached by an ordinary
-         * lookup rather than by asking which modules this compilation happens to have read. */
         const ASTImportList *imports = &module->files.data[f]->imports;
 
         files.visible[f] = (Visible){
@@ -2918,7 +2810,6 @@ static Files collect_files(const Resolver *resolver, ResolverState *state, ASTMo
             files.visible[f].modules[files.visible[f].count++] = *imported;
         }
 
-        /* Last, so a name the file imports is the one it means where the core declares it too. */
         if (resolver->core) {
             files.visible[f].modules[files.visible[f].count++] = resolver->core;
         }
@@ -2927,8 +2818,6 @@ static Files collect_files(const Resolver *resolver, ResolverState *state, ASTMo
     return files;
 }
 
-/* Every file declares its types before any file resolves, so a declaration is visible across the
- * module however the files were ordered. */
 static void declare_types(ResolverState *state, const Files *files) {
     for (size_t f = 0; f < files->module->files.size; f++) {
         resolver_enter_file(state, files, f);
@@ -2953,14 +2842,12 @@ static void declare_types(ResolverState *state, const Files *files) {
     }
 }
 
-/* A field's type may name what any file declared, so the fields resolve once every type is bound. */
 static void resolve_type_bodies(ResolverState *state) {
     for (size_t i = 0; i < state->struct_decls.size; i++) {
         resolve_struct_fields(state, state->struct_decls.data[i]);
     }
 }
 
-/* Signatures, which a body resolved after them may name whichever file wrote it. */
 static void declare_functions(ResolverState *state, const Files *files) {
     for (size_t f = 0; f < files->module->files.size; f++) {
         resolver_enter_file(state, files, f);
@@ -2985,7 +2872,6 @@ static void declare_functions(ResolverState *state, const Files *files) {
     }
 }
 
-/* Bodies, which every declaration the module makes is already visible to. */
 static void resolve_bodies(ResolverState *state, const Files *files) {
     for (size_t f = 0; f < files->module->files.size; f++) {
         resolver_enter_file(state, files, f);

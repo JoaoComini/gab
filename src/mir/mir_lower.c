@@ -13,7 +13,6 @@ typedef struct {
     const Facts *facts;
     Arena *arena;
 
-    /* The value each local was given, so a variable expression names it rather than looking it up. */
     Symbol **locals;
     MIRValueId *local_values;
     size_t local_count;
@@ -22,17 +21,12 @@ typedef struct {
     MIRBlockId break_target;
     MIRBlockId continue_target;
 
-    /* How many locals stood when the enclosing loop was entered, so a jump out closes the rest. */
     size_t loop_local_floor;
 
-    /* The constant each value was defined by, so reading one names it rather than a slot. */
     MIROperand *constants;
     size_t constant_capacity;
 
-    /* Where the call that reached this body was written, in a 'caller' one; none otherwise. */
     MIRValueId caller_location;
-
-    /* Where the body's own locals begin; a parameter's object is the caller's and is never ended. */
 } Lowering;
 
 static MIRValueId lower_expr(Lowering *lowering, ASTExpr *expr);
@@ -41,7 +35,6 @@ static void lower_stmt(Lowering *lowering, ASTStmt *stmt);
 static void lower_struct_lit_into(Lowering *lowering, ASTExpr *expr, Place base);
 static MIRValueId lower_location_of(Lowering *lowering, const Type *type, Span span);
 
-/* An index and a length are counted values, which the allocator sizes only when they say so. */
 static const Type *i32_type(Lowering *lowering) {
     return type_registry_get_primitive(lowering->registry, TYPE_I32);
 }
@@ -86,7 +79,6 @@ static MIRValueId local_value(Lowering *lowering, const Symbol *binding) {
     return MIR_NO_VALUE;
 }
 
-/* Records that a value holds a constant, so a later read of it can name the constant outright. */
 static void note_constant(Lowering *lowering, MIRValueId value, Constant constant) {
     if (mir_value_is_none(value)) {
         return;
@@ -116,7 +108,6 @@ static void note_constant(Lowering *lowering, MIRValueId value, Constant constan
     lowering->constants[value.id] = mir_operand_const(constant);
 }
 
-/* A value a constant defined is read as that constant, which costs no register. */
 static MIROperand lower_operand(Lowering *lowering, MIRValueId value) {
     if (!mir_value_is_none(value) && value.id < lowering->constant_capacity &&
         lowering->constants[value.id].kind == OPERAND_CONST) {
@@ -126,8 +117,6 @@ static MIROperand lower_operand(Lowering *lowering, MIRValueId value) {
     return mir_operand_value(value);
 }
 
-/* A binary instruction reads its right operand as a constant where one defined it; which constants a
- * backend can name in an instruction, rather than load first, is that backend's own question. */
 static MIROperand *lower_binary_args(Lowering *lowering, const MIRValueId *values) {
     MIROperand *args = mir_args_alloc(lowering->ir, 2);
 
@@ -228,8 +217,6 @@ static MIRValueId lower_load_from(Lowering *lowering, Place place, const Type *t
 
 static Place lower_place(Lowering *lowering, ASTExpr *expr);
 
-/* The arguments the source wrote, which an indexing reaches as the one between its brackets. A
- * receiver is not among them: it is held beside the call and passed ahead of them. */
 static size_t call_arg_count(const ASTExpr *expr) {
     return expr->kind == EXPR_INDEX ? 1 : expr->call.args.size;
 }
@@ -238,8 +225,6 @@ static ASTExpr *call_arg(const ASTExpr *expr, size_t i) {
     return expr->kind == EXPR_INDEX ? expr->index.index : expr->call.args.data[i];
 }
 
-/* The value a call is written on, which its written form already names: what an indexing indexes,
- * and what a method call reaches its method through. Null where the call stands on nothing. */
 static ASTExpr *call_receiver(const Lowering *lowering, const ASTExpr *expr) {
     switch (fact_call_kind(lowering->facts, expr)) {
     case CALL_INDEX:
@@ -251,7 +236,6 @@ static ASTExpr *call_receiver(const Lowering *lowering, const ASTExpr *expr) {
     }
 }
 
-/* What the call answers with, which an indexing reads through rather than being. */
 static const Type *call_result_type(Lowering *lowering, const ASTExpr *expr) {
     Function *callee = fact_callee_of(lowering->facts, expr);
 
@@ -262,7 +246,6 @@ static const Type *call_result_type(Lowering *lowering, const ASTExpr *expr) {
     return fact_type_of(lowering->facts, expr);
 }
 
-/* Checks the index against the container, then names the element the check guarantees is there. */
 static Place lower_indexed_place(Lowering *lowering, ASTExpr *target, ASTExpr *index_expr,
                                  const Type *element, Span span) {
     Place base = lower_place(lowering, target);
@@ -270,7 +253,6 @@ static Place lower_indexed_place(Lowering *lowering, ASTExpr *target, ASTExpr *i
 
     Place place = mir_place_index(lowering->ir, base, fact_type_of(lowering->facts, target), index, element);
 
-    /* A raw run states no length, so nothing here knows what would be out of range. */
     if (type_kind(mir_indexed_container(fact_type_of(lowering->facts, target))) == TYPE_RAW) {
         return place;
     }
@@ -278,7 +260,6 @@ static Place lower_indexed_place(Lowering *lowering, ASTExpr *target, ASTExpr *i
     MIRValueId checked[2];
     size_t checked_count = mir_bounds_operands(place, fact_type_of(lowering->facts, target), index, checked);
 
-    /* The check guards the access, so it is emitted before the place that reaches it. */
     emit(lowering, (MIRInst){.op = MIR_BOUNDS,
                              .type = mir_indexed_container(fact_type_of(lowering->facts, target)),
                              .result = MIR_NO_VALUE,
@@ -289,7 +270,6 @@ static Place lower_indexed_place(Lowering *lowering, ASTExpr *target, ASTExpr *i
     return place;
 }
 
-/* An lvalue's path, built by descending it; a base the IR has no place for is evaluated as a value. */
 static Place lower_place(Lowering *lowering, ASTExpr *expr) {
     switch (expr->kind) {
     case EXPR_NAME: {
@@ -306,8 +286,6 @@ static Place lower_place(Lowering *lowering, ASTExpr *expr) {
     case EXPR_FIELD: {
         Place place = lower_place(lowering, expr->field.target);
 
-        /* Reaching a field through a pointer is a hop the source does not spell, and a pointer to a
-         * pointer is as many hops as it has levels. */
         for (const Type *reached = fact_type_of(lowering->facts, expr->field.target);
              type_is_indirect(reached); reached = type_pointee(reached)) {
             place = mir_place_project(lowering->ir, place,
@@ -329,7 +307,7 @@ static Place lower_place(Lowering *lowering, ASTExpr *expr) {
     }
 
     case EXPR_INDEX:
-        /* Indexing what supplies 'Index' is the call it names, read through what the call lends. */
+
         if (fact_call_kind(lowering->facts, expr) == CALL_INDEX) {
             return mir_place_project(
                 lowering->ir, mir_place_of(lower_call(lowering, expr), NULL),
@@ -375,7 +353,6 @@ static MIRValueId lower_literal(Lowering *lowering, ASTExpr *expr) {
                              .constant = constant,
                              .span = expr->span});
 
-    /* Text is named where it is read, like any other constant, rather than loaded into a slot first. */
     if (op != MIR_CONST_STR) {
         note_constant(lowering, result, constant);
     }
@@ -383,7 +360,6 @@ static MIRValueId lower_literal(Lowering *lowering, ASTExpr *expr) {
     return result;
 }
 
-/* 'a && b' evaluates 'b' only where 'a' allows it, so each operand needs its own block. */
 static MIRValueId lower_logical(Lowering *lowering, ASTExpr *expr) {
     bool is_and = expr->bin_op.op == BIN_OP_AND;
 
@@ -460,7 +436,6 @@ static MIRValueId lower_bin_op(Lowering *lowering, ASTExpr *expr) {
     return result;
 }
 
-/* An intrinsic stands for instructions rather than a body, so the call never survives lowering. */
 static bool lower_intrinsic_call(Lowering *lowering, ASTExpr *expr, MIRValueId *out) {
     Function *callee = fact_callee_of(lowering->facts, expr);
     ASTExpr *receiver = call_receiver(lowering, expr);
@@ -469,7 +444,6 @@ static bool lower_intrinsic_call(Lowering *lowering, ASTExpr *expr, MIRValueId *
         return false;
     }
 
-    /* Characters and the bytes naming them are the same address and count, so the view is the value. */
     if (type_is_str_ref(fact_type_of(lowering->facts, receiver))) {
         MIRValueId source = lower_expr(lowering, receiver);
         MIRValueId result = lower_temp(lowering, fact_type_of(lowering->facts, expr), expr->span);
@@ -496,7 +470,6 @@ static bool lower_intrinsic_call(Lowering *lowering, ASTExpr *expr, MIRValueId *
             base = type_pointee(base);
         }
 
-        /* An array's length is the count in its type, so it is known without reading the array. */
         if (type_kind(base) == TYPE_ARRAY) {
             MIRValueId result = lower_temp(lowering, fact_type_of(lowering->facts, expr), expr->span);
 
@@ -514,7 +487,6 @@ static bool lower_intrinsic_call(Lowering *lowering, ASTExpr *expr, MIRValueId *
             return true;
         }
 
-        /* A slice states its length in the word past the address it holds, so reading it is no call. */
         MIRValueId source = lower_expr(lowering, receiver);
         MIRValueId result = lower_temp(lowering, fact_type_of(lowering->facts, expr), expr->span);
 
@@ -549,7 +521,6 @@ static bool lower_intrinsic_call(Lowering *lowering, ASTExpr *expr, MIRValueId *
 
     Place place = lower_indexed_place(lowering, receiver, call_arg(expr, 0), element, expr->span);
 
-    /* The intrinsic lends the element, so what it answers with is the reference, not the element. */
     const Type *lent = call_result_type(lowering, expr);
 
     MIRValueId result = lower_temp(lowering, lent, expr->span);
@@ -563,7 +534,6 @@ static bool lower_intrinsic_call(Lowering *lowering, ASTExpr *expr, MIRValueId *
 }
 
 static MIRValueId lower_call(Lowering *lowering, ASTExpr *expr) {
-    /* A builtin's call is the builtin: it names no function and emits no call. */
     if (expr->kind == EXPR_CALL && expr->call.target && expr->call.target->kind == EXPR_BUILTIN) {
         return lower_expr(lowering, expr->call.target);
     }
@@ -574,12 +544,10 @@ static MIRValueId lower_call(Lowering *lowering, ASTExpr *expr) {
         return intrinsic;
     }
 
-    /* A conversion is written as a call, and names a type where a call names a function. */
     if (fact_call_kind(lowering->facts, expr) == CALL_CONVERSION) {
         ASTExpr *operand = expr->call.args.data[0];
         const Type *to = fact_type_of(lowering->facts, expr);
 
-        /* A conversion to what the operand already is names the same value rather than converting it. */
         if (type_kind(to) == type_kind(fact_type_of(lowering->facts, operand))) {
             return lower_expr(lowering, operand);
         }
@@ -589,10 +557,8 @@ static MIRValueId lower_call(Lowering *lowering, ASTExpr *expr) {
 
     Function *callee = fact_callee_of(lowering->facts, expr);
 
-    /* A 'caller' callee is handed where the call is, which forwards where the caller is itself one. */
     bool passes_line = callee && (callee->decl->modifiers & FUNC_MOD_CALLER);
 
-    /* A method's receiver is the argument its declaration takes first, ahead of the written ones. */
     ASTExpr *receiver = call_receiver(lowering, expr);
 
     size_t written = call_arg_count(expr);
@@ -633,7 +599,6 @@ static MIRValueId lower_call(Lowering *lowering, ASTExpr *expr) {
     return result;
 }
 
-/* Fills a place with a struct literal's fields, so no temporary stands between it and where it goes. */
 static void lower_struct_lit_into(Lowering *lowering, ASTExpr *expr, Place base) {
     for (size_t i = 0; i < expr->struct_lit.fields.size; i++) {
         const ASTFieldInit *init = &expr->struct_lit.fields.data[i];
@@ -644,7 +609,6 @@ static void lower_struct_lit_into(Lowering *lowering, ASTExpr *expr, Place base)
                          .field = {(uint32_t)fact_initialized_field_of(lowering->facts, init->value)},
                          .type = fact_type_of(lowering->facts, init->value)});
 
-        /* A literal inside a literal fills its own field, so each stays its own tracked place. */
         if (init->value->kind == EXPR_STRUCT_LIT) {
             lower_struct_lit_into(lowering, init->value, field);
             continue;
@@ -662,7 +626,6 @@ static void lower_struct_lit_into(Lowering *lowering, ASTExpr *expr, Place base)
     }
 }
 
-/* The location a call passes: a 'Location' whose fields are where the call was written. */
 static MIRValueId lower_location_of(Lowering *lowering, const Type *type, Span span) {
     MIRValueId result = lower_temp(lowering, type, span);
 
@@ -736,11 +699,9 @@ static MIRValueId lower_array_lit(Lowering *lowering, ASTExpr *expr) {
     return result;
 }
 
-/* A slice is where the elements start and how many there are, which the resolver already counted. */
 static MIRValueId lower_unadjusted(Lowering *lowering, ASTExpr *expr) {
     Constant answered;
 
-    /* One resolution answered outright is that value, whatever the node it was written as. */
     if (fact_constant_of(lowering->facts, expr, &answered)) {
         MIRValueId result = lower_temp(lowering, answered.type, expr->span);
 
@@ -798,7 +759,6 @@ static MIRValueId lower_unadjusted(Lowering *lowering, ASTExpr *expr) {
     case EXPR_NAME: {
         MIRValueId value = local_value(lowering, fact_use_of(lowering->facts, expr));
 
-        /* A moving read leaves the place holding nothing, so it cannot name the local directly. */
         if (!mir_value_is_none(value) && !fact_moves(lowering->facts, expr)) {
             return value;
         }
@@ -814,7 +774,6 @@ static MIRValueId lower_unadjusted(Lowering *lowering, ASTExpr *expr) {
                            fact_moves(lowering->facts, expr) ? READ_MOVE : READ_COPY, expr->span);
 }
 
-/* A place the source names, reached through the dereferences a coercion applies before it. */
 static Place lower_adjusted_place(Lowering *lowering, ASTExpr *expr, const Adjustment *adjustment) {
     Place place = lower_place(lowering, expr);
 
@@ -826,7 +785,6 @@ static Place lower_adjusted_place(Lowering *lowering, ASTExpr *expr, const Adjus
     return place;
 }
 
-/* The value a coercion's dereferences reach, which is the value itself where it applies none. */
 static MIRValueId lower_derefs(Lowering *lowering, ASTExpr *expr, const Adjustment *adjustment) {
     if (adjustment->derefs == 0) {
         return lower_unadjusted(lowering, expr);
@@ -858,7 +816,6 @@ static MIRValueId lower_expr(Lowering *lowering, ASTExpr *expr) {
         const Type *reached = adjustment.derefs ? adjustment.deref_types[adjustment.derefs - 1]
                                                 : fact_type_of(lowering->facts, expr);
 
-        /* The slice names where the elements start, which is a pointer rather than a slice itself. */
         const Type *elements = type_registry_raw_of(lowering->registry, reached);
 
         operands[0] = lower_temp(lowering, elements, expr->span);
@@ -908,9 +865,7 @@ static MIRValueId lower_expr(Lowering *lowering, ASTExpr *expr) {
     return lower_derefs(lowering, expr, &adjustment);
 }
 
-/* A local's storage ends where its scope does, innermost first, so what it owns is dropped there. */
 static void lower_scope_end(Lowering *lowering, size_t enclosing, Span span) {
-    /* A block a jump already closed takes no further instructions; its locals end at that jump. */
     if (mir_block_is_terminated(lowering->block)) {
         lowering->local_count = enclosing;
         return;
@@ -978,7 +933,6 @@ static void lower_var_decl(Lowering *lowering, ASTStmt *stmt) {
     if (decl->initializer->kind == EXPR_STRUCT_LIT) {
         Place place = mir_place_of(local, binding);
 
-        /* The local holds a value from here, whichever of its fields the literal went on to fill. */
         emit(lowering, (MIRInst){.op = MIR_STORAGE_INIT,
                                  .type = fact_type_of(lowering->facts, decl->initializer),
                                  .result = MIR_NO_VALUE,
@@ -1006,8 +960,6 @@ static void lower_if(Lowering *lowering, ASTStmt *stmt) {
     MIRBlock *then_block = mir_block_create(lowering->ir);
     MIRBlock *join = mir_block_create(lowering->ir);
 
-    /* Without an else there is nothing to run when the test fails, so the join is what it branches to
-     * and no block stands between them forwarding a jump. */
     MIRBlock *else_block = stmt->ifstmt.else_block ? mir_block_create(lowering->ir) : join;
 
     lower_terminator(lowering, (MIRInst){.op = MIR_BRANCH,
@@ -1090,8 +1042,6 @@ static void lower_return(Lowering *lowering, ASTStmt *stmt) {
         value = lower_expr(lowering, stmt->ret.result);
     }
 
-    /* Returning leaves every scope the body opened, so each local it still holds is ended; a
-     * parameter that owns what it was given ends with them, since the call handed it over. */
     for (size_t at = lowering->local_count; at > 0; at--) {
         Symbol *binding = lowering->locals[at - 1];
 
@@ -1131,8 +1081,6 @@ static void lower_stmt(Lowering *lowering, ASTStmt *stmt) {
     case STMT_ASSIGN: {
         ASTExpr *target = stmt->assign.target;
 
-        /* Overwriting a place that owns ends what it held, which is read out before the store so the
-         * release still names it; a borrow names what another owns, so replacing one ends nothing. */
         bool overwrites_owned =
             (target->kind == EXPR_FIELD || target->kind == EXPR_DEREF || target->kind == EXPR_INDEX) &&
             mir_type_needs_drop(lowering->registry, fact_type_of(lowering->facts, target));
@@ -1163,7 +1111,6 @@ static void lower_stmt(Lowering *lowering, ASTStmt *stmt) {
     case STMT_COMPOUND_ASSIGN: {
         ASTExpr *target = stmt->compound_assign.target;
 
-        /* The target is reached once: its place serves both the read and the store. */
         Place place = lower_place(lowering, target);
 
         MIRValueId operands[2];
@@ -1204,7 +1151,6 @@ static void lower_stmt(Lowering *lowering, ASTStmt *stmt) {
         break;
 
     case STMT_JUMP: {
-        /* Leaving the loop leaves every scope opened inside it, so those locals end here. */
         for (size_t at = lowering->local_count; at > lowering->loop_local_floor; at--) {
             Symbol *binding = lowering->locals[at - 1];
 
@@ -1222,7 +1168,6 @@ static void lower_stmt(Lowering *lowering, ASTStmt *stmt) {
 
         MIRBlockId target = stmt->jump.is_break ? lowering->break_target : lowering->continue_target;
 
-        /* A jump outside a loop names no block; the resolver rejects it, and lowering emits nothing. */
         if (!mir_block_is_none(target)) {
             lower_jump(lowering, target);
         }
@@ -1254,8 +1199,6 @@ MIRFunction *mir_build_function(Arena *arena, TypeRegistry *registry, const Fact
 
     size_t declared = params->size;
 
-    /* A 'caller' function takes the line of its call as a parameter no declaration writes, which is
-     * what '@caller()' in its body answers with. */
     bool takes_caller_line = (function->decl->modifiers & FUNC_MOD_CALLER) != 0;
 
     ir->param_count = declared + (takes_caller_line ? 1 : 0);
@@ -1264,7 +1207,6 @@ MIRFunction *mir_build_function(Arena *arena, TypeRegistry *registry, const Fact
     for (size_t i = 0; i < declared; i++) {
         Symbol *binding = fact_def_of(facts, params->data[i]->name);
 
-        /* What the parameter takes is its signature's, which is what the body was checked against. */
         MIRValueId value =
             mir_value_create(ir, function->signature.params[i], binding, params->data[i]->name->span);
 
@@ -1285,7 +1227,6 @@ MIRFunction *mir_build_function(Arena *arena, TypeRegistry *registry, const Fact
 
     lower_stmt(&lowering, body);
 
-    /* A body that runs off its end still returns, so every block reaching here is terminated. */
     lower_terminator(&lowering, (MIRInst){.op = MIR_RETURN, .result = MIR_NO_VALUE});
 
     return ir;

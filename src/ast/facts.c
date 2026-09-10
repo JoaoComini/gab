@@ -10,7 +10,6 @@ void facts_init(Facts *facts, Arena *arena) {
     def_fact_init_alloc(&facts->defs, allocator, FACTS_INITIAL_CAPACITY);
 }
 
-/* The record for a node, created empty where resolution has concluded nothing about it yet. */
 static ExprFact *fact_mut(Facts *facts, const ASTExpr *expr) {
     ExprFact *fact = expr_fact_lookup(&facts->exprs, expr);
 

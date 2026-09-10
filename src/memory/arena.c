@@ -27,9 +27,6 @@ static ArenaBlock *arena_block_create(size_t size) {
     return block;
 }
 
-/* An allocation too big for a shared block gets one of its own, linked after the current block rather than
- * becoming it, so the space left in the current block is still handed out. Its capacity is exactly what was
- * asked for, so arena_grow must never hand it out again: it stays full until the arena resets. */
 static void *arena_alloc_oversized(Arena *arena, size_t size) {
     for (ArenaBlock *reused = arena->current_block->next; reused; reused = reused->next) {
         if (reused->dedicated && reused->offset == 0 && size <= reused->capacity) {
@@ -127,8 +124,6 @@ ArenaCheckpoint arena_checkpoint(const Arena *arena) {
     return (ArenaCheckpoint){.block = arena->current_block, .offset = arena->current_block->offset};
 }
 
-/* Every block from the checkpoint's forward was touched only after it, so each rewinds to empty; the
- * checkpoint's own block rewinds to where its cursor stood, not to empty. */
 void arena_rewind(Arena *arena, ArenaCheckpoint checkpoint) {
 #ifdef ARENA_POISON
     memset((char *)checkpoint.block->memory + checkpoint.offset, ARENA_POISON,

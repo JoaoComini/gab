@@ -29,11 +29,9 @@ static char *read_file(const char *path) {
     return text;
 }
 
-/* What one compilation may be given. */
 #define GABC_MAX_IMPORTS 64
 #define GABC_MAX_FILES 16
 
-/* Matched at the end, so a file is source because of what it is called and not what it contains. */
 static bool has_extension(const char *path, const char *extension) {
     size_t length = strlen(path);
     size_t wanted = strlen(extension);
@@ -47,8 +45,6 @@ static int usage(void) {
     return 2;
 }
 
-/* An import as the command line states it, which the compilation reads in the order it was given:
- * an interface names the modules it states, so those come before it. */
 static bool parse_import(char *argument, const char **name, const char **path) {
     char *equals = strchr(argument, '=');
 
@@ -112,8 +108,6 @@ int main(int argc, char **argv) {
 
             paths[path_count++] = argv[i];
         } else if (extra_count < 16) {
-            /* Anything not Gab source is handed to the link, which is how a program supplies its own
-             * entry point or calls into C it already has. */
             extra[extra_count++] = argv[i];
         }
     }
@@ -141,8 +135,6 @@ int main(int argc, char **argv) {
     StringPool strings;
     string_pool_init(&strings, arena);
 
-    /* Every artifact is named for the module the source declares, which is read before anything is
-     * compiled so that what a compilation writes is known before it runs. */
     char module_name[64];
 
     bool ok = gab_module_name(sources[0], arena, &strings, module_name, sizeof(module_name), &diagnostics);
@@ -160,8 +152,6 @@ int main(int argc, char **argv) {
 
     char *texts[GABC_MAX_IMPORTS + 1] = {0};
 
-    /* The core is found beside the compiler rather than named, so a program that imports nothing of
-     * its own is compiled without a flag. The one compilation writing it reads none. */
     if (ok && !is_core) {
         char path[512];
         snprintf(path, sizeof(path), "%s/%s.gabi", gab_libdir(), GAB_CORE_MODULE);
@@ -220,8 +210,6 @@ int main(int argc, char **argv) {
     }
 
     if (ok && !compile_only) {
-        /* The object beside each interface is what its declarations were compiled from, which the
-         * link needs whether or not this module names it. */
         for (size_t i = 0; i < import_count && extra_count < 16; i++) {
             static char objects[GABC_MAX_IMPORTS][512];
 

@@ -115,8 +115,6 @@ const Type *mir_indexed_container(const Type *type) {
 
 Place mir_place_index(MIRFunction *ir, Place base, const Type *container, MIRValueId index,
                       const Type *element) {
-    /* A raw run holds the address it names, so reaching an element reads that address first; the
-     * projection names the run rather than its element, which is what says to step through it. */
     if (type_kind(container) == TYPE_RAW) {
         base = mir_place_project(ir, base, (Projection){.kind = PROJ_DEREF, .type = container});
     } else if (type_is_indirect(container)) {
@@ -130,7 +128,6 @@ size_t mir_bounds_operands(Place indexed, const Type *container, MIRValueId inde
     out[0] = index;
     out[1] = indexed.base;
 
-    /* A slice states its own length, so the check reads it from the value rather than the type. */
     return type_kind(mir_indexed_container(container)) == TYPE_SLICE ? 2 : 1;
 }
 

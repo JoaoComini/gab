@@ -6,8 +6,6 @@
 #include "string/string.h"
 #include "string/string_ref.h"
 
-/* A name the source wrote. Interned as it is parsed, so every stage past the parser compares
- * pointers, and carrying its own span so a diagnostic about the name points at the name. */
 typedef struct ASTIdent {
     String *name;
 

@@ -17,16 +17,13 @@ typedef enum {
     MIR_SLOT_INIT,
 } MIRSlotInit;
 
-/* What one value, or one field of it, holds and borrows from. */
 typedef struct MIRSlot {
     MIRSlotInit init;
 
-    /* The values this one borrows from, so dropping any of them dangles this one. */
     MIRValueId *borrows;
     size_t borrow_count;
     size_t borrow_capacity;
 
-    /* What each field holds, so reading one names its own sources rather than the whole value's. */
     struct MIRSlot *fields;
     size_t field_count;
 } MIRSlot;
@@ -36,10 +33,8 @@ bool mir_slot_borrows_from(const MIRSlot *slot, MIRValueId from);
 
 void mir_slot_open_fields(MIRSlot *slot, Arena *arena, size_t count);
 
-/* Puts a slot and every field it holds into the same state, for a write that names the whole value. */
 void mir_slot_set_all(MIRSlot *slot, MIRSlotInit init);
 
-/* Folds every field into the slot itself, for a read that names the whole value. */
 MIRSlot mir_slot_flattened(Arena *arena, const MIRSlot *slot);
 
 #define mir_state_map_hash(key) ((size_t)(key).id * 2654435761u)
@@ -62,7 +57,6 @@ void mir_state_set(MIRState *state, MIRValueId value, MIRSlot slot);
 void mir_state_copy(MIRState *into, const MIRState *from);
 void mir_state_merge(MIRState *state, const MIRState *other);
 
-/* Marks every slot borrowing from 'dropped' as dangling. */
 void mir_state_invalidate_borrows_of(MIRState *state, MIRValueId dropped);
 
 bool mir_state_equals(const MIRState *a, const MIRState *b);

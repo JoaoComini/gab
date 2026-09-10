@@ -52,7 +52,6 @@ static void print_type(FILE *out, const TypeExpr *type) {
     }
 }
 
-/* The parameters a declaration takes, with the bound each was written with. */
 static void print_params(FILE *out, ASTIdent *const *names, TypeExpr *const *bounds, size_t count) {
     if (!count) {
         return;
@@ -78,19 +77,14 @@ static void print_params(FILE *out, ASTIdent *const *names, TypeExpr *const *bou
 
 static void print_block(FILE *out, const Facts *facts, const ASTStmt *stmt, int depth);
 
-/* A generic is instantiated by whoever names it, so its interface carries the body rather than a symbol
- * to link against: nothing was compiled for arguments the declaring unit never saw. */
 static bool carries_body(const ASTFuncDecl *func) { return func->body && func->type_param_count > 0; }
 
-/* How deep a member sits, which its body's statements continue from. */
 static size_t indent_depth(const char *indent) { return strlen(indent) / 4; }
 
-/* A signature and never a body: what an interface file states is what a caller must know. */
 static void print_func(FILE *out, const Facts *facts, const ASTFuncDecl *func, const char *indent,
                        size_t inherited, bool states_only) {
     fprintf(out, "%s", indent);
 
-    /* 'caller' is how a call is made and not where the body is, so it precedes and never replaces. */
     if (func->syntax & FUNC_SYN_CALLER) {
         fprintf(out, "caller ");
     }
@@ -100,15 +94,11 @@ static void print_func(FILE *out, const Facts *facts, const ASTFuncDecl *func, c
     } else if (func->syntax & FUNC_SYN_INTRINSIC) {
         fprintf(out, "intrinsic ");
     } else if (!states_only && !carries_body(func) && (func->body || (func->syntax & FUNC_SYN_EXTERN))) {
-        /* A body compiled into the library it came from, which a reader links against rather than
-         * compiles again. What was read as 'extern' is still one, though it arrived without a body.
-         * An interface states signatures alone, where saying so again would not parse. */
         fprintf(out, "extern ");
     }
 
     fprintf(out, "func %s", func->name->name->data);
 
-    /* A member's own parameters follow the ones its block gave it, which the block already states. */
     print_params(out, func->type_params + inherited, func->type_param_bounds + inherited,
                  func->type_param_count - inherited);
 
@@ -144,7 +134,6 @@ static void print_func(FILE *out, const Facts *facts, const ASTFuncDecl *func, c
 
 static void print_expr(FILE *out, const Facts *facts, const ASTExpr *expr);
 
-/* Spelled as the source spells it, so what is read back binds the same operator to the same operands. */
 static const char *bin_op_text(BinOp op) {
     switch (op) {
     case BIN_OP_ADD:
@@ -185,7 +174,7 @@ static void print_literal(FILE *out, const Literal *literal) {
         return;
 
     case LITERAL_FLOAT:
-        /* Enough digits to name the same float again, which a shorter spelling would round away. */
+
         fprintf(out, "%.9g", (double)literal->as_float);
         return;
 
@@ -223,7 +212,6 @@ static void print_expr(FILE *out, const Facts *facts, const ASTExpr *expr) {
         print_literal(out, &expr->lit);
         return;
 
-    /* Parenthesized rather than spelled by precedence, so reading it back groups it as it was written. */
     case EXPR_BIN_OP:
         fputc('(', out);
         print_expr(out, facts, expr->bin_op.left);
@@ -232,7 +220,6 @@ static void print_expr(FILE *out, const Facts *facts, const ASTExpr *expr) {
         fputc(')', out);
         return;
 
-    /* The arguments applied to it are held as a written type of its own name, which states both. */
     case EXPR_NAME:
         if (expr->name.owner_type_expr) {
             print_type(out, expr->name.owner_type_expr);
@@ -252,7 +239,6 @@ static void print_expr(FILE *out, const Facts *facts, const ASTExpr *expr) {
         fprintf(out, "::%s", expr->qualified.name->name->data);
         return;
 
-    /* The arguments are held as an application of the builtin's own name, which is written once. */
     case EXPR_BUILTIN:
         fprintf(out, "@%s", expr->builtin.name->name->data);
 
@@ -273,7 +259,6 @@ static void print_expr(FILE *out, const Facts *facts, const ASTExpr *expr) {
         return;
 
     case EXPR_CALL: {
-        /* A conversion names a type where a call names a function, so the type alone is written. */
         if (fact_call_kind(facts, expr) == CALL_CONVERSION && expr->call.target &&
             expr->call.target->kind == EXPR_NAME && expr->call.target->name.owner_type_expr) {
             print_type(out, expr->call.target->name.owner_type_expr);
@@ -365,7 +350,6 @@ static void print_indent(FILE *out, int depth) {
     }
 }
 
-/* A block prints its own braces, so a statement that holds one does not print them again. */
 static void print_block(FILE *out, const Facts *facts, const ASTStmt *stmt, int depth) {
     if (!stmt || stmt->kind != STMT_BLOCK) {
         fprintf(out, "{\n");
@@ -385,7 +369,6 @@ static void print_block(FILE *out, const Facts *facts, const ASTStmt *stmt, int 
     fprintf(out, "}");
 }
 
-/* The header of a 'for', which prints on one line however many of its three parts were written. */
 static void print_for_header(FILE *out, const Facts *facts, const ASTForStmt *loop) {
     if (!loop->init && !loop->post) {
         if (loop->condition) {
@@ -400,7 +383,6 @@ static void print_for_header(FILE *out, const Facts *facts, const ASTForStmt *lo
     fputc(' ', out);
 
     if (loop->init) {
-        /* Written without its own indent or newline, since the header states it inline. */
         if (loop->init->kind == STMT_VAR_DECL) {
             const ASTVarDecl *decl = &loop->init->var_decl;
 
@@ -629,7 +611,6 @@ static void print_stmt(FILE *out, const Facts *facts, const ASTStmt *stmt) {
     }
 }
 
-/* The declarations hashed, and never the digest line itself: what a reader compiles is what is hashed. */
 uint64_t gab_interface_digest(const char *text) {
     uint64_t hash = 1469598103934665603u;
 
@@ -671,8 +652,6 @@ static bool import_stated_before(const ASTModule *module, size_t file, size_t in
 void gab_interface_print(const ASTModule *module, const Facts *facts, FILE *out) {
     fprintf(out, "module %s;\n", module->name->name->data);
 
-    /* What this module imports, so linking against it reaches the objects its bodies call into. An
-     * interface states the module, so a name any of its files imports is stated once. */
     for (size_t f = 0; f < module->files.size; f++) {
         const ASTImportList *imports = &module->files.data[f]->imports;
 

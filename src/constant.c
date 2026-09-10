@@ -12,7 +12,6 @@ bool constant_is_bool(Constant constant) { return constant.type && type_kind(con
 
 bool constant_is_string(Constant constant) { return constant.type && type_kind(constant.type) == TYPE_STR; }
 
-/* The type says which member is live, so only that one is compared; the rest of the union is stale. */
 bool constant_equals(Constant a, Constant b) {
     if (a.type != b.type) {
         return false;

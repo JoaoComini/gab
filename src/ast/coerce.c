@@ -2,9 +2,6 @@
 
 #include "type/type.h"
 
-/* Whether one type may stand where another is wanted, and what the value must do to get there:
- * dereferenced to reach it, borrowed into a reference, or widened from an array to a slice. */
-
 bool is_addressable(ResolverState *state, const ASTExpr *expr) {
     switch (expr->kind) {
     case EXPR_NAME:
@@ -47,7 +44,6 @@ bool accepts_by_borrowing(const Type *to, const Type *from) {
     return to != from && type_kind(to) == TYPE_REF && type_pointee(to) == from;
 }
 
-/* An array reaches a '&slice<T>' by handing over where it starts and how many it holds. */
 bool unsizes_to_a_slice(const Type *to, const Type *from) {
     if (type_kind(to) != TYPE_REF || type_kind(type_pointee(to)) != TYPE_SLICE) {
         return false;
@@ -84,7 +80,6 @@ bool type_accepts(TypeRegistry *registry, const Type *to, const Type *from) {
     }
 }
 
-/* Records the dereferences a coercion applies, naming the type each one reaches. */
 void adjust_derefs(ResolverState *state, Adjustment *adjustment, const Type *from, unsigned int count) {
     adjustment->derefs = count;
     adjustment->deref_types = count ? arena_alloc(state->global->arena, count * sizeof(const Type *)) : NULL;
@@ -143,7 +138,6 @@ bool borrow_into(ResolverState *state, ASTExpr *expr, const Type *destination, S
     }
 
     if (!accepts_by_borrowing(destination, at)) {
-        /* The dereferences alone reach what the destination takes, so they stand as the coercion. */
         if (derefs > 0) {
             Adjustment adjustment = {.kind = ADJUST_NONE, .to = at};
 

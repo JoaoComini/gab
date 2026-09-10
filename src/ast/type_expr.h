@@ -28,7 +28,6 @@ struct TypeExpr {
 
     ASTIdent *name;
 
-    /* The module a written name is qualified by, or null where it names one directly. */
     ASTIdent *qualifier;
 
     union {
@@ -47,7 +46,6 @@ struct TypeExpr {
 
 TypeExpr *type_expr_name(Arena *arena, ASTIdent *name);
 
-/* 'Module::Name' as a written type, whose halves the source spelled apart. */
 TypeExpr *type_expr_qualified(Arena *arena, ASTIdent *qualifier, ASTIdent *name);
 TypeExpr *type_expr_indirect(Arena *arena, TypeExprKind kind, TypeExpr *inner);
 TypeExpr *type_expr_apply(Arena *arena, TypeExpr *base);

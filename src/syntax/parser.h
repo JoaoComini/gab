@@ -9,17 +9,12 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-/* False where the source does not parse, so a file exists only once it holds together. */
 bool parse_file(const char *source, Arena *arena, StringPool *strings, ASTFile **out,
                 Diagnostics *diagnostics);
 
-/* A file's header alone: the module it declares and what it imports, stopping before the first
- * declaration: what names a module's artifacts, without parsing its bodies. */
 bool parse_header(const char *source, Arena *arena, StringPool *strings, ASTFile **out,
                   Diagnostics *diagnostics);
 
-/* Every file of one module, which is one namespace however many files write it: false where they do
- * not agree on the module they declare. 'names' names each source in a diagnostic about it. */
 bool parse_module(const char *const *sources, size_t count, const char *const *names, Arena *arena,
                   StringPool *strings, ASTModule **out, Diagnostics *diagnostics);
 

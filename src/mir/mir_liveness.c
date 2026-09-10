@@ -4,7 +4,6 @@
 
 #include <string.h>
 
-/* Every value gets a bit for itself and one per field, so a field's own liveness is its own fact. */
 static size_t place_index(const Liveness *liveness, MIRValueId value, MIRFieldId field) {
     size_t base = liveness->value_base[value.id];
 
@@ -24,7 +23,6 @@ static void set_add(uint64_t *set, size_t index) { set[word_of(index)] |= bit_of
 
 static void set_remove(uint64_t *set, size_t index) { set[word_of(index)] &= ~bit_of(index); }
 
-/* Reading a value whole reads every field it holds, so each of their facts becomes live too. */
 static void read_place(const Liveness *liveness, uint64_t *set, MIRValueId value, MIRFieldId field) {
     if (mir_value_is_none(value) || value.id >= liveness->value_count) {
         return;
@@ -41,7 +39,6 @@ static void read_place(const Liveness *liveness, uint64_t *set, MIRValueId value
     }
 }
 
-/* Writing a place ends what it held; writing a value whole ends every field with it. */
 static void write_place(const Liveness *liveness, uint64_t *set, MIRValueId value, MIRFieldId field) {
     if (mir_value_is_none(value) || value.id >= liveness->value_count) {
         return;
@@ -58,7 +55,6 @@ static void write_place(const Liveness *liveness, uint64_t *set, MIRValueId valu
     }
 }
 
-/* The field a place names at its root, or the whole value where it names none. */
 static MIRFieldId leading_field(const Place *place) {
     if (place->projection_count == 0) {
         return MIR_WHOLE_VALUE;
@@ -67,7 +63,6 @@ static MIRFieldId leading_field(const Place *place) {
     return place->projections[0].kind == PROJ_FIELD ? place->projections[0].field : MIR_WHOLE_VALUE;
 }
 
-/* A place reads every value its path names, since the address it forms depends on each of them. */
 static void place_reads(const Liveness *liveness, const Place *place, uint64_t *set) {
     read_place(liveness, set, place->base, leading_field(place));
 
@@ -78,19 +73,16 @@ static void place_reads(const Liveness *liveness, const Place *place, uint64_t *
     }
 }
 
-/* Walks one instruction backwards: what it writes stops being live, what it reads starts. */
 static void step_backwards(const Liveness *liveness, const MIRInst *inst, uint64_t *set) {
     if (!mir_value_is_none(inst->result)) {
         write_place(liveness, set, inst->result, MIR_WHOLE_VALUE);
     }
 
-    /* A store writes the place it names rather than reading it, ending what that place held. */
     if (inst->op == MIR_STORE) {
         MIRFieldId written = leading_field(&inst->place);
 
         write_place(liveness, set, inst->place.base, written);
 
-        /* The address a deeper path forms is still read, as is any index along it. */
         if (inst->place.projection_count > 1) {
             read_place(liveness, set, inst->place.base, leading_field(&inst->place));
         }
@@ -104,7 +96,6 @@ static void step_backwards(const Liveness *liveness, const MIRInst *inst, uint64
         place_reads(liveness, &inst->place, set);
     }
 
-    /* Storage ending is not a read: what the local held is gone rather than wanted. */
     if (inst->op == MIR_STORAGE_LIVE || inst->op == MIR_STORAGE_DEAD) {
         write_place(liveness, set, inst->place.base, MIR_WHOLE_VALUE);
     }
@@ -122,7 +113,6 @@ Liveness *mir_liveness_compute(Arena *arena, const MIRFunction *ir) {
     liveness->value_base = arena_alloc(arena, (ir->value_count + 1) * sizeof(size_t));
     liveness->value_fields = arena_alloc(arena, (ir->value_count + 1) * sizeof(size_t));
 
-    /* A value's own bit comes first, then one per field it holds, so a field is its own fact. */
     size_t places = 0;
 
     for (size_t i = 0; i < ir->value_count; i++) {
@@ -169,7 +159,6 @@ Liveness *mir_liveness_compute(Arena *arena, const MIRFunction *ir) {
     while (changed) {
         changed = false;
 
-        /* Liveness flows backwards, so the last block settles first and the walk runs in reverse. */
         for (size_t i = ir->block_count; i > 0; i--) {
             const MIRBlock *block = ir->blocks[i - 1];
 
@@ -211,7 +200,6 @@ Liveness *mir_liveness_compute(Arena *arena, const MIRFunction *ir) {
     return liveness;
 }
 
-/* A value is live where any field of it is, since holding one field holds the storage of all. */
 static bool any_field_live(const Liveness *liveness, const uint64_t *set, MIRValueId value) {
     if (set_test(set, place_index(liveness, value, MIR_WHOLE_VALUE))) {
         return true;
@@ -286,7 +274,6 @@ bool mir_live_after(const Liveness *liveness, MIRBlockId block, size_t index, MI
 
     uint64_t *working = liveness->scratch;
 
-    /* Walking back from the block's exit to just past 'index' says what is still read from there. */
     memcpy(working, liveness->exit + block.id * words, words * sizeof(uint64_t));
 
     for (size_t j = data->inst_count; j > index + 1; j--) {

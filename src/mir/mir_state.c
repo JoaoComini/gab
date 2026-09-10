@@ -48,7 +48,6 @@ void mir_slot_open_fields(MIRSlot *slot, Arena *arena, size_t count) {
 
     MIRSlot *grown = arena_alloc(arena, count * sizeof(MIRSlot));
 
-    /* Fields already opened keep what they hold, since growing must not forget an earlier write. */
     for (size_t i = 0; i < slot->field_count; i++) {
         grown[i] = slot->fields[i];
     }
@@ -77,7 +76,6 @@ MIRSlot mir_slot_flattened(Arena *arena, const MIRSlot *slot) {
     for (size_t i = 0; i < slot->field_count; i++) {
         MIRSlot field = mir_slot_flattened(arena, &slot->fields[i]);
 
-        /* Reading the whole value reads this field too, so its freed borrow is the value's. */
         if (flat.init == MIR_SLOT_INIT && field.init == MIR_SLOT_DANGLING) {
             flat.init = MIR_SLOT_DANGLING;
         }
@@ -111,7 +109,6 @@ void mir_state_set(MIRState *state, MIRValueId value, MIRSlot slot) {
     mir_state_map_insert(state->slots, value, slot);
 }
 
-/* Field and borrow arrays are shared until written, so a slot entering a new state takes its own copy. */
 static MIRSlot slot_copy(Arena *arena, MIRSlot slot) {
     if (slot.borrow_capacity > 0) {
         MIRValueId *borrows = arena_alloc(arena, slot.borrow_capacity * sizeof(MIRValueId));
@@ -148,7 +145,6 @@ void mir_state_copy(MIRState *into, const MIRState *from) {
     }
 }
 
-/* Two paths reaching a point agree on the worst each says: the least initialized, and every source. */
 static MIRSlot slot_merge(Arena *arena, MIRSlot a, MIRSlot b) {
     if (a.init == MIR_SLOT_UNREACHED) {
         return slot_copy(arena, b);

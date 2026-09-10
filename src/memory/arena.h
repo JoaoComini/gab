@@ -10,7 +10,6 @@ typedef struct ArenaBlock {
     size_t capacity;
     size_t offset;
 
-    /* Sized for one allocation that no shared block could hold, so growth must never hand it out. */
     bool dedicated;
 
     struct ArenaBlock *next;
@@ -23,7 +22,6 @@ typedef struct Arena {
     size_t block_size;
 } Arena;
 
-/* Where an arena's cursor stood, so scratch work done after it can be rewound without a whole reset. */
 typedef struct {
     ArenaBlock *block;
     size_t offset;

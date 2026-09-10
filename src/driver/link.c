@@ -41,8 +41,6 @@ const char *gab_libdir(void) {
         *slash = '\0';
     }
 
-    /* An installation puts the compiler in 'bin' and what it links beside it in 'lib/gab'; a build tree
-     * puts both in one directory. The library is wherever the core is. */
     snprintf(directory, sizeof(directory), "%s/../lib/gab", self);
 
     char probe[PATH_MAX];
@@ -57,8 +55,6 @@ const char *gab_libdir(void) {
     return directory;
 }
 
-/* What 'crt1.o' calls: a program is entered at the C 'main', which calls the module's. The shim is
- * written rather than emitted so the entry point stays the driver's decision. */
 static bool write_entry(const char *path, const char *module) {
     FILE *file = fopen(path, "w");
 
@@ -91,7 +87,6 @@ static bool readable(const char *path) {
 void gab_object_beside(const char *interface, char *out, size_t capacity) {
     size_t length = strlen(interface);
 
-    /* '.gabi' is what the interface ends with, and '.o' is what the object beside it ends with. */
     if (length > 5 && strcmp(interface + length - 5, ".gabi") == 0) {
         length -= 5;
     }
@@ -107,8 +102,6 @@ bool gab_link(const char *object, const char *module, const char *const *extra, 
         cc = "cc";
     }
 
-    /* The C compiler drives the link, so a missing one is reported as what it is rather than as a
-     * link that failed for reasons unknown. */
     char probe[512];
     snprintf(probe, sizeof(probe), "command -v %s > /dev/null 2>&1", cc);
 
@@ -123,12 +116,10 @@ bool gab_link(const char *object, const char *module, const char *const *extra, 
 
     const char *libdir = gab_libdir();
 
-    /* The sanitizers a program links must match those the core was built with. */
     const char *flags = getenv("GABC_LINK_FLAGS");
 
     char entry[PATH_MAX] = {0};
 
-    /* Only a C source supplies an entry point; an object linked beside this one does not. */
     bool entry_given = false;
 
     for (size_t i = 0; i < extra_count; i++) {
@@ -155,7 +146,6 @@ bool gab_link(const char *object, const char *module, const char *const *extra, 
     snprintf(command + length, sizeof(command) - length, " %s/libcore.a %s -o %s", libdir, flags ? flags : "",
              binary);
 
-    /* The linker's report of a missing interface symbol names a digest, which says nothing on its own. */
     char captured[512];
     snprintf(captured, sizeof(captured), "%s/gab.link.%d", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp",
              (int)getpid());
@@ -182,7 +172,6 @@ bool gab_link(const char *object, const char *module, const char *const *extra, 
             char module[128];
 
             if (sscanf(marker, "gab.iface.%127[^.]", module) == 1) {
-                /* The object is there and states another interface, or it was never linked at all. */
                 bool present = false;
 
                 for (size_t i = 0; i < extra_count; i++) {

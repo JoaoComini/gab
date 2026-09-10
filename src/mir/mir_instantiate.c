@@ -18,7 +18,6 @@ static const Type *subst_type(Instantiation *in, const Type *type) {
 static Constant subst_constant(Instantiation *in, Constant constant) {
     constant.type = subst_type(in, constant.type);
 
-    /* A count the declaration could not take is one its instance can, since the type now states it. */
     if (constant.type && type_kind(constant.type) == TYPE_ARRAY) {
         constant.as_int = type_array_length(constant.type);
         constant.type = type_registry_get_primitive(in->registry, TYPE_I32);
@@ -39,18 +38,15 @@ static TypeArg subst_arg(Instantiation *in, TypeArg arg) {
     return arg.constant.param < in->arg_count ? in->args[arg.constant.param] : arg;
 }
 
-/* A generic body names its callee in its own parameters, so the instance names one of its own. */
 static Function *subst_callee(Instantiation *in, Function *callee) {
     if (!callee) {
         return callee;
     }
 
-    /* A method standing on a bounded parameter becomes the one the implementor actually owns. */
     if (callee->bound_self) {
         const Type *self = subst_type(in, callee->bound_self);
 
-        Function *owned =
-            function_registry_owned_for(in->functions, self, callee->decl->id.name);
+        Function *owned = function_registry_owned_for(in->functions, self, callee->decl->id.name);
 
         return owned ? owned : callee;
     }
@@ -110,7 +106,6 @@ static MIROperand *clone_args(Instantiation *in, const MIROperand *args, size_t 
     return out;
 }
 
-/* A bound resolving to an intrinsic names instructions, not a body, so the call becomes them here. */
 static bool expand_intrinsic(MIRFunction *out, MIRBlock *block, const MIRInst *inst) {
     if (inst->op != MIR_CALL || !inst->callee || !(inst->callee->decl->modifiers & FUNC_MOD_INTRINSIC) ||
         inst->arg_count != 2) {
@@ -209,7 +204,6 @@ MIRFunction *mir_instantiate(Arena *arena, TypeRegistry *registry, FunctionRegis
 
         MIRBlock *block = arena_alloc(arena, sizeof(MIRBlock));
 
-        /* An intrinsic reached through a bound expands into the two instructions it stands for. */
         *block = (MIRBlock){.id = from->id, .inst_capacity = from->inst_count * 2 + 1};
 
         block->insts = arena_alloc(arena, block->inst_capacity * sizeof(MIRInst));

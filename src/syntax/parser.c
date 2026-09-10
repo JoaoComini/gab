@@ -12,7 +12,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* A '{' closes an 'if' or 'for' header, so a struct literal is spelled there only inside brackets. */
 typedef enum {
     EXPR_ANY,
     EXPR_NO_STRUCT_LIT,
@@ -258,7 +257,6 @@ static ASTStmt *parse_decl_statement(Parser *parser) {
         break;
     }
     case TOKEN_INTRINSIC: {
-        /* 'intrinsic' qualifies a struct as well as a function, and one token of source separates them. */
         Span span = parser_span(parser);
 
         parser_next_token(parser);
@@ -458,7 +456,6 @@ static ASTStmt *parse_var_decl_stmt(Parser *parser, ExprContext ctx) {
     return ast_var_decl_stmt_create(parser->arena, span, name, spec, initializer);
 }
 
-/* Inside brackets a '{' cannot open a block, so a struct literal is spelled there even in a header. */
 static ASTStmt *parse_if_stmt(Parser *parser) {
     Span span = parser_span(parser);
 
@@ -632,16 +629,13 @@ static ASTField *parse_field(Parser *parser, const char *name_message) {
     return ast_field_create(parser->arena, name, type);
 }
 
-/* '<T, U>' as a declaration writes: names, each optionally bounded by ': Interface'. */
 typedef struct {
     ASTIdent *names[GAB_MAX_TYPE_PARAMS];
     TypeExpr *bounds[GAB_MAX_TYPE_PARAMS];
 
-    /* What was written, which may exceed GAB_MAX_TYPE_PARAMS; only that many are stored. */
     size_t count;
 } TypeParams;
 
-/* Absent parameters leave 'out' empty rather than failing: every site's '<' is optional. */
 static bool parse_type_params(Parser *parser, TypeParams *out, const char *owner) {
     *out = (TypeParams){0};
 
@@ -695,7 +689,6 @@ static bool parse_type_params(Parser *parser, TypeParams *out, const char *owner
     return true;
 }
 
-/* '<int, bool>' as a use writes: the types applied to whatever named them. */
 static bool parse_type_args(Parser *parser, TypeExprList *out) {
     parser_next_token(parser);
 
@@ -732,12 +725,10 @@ static bool parse_type_args(Parser *parser, TypeExprList *out) {
 }
 
 static TypeExpr *parse_type_expr(Parser *parser) {
-    /* In a type '&' borrows and '*' owns; neither is the expression operator that shares its spelling. */
     if (parser->current.type == TOKEN_AMP || parser->current.type == TOKEN_MUL ||
         parser->current.type == TOKEN_AND) {
         TypeExprKind kind = parser->current.type == TOKEN_MUL ? TYPE_EXPR_BOX : TYPE_EXPR_REF;
 
-        /* '&&T' lexes as one token, so consuming half of it leaves the borrow it still spells. */
         if (parser->current.type == TOKEN_AND) {
             parser->current.type = TOKEN_AMP;
         } else {
@@ -855,8 +846,6 @@ static ASTStmt *parse_struct_decl_stmt_at(Parser *parser, bool intrinsic, Span s
                                        fields, intrinsic);
 }
 
-/* Prepended, so a member's own parameters continue the numbering of the ones its owner declares. */
-/* A bound travels with the name it qualifies, which the owner's parameters displace. */
 static void func_decl_take_type_params(ASTStmt *decl, ASTIdent *const *params, size_t param_count,
                                        TypeExpr *const *bounds) {
     ASTIdent *own[GAB_MAX_TYPE_PARAMS];
@@ -885,9 +874,7 @@ static void func_decl_take_type_params(ASTStmt *decl, ASTIdent *const *params, s
     }
 }
 
-/* Consumes the modifiers before 'func' and leaves the parser on 'func' itself. */
 static bool parse_func_syntax(Parser *parser, bool signature_only, unsigned *out) {
-    /* An interface states a signature, whose body is elsewhere though no keyword says so. */
     *out = signature_only ? FUNC_SYN_EXTERN : FUNC_SYN_NONE;
 
     for (;;) {
@@ -906,7 +893,6 @@ static bool parse_func_syntax(Parser *parser, bool signature_only, unsigned *out
             *out |= FUNC_SYN_EXTERN;
             parser_next_token(parser);
 
-            /* 'extern "C"' names a symbol spelled exactly as written, which is what links against C. */
             if (parser->current.type == TOKEN_STRING) {
                 if (strcmp(parser->current.value.as_string->data, "C") != 0) {
                     parser_error(parser, "the only foreign ABI is \"C\"");
@@ -938,7 +924,6 @@ static ASTStmt *parse_func_decl_stmt_at(Parser *parser, bool signature_only, Spa
 
     syntax |= prefix;
 
-    /* An intrinsic has no body either, though it is the compiler and not a linker that supplies it. */
     bool is_extern = (syntax & (FUNC_SYN_EXTERN | FUNC_SYN_INTRINSIC)) != 0;
 
     if (!parser_expect(parser, TOKEN_FUNC, "expected 'func' after a function's modifiers")) {
@@ -1028,7 +1013,6 @@ static ASTStmt *parse_func_decl_stmt_at(Parser *parser, bool signature_only, Spa
 
     ASTStmt *func_body = parse_block_stmt(parser);
     if (!func_body) {
-
         return NULL;
     }
 
@@ -1050,7 +1034,6 @@ static ASTStmt *parse_func_decl_stmt(Parser *parser) {
     return parse_func_decl_stmt_at(parser, false, parser_span(parser), FUNC_SYN_NONE);
 }
 
-/* 'intrinsic' is consumed before a struct and a function can be told apart, so its span is given back. */
 static ASTStmt *parse_func_decl_stmt_after_intrinsic(Parser *parser, Span span) {
     return parse_func_decl_stmt_at(parser, false, span, FUNC_SYN_INTRINSIC);
 }
@@ -1385,7 +1368,6 @@ static bool parse_call_args(Parser *parser, ASTExprList *out) {
     return true;
 }
 
-/* '<' after a name opens type arguments only when '::' or '{' closes them; otherwise it is a comparison. */
 static bool parser_scan_type_args(Parser *parser, TokenType after) {
     parser_next_token(parser);
 
@@ -1406,8 +1388,7 @@ static bool parser_scan_type_args(Parser *parser, TokenType after) {
         case TOKEN_SEMICOLON:
         case TOKEN_INT:
             break;
-        /* Every token 'parse_type_expr' accepts must be listed above, or a valid type argument scans as a
-         * comparison. */
+
         default:
             return false;
         }
@@ -1438,7 +1419,6 @@ static bool parser_type_args_precede_colons(Parser *parser) {
     return parser_type_args_close_with(parser, TOKEN_COLON_COLON);
 }
 
-/* 'f<int>(' supplies type arguments; 'a < b' compares, and only the closing token tells them apart. */
 static bool parser_type_args_precede_a_call(Parser *parser) {
     return parser_type_args_close_with(parser, TOKEN_LPAREN);
 }
@@ -1486,7 +1466,6 @@ static bool parse_field_inits(Parser *parser, ASTFieldInitList *out) {
     return parser_expect(parser, TOKEN_RBRACE, "expected '}' or ',' after a field value");
 }
 
-/* A struct literal names its type as a written one, which a qualified name spells with both halves. */
 static TypeExpr *struct_lit_type_expr(Parser *parser, const ASTExpr *target) {
     if (target->kind == EXPR_QUALIFIED) {
         return type_expr_qualified(parser->arena, target->qualified.qualifier, target->qualified.name);
@@ -1532,7 +1511,6 @@ static ASTExpr *parse_struct_lit_expr(Parser *parser, ASTExpr *target) {
 }
 
 static ASTExpr *parse_call_expr(Parser *parser, ASTExpr *target) {
-    /* A call is where its target is written, not where its arguments happen to end. */
     Span span = target->span;
 
     ASTExprList args;
@@ -1574,7 +1552,6 @@ static ASTExpr *parse_index_expr(Parser *parser, ASTExpr *target) {
     return ast_index_expr_create(parser->arena, span, target, index);
 }
 
-/* A '{' after a plain name opens a literal; '<' does only when the type arguments it opens reach one. */
 static bool starts_struct_lit(Parser *parser, const ASTExpr *expr, ExprContext ctx) {
     if (ctx != EXPR_ANY || (expr->kind != EXPR_NAME && expr->kind != EXPR_QUALIFIED)) {
         return false;

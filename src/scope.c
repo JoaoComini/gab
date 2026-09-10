@@ -34,7 +34,6 @@ Scope *global_scope_create(Arena *arena, TypeRegistry *types) {
     for (size_t i = 0; i < sizeof(PRIMITIVES) / sizeof(PRIMITIVES[0]); i++) {
         const Type *type = type_registry_get_primitive(types, PRIMITIVES[i]);
 
-        /* A scope keys its symbols on a mutable name, though binding one only ever hashes it. */
         scope_bind_type(scope, (String *)type_name_of(type), type);
     }
 
@@ -68,7 +67,6 @@ const Type *symbol_type(TypeRegistry *registry, const Symbol *symbol) {
     case SYMBOL_TYPE:
         return symbol->type;
 
-    /* A generic names a type only once its arguments are given, but one taking none names itself. */
     case SYMBOL_TYPE_DECL:
         return symbol->type_decl->param_count == 0 ? type_registry_apply(registry, symbol->type_decl, NULL, 0)
                                                    : NULL;
@@ -90,7 +88,6 @@ Symbol *scope_type_lookup_declaring(Scope *scope, String *name) {
             return found;
         }
 
-        /* A module's own declarations, so the walk stops where this module does. */
         if (s->kind == SCOPE_MODULE) {
             return NULL;
         }
@@ -107,7 +104,6 @@ Symbol *scope_lookup_declaring(Scope *scope, String *name) {
             return found;
         }
 
-        /* A module's symbols and its files', which are what a redeclaration would collide with. */
         if (s->kind != SCOPE_FILE || !s->parent) {
             return NULL;
         }
@@ -116,7 +112,6 @@ Symbol *scope_lookup_declaring(Scope *scope, String *name) {
 
 void scope_withdraw(Scope *scope, String *name) { symbol_table_delete(scope->symbols, name); }
 
-/* Binds a symbol of this shape, or answers false where the scope already binds the name. */
 static bool scope_bind(Scope *scope, String *name, Symbol shape) {
     if (symbol_table_lookup(scope->symbols, name)) {
         return false;

@@ -49,8 +49,6 @@ typedef struct {
     ASTExpr *initializer;
 } ASTVarDecl;
 
-/* What was written before 'func'. Syntax, not a conclusion: what these mean for a symbol is decided
- * once the resolver can also see whether a body follows. */
 typedef enum {
     FUNC_SYN_NONE = 0,
 
@@ -71,11 +69,9 @@ typedef struct {
 
     ASTIdent *type_params[GAB_MAX_TYPE_PARAMS];
 
-    /* The interface each type parameter is bounded by, null where it is unbounded. */
     TypeExpr *type_param_bounds[GAB_MAX_TYPE_PARAMS];
     size_t type_param_count;
 
-    /* A set of FuncSyntax. */
     unsigned syntax;
 } ASTFuncDecl;
 
@@ -86,7 +82,6 @@ typedef struct {
     ASTIdent *params[GAB_MAX_TYPE_PARAMS];
     size_t param_count;
 
-    /* The compiler supplies what this type means, which only a name it knows may claim. */
     bool intrinsic;
 } ASTStructDecl;
 
@@ -104,10 +99,8 @@ typedef struct {
 
     ASTIdent *interface_name;
 
-    /* The arguments the 'as' clause applies to the interface, empty where it names none. */
     TypeExprList interface_args;
 
-    /* The bound written on each parameter the block declares, which says whether it takes a value. */
     TypeExpr *param_bounds[GAB_MAX_TYPE_PARAMS];
 
     ASTIdent *param_names[GAB_MAX_TYPE_PARAMS];

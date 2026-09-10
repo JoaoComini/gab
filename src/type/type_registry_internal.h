@@ -30,13 +30,10 @@ typedef struct {
 
     const Type *str_type;
 
-    /* Every slice shares one declaration, so a method reaches 'slice<T>' at any element. */
     const TypeDecl *slice_decl;
 
-    /* Every array shares one declaration, which is what carries the conformance all of them have. */
     const TypeDecl *array_decl;
 
-    /* Every raw run shares one declaration, which is what carries the indexing all of them have. */
     const TypeDecl *raw_decl;
 
     const Type *error_type;

@@ -50,9 +50,6 @@ typedef struct Type Type;
 
 typedef struct TypeRegistry TypeRegistry;
 
-/* A value a generic takes, as 'Type' is a type it takes. A fixed one is the same 'Constant' an
- * instruction names, so what a source writes as a length and what it writes as an operand are one
- * thing; a parameter is the index its declaration gave it, standing in until it is substituted. */
 typedef struct TypeConst {
     enum {
         CONST_VALUE,
@@ -65,7 +62,6 @@ typedef struct TypeConst {
     };
 } TypeConst;
 
-/* The kind says which axis a parameter sits on and never changes; the payload says whether it is fixed. */
 typedef struct TypeArg {
     enum {
         TYPE_ARG_TYPE,
@@ -94,9 +90,6 @@ typedef struct TypeFields {
     size_t count;
 } TypeFields;
 
-/* A member named on a type's declaration rather than on one instantiation, so every instantiation of a
- * generic owner finds the one entry. A box, a reference and a parameter declare nothing, so they key on
- * the id no declaration has. */
 typedef struct TypeMemberKey {
     DeclId owner;
 
@@ -105,8 +98,6 @@ typedef struct TypeMemberKey {
 
 TypeMemberKey type_member_key_of(const Type *type, const String *name);
 
-/* A declaration together with what its parameters were fixed to: which monomorphisation, which
- * instantiation of a generic type, which interface a bound names. */
 typedef struct InstanceId {
     DeclId decl;
 
@@ -114,15 +105,11 @@ typedef struct InstanceId {
     size_t arg_count;
 } InstanceId;
 
-/* The one place an id is assembled, so a caller never fills the slots itself. */
 InstanceId instance_id_of(DeclId decl, const TypeArg *args, size_t arg_count);
 
 bool instance_id_equals(InstanceId id, InstanceId other);
 size_t instance_id_hash(InstanceId id);
 
-/* A type declaration together with the interface it implements, applied to what the impl block gave it,
- * so 'Index<i32>' answers apart from 'Index<bool>'. Named by declaration on both sides, so implementing
- * a generic covers every instantiation of it. */
 typedef struct ConformanceKey {
     DeclId owner;
 
@@ -151,12 +138,10 @@ const TypeDecl *type_decl(const Type *type);
 const TypeArg *type_args(const Type *type);
 size_t type_arg_count(const Type *type);
 
-/* An argument slot inference has not fixed yet: a type argument with no type. */
 #define TYPE_ARG_NONE ((TypeArg){.kind = TYPE_ARG_TYPE, .type = NULL})
 
 static inline bool type_arg_is_set(TypeArg arg) { return arg.kind != TYPE_ARG_TYPE || arg.type != NULL; }
 
-/* An argument is hashed and compared by its kind and payload, never as bytes: the union has padding. */
 size_t type_arg_hash(TypeArg arg);
 bool type_arg_equals(TypeArg arg, TypeArg other);
 
@@ -183,10 +168,8 @@ bool type_is_sized(const Type *type);
 
 bool type_is_primitive(const Type *type);
 
-/* Whether values of this type are whole numbers, which arithmetic on them is integer arithmetic. */
 bool type_is_integer(const Type *type);
 
-/* Whether a whole number of this type counts rather than measures, which orders and divides it unsigned. */
 bool type_is_unsigned(const Type *type);
 
 bool type_names_itself(const Type *type);
@@ -196,7 +179,6 @@ bool type_is_indirect(const Type *type);
 const Type *type_array_element(const Type *type);
 int32_t type_array_length(const Type *type);
 
-/* False while the length is still a parameter, so the array has no width yet. */
 bool type_array_length_is_known(const Type *type);
 
 const Type *type_slice_element(const Type *type);

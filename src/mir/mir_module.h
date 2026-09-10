@@ -9,8 +9,6 @@
 typedef struct {
     Function *function;
 
-    /* What names this entry across compilations: a template by its declaration, an instance by that
-     * declaration together with the arguments it was fixed to. */
     InstanceId id;
 
     MIRFunction *ir;
@@ -18,7 +16,6 @@ typedef struct {
 
 GAB_LIST(MIRModuleEntryList, mir_module_entry_list, MIRModuleEntry)
 
-/* The lowered body of every function a unit resolved, which codegen reads instead of lowering again. */
 typedef struct {
     MIRModuleEntryList entries;
 } MIRModule;

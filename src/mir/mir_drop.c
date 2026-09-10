@@ -24,10 +24,6 @@ static MIRInst *block_insert(Arena *arena, MIRBlock *block, size_t at, MIRInst i
     return &block->insts[at];
 }
 
-/* Whether a value is handed on rather than kept, which is what makes a producer's result someone
- * else's to end: stored into a place, or given to a call that takes it. */
-/* Whether a callee takes the argument at this position, rather than only borrowing it; a borrowed
- * argument stays the caller's to end. */
 static bool callee_takes(TypeRegistry *registry, const Function *callee, size_t index) {
     if (!callee || index >= callee->signature.param_count) {
         return false;
@@ -69,7 +65,6 @@ static bool is_given_away(TypeRegistry *registry, const MIRFunction *ir, MIRValu
     return false;
 }
 
-/* The instruction a value is last read at, which is where a temporary holding its own object ends. */
 static bool last_read_of(const MIRFunction *ir, MIRValueId value, size_t *block_index, size_t *at) {
     bool found = false;
 
@@ -103,8 +98,6 @@ static bool last_read_of(const MIRFunction *ir, MIRValueId value, size_t *block_
     return found;
 }
 
-/* A temporary holding its own object is nobody's to end but the body's, so it is dropped where it is
- * last read; one stored into a place or handed to a call ends with whatever took it. */
 static void drop_owned_temporaries(Arena *arena, TypeRegistry *registry, MIRFunction *ir) {
     for (size_t b = 0; b < ir->block_count; b++) {
         MIRBlock *block = ir->blocks[b];
@@ -133,12 +126,10 @@ static void drop_owned_temporaries(Arena *arena, TypeRegistry *registry, MIRFunc
             size_t at_block = b;
             size_t at = j;
 
-            /* A result nothing reads ends where it is made, since no later point names it. */
             last_read_of(ir, result, &at_block, &at);
 
             MIRBlock *target = ir->blocks[at_block];
 
-            /* A terminator ends its block, so what it reads is dropped before it rather than after. */
             size_t insert_at = mir_op_is_terminator(target->insts[at].op) ? at : at + 1;
 
             block_insert(arena, target, insert_at,
@@ -155,8 +146,6 @@ static void drop_owned_temporaries(Arena *arena, TypeRegistry *registry, MIRFunc
     }
 }
 
-/* Storing over a place that already holds an owned value ends what it held, which is read out ahead
- * of the store so the release still names it; the first store into a place ends nothing. */
 static void release_before_overwrite(Arena *arena, TypeRegistry *registry, MIRFunction *ir) {
     bool *stored = arena_alloc(arena, (ir->value_count + 1) * sizeof(bool));
 
@@ -223,20 +212,15 @@ static void block_remove(MIRBlock *block, size_t at) {
     block->inst_count--;
 }
 
-/* What a slot holds where control flow reaches it, which decides whether its drop frees anything.
- * A slot holds its object until something empties it, so that is what an unwalked block assumes. */
 typedef enum {
     HOLDS_ITS_OBJECT = 0,
     HOLDS_NOTHING,
 
-    /* Reached by paths that disagree, so only a flag written along them can say. */
     HOLDS_EITHER,
 } Holding;
 
 static Holding holding_merge(Holding a, Holding b) { return a == b ? a : HOLDS_EITHER; }
 
-/* Walks one block from what it was entered holding, answering what it leaves holding. A visitor is
- * given each drop with what the slot holds there, which the rewriting walk uses and the fixpoint does not. */
 static void walk_block(MIRFunction *ir, MIRBlock *block, Holding *holds,
                        void (*visit)(void *context, MIRBlock *block, size_t at, Holding held),
                        void *context) {
@@ -264,7 +248,6 @@ static void walk_block(MIRFunction *ir, MIRBlock *block, Holding *holds,
     }
 }
 
-/* What every block is entered holding, once every path into it agrees. */
 static Holding *entry_holdings(Arena *arena, MIRFunction *ir) {
     size_t width = ir->value_count + 1;
 
@@ -274,8 +257,6 @@ static Holding *entry_holdings(Arena *arena, MIRFunction *ir) {
 
     Holding *exit = arena_alloc(arena, width * sizeof(Holding));
 
-    /* An entry is what its predecessors leave, so one is built afresh each round rather than merged
-     * into the last round's answer, which no merge could ever lower again. */
     Holding *next = arena_alloc(arena, ir->block_count * width * sizeof(Holding));
     bool *reached = arena_alloc(arena, ir->block_count * sizeof(bool));
 
@@ -324,7 +305,6 @@ static Holding *entry_holdings(Arena *arena, MIRFunction *ir) {
 typedef struct {
     MIRFunction *ir;
 
-    /* Collected rather than removed in place, so the walk is not rewriting what it reads. */
     MIRBlock **blocks;
     size_t *indices;
     size_t count;
@@ -345,11 +325,9 @@ static void note_empty_drop(void *context, MIRBlock *block, size_t at, Holding h
 typedef struct {
     MIRFunction *ir;
 
-    /* The flag each slot is guarded by, none for a slot whose paths agree. */
     MIRValueId *flags;
 } Flagged;
 
-/* Marks every drop whose slot's paths disagree, so the walk that follows can write the flag it reads. */
 static void note_conditional_drop(void *context, MIRBlock *block, size_t at, Holding held) {
     Flagged *flagged = context;
 
@@ -370,8 +348,6 @@ static void note_conditional_drop(void *context, MIRBlock *block, size_t at, Hol
     inst->flag = flagged->flags[base];
 }
 
-/* Writes the flag beside every point that changes what a slot holds, so the drop reading it is answered
- * on every path rather than only the one that moved. */
 static void write_drop_flags(Arena *arena, MIRFunction *ir, const MIRValueId *flags) {
     for (size_t b = 0; b < ir->block_count; b++) {
         MIRBlock *block = ir->blocks[b];
@@ -394,7 +370,6 @@ static void write_drop_flags(Arena *arena, MIRFunction *ir, const MIRValueId *fl
 
             bool holds = inst->op == MIR_STORE || inst->op == MIR_STORAGE_INIT;
 
-            /* A flag starts saying the slot holds nothing, so opening its scope writes nothing itself. */
             if (!holds && inst->op != MIR_NULL) {
                 j++;
                 continue;
@@ -423,8 +398,6 @@ static void write_drop_flags(Arena *arena, MIRFunction *ir, const MIRValueId *fl
     }
 }
 
-/* A drop whose paths disagree is guarded by a flag those paths write, rather than by what the slot
- * itself was left holding, so nothing depends on a moved-from slot reading as zero. */
 static void guard_conditional_drops(Arena *arena, MIRFunction *ir) {
     if (ir->block_count == 0) {
         return;
@@ -450,7 +423,6 @@ static void guard_conditional_drops(Arena *arena, MIRFunction *ir) {
 
     write_drop_flags(arena, ir, flagged.flags);
 
-    /* The flag now says what a moved-from slot used to say by reading as zero, so the nulling goes. */
     for (size_t b = 0; b < ir->block_count; b++) {
         MIRBlock *block = ir->blocks[b];
 
@@ -469,7 +441,6 @@ static void guard_conditional_drops(Arena *arena, MIRFunction *ir) {
     }
 }
 
-/* A place every path empties holds nothing where its drop stands, so that drop frees nothing and goes. */
 static void drop_releases_of_emptied_places(Arena *arena, MIRFunction *ir) {
     if (ir->block_count == 0) {
         return;
@@ -497,14 +468,11 @@ static void drop_releases_of_emptied_places(Arena *arena, MIRFunction *ir) {
         walk_block(ir, ir->blocks[b], holds, note_empty_drop, &found);
     }
 
-    /* Removed last to first within a block, so an earlier index is still the instruction it named. */
     for (size_t i = found.count; i > 0; i--) {
         block_remove(found.blocks[i - 1], found.indices[i - 1]);
     }
 }
 
-/* The ending a drop runs, resolved for the type it actually drops so an instance of it is lowered rather
- * than the declaration it was written as. What a drop reaches through it ends too, so each level is named. */
 static void resolve_endings(TypeRegistry *registry, FunctionRegistry *functions, MIRFunction *ir) {
     const String *name = type_registry_names(registry)->destroy_method;
 
@@ -532,7 +500,6 @@ void mir_drop_elaborate(Arena *arena, TypeRegistry *registry, FunctionRegistry *
         for (size_t i = 0; i < block->inst_count;) {
             MIRInst *inst = &block->insts[i];
 
-            /* Giving a value away leaves its slot holding nothing, so a later release frees nothing. */
             if (inst->op == MIR_LOAD && inst->read == READ_MOVE) {
                 if (!mir_type_needs_drop(registry, inst->type)) {
                     i++;

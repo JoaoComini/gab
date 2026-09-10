@@ -5,9 +5,6 @@
 
 #include <stdlib.h>
 
-/* What a written type denotes: the primitives and the types a scope names, the runs and slices the
- * language supplies, and the arguments a generic is applied to. */
-
 bool reject_unsized(ResolverState *state, const Type *type, Span span, const char *held_as) {
     if (!type || type_is_sized(type)) {
         return false;
@@ -19,7 +16,6 @@ bool reject_unsized(ResolverState *state, const Type *type, Span span, const cha
     return true;
 }
 
-/* An element must be sized and non-recursive wherever a run of it is laid out. */
 const Type *resolve_element_type(ResolverState *state, TypeExpr *expr, Span span, const char *held_as) {
     const Type *element = resolve_type_expr(state, expr, span);
 
@@ -50,9 +46,6 @@ const Type *resolve_element_type(ResolverState *state, TypeExpr *expr, Span span
     return element;
 }
 
-/* Which kind of parameter a bound declares, which its syntax alone says: nothing here is resolved, so
- * this answers before the parameters are in scope and their bounds can be. 'N: i32' declares a value
- * parameter, as Rust spells 'const N: usize'; any other bound names an interface. */
 BoundKind bound_kind_of(const TypeRegistry *registry, StringPool *strings, const TypeExpr *bound) {
     if (!bound) {
         return BOUND_NONE;
@@ -73,7 +66,6 @@ bool bind_type_param(TypeRegistry *registry, Scope *params, String *name, size_t
     return scope_bind_type_param(params, name, type_registry_param(registry, index));
 }
 
-/* A length is written as a literal, or named as the value parameter a generic declaration takes. */
 static bool resolve_array_length(ResolverState *state, TypeExpr *expr, Span span, TypeArg *out) {
     if (expr->kind == TYPE_EXPR_CONST) {
         Constant length = constant_int(i32_type(state), expr->constant);
@@ -143,7 +135,6 @@ static const Type *resolve_slice_type(ResolverState *state, TypeExpr *expr, Span
     return type_registry_slice_of(state->global->types, element);
 }
 
-/* A raw run names where elements start and nothing more: no length, and nothing it owns. */
 static const Type *resolve_raw_type(ResolverState *state, TypeExpr *expr, Span span) {
     if (expr->apply.args.size != 1 || expr->apply.args.data[0]->kind == TYPE_EXPR_CONST) {
         diag_error(state->global->diagnostics, GAB_ERR_TYPE, span,
