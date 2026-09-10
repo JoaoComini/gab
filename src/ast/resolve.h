@@ -14,8 +14,8 @@
 typedef struct ResolvedModule {
     ASTModule *module;
 
-    /* Where this module's declarations landed, which is what another module names it through. */
-    Scope *scope;
+    /* What another module importing this one names it through, which outlives this compilation. */
+    Module *declared;
 
     Facts facts;
     PendingBodies work;
@@ -36,8 +36,7 @@ typedef struct {
 } ModulePrivileges;
 
 /* False where the module does not resolve, so what it concluded exists only once it holds together. */
-bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope,
-                    ModuleScopeMap *module_scopes, ModulePrivileges privileges, ResolvedModule **out,
-                    Diagnostics *diagnostics);
+bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope, ModuleMap *modules,
+                    ModulePrivileges privileges, ResolvedModule **out, Diagnostics *diagnostics);
 
 #endif

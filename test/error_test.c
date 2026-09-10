@@ -108,7 +108,7 @@ static void collect(const char *source, Lines *actual) {
     TestContext ctx;
     test_context_init(&ctx);
 
-    ModuleScopeMap *modules;
+    ModuleMap *modules;
     Scope *scope = test_scope_with_core(&ctx, &modules);
 
     ASTModule *unit;

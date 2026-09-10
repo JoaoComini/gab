@@ -31,16 +31,27 @@ GAB_HASH_MAP(TypeMap, type_map, String *, TypeBinding)
 
 GAB_HASH_MAP(InterfaceMap, interface_map, String *, InterfaceDecl *)
 
-#define module_scope_map_hash(key) (size_t)key
-#define module_scope_map_key_equals(key, other) key == other
+/* A module as another module sees it: what it is called and what it declares. What compiling it
+ * concluded is the compiling module's own business, and does not survive into this. */
+typedef struct Module {
+    String *name;
 
-GAB_HASH_MAP(ModuleScopeMap, module_scope_map, String *, Scope *)
+    Scope *scope;
+} Module;
+
+#define module_map_hash(key) (size_t)key
+#define module_map_key_equals(key, other) key == other
+
+GAB_HASH_MAP(ModuleMap, module_map, String *, Module *)
 
 #define BINDING_TABLE_INITIAL_CAPACITY 8
 
 typedef enum {
     BINDING_VAR,
     BINDING_FUNC,
+
+    /* What an import binds, so naming the module is the same lookup as naming anything else. */
+    BINDING_MODULE,
 } BindingKind;
 
 typedef struct Binding {
@@ -54,6 +65,8 @@ typedef struct Binding {
         } var;
 
         Function *func;
+
+        Module *module;
     };
 } Binding;
 
@@ -150,7 +163,15 @@ bool scope_bind_interface(Scope *scope, String *name, InterfaceDecl *interface);
 
 InterfaceDecl *scope_interface_lookup(Scope *scope, String *name);
 
+/* Declares into 'scope', rejecting a name 'against' already binds: a module's declaration is checked
+ * from the file that writes it, so it collides with what that file imports as well. */
+Binding *scope_decl_var_against(Scope *scope, Scope *against, String *name, const Type *type);
+Binding *scope_decl_func_against(Scope *scope, Scope *against, String *name, const Type *return_type);
+
 Binding *scope_decl_var(Scope *scope, String *name, const Type *type);
 Binding *scope_decl_func(Scope *scope, String *name, const Type *return_type);
+
+/* Binds 'module' under the name this file imports it as; false where the name is already taken. */
+bool scope_bind_module(Scope *scope, String *name, Module *module);
 
 #endif

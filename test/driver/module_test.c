@@ -314,6 +314,23 @@ static void a_module_declares_a_name_the_prelude_holds(void) {
                    object, NULL, NULL));
 }
 
+/* An import binds the module in the file that wrote it, so a declaration cannot take the same name. */
+static void a_declaration_does_not_take_the_name_of_an_import(void) {
+    char object[512];
+    char interface[512];
+
+    snprintf(object, sizeof(object), "%s/taken.o", GAB_TEST_SCRATCH);
+    snprintf(interface, sizeof(interface), "%s/taken.gabi", GAB_TEST_SCRATCH);
+
+    assert(compile("module taken;\nfunc helper(): i32 { return 7; }\n", object, interface, NULL));
+
+    char user[512];
+    snprintf(user, sizeof(user), "%s/taken_use.o", GAB_TEST_SCRATCH);
+
+    assert(!compile("module use;\nimport taken;\nfunc taken(): i32 { return 1; }\n", user, NULL,
+                    GAB_TEST_SCRATCH));
+}
+
 /* An interface and the object it was compiled from name each other, so a stale pair cannot be linked. */
 static void a_stale_interface_does_not_link(void) {
     char object[512];
@@ -519,7 +536,8 @@ static void read_source(Reading *reading, TestContext *ctx, const char *source) 
 }
 
 static DeclId method_id_in(Reading *reading, TestContext *ctx, const char *type, const char *method) {
-    const Type *owner = scope_type_lookup(reading->resolved->scope, string_from_cstr(&ctx->strings, type));
+    const Type *owner =
+        scope_type_lookup(reading->resolved->declared->scope, string_from_cstr(&ctx->strings, type));
 
     assert(owner);
 
@@ -533,7 +551,8 @@ static DeclId method_id_in(Reading *reading, TestContext *ctx, const char *type,
 }
 
 static DeclId type_id_in(Reading *reading, TestContext *ctx, const char *name) {
-    const Type *type = scope_type_lookup(reading->resolved->scope, string_from_cstr(&ctx->strings, name));
+    const Type *type =
+        scope_type_lookup(reading->resolved->declared->scope, string_from_cstr(&ctx->strings, name));
 
     assert(type);
     assert(decl_id_is_set(type_decl(type)->id));
@@ -624,6 +643,7 @@ int main(void) {
     a_name_two_files_declare_is_declared_twice();
     the_prelude_is_not_imported();
     a_module_declares_a_name_the_prelude_holds();
+    a_declaration_does_not_take_the_name_of_an_import();
     a_stale_interface_does_not_link();
     a_module_is_written_across_the_files_it_is_compiled_from();
     every_file_of_a_module_declares_that_module();

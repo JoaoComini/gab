@@ -17,7 +17,13 @@
 
 typedef struct StructDecl {
     ASTStmt *stmt;
+
+    /* Where the type is bound, which is the module's however many files write it. */
     Scope *scope;
+
+    /* Where its fields resolve from, which is the file that wrote it: a field's type may name what
+     * that file imports, and fields resolve after every file has declared. */
+    Scope *file_scope;
 
     /* Fields resolve after every file has declared, so the struct carries the file whose imports its
      * field types may name. */
@@ -49,7 +55,7 @@ typedef struct ResolverState {
     Scope *global_scope;
     Scope *current_scope;
 
-    ModuleScopeMap *module_scopes;
+    ModuleMap *modules;
 
     /* The file being resolved, whose imports are the ones its statements may name. */
     const ASTFile *file;
@@ -161,20 +167,8 @@ static unsigned modifiers_of(const ASTFuncDecl *decl) {
            (unsigned)((decl->syntax & FUNC_SYN_CALLER) ? FUNC_MOD_CALLER : FUNC_MOD_NONE);
 }
 
-static bool resolver_may_name(ResolverState *state, String *module) {
-    if (module == state->module_name) {
-        return true;
-    }
-
-    for (size_t i = 0; i < state->file->imports.size; i++) {
-        if (string_from_ref(state->current_scope->strings, state->file->imports.data[i].name) == module) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
+/* What a name qualified by a module resolves through: an import binds the module in this file, so
+ * naming it is the lookup any other name is, and one this file did not import is bound nowhere. */
 static Scope *resolver_expr_scope(ResolverState *state, StringRef name) {
     StringRef module, member;
 
@@ -182,19 +176,15 @@ static Scope *resolver_expr_scope(ResolverState *state, StringRef name) {
         return state->current_scope;
     }
 
-    if (!state->module_scopes) {
-        return NULL;
-    }
-
     String *module_name = string_from_ref(state->current_scope->strings, module);
 
-    if (!resolver_may_name(state, module_name)) {
-        return NULL;
+    if (module_name == state->module_name) {
+        return state->module_scope;
     }
 
-    Scope **existing = module_scope_map_lookup(state->module_scopes, module_name);
+    Binding *bound = scope_binding_lookup(state->current_scope, module_name);
 
-    return existing ? *existing : NULL;
+    return bound && bound->kind == BINDING_MODULE ? bound->module->scope : NULL;
 }
 
 /* The scope of the import at 'index' in this file, or null where it names nothing this compilation
@@ -202,14 +192,14 @@ static Scope *resolver_expr_scope(ResolverState *state, StringRef name) {
 static Scope *resolver_import_scope(ResolverState *state, size_t index) {
     String *module = string_from_ref(state->current_scope->strings, state->file->imports.data[index].name);
 
-    Scope **imported = module_scope_map_lookup(state->module_scopes, module);
+    Binding *bound = scope_binding_lookup(state->current_scope, module);
 
-    return imported ? *imported : NULL;
+    return bound && bound->kind == BINDING_MODULE ? bound->module->scope : NULL;
 }
 
 /* A name an import declares, which an unqualified use reaches once this unit declares none itself. */
 static Binding *resolver_imported_binding(ResolverState *state, String *name) {
-    if (!state->module_scopes) {
+    if (!state->modules) {
         return NULL;
     }
 
@@ -229,7 +219,7 @@ static Binding *resolver_imported_binding(ResolverState *state, String *name) {
 static Resolution resolver_resolve_name(ResolverState *state, Scope *scope, String *name) {
     Resolution resolution = scope ? scope_resolve(scope, name) : (Resolution){0};
 
-    if (resolution.kind != RESOLUTION_NONE || scope != state->current_scope || !state->module_scopes) {
+    if (resolution.kind != RESOLUTION_NONE || scope != state->current_scope || !state->modules) {
         return resolution;
     }
 
@@ -249,7 +239,7 @@ static Resolution resolver_resolve_name(ResolverState *state, Scope *scope, Stri
 static InterfaceDecl *resolver_lookup_interface(ResolverState *state, String *name) {
     InterfaceDecl *found = scope_interface_lookup(state->current_scope, name);
 
-    if (found || !state->module_scopes) {
+    if (found || !state->modules) {
         return found;
     }
 
@@ -2349,6 +2339,7 @@ static StructDecl *declare_struct(ResolverState *state, ASTStmt *stmt) {
     *decl = (StructDecl){
         .stmt = stmt,
         .scope = resolver_declaring_scope(state),
+        .file_scope = state->current_scope,
         .file = state->file,
         .name = struct_name,
         .decl = declared,
@@ -2433,7 +2424,7 @@ static void resolve_struct_fields(ResolverState *state, StructDecl *decl) {
 
     state->file = decl->file;
 
-    Scope *params = scope_create(resolver_owner_arena(state), decl->scope->strings, decl->scope);
+    Scope *params = scope_create(resolver_owner_arena(state), decl->file_scope->strings, decl->file_scope);
 
     for (size_t i = 0; i < stmt->struct_decl.param_count; i++) {
         String *param_name = resolver_intern(state, stmt->struct_decl.params[i]);
@@ -3166,7 +3157,8 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
         return;
     }
 
-    Binding *declared = scope_decl_func(resolver_declaring_scope(state), declared_name, func_return_type);
+    Binding *declared = scope_decl_func_against(resolver_declaring_scope(state), state->current_scope,
+                                                declared_name, func_return_type);
 
     if (!declared) {
         char *name = string_ref_to_cstr(func_name);
@@ -3572,9 +3564,8 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
     }
 }
 
-bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope,
-                    ModuleScopeMap *module_scopes, ModulePrivileges privileges, ResolvedModule **out,
-                    Diagnostics *diagnostics) {
+bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope, ModuleMap *modules,
+                    ModulePrivileges privileges, ResolvedModule **out, Diagnostics *diagnostics) {
     /* A module declares into a scope of its own, so what it declares does not land among the names
      * every module shares. The prelude is those names, so it declares into the global scope itself. */
     Scope *module_scope = global_scope;
@@ -3587,7 +3578,13 @@ bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope
     ResolvedModule *resolved = arena_alloc(compile_arena, sizeof(ResolvedModule));
 
     resolved->module = module;
-    resolved->scope = module_scope;
+
+    resolved->declared = arena_alloc(compile_arena, sizeof(Module));
+
+    *resolved->declared = (Module){
+        .name = module->name.data ? string_from_ref(global_scope->strings, module->name) : NULL,
+        .scope = module_scope,
+    };
     resolved->work = pending_bodies_create(compile_arena);
     resolved->registry = global_scope->type_registry;
     resolved->functions = global_scope->functions;
@@ -3599,7 +3596,7 @@ bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope
         .global_scope = global_scope,
         .current_scope = module_scope,
         .module_scope = module_scope,
-        .module_scopes = module_scopes,
+        .modules = modules,
         .file = module->files.size ? module->files.data[0] : ast_file_create(compile_arena),
         .module_name = module->name.data ? string_from_ref(global_scope->strings, module->name) : NULL,
         .declares_intrinsics = privileges.intrinsics,
@@ -3623,6 +3620,25 @@ bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope
     for (size_t f = 0; f < module->files.size; f++) {
         file_scopes[f] = arena_alloc(compile_arena, sizeof(Scope));
         scope_init_kind(file_scopes[f], compile_arena, global_scope->strings, module_scope, SCOPE_FILE);
+
+        /* An import binds the module in this file, so what it declares is reached by an ordinary
+         * lookup rather than by asking which modules this compilation happens to have read. */
+        const ASTImportList *imports = &module->files.data[f]->imports;
+
+        for (size_t i = 0; i < imports->size; i++) {
+            String *name = string_from_ref(global_scope->strings, imports->data[i].name);
+
+            Module **imported = modules ? module_map_lookup(modules, name) : NULL;
+
+            if (!imported) {
+                continue;
+            }
+
+            if (!scope_bind_module(file_scopes[f], name, *imported)) {
+                diag_error(diagnostics, GAB_ERR_NAME, imports->data[i].span,
+                           "'%s' is already declared in this file", name->data);
+            }
+        }
     }
 
     /* Every file declares before any file resolves, so a declaration is visible across the module

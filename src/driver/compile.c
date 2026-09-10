@@ -27,7 +27,7 @@ typedef struct {
     StringPool *strings;
 
     Scope *global;
-    ModuleScopeMap *modules;
+    ModuleMap *modules;
 
     MIRModule *generics;
 
@@ -48,7 +48,7 @@ static void keep_templates(const Compilation *compilation, const MIRModule *bodi
 /* What an interface declares, resolved into a scope of its own so a symbol keeps the module that
  * defines it. Nothing is emitted: the bodies live in the object beside it. */
 static bool compile_declarations(const Compilation *compilation, const char *text, bool is_prelude,
-                                 Scope **into) {
+                                 Module **into) {
     ASTModule *module = NULL;
 
     const char *sources[1] = {text};
@@ -70,7 +70,7 @@ static bool compile_declarations(const Compilation *compilation, const char *tex
         return false;
     }
 
-    *into = resolved->scope;
+    *into = resolved->declared;
 
     MIRModule *bodies = NULL;
 
@@ -157,7 +157,7 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
         }
     }
 
-    ModuleScopeMap *modules = module_scope_map_create_alloc(arena_allocator(arena), 8);
+    ModuleMap *modules = module_map_create_alloc(arena_allocator(arena), 8);
 
     Compilation compilation = {
         .arena = arena,
@@ -179,7 +179,7 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
     /* The prelude declares into the global scope, so what it states is reached the way a primitive's
      * name is: by an ordinary walk, without an import and without a scope of its own. */
     if (!declares_prelude) {
-        Scope *prelude = NULL;
+        Module *prelude = NULL;
 
         ok = compile_declarations(&compilation, interface, true, &prelude);
     }
@@ -281,13 +281,13 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
 
             diagnostics_free(&quiet);
 
-            Scope *imported = NULL;
+            Module *imported = NULL;
 
             ok = compile_declarations(&compilation, text, false, &imported);
 
             if (ok) {
                 if (i < direct) {
-                    module_scope_map_insert(modules, string_from_cstr(&strings, module), imported);
+                    module_map_insert(modules, string_from_cstr(&strings, module), imported);
                 }
 
                 char symbol[512];

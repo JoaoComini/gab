@@ -60,13 +60,13 @@ static inline Scope *test_resolve(TestContext *ctx, Scope *global, ASTModule **u
         return NULL;
     }
 
-    return resolved->scope;
+    return resolved->declared->scope;
 }
 
 /* A global scope the core has declared into, which is what 'len', 'as_bytes' and '[]' resolve through.
  * It is read from the interface a compilation reads, so what a test resolves against is what 'gabc'
  * hands a program rather than a second reading of the core's source. */
-static inline Scope *test_scope_with_core(TestContext *ctx, ModuleScopeMap **out_modules) {
+static inline Scope *test_scope_with_core(TestContext *ctx, ModuleMap **out_modules) {
     Scope *scope = scope_create(ctx->arena, &ctx->strings, NULL);
 
     char *core = gab_interface_read(GAB_TEST_CORE_INTERFACE);
@@ -85,7 +85,7 @@ static inline Scope *test_scope_with_core(TestContext *ctx, ModuleScopeMap **out
     free(core);
 
     /* Holds what a test imports; the core is not among them, having declared into 'scope' itself. */
-    ModuleScopeMap *modules = module_scope_map_create_alloc(arena_allocator(ctx->arena), 8);
+    ModuleMap *modules = module_map_create_alloc(arena_allocator(ctx->arena), 8);
 
     if (out_modules) {
         *out_modules = modules;

@@ -15,7 +15,7 @@ typedef struct {
     MIRModule *mir_unit;
     ResolvedModule *resolved;
 
-    ModuleScopeMap *module_scopes;
+    ModuleMap *module_scopes;
 
     MIRFunction *ir;
 } TestEmission;

@@ -197,8 +197,26 @@ bool scope_bind_decl(Scope *scope, String *name, const TypeDecl *decl) {
     return true;
 }
 
+bool scope_bind_module(Scope *scope, String *name, Module *module) {
+    if (binding_table_lookup(scope->bindings, name)) {
+        return false;
+    }
+
+    Binding *binding = arena_alloc(scope->arena, sizeof(Binding));
+
+    binding->kind = BINDING_MODULE;
+    binding->pinned = false;
+    binding->module = module;
+
+    return binding_table_insert(scope->bindings, name, binding) != NULL;
+}
+
 Binding *scope_decl_var(Scope *scope, String *name, const Type *type) {
-    if (scope_binding_lookup_declaring(scope, name)) {
+    return scope_decl_var_against(scope, scope, name, type);
+}
+
+Binding *scope_decl_var_against(Scope *scope, Scope *against, String *name, const Type *type) {
+    if (scope_binding_lookup_declaring(against, name)) {
         return NULL;
     }
 
@@ -216,7 +234,11 @@ Binding *scope_decl_var(Scope *scope, String *name, const Type *type) {
 }
 
 Binding *scope_decl_func(Scope *scope, String *name, const Type *return_type) {
-    if (scope_binding_lookup_declaring(scope, name)) {
+    return scope_decl_func_against(scope, scope, name, return_type);
+}
+
+Binding *scope_decl_func_against(Scope *scope, Scope *against, String *name, const Type *return_type) {
+    if (scope_binding_lookup_declaring(against, name)) {
         return NULL;
     }
 
