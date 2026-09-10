@@ -526,18 +526,20 @@ typedef struct {
 /* Both readings share one string pool, as the writer and the reader of an interface do in one
  * compilation, since an id compares by the pointers interning produced. */
 static void read_source(Reading *reading, TestContext *ctx, const char *source) {
-    reading->scope = scope_create(ctx->arena, &ctx->strings, NULL);
-    reading->unit = ast_module_create(ctx->arena);
+    reading->ctx = test_context_reading(ctx);
 
-    bool ok =
-        test_resolve_ir_with(ctx, reading->scope, &reading->unit, NULL, &reading->resolved, source, false);
+    reading->scope = scope_create_kind(reading->ctx.arena, reading->ctx.global, SCOPE_MODULE);
+    reading->unit = ast_module_create(reading->ctx.arena);
+
+    bool ok = test_resolve_ir_with(&reading->ctx, reading->scope, &reading->unit, NULL, &reading->resolved,
+                                   source, false);
 
     assert(ok);
 }
 
 static DeclId method_id_in(Reading *reading, TestContext *ctx, const char *type, const char *method) {
-    const Type *owner =
-        scope_type_lookup(reading->resolved->declared->scope, string_from_cstr(&ctx->strings, type));
+    const Type *owner = scope_type_lookup(reading->ctx.types, reading->resolved->declared->scope,
+                                          string_from_cstr(&ctx->strings, type));
 
     assert(owner);
 
@@ -551,8 +553,8 @@ static DeclId method_id_in(Reading *reading, TestContext *ctx, const char *type,
 }
 
 static DeclId type_id_in(Reading *reading, TestContext *ctx, const char *name) {
-    const Type *type =
-        scope_type_lookup(reading->resolved->declared->scope, string_from_cstr(&ctx->strings, name));
+    const Type *type = scope_type_lookup(reading->ctx.types, reading->resolved->declared->scope,
+                                         string_from_cstr(&ctx->strings, name));
 
     assert(type);
     assert(decl_id_is_set(type_decl(type)->id));

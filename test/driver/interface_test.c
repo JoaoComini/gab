@@ -25,7 +25,7 @@ static char *interface_of(const char *source) {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
+    Scope *scope = scope_create_kind(ctx.arena, ctx.global, SCOPE_MODULE);
     ASTModule *unit = ast_module_create(ctx.arena);
 
     ResolvedModule *resolved = NULL;
@@ -55,7 +55,7 @@ static void a_written_interface_compiles(void) {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
+    Scope *scope = scope_create_kind(ctx.arena, ctx.global, SCOPE_MODULE);
     ASTModule *unit = ast_module_create(ctx.arena);
 
     assert(test_resolve_ir_with(&ctx, scope, &unit, NULL, NULL, text, true));

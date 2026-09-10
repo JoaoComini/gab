@@ -92,12 +92,6 @@ typedef struct Scope {
 
     InterfaceMap *interfaces;
 
-    TypeRegistry *type_registry;
-
-    FunctionRegistry *functions;
-
-    StringPool *strings;
-
     struct Scope *parent;
 
     ScopeKind kind;
@@ -108,12 +102,16 @@ typedef struct Scope {
 
 #define GAB_STD_MODULE "std"
 
-/* A local scope under 'parent', or the global one where it is null. */
-Scope *scope_create(Arena *arena, StringPool *strings, Scope *parent);
-void scope_init(Scope *scope, Arena *arena, StringPool *strings, Scope *parent);
+/* The scope every module hangs off, holding the names the language predeclares. Built once, before
+ * any source is read: what the primitives are called is not something a module states. */
+Scope *global_scope_create(Arena *arena, TypeRegistry *types);
+
+/* A local scope under 'parent'. */
+Scope *scope_create(Arena *arena, Scope *parent);
 
 /* A scope of a given kind, which a lookup treats by what it stands for rather than by how deep it is. */
-void scope_init_kind(Scope *scope, Arena *arena, StringPool *strings, Scope *parent, ScopeKind kind);
+void scope_init_kind(Scope *scope, Arena *arena, Scope *parent, ScopeKind kind);
+Scope *scope_create_kind(Arena *arena, Scope *parent, ScopeKind kind);
 
 typedef enum {
     RESOLUTION_NONE,
@@ -142,7 +140,7 @@ const Type *resolution_type(TypeRegistry *registry, Resolution resolution);
 
 Binding *scope_binding_lookup(Scope *scope, String *name);
 
-const Type *scope_type_lookup(Scope *scope, String *name);
+const Type *scope_type_lookup(TypeRegistry *registry, Scope *scope, String *name);
 
 /* A type this module declares, which is what an 'impl' may name: a type reached through an import
  * belongs to the module that declared it. */

@@ -17,7 +17,7 @@ typedef struct {
 static void lower(Lowered *lowered, const char *source) {
     test_context_init(&lowered->ctx);
 
-    lowered->scope = scope_create(lowered->ctx.arena, &lowered->ctx.strings, NULL);
+    lowered->scope = scope_create_kind(lowered->ctx.arena, lowered->ctx.global, SCOPE_MODULE);
     lowered->unit = ast_module_create(lowered->ctx.arena);
 
     assert(test_resolve_ir(&lowered->ctx, lowered->scope, &lowered->unit, NULL, &lowered->resolved, source));
@@ -26,9 +26,9 @@ static void lower(Lowered *lowered, const char *source) {
         ASTStmt *stmt = ast_module_statements(lowered->unit)[0].data[i];
 
         if (stmt && stmt->kind == STMT_FUNC_DECL && stmt->func_decl.body) {
-            lowered->ir = mir_build_function(lowered->ctx.arena, lowered->scope->type_registry,
-                                             &lowered->resolved->facts, stmt->func_decl.function,
-                                             &stmt->func_decl.params, stmt->func_decl.body);
+            lowered->ir =
+                mir_build_function(lowered->ctx.arena, lowered->ctx.types, &lowered->resolved->facts,
+                                   stmt->func_decl.function, &stmt->func_decl.params, stmt->func_decl.body);
             return;
         }
     }

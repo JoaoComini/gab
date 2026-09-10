@@ -20,18 +20,12 @@
 
 #define GAB_COMPILE_BLOCK_SIZE 4096
 
-/* What every stage of one compilation shares: the storage it allocates from, the scope its
- * declarations land in, and the generics a later module instantiates from. */
+/* What every stage of one compilation shares: what resolving a module in it needs, and the generics
+ * a later module instantiates from. */
 typedef struct {
-    Arena *arena;
-    StringPool *strings;
-
-    Scope *global;
-    ModuleMap *modules;
+    Resolver resolver;
 
     MIRModule *generics;
-
-    Diagnostics *diagnostics;
 } Compilation;
 
 /* A generic's body is what a reader instantiates, so it is kept where every later module finds it. */
@@ -53,20 +47,23 @@ static bool compile_declarations(const Compilation *compilation, const char *tex
 
     const char *sources[1] = {text};
 
-    if (!parse_module(sources, 1, NULL, compilation->arena, compilation->strings, &module,
-                      compilation->diagnostics)) {
+    if (!parse_module(sources, 1, NULL, compilation->resolver.arena, compilation->resolver.strings, &module,
+                      compilation->resolver.diagnostics)) {
         return false;
     }
 
     ResolvedModule *resolved = NULL;
 
     /* An interface restates the declarations it was written from, intrinsics included, so re-reading
-     * one declares what its source was allowed to. It names the prelude as its source did, so the
-     * scopes are what a '@caller()' in it resolves 'Location' through. */
-    ModulePrivileges privileges = {.intrinsics = true, .global = is_prelude};
+     * one declares what its source was allowed to. */
+    ModulePrivileges privileges = {.intrinsics = true};
 
-    if (!resolve_module(compilation->arena, module, compilation->global, compilation->modules, privileges,
-                        &resolved, compilation->diagnostics)) {
+    /* The prelude's names are the language's own, so they land where a primitive's do. */
+    Scope *into_scope = is_prelude ? compilation->resolver.global
+                                   : scope_create_kind(compilation->resolver.arena,
+                                                       compilation->resolver.global, SCOPE_MODULE);
+
+    if (!resolve_module(&compilation->resolver, module, into_scope, privileges, &resolved)) {
         return false;
     }
 
@@ -74,7 +71,8 @@ static bool compile_declarations(const Compilation *compilation, const char *tex
 
     MIRModule *bodies = NULL;
 
-    if (!mir_build(compilation->arena, resolved, compilation->generics, &bodies, compilation->diagnostics)) {
+    if (!mir_build(compilation->resolver.arena, resolved, compilation->generics, &bodies,
+                   compilation->resolver.diagnostics)) {
         return false;
     }
 
@@ -86,12 +84,11 @@ static bool compile_declarations(const Compilation *compilation, const char *tex
 /* This module's source, resolved and lowered into 'out'. Only source someone wrote is held to what a
  * program may declare; 'declares_intrinsics' is what the prelude is granted. What the interface states
  * a body as is what was written, which only resolution's facts recover, so they are left in 'facts'. */
-static bool compile_module(const Compilation *compilation, ASTModule *module, ModulePrivileges privileges,
-                           LLVMUnit *out, const Facts **facts) {
+static bool compile_module(const Compilation *compilation, ASTModule *module, Scope *into,
+                           ModulePrivileges privileges, LLVMUnit *out, const Facts **facts) {
     ResolvedModule *resolved = NULL;
 
-    if (!resolve_module(compilation->arena, module, compilation->global, compilation->modules, privileges,
-                        &resolved, compilation->diagnostics)) {
+    if (!resolve_module(&compilation->resolver, module, into, privileges, &resolved)) {
         return false;
     }
 
@@ -99,7 +96,8 @@ static bool compile_module(const Compilation *compilation, ASTModule *module, Mo
 
     MIRModule *bodies = NULL;
 
-    if (!mir_build(compilation->arena, resolved, compilation->generics, &bodies, compilation->diagnostics)) {
+    if (!mir_build(compilation->resolver.arena, resolved, compilation->generics, &bodies,
+                   compilation->resolver.diagnostics)) {
         return false;
     }
 
@@ -113,9 +111,9 @@ static bool compile_module(const Compilation *compilation, ASTModule *module, Mo
             continue;
         }
 
-        mir_fold(compilation->arena, ir);
-        mir_drop_elaborate(compilation->arena, compilation->global->type_registry,
-                           compilation->global->functions, ir);
+        mir_fold(compilation->resolver.arena, ir);
+        mir_drop_elaborate(compilation->resolver.arena, compilation->resolver.types,
+                           compilation->resolver.functions, ir);
 
         llvm_unit_add(out, ir);
     }
@@ -129,7 +127,13 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
     StringPool strings;
     string_pool_init(&strings, arena);
 
-    Scope *scope = scope_create(arena, &strings, NULL);
+    /* Built before any source is read: what a primitive is called is not something a module states. */
+    const KnownNames names = known_names(&strings);
+
+    TypeRegistry *types = type_registry_create(arena, &names);
+    FunctionRegistry *functions = function_registry_create(arena, types);
+
+    Scope *scope = global_scope_create(arena, types);
 
     LLVMUnit *unit = llvm_unit_open(arena);
 
@@ -160,16 +164,20 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
     ModuleMap *modules = module_map_create_alloc(arena_allocator(arena), 8);
 
     Compilation compilation = {
-        .arena = arena,
-        .strings = &strings,
-        .global = scope,
-        .modules = modules,
+        .resolver =
+            {
+                .arena = arena,
+                .strings = &strings,
+                .types = types,
+                .functions = functions,
+                .global = scope,
+                .modules = modules,
+                .diagnostics = diagnostics,
+            },
 
         /* Every generic the prelude and the imports declare, which this module instantiates from
          * rather than links. */
         .generics = mir_module_create(arena),
-
-        .diagnostics = diagnostics,
     };
 
     ASTModule *declaring = NULL;
@@ -316,10 +324,12 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
     const Facts *facts = NULL;
 
     if (ok) {
-        ModulePrivileges privileges = {.intrinsics = request->declares_intrinsics,
-                                       .global = request->declares_intrinsics};
+        ModulePrivileges privileges = {.intrinsics = request->declares_intrinsics};
 
-        ok = compile_module(&compilation, declaring, privileges, unit, &facts);
+        /* The prelude's names are the language's own, so they land where a primitive's do. */
+        Scope *into = declares_prelude ? scope : scope_create_kind(arena, scope, SCOPE_MODULE);
+
+        ok = compile_module(&compilation, declaring, into, privileges, unit, &facts);
     }
 
     if (ok) {

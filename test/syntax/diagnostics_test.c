@@ -16,8 +16,9 @@ static void compile(TestContext *ctx, const char *source) {
     Arena *arena = ctx->arena;
     Diagnostics *diagnostics = &ctx->diagnostics;
 
-    Scope global_scope;
-    scope_init(&global_scope, arena, &ctx->strings, NULL);
+    Resolver resolver = test_resolver(ctx, NULL);
+
+    Scope *module_scope = scope_create_kind(arena, ctx->global, SCOPE_MODULE);
 
     ASTModule *unit;
     ResolvedModule *resolved;
@@ -25,7 +26,7 @@ static void compile(TestContext *ctx, const char *source) {
 
     if (parse_module((const char *const[]){test_in_a_module(source)}, 1, NULL, ctx->arena, &ctx->strings,
                      &unit, diagnostics) &&
-        resolve_module(arena, unit, &global_scope, NULL, (ModulePrivileges){0}, &resolved, diagnostics)) {
+        resolve_module(&resolver, unit, module_scope, (ModulePrivileges){0}, &resolved)) {
         mir_build(arena, resolved, NULL, &mir_unit, diagnostics);
     }
 }

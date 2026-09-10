@@ -8,7 +8,7 @@ static void resolving_a_unit_lowers_every_function(void) {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
+    Scope *scope = scope_create_kind(ctx.arena, ctx.global, SCOPE_MODULE);
     ASTModule *unit = ast_module_create(ctx.arena);
     MIRModule *mir_unit = NULL;
 
@@ -31,7 +31,7 @@ static void a_function_the_unit_never_resolved_is_absent(void) {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
+    Scope *scope = scope_create_kind(ctx.arena, ctx.global, SCOPE_MODULE);
     ASTModule *unit = ast_module_create(ctx.arena);
     MIRModule *mir_unit = NULL;
 
@@ -48,7 +48,7 @@ static void a_lowered_body_carries_the_function_it_came_from(void) {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
+    Scope *scope = scope_create_kind(ctx.arena, ctx.global, SCOPE_MODULE);
     ASTModule *unit = ast_module_create(ctx.arena);
     MIRModule *mir_unit = NULL;
 

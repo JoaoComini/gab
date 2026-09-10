@@ -15,10 +15,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The prelude declares methods on the primitives, which only a compilation given permission may do. */
-static inline bool test_resolve_ir_with(TestContext *ctx, Scope *scope, ASTModule **unit,
-                                        MIRModule **mir_unit, ResolvedModule **out, const char *source,
-                                        bool declares_intrinsics) {
+/* The prelude declares methods on the primitives, which only a compilation given permission may do,
+ * and declares into the global scope as the compilation reading it does. */
+static inline bool test_resolve_ir_with(TestContext *ctx, Scope *into, ASTModule **unit, MIRModule **mir_unit,
+                                        ResolvedModule **out, const char *source, bool declares_intrinsics) {
     if (!parse_module((const char *const[]){test_in_a_module(source)}, 1, NULL, ctx->arena, &ctx->strings,
                       unit, &ctx->diagnostics)) {
         return false;
@@ -26,10 +26,11 @@ static inline bool test_resolve_ir_with(TestContext *ctx, Scope *scope, ASTModul
 
     ResolvedModule *resolved;
 
-    /* The prelude declares into the global scope, as the compilation reading it does. */
-    ModulePrivileges privileges = {.intrinsics = declares_intrinsics, .global = declares_intrinsics};
+    Resolver resolver = test_resolver(ctx, NULL);
 
-    if (!resolve_module(ctx->arena, *unit, scope, NULL, privileges, &resolved, &ctx->diagnostics)) {
+    ModulePrivileges privileges = {.intrinsics = declares_intrinsics};
+
+    if (!resolve_module(&resolver, *unit, into, privileges, &resolved)) {
         return false;
     }
 
@@ -67,7 +68,7 @@ static inline Scope *test_resolve(TestContext *ctx, Scope *global, ASTModule **u
  * It is read from the interface a compilation reads, so what a test resolves against is what 'gabc'
  * hands a program rather than a second reading of the core's source. */
 static inline Scope *test_scope_with_core(TestContext *ctx, ModuleMap **out_modules) {
-    Scope *scope = scope_create(ctx->arena, &ctx->strings, NULL);
+    Scope *scope = ctx->global;
 
     char *core = gab_interface_read(GAB_TEST_CORE_INTERFACE);
 
@@ -98,7 +99,7 @@ static inline bool test_compiles(const char *source) {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
+    Scope *scope = scope_create_kind(ctx.arena, ctx.global, SCOPE_MODULE);
     ASTModule *unit;
 
     bool ok = test_resolve(&ctx, scope, &unit, source);
@@ -112,7 +113,7 @@ static inline bool test_diagnostic_mentions(const char *source, const char *need
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
+    Scope *scope = scope_create_kind(ctx.arena, ctx.global, SCOPE_MODULE);
     ASTModule *unit;
 
     test_resolve(&ctx, scope, &unit, source);
@@ -136,7 +137,7 @@ static inline bool test_core_diagnostic_mentions(const char *source, const char 
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
+    Scope *scope = scope_create_kind(ctx.arena, ctx.global, SCOPE_MODULE);
     ASTModule *unit;
     MIRModule *bodies;
     ResolvedModule *resolved;
@@ -161,7 +162,7 @@ static inline size_t test_diagnostic_count(const char *source) {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
+    Scope *scope = scope_create_kind(ctx.arena, ctx.global, SCOPE_MODULE);
     ASTModule *unit;
 
     test_resolve(&ctx, scope, &unit, source);

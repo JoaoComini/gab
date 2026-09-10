@@ -16,7 +16,7 @@ typedef struct {
 static MIRFunction *elaborate(Elaborated *out, const char *source, const char *name) {
     test_context_init(&out->ctx);
 
-    out->scope = scope_create(out->ctx.arena, &out->ctx.strings, NULL);
+    out->scope = scope_create_kind(out->ctx.arena, out->ctx.global, SCOPE_MODULE);
     out->unit = ast_module_create(out->ctx.arena);
 
     assert(test_resolve_ir(&out->ctx, out->scope, &out->unit, NULL, &out->resolved, source));
@@ -35,10 +35,10 @@ static MIRFunction *elaborate(Elaborated *out, const char *source, const char *n
         }
 
         MIRFunction *ir =
-            mir_build_function(out->ctx.arena, out->scope->type_registry, &out->resolved->facts,
+            mir_build_function(out->ctx.arena, out->ctx.types, &out->resolved->facts,
                                stmt->func_decl.function, &stmt->func_decl.params, stmt->func_decl.body);
 
-        mir_drop_elaborate(out->ctx.arena, out->scope->type_registry, out->scope->functions, ir);
+        mir_drop_elaborate(out->ctx.arena, out->ctx.types, out->ctx.functions, ir);
 
         return ir;
     }

@@ -10,22 +10,22 @@ static TestContext ctx;
 static Arena *arena = NULL;
 
 static void test_create_and_free() {
-    Scope *scope = scope_create(arena, &ctx.strings, NULL);
+    Scope *scope = scope_create(arena, NULL);
     assert(scope->bindings != NULL);
     assert(scope->parent == NULL);
 }
 
 static void test_nested_scopes() {
-    Scope *parent = scope_create(arena, &ctx.strings, NULL);
-    Scope *child = scope_create(arena, &ctx.strings, parent);
+    Scope *parent = scope_create(arena, NULL);
+    Scope *child = scope_create(arena, parent);
 
     assert(child->parent == parent);
 }
 
 static void test_var_declaration() {
-    Scope *scope = scope_create(arena, &ctx.strings, NULL);
+    Scope *scope = scope_create_kind(arena, ctx.global, SCOPE_MODULE);
     String *name = string_from_cstr(&ctx.strings, "x");
-    const Type *type = type_registry_get_primitive(scope->type_registry, TYPE_I32);
+    const Type *type = type_registry_get_primitive(ctx.types, TYPE_I32);
 
     Binding *sym = scope_decl_var(scope, name, type);
     assert(sym != NULL);
@@ -36,16 +36,16 @@ static void test_var_declaration() {
 
 /* A module's declarations are its files', so a redeclaration in one file collides with the other's. */
 static void a_name_a_module_declares_collides_across_its_files() {
-    Scope *global = scope_create(arena, &ctx.strings, NULL);
+    Scope *global = scope_create_kind(arena, ctx.global, SCOPE_MODULE);
 
-    Scope *module = scope_create(arena, &ctx.strings, global);
-    scope_init_kind(module, arena, &ctx.strings, global, SCOPE_MODULE);
+    Scope *module = scope_create(arena, global);
+    scope_init_kind(module, arena, global, SCOPE_MODULE);
 
-    Scope *file = scope_create(arena, &ctx.strings, module);
-    scope_init_kind(file, arena, &ctx.strings, module, SCOPE_FILE);
+    Scope *file = scope_create(arena, module);
+    scope_init_kind(file, arena, module, SCOPE_FILE);
 
     String *name = string_from_cstr(&ctx.strings, "shared");
-    const Type *type = type_registry_get_primitive(global->type_registry, TYPE_I32);
+    const Type *type = type_registry_get_primitive(ctx.types, TYPE_I32);
 
     assert(scope_decl_var(module, name, type));
     assert(!scope_decl_var(file, name, type));
@@ -53,30 +53,30 @@ static void a_name_a_module_declares_collides_across_its_files() {
 
 /* An 'impl' names what its own module declares, so the walk stops where the module does. */
 static void a_type_lookup_that_declares_stops_at_the_module() {
-    Scope *global = scope_create(arena, &ctx.strings, NULL);
+    Scope *global = scope_create_kind(arena, ctx.global, SCOPE_MODULE);
 
-    Scope *module = scope_create(arena, &ctx.strings, global);
-    scope_init_kind(module, arena, &ctx.strings, global, SCOPE_MODULE);
+    Scope *module = scope_create(arena, global);
+    scope_init_kind(module, arena, global, SCOPE_MODULE);
 
-    Scope *file = scope_create(arena, &ctx.strings, module);
-    scope_init_kind(file, arena, &ctx.strings, module, SCOPE_FILE);
+    Scope *file = scope_create(arena, module);
+    scope_init_kind(file, arena, module, SCOPE_FILE);
 
     String *i32 = string_from_cstr(&ctx.strings, "i32");
 
-    assert(scope_type_lookup(file, i32));
+    assert(scope_type_lookup(ctx.types, file, i32));
     assert(!scope_type_lookup_declaring(file, i32));
 }
 
 static void test_shadowing() {
-    Scope *parent = scope_create(arena, &ctx.strings, NULL);
+    Scope *parent = scope_create_kind(arena, ctx.global, SCOPE_MODULE);
 
     String *name = string_from_cstr(&ctx.strings, "x");
-    const Type *i32_type = type_registry_get_primitive(parent->type_registry, TYPE_I32);
-    const Type *f32_type = type_registry_get_primitive(parent->type_registry, TYPE_F32);
+    const Type *i32_type = type_registry_get_primitive(ctx.types, TYPE_I32);
+    const Type *f32_type = type_registry_get_primitive(ctx.types, TYPE_F32);
 
     Binding *parent_sym = scope_decl_var(parent, name, i32_type);
 
-    Scope *child = scope_create(arena, &ctx.strings, parent);
+    Scope *child = scope_create(arena, parent);
 
     Binding *child_sym = scope_decl_var(child, name, f32_type);
 

@@ -109,7 +109,11 @@ static void collect(const char *source, Lines *actual) {
     test_context_init(&ctx);
 
     ModuleMap *modules;
-    Scope *scope = test_scope_with_core(&ctx, &modules);
+    test_scope_with_core(&ctx, &modules);
+
+    Resolver resolver = test_resolver(&ctx, modules);
+
+    Scope *scope = scope_create_kind(ctx.arena, ctx.global, SCOPE_MODULE);
 
     ASTModule *unit;
     ResolvedModule *resolved;
@@ -119,7 +123,7 @@ static void collect(const char *source, Lines *actual) {
     /* Borrow checking runs while the bodies are built, so a lifetime error needs that pass too. */
     if (parse_module((const char *const[]){test_in_a_module(source)}, 1, NULL, ctx.arena, &ctx.strings, &unit,
                      &ctx.diagnostics) &&
-        resolve_module(ctx.arena, unit, scope, modules, (ModulePrivileges){0}, &resolved, &ctx.diagnostics)) {
+        resolve_module(&resolver, unit, scope, (ModulePrivileges){0}, &resolved)) {
         mir_build(ctx.arena, resolved, NULL, &bodies, &ctx.diagnostics);
     }
 

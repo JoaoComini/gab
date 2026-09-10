@@ -19,7 +19,7 @@ static void a_unique_owns_what_it_points_at(void) {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
+    Scope *scope = scope_create_kind(ctx.arena, ctx.global, SCOPE_MODULE);
     ASTModule *unit;
     MIRModule *bodies;
     ResolvedModule *resolved;
@@ -30,7 +30,7 @@ static void a_unique_owns_what_it_points_at(void) {
                                    true);
     assert(ok);
 
-    TypeRegistry *registry = scope->type_registry;
+    TypeRegistry *registry = ctx.types;
 
     Resolution declared = scope_resolve(resolved->declared->scope, type_registry_names(registry)->unique);
 
@@ -38,7 +38,8 @@ static void a_unique_owns_what_it_points_at(void) {
 
     const Type *i32 = type_registry_get_primitive(registry, TYPE_I32);
     const Type *unique = type_registry_apply(registry, declared.decl, &i32, 1);
-    const Type *plain = scope_type_lookup(resolved->declared->scope, string_from_cstr(&ctx.strings, "Plain"));
+    const Type *plain =
+        scope_type_lookup(ctx.types, resolved->declared->scope, string_from_cstr(&ctx.strings, "Plain"));
 
     assert(unique && plain);
 

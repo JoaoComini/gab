@@ -29,14 +29,30 @@ typedef struct {
     /* The intrinsics and the methods on primitives that the prelude declares and a program may not,
      * which an interface restating them is read with. */
     bool intrinsics;
-
-    /* Declares into the global scope rather than a scope of its own: the prelude is the language's own
-     * vocabulary, so its names are reached the way a primitive's are, without an import. */
-    bool global;
 } ModulePrivileges;
 
-/* False where the module does not resolve, so what it concluded exists only once it holds together. */
-bool resolve_module(Arena *compile_arena, ASTModule *module, Scope *global_scope, ModuleMap *modules,
-                    ModulePrivileges privileges, ResolvedModule **out, Diagnostics *diagnostics);
+/* What every module resolved in one compilation shares: a scope names things and does not own them,
+ * so what they are is held here rather than reached through whichever scope is in hand. */
+typedef struct {
+    Arena *arena;
+    StringPool *strings;
+
+    TypeRegistry *types;
+    FunctionRegistry *functions;
+
+    /* Holds the names the language predeclares, and is what every module scope hangs off. */
+    Scope *global;
+
+    /* What this compilation has read, which is what an import in it may name. */
+    ModuleMap *modules;
+
+    Diagnostics *diagnostics;
+} Resolver;
+
+/* False where the module does not resolve, so what it concluded exists only once it holds together.
+ * It declares into 'into', which the caller makes: a module of its own, or the global scope for the
+ * prelude, whose names the language predeclares as it does a primitive's. */
+bool resolve_module(const Resolver *resolver, ASTModule *module, Scope *into, ModulePrivileges privileges,
+                    ResolvedModule **out);
 
 #endif

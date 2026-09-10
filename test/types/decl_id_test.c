@@ -4,15 +4,19 @@
 
 #include <assert.h>
 
-static DeclId method_id(TestContext *ctx, const char *source, const char *type, const char *name) {
-    Scope *scope = scope_create(ctx->arena, &ctx->strings, NULL);
+static DeclId method_id(TestContext *outer, const char *source, const char *type, const char *name) {
+    TestContext reading = test_context_reading(outer);
+    TestContext *ctx = &reading;
+
+    Scope *scope = scope_create_kind(ctx->arena, ctx->global, SCOPE_MODULE);
     ASTModule *unit;
     ResolvedModule *resolved;
 
     bool ok = test_resolve_ir(ctx, scope, &unit, NULL, &resolved, source);
     assert(ok);
 
-    const Type *owner = scope_type_lookup(resolved->declared->scope, string_from_cstr(&ctx->strings, type));
+    const Type *owner =
+        scope_type_lookup(ctx->types, resolved->declared->scope, string_from_cstr(&ctx->strings, type));
     assert(owner);
 
     Function *found =

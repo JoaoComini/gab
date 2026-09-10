@@ -16,7 +16,7 @@ typedef struct {
 static MIRFunction *lower_first_function(Lowered *lowered, const char *source) {
     test_context_init(&lowered->ctx);
 
-    lowered->scope = scope_create(lowered->ctx.arena, &lowered->ctx.strings, NULL);
+    lowered->scope = scope_create_kind(lowered->ctx.arena, lowered->ctx.global, SCOPE_MODULE);
     lowered->unit = ast_module_create(lowered->ctx.arena);
 
     bool ok =
@@ -31,9 +31,8 @@ static MIRFunction *lower_first_function(Lowered *lowered, const char *source) {
             continue;
         }
 
-        return mir_build_function(lowered->ctx.arena, lowered->scope->type_registry,
-                                  &lowered->resolved->facts, stmt->func_decl.function,
-                                  &stmt->func_decl.params, stmt->func_decl.body);
+        return mir_build_function(lowered->ctx.arena, lowered->ctx.types, &lowered->resolved->facts,
+                                  stmt->func_decl.function, &stmt->func_decl.params, stmt->func_decl.body);
     }
 
     assert(false && "the unit declares no function with a body");
@@ -236,7 +235,7 @@ static void test_a_loop_returns_to_its_header(void) {
 static MIRFunction *lower_named_function(Lowered *lowered, const char *source, const char *name) {
     test_context_init(&lowered->ctx);
 
-    lowered->scope = scope_create(lowered->ctx.arena, &lowered->ctx.strings, NULL);
+    lowered->scope = scope_create_kind(lowered->ctx.arena, lowered->ctx.global, SCOPE_MODULE);
     lowered->unit = ast_module_create(lowered->ctx.arena);
 
     bool ok =
@@ -257,9 +256,8 @@ static MIRFunction *lower_named_function(Lowered *lowered, const char *source, c
             continue;
         }
 
-        return mir_build_function(lowered->ctx.arena, lowered->scope->type_registry,
-                                  &lowered->resolved->facts, stmt->func_decl.function,
-                                  &stmt->func_decl.params, stmt->func_decl.body);
+        return mir_build_function(lowered->ctx.arena, lowered->ctx.types, &lowered->resolved->facts,
+                                  stmt->func_decl.function, &stmt->func_decl.params, stmt->func_decl.body);
     }
 
     assert(false && "the unit declares no such function");
@@ -481,7 +479,7 @@ static void a_jump_outside_a_loop_emits_no_terminator(void) {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope *scope = scope_create(ctx.arena, &ctx.strings, NULL);
+    Scope *scope = scope_create_kind(ctx.arena, ctx.global, SCOPE_MODULE);
     ASTModule *unit = ast_module_create(ctx.arena);
     ResolvedModule *resolved;
 
@@ -500,9 +498,8 @@ static void a_jump_outside_a_loop_emits_no_terminator(void) {
 
     assert(decl);
 
-    MIRFunction *ir =
-        mir_build_function(ctx.arena, scope->type_registry, &resolved->facts, decl->func_decl.function,
-                           &decl->func_decl.params, decl->func_decl.body);
+    MIRFunction *ir = mir_build_function(ctx.arena, ctx.types, &resolved->facts, decl->func_decl.function,
+                                         &decl->func_decl.params, decl->func_decl.body);
 
     for (size_t b = 0; b < ir->block_count; b++) {
         MIRBlock *block = ir->blocks[b];

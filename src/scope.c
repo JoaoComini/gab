@@ -7,49 +7,40 @@
 #include "type/type_registry.h"
 #include <assert.h>
 
-Scope *scope_create(Arena *arena, StringPool *strings, Scope *parent) {
+Scope *scope_create(Arena *arena, Scope *parent) {
     Scope *scope = arena_alloc(arena, sizeof(Scope));
-    scope_init(scope, arena, strings, parent);
+    scope_init_kind(scope, arena, parent, parent ? SCOPE_LOCAL : SCOPE_GLOBAL);
     return scope;
 }
 
-void scope_init(Scope *scope, Arena *arena, StringPool *strings, Scope *parent) {
-    scope_init_kind(scope, arena, strings, parent, parent ? SCOPE_LOCAL : SCOPE_GLOBAL);
-}
-
-static void scope_declare_primitives(Scope *scope) {
-    TypeRegistry *registry = scope->type_registry;
-
-    static const TypeKind PRIMITIVES[] = {TYPE_I32, TYPE_F32, TYPE_BOOL, TYPE_U8, TYPE_USIZE, TYPE_STR};
-
-    for (size_t i = 0; i < sizeof(PRIMITIVES) / sizeof(PRIMITIVES[0]); i++) {
-        const Type *type = type_registry_get_primitive(registry, PRIMITIVES[i]);
-
-        /* A scope keys its bindings on a mutable name, though binding one only ever hashes it. */
-        scope_bind_type(scope, (String *)type_name_of(type), type);
-    }
-}
-
-void scope_init_kind(Scope *scope, Arena *arena, StringPool *strings, Scope *parent, ScopeKind kind) {
+void scope_init_kind(Scope *scope, Arena *arena, Scope *parent, ScopeKind kind) {
     scope->arena = arena;
-    scope->strings = strings;
     scope->bindings = binding_table_create_alloc(arena_allocator(arena), BINDING_TABLE_INITIAL_CAPACITY);
     scope->types = type_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     scope->interfaces = interface_map_create_alloc(arena_allocator(arena), TYPE_REGISTRY_INITIAL_CAPACITY);
     scope->parent = parent;
     scope->kind = kind;
+}
 
-    if (parent && parent->type_registry) {
-        scope->type_registry = parent->type_registry;
-        scope->functions = parent->functions;
-        return;
+Scope *scope_create_kind(Arena *arena, Scope *parent, ScopeKind kind) {
+    Scope *scope = arena_alloc(arena, sizeof(Scope));
+    scope_init_kind(scope, arena, parent, kind);
+    return scope;
+}
+
+Scope *global_scope_create(Arena *arena, TypeRegistry *types) {
+    Scope *scope = scope_create(arena, NULL);
+
+    static const TypeKind PRIMITIVES[] = {TYPE_I32, TYPE_F32, TYPE_BOOL, TYPE_U8, TYPE_USIZE, TYPE_STR};
+
+    for (size_t i = 0; i < sizeof(PRIMITIVES) / sizeof(PRIMITIVES[0]); i++) {
+        const Type *type = type_registry_get_primitive(types, PRIMITIVES[i]);
+
+        /* A scope keys its bindings on a mutable name, though binding one only ever hashes it. */
+        scope_bind_type(scope, (String *)type_name_of(type), type);
     }
 
-    const KnownNames names = known_names(strings);
-
-    scope->type_registry = type_registry_create(arena, &names);
-    scope->functions = function_registry_create(arena, scope->type_registry);
-    scope_declare_primitives(scope);
+    return scope;
 }
 
 Binding *scope_binding_lookup(Scope *scope, String *name) {
@@ -65,8 +56,8 @@ Binding *scope_binding_lookup(Scope *scope, String *name) {
     return NULL;
 }
 
-const Type *scope_type_lookup(Scope *scope, String *name) {
-    return scope ? resolution_type(scope->type_registry, scope_resolve(scope, name)) : NULL;
+const Type *scope_type_lookup(TypeRegistry *registry, Scope *scope, String *name) {
+    return scope ? resolution_type(registry, scope_resolve(scope, name)) : NULL;
 }
 
 Resolution scope_resolve(Scope *scope, String *name) {

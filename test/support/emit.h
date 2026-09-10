@@ -26,7 +26,7 @@ static inline TestEmission test_lower_ir_named(const char *source, const char *n
 
     test_context_init(&emission.ctx);
 
-    emission.scope = scope_create(emission.ctx.arena, &emission.ctx.strings, NULL);
+    emission.scope = scope_create_kind(emission.ctx.arena, emission.ctx.global, SCOPE_MODULE);
     emission.unit = ast_module_create(emission.ctx.arena);
     bool resolved = test_resolve_ir(&emission.ctx, emission.scope, &emission.unit, &emission.mir_unit,
                                     &emission.resolved, source);
@@ -52,8 +52,7 @@ static inline TestEmission test_lower_ir_named(const char *source, const char *n
     assert(emission.ir);
 
     mir_fold(emission.ctx.arena, emission.ir);
-    mir_drop_elaborate(emission.ctx.arena, emission.scope->type_registry, emission.scope->functions,
-                       emission.ir);
+    mir_drop_elaborate(emission.ctx.arena, emission.ctx.types, emission.ctx.functions, emission.ir);
 
     return emission;
 }
@@ -67,7 +66,7 @@ static inline TestEmission test_lower_unit(const char *source, MIRFunction **out
 
     test_context_init(&emission.ctx);
 
-    emission.scope = scope_create(emission.ctx.arena, &emission.ctx.strings, NULL);
+    emission.scope = scope_create_kind(emission.ctx.arena, emission.ctx.global, SCOPE_MODULE);
     emission.unit = ast_module_create(emission.ctx.arena);
 
     bool resolved = test_resolve_ir_with(&emission.ctx, emission.scope, &emission.unit, &emission.mir_unit,
@@ -87,7 +86,7 @@ static inline TestEmission test_lower_unit(const char *source, MIRFunction **out
         }
 
         mir_fold(emission.ctx.arena, ir);
-        mir_drop_elaborate(emission.ctx.arena, emission.scope->type_registry, emission.scope->functions, ir);
+        mir_drop_elaborate(emission.ctx.arena, emission.ctx.types, emission.ctx.functions, ir);
 
         out[(*count)++] = ir;
     }

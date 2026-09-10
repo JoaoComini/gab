@@ -42,19 +42,19 @@ static const Type *resolve_struct(TestContext *ctx, const char *source, const ch
                                   TypeRegistry **out_registry) {
     ASTModule *unit;
 
-    Scope global_scope;
-    scope_init(&global_scope, ctx->arena, &ctx->strings, NULL);
+    Resolver resolver = test_resolver(ctx, NULL);
+
+    Scope *module_scope = scope_create_kind(ctx->arena, ctx->global, SCOPE_MODULE);
 
     if (out_registry) {
-        *out_registry = global_scope.type_registry;
+        *out_registry = ctx->types;
     }
 
     ResolvedModule *resolved = NULL;
 
     if (parse_module((const char *const[]){test_in_a_module(source)}, 1, NULL, ctx->arena, &ctx->strings,
                      &unit, &ctx->diagnostics)) {
-        resolve_module(ctx->arena, unit, &global_scope, NULL, (ModulePrivileges){0}, &resolved,
-                       &ctx->diagnostics);
+        resolve_module(&resolver, unit, module_scope, (ModulePrivileges){0}, &resolved);
     }
 
     if (diagnostics_has_errors(&ctx->diagnostics)) {
@@ -63,7 +63,7 @@ static const Type *resolve_struct(TestContext *ctx, const char *source, const ch
 
     assert(!diagnostics_has_errors(&ctx->diagnostics));
 
-    return scope_type_lookup(resolved->declared->scope, string_from_cstr(&ctx->strings, name));
+    return scope_type_lookup(ctx->types, resolved->declared->scope, string_from_cstr(&ctx->strings, name));
 }
 
 static size_t offset_of(TestContext *ctx, TypeRegistry *registry, const Type *type, const char *field) {
@@ -199,17 +199,19 @@ static void test_unknown_field_type_is_not_registered() {
     ASTModule *unit;
     const char *source = "module test;\nstruct Broken { value: Nope }";
 
-    Scope global_scope;
-    scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
+    Resolver resolver = test_resolver(&ctx, NULL);
+
+    Scope *module_scope = scope_create_kind(ctx.arena, ctx.global, SCOPE_MODULE);
 
     ResolvedModule *resolved;
 
     parse_module((const char *const[]){source}, 1, NULL, ctx.arena, &ctx.strings, &unit, &ctx.diagnostics);
-    resolve_module(ctx.arena, unit, &global_scope, NULL, (ModulePrivileges){0}, &resolved, &ctx.diagnostics);
+    resolve_module(&resolver, unit, module_scope, (ModulePrivileges){0}, &resolved);
 
     assert(diagnostics_count(&ctx.diagnostics) == 1);
 
-    assert(scope_type_lookup(resolved->declared->scope, string_from_cstr(&ctx.strings, "Broken")) == NULL);
+    assert(scope_type_lookup(ctx.types, resolved->declared->scope,
+                             string_from_cstr(&ctx.strings, "Broken")) == NULL);
 
     test_context_free(&ctx);
 }
@@ -230,9 +232,7 @@ static void test_builtin_widths() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope global_scope;
-    scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
-    TypeRegistry *registry = global_scope.type_registry;
+    TypeRegistry *registry = ctx.types;
 
     const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
     const Type *f32_type = type_registry_get_primitive(registry, TYPE_F32);
@@ -252,9 +252,7 @@ static void test_raw_pointer_owns_nothing() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope global_scope;
-    scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
-    TypeRegistry *registry = global_scope.type_registry;
+    TypeRegistry *registry = ctx.types;
 
     const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
@@ -283,9 +281,7 @@ static void test_an_array_is_interned_under_its_length() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope global_scope;
-    scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
-    TypeRegistry *registry = global_scope.type_registry;
+    TypeRegistry *registry = ctx.types;
 
     const Type *element = type_registry_get_primitive(registry, TYPE_I32);
 
@@ -306,9 +302,7 @@ static void test_a_borrow_and_a_box_are_distinct_constructors() {
     TestContext ctx;
     test_context_init(&ctx);
 
-    Scope global_scope;
-    scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
-    TypeRegistry *registry = global_scope.type_registry;
+    TypeRegistry *registry = ctx.types;
 
     const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
@@ -362,16 +356,19 @@ static void test_a_failed_field_poisons_what_holds_it() {
     const char *source = test_in_a_module("struct A { b: B }\n"
                                           "struct B { a: A }\n");
 
-    Scope global_scope;
-    scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
+    Resolver resolver = test_resolver(&ctx, NULL);
+
+    Scope *module_scope = scope_create_kind(ctx.arena, ctx.global, SCOPE_MODULE);
 
     ResolvedModule *resolved;
 
     parse_module((const char *const[]){source}, 1, NULL, ctx.arena, &ctx.strings, &unit, &ctx.diagnostics);
-    resolve_module(ctx.arena, unit, &global_scope, NULL, (ModulePrivileges){0}, &resolved, &ctx.diagnostics);
+    resolve_module(&resolver, unit, module_scope, (ModulePrivileges){0}, &resolved);
 
-    assert(scope_type_lookup(resolved->declared->scope, string_from_cstr(&ctx.strings, "A")) == NULL);
-    assert(scope_type_lookup(resolved->declared->scope, string_from_cstr(&ctx.strings, "B")) == NULL);
+    assert(scope_type_lookup(ctx.types, resolved->declared->scope, string_from_cstr(&ctx.strings, "A")) ==
+           NULL);
+    assert(scope_type_lookup(ctx.types, resolved->declared->scope, string_from_cstr(&ctx.strings, "B")) ==
+           NULL);
 
     test_context_free(&ctx);
 }
@@ -415,18 +412,20 @@ static void test_rejects_an_array_of_the_struct_declaring_it() {
     ASTModule *unit;
     const char *source = test_in_a_module("struct A { cells: array<A, 2> }");
 
-    Scope global_scope;
-    scope_init(&global_scope, ctx.arena, &ctx.strings, NULL);
+    Resolver resolver = test_resolver(&ctx, NULL);
+
+    Scope *module_scope = scope_create_kind(ctx.arena, ctx.global, SCOPE_MODULE);
 
     ResolvedModule *resolved;
 
     parse_module((const char *const[]){source}, 1, NULL, ctx.arena, &ctx.strings, &unit, &ctx.diagnostics);
-    resolve_module(ctx.arena, unit, &global_scope, NULL, (ModulePrivileges){0}, &resolved, &ctx.diagnostics);
+    resolve_module(&resolver, unit, module_scope, (ModulePrivileges){0}, &resolved);
 
     assert(diagnostics_count(&ctx.diagnostics) == 1);
     assert(strcmp(diagnostics_get(&ctx.diagnostics, 0)->message,
                   "struct 'A' cannot contain itself: 'A' contains 'A'") == 0);
-    assert(scope_type_lookup(resolved->declared->scope, string_from_cstr(&ctx.strings, "A")) == NULL);
+    assert(scope_type_lookup(ctx.types, resolved->declared->scope, string_from_cstr(&ctx.strings, "A")) ==
+           NULL);
 
     test_context_free(&ctx);
 }
