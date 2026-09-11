@@ -2429,6 +2429,32 @@ static void declare_func(ResolverState *state, ASTStmt *stmt) {
     state->env = saved;
 }
 
+static bool stmt_returns(const ASTStmt *stmt) {
+    if (!stmt) {
+        return false;
+    }
+
+    switch (stmt->kind) {
+    case STMT_RETURN:
+        return true;
+
+    case STMT_BLOCK:
+        for (size_t i = 0; i < stmt->block.list.size; i++) {
+            if (stmt_returns(stmt->block.list.data[i])) {
+                return true;
+            }
+        }
+
+        return false;
+
+    case STMT_IF:
+        return stmt_returns(stmt->ifstmt.then_block) && stmt_returns(stmt->ifstmt.else_block);
+
+    default:
+        return false;
+    }
+}
+
 static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
     size_t errors_before = diagnostics_count(state->global->diagnostics);
 
@@ -2464,6 +2490,13 @@ static void resolve_func_body(ResolverState *state, ASTStmt *stmt) {
     state->env.func.is_caller = (stmt->func_decl.syntax & FUNC_SYN_CALLER) != 0;
 
     resolve_stmt(state, stmt->func_decl.body);
+
+    if (diagnostics_count(state->global->diagnostics) == errors_before && signature->signature.return_type &&
+        !stmt_returns(stmt->func_decl.body)) {
+        diag_error(state->global->diagnostics, GAB_ERR_TYPE, stmt->span,
+                   "'%s' promises %s, and its body ends without returning one",
+                   stmt->func_decl.name->name->data, type_name(state, signature->signature.return_type));
+    }
 
     if (diagnostics_count(state->global->diagnostics) == errors_before) {
         PendingBody body = {
