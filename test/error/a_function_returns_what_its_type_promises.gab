@@ -1,0 +1,5 @@
+func f(): i32 {
+}
+
+// error
+// :1:1: type error: 'f' promises i32, and its body ends without returning one

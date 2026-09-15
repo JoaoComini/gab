@@ -34,6 +34,8 @@ typedef struct {
     size_t dependency_count;
 
     bool writes_core;
+
+    bool no_entry;
 } GabCompile;
 
 bool gab_module_name(const char *source, Arena *arena, StringPool *strings, char *out, size_t capacity,

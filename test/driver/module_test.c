@@ -268,12 +268,15 @@ static void an_interface_states_an_import_once(void) {
 /* What a file declares is the module's, so a sibling names it without an import. */
 static void a_declaration_is_named_across_the_files_of_its_module(void) {
     char object[512];
+    char interface[512];
+
     snprintf(object, sizeof(object), "%s/across.o", GAB_TEST_SCRATCH);
+    snprintf(interface, sizeof(interface), "%s/across.gabi", GAB_TEST_SCRATCH);
 
     const char *parts[2] = {"module across;\nfunc one(): i32 { return 1; }\n",
                             "module across;\nfunc two(): i32 { return one() + 1; }\n"};
 
-    assert(compile_all(parts, 2, object, NULL, NULL));
+    assert(compile_all(parts, 2, object, interface, NULL));
 }
 
 /* A module and its files are one namespace, so a name one file declares collides with the other's. */
@@ -456,7 +459,7 @@ static void a_stale_interface_does_not_link(void) {
     char binary[512];
     snprintf(binary, sizeof(binary), "%s/module_test_stale_user", GAB_TEST_SCRATCH);
 
-    assert(!gab_link(user, "u", (const char *const[]){object}, 1, binary));
+    assert(!gab_link(user, (const char *const[]){object}, 1, binary));
 }
 
 /* Nothing was compiled for arguments the declaring unit never saw, so a reader instantiates the body
@@ -480,7 +483,7 @@ static void an_imported_generic_is_instantiated_where_it_is_named(void) {
     snprintf(binary, sizeof(binary), "%s/module_test_generic", GAB_TEST_SCRATCH);
 
     /* The instance is a body of the reader's own, so linking finds it without the declaring object. */
-    assert(gab_link(user, "use", (const char *const[]){object}, 1, binary));
+    assert(gab_link(user, (const char *const[]){object}, 1, binary));
 }
 
 /* Two readers naming one generic each instantiate it, so the two objects state the same body and the
@@ -513,7 +516,7 @@ static void one_generic_instantiated_twice_links_once(void) {
     char binary[512];
     snprintf(binary, sizeof(binary), "%s/twice_linked", GAB_TEST_SCRATCH);
 
-    assert(gab_link(user, "use", (const char *const[]){object, first}, 2, binary));
+    assert(gab_link(user, (const char *const[]){object, first}, 2, binary));
 }
 
 /* A method an imported generic type owns is instantiated where it is named, as a free function is. */
@@ -539,7 +542,7 @@ static void an_imported_generic_method_is_instantiated_where_it_is_named(void) {
     char binary[512];
     snprintf(binary, sizeof(binary), "%s/holder_linked", GAB_TEST_SCRATCH);
 
-    assert(gab_link(user, "use", (const char *const[]){object}, 1, binary));
+    assert(gab_link(user, (const char *const[]){object}, 1, binary));
 }
 
 typedef struct {
@@ -652,10 +655,39 @@ static void two_modules_declare_one_foreign_function(void) {
     char binary[512];
     snprintf(binary, sizeof(binary), "%s/ffi_linked", GAB_TEST_SCRATCH);
 
-    assert(gab_link(user, "use", (const char *const[]){first, second}, 2, binary));
+    assert(gab_link(user, (const char *const[]){first, second}, 2, binary));
+}
+
+/* A 'main' that names no return type still marks its module executable, since C's 'main' returns
+ * an int of its own and a void entry point does not need to supply one. */
+static void a_void_main_is_an_executable_entry_point(void) {
+    char object[512];
+    snprintf(object, sizeof(object), "%s/void_main.o", GAB_TEST_SCRATCH);
+
+    assert(compile("module void_main;\nfunc main() { }\n", object, NULL, NULL));
+
+    char binary[512];
+    snprintf(binary, sizeof(binary), "%s/void_main", GAB_TEST_SCRATCH);
+
+    assert(gab_link(object, NULL, 0, binary));
+
+    char run[1024];
+    snprintf(run, sizeof(run), "%s", binary);
+
+    assert(system(run) == 0);
+}
+
+/* A 'main' promising neither i32 nor nothing names no entry point an executable can call. */
+static void a_main_that_returns_neither_i32_nor_nothing_is_not_an_entry_point(void) {
+    char object[512];
+    snprintf(object, sizeof(object), "%s/bool_main.o", GAB_TEST_SCRATCH);
+
+    assert(!compile("module bool_main;\nfunc main(): bool { return true; }\n", object, NULL, NULL));
 }
 
 int main(void) {
+    a_main_that_returns_neither_i32_nor_nothing_is_not_an_entry_point();
+    a_void_main_is_an_executable_entry_point();
     two_modules_declare_one_foreign_function();
     a_declaration_read_back_has_the_id_it_was_written_with();
     an_imported_generic_method_is_instantiated_where_it_is_named();

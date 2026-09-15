@@ -14,6 +14,8 @@ void llvm_unit_declares(LLVMUnit *unit, const char *symbol);
 
 void llvm_unit_requires(LLVMUnit *unit, const char *symbol);
 
+void llvm_unit_entry(LLVMUnit *unit, const char *symbol);
+
 char *llvm_unit_text(LLVMUnit *unit);
 
 bool llvm_unit_write_object(LLVMUnit *unit, const char *path, const char **error);

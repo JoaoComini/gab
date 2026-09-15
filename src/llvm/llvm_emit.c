@@ -873,6 +873,39 @@ void llvm_unit_requires(LLVMUnit *unit, const char *symbol) {
     LLVMSetSection(anchor, ".gab.imports");
 }
 
+void llvm_unit_entry(LLVMUnit *unit, const char *symbol) {
+    LLVMValueRef aliasee = LLVMGetNamedFunction(unit->module, symbol);
+
+    if (!aliasee) {
+        return;
+    }
+
+    LLVMTypeRef i32 = LLVMInt32TypeInContext(unit->context);
+
+    /* An alias must share its aliasee's type, so a void 'main' is called from a trampoline rather
+     * than aliased: C's 'main' returns int, and this is where that return value comes from. */
+    if (LLVMGetReturnType(LLVMGlobalGetValueType(aliasee)) != i32) {
+        LLVMTypeRef signature = LLVMFunctionType(i32, NULL, 0, false);
+        LLVMValueRef trampoline = LLVMAddFunction(unit->module, "main", signature);
+
+        LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(unit->context, trampoline, "entry");
+
+        LLVMBuilderRef builder = LLVMCreateBuilderInContext(unit->context);
+        LLVMPositionBuilderAtEnd(builder, entry);
+
+        LLVMTypeRef aliasee_signature = LLVMGlobalGetValueType(aliasee);
+        LLVMBuildCall2(builder, aliasee_signature, aliasee, NULL, 0, "");
+        LLVMBuildRet(builder, LLVMConstInt(i32, 0, false));
+
+        LLVMDisposeBuilder(builder);
+        return;
+    }
+
+    LLVMTypeRef signature = LLVMFunctionType(i32, NULL, 0, false);
+
+    LLVMAddAlias2(unit->module, signature, 0, aliasee, "main");
+}
+
 LLVMUnit *llvm_unit_open(Arena *arena) {
     LLVMUnit *unit = arena_alloc(arena, sizeof(LLVMUnit));
 

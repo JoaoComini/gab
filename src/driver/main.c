@@ -190,6 +190,14 @@ int main(int argc, char **argv) {
         dependency_count++;
     }
 
+    bool no_entry = false;
+
+    for (size_t i = 0; i < extra_count; i++) {
+        const char *dot = strrchr(extra[i], '.');
+
+        no_entry = no_entry || (dot && strcmp(dot, ".c") == 0);
+    }
+
     GabCompiled compiled = {0};
 
     GabCompile request = {
@@ -201,6 +209,7 @@ int main(int argc, char **argv) {
         .dependencies = dependencies,
         .dependency_count = dependency_count,
         .writes_core = is_core,
+        .no_entry = no_entry,
     };
 
     ok = ok && gab_compile(&request, &compiled, &diagnostics);
@@ -220,7 +229,7 @@ int main(int argc, char **argv) {
 
         const char *out = binary ? binary : module_name;
 
-        ok = gab_link(object, compiled.module_name, extra, extra_count, out);
+        ok = gab_link(object, extra, extra_count, out);
 
         if (!ok) {
             fprintf(stderr, "gabc: %s: the object did not link\n", out);

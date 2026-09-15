@@ -12,6 +12,7 @@
 #include "string/string_pool.h"
 #include "syntax/parser.h"
 #include "llvm/llvm_emit.h"
+#include "llvm/llvm_symbol.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -71,8 +72,31 @@ static bool compile_declarations(const Compilation *compilation, const char *tex
     return true;
 }
 
+static const Function *module_entry(const Module *module, StringPool *strings) {
+    Symbol *symbol = scope_lookup(module->scope, string_from_cstr(strings, "main"));
+
+    if (!symbol || symbol->kind != SYMBOL_FUNC) {
+        return NULL;
+    }
+
+    Function *function = symbol->func;
+
+    if (function->decl->id.owner || function->type_arg_count > 0) {
+        return NULL;
+    }
+
+    const Type *returns = function->decl->signature.return_type;
+
+    if (returns && type_kind(returns) != TYPE_I32) {
+        return NULL;
+    }
+
+    return function;
+}
+
 static bool compile_module(const Compilation *compilation, ASTModule *module, Scope *into,
-                           ModulePrivileges privileges, LLVMUnit *out, const Facts **facts) {
+                           ModulePrivileges privileges, LLVMUnit *out, const Facts **facts,
+                           const Function **entry) {
     ResolvedModule *resolved = NULL;
 
     if (!resolve_module(&compilation->resolver, module, into, privileges, &resolved)) {
@@ -80,6 +104,10 @@ static bool compile_module(const Compilation *compilation, ASTModule *module, Sc
     }
 
     *facts = &resolved->facts;
+
+    if (entry) {
+        *entry = module_entry(resolved->declared, compilation->resolver.strings);
+    }
 
     MIRModule *bodies = NULL;
 
@@ -190,17 +218,28 @@ bool gab_compile(const GabCompile *request, GabCompiled *out, Diagnostics *diagn
     }
 
     const Facts *facts = NULL;
+    const Function *entry = NULL;
 
     if (ok) {
         ModulePrivileges privileges = {.intrinsics = declares_core};
 
         Scope *into = scope_create_kind(arena, scope, SCOPE_MODULE);
 
-        ok = compile_module(&compilation, declaring, into, privileges, unit, &facts);
+        ok = compile_module(&compilation, declaring, into, privileges, unit, &facts, &entry);
     }
 
     if (ok) {
         snprintf(out->module_name, sizeof(out->module_name), "%s", declaring->name->name->data);
+    }
+
+    if (ok && entry && !request->no_entry && !request->interface) {
+        llvm_unit_entry(unit, llvm_symbol_of(arena, entry));
+    }
+
+    if (ok && !request->no_entry && !request->interface && !entry) {
+        diag_error(diagnostics, GAB_ERR_CODEGEN, (Span){0, 0},
+                   "no 'func main()' or 'func main(): i32' found for executable");
+        ok = false;
     }
 
     if (ok && request->interface) {
