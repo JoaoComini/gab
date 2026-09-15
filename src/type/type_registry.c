@@ -602,6 +602,10 @@ bool type_registry_copies(TypeRegistry *registry, const Type *type) {
         return false;
     }
 
+    if (type_registry_conforms(registry, type, registry->names.destroy_interface, NULL, 0)) {
+        return false;
+    }
+
     const TypeFields *fields = type_registry_fields_of(registry, type);
 
     for (size_t i = 0; i < fields->count; i++) {

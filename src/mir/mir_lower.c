@@ -719,6 +719,21 @@ static MIRValueId lower_unadjusted(Lowering *lowering, ASTExpr *expr) {
     Constant answered;
 
     if (fact_constant_of(lowering->facts, expr, &answered)) {
+        bool is_size_of = expr->kind == EXPR_BUILTIN || (expr->kind == EXPR_CALL && expr->call.target &&
+                                                         expr->call.target->kind == EXPR_BUILTIN);
+
+        /* '@size_of<T>()' on a still-generic T has no byte count of its own: what was recorded is
+         * the type, measured again once instantiation makes it concrete. */
+        if (is_size_of && type_has_param(answered.type)) {
+            const Type *counted = type_registry_get_primitive(lowering->registry, TYPE_USIZE);
+            MIRValueId result = lower_temp(lowering, counted, expr->span);
+
+            emit(lowering,
+                 (MIRInst){.op = MIR_SIZE_OF, .type = answered.type, .result = result, .span = expr->span});
+
+            return result;
+        }
+
         MIRValueId result = lower_temp(lowering, answered.type, expr->span);
 
         emit(lowering, (MIRInst){.op = MIR_CONST_INT,
@@ -1094,8 +1109,16 @@ static void lower_stmt(Lowering *lowering, ASTStmt *stmt) {
     case STMT_ASSIGN: {
         ASTExpr *target = stmt->assign.target;
 
+        /* A raw run is memory the compiler never tracked as initialized, so what it names before
+         * a write is not read back to be dropped: there is nothing there a drop could be owed. */
+        ASTExpr *container = target->kind == EXPR_DEREF   ? target->unary.target
+                             : target->kind == EXPR_INDEX ? target->index.target
+                                                          : NULL;
+        bool through_a_raw_run = container && type_kind(fact_type_of(lowering->facts, container)) == TYPE_RAW;
+
         bool overwrites_owned =
             (target->kind == EXPR_FIELD || target->kind == EXPR_DEREF || target->kind == EXPR_INDEX) &&
+            !through_a_raw_run &&
             mir_type_needs_drop(lowering->registry, fact_type_of(lowering->facts, target));
 
         Place place = lower_place(lowering, target);

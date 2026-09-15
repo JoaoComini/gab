@@ -478,6 +478,14 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
             LLVMConstReal(llvm_type_of(emitter, inst->type), (double)inst->constant.as_float);
         break;
 
+    case MIR_SIZE_OF: {
+        LLVMTypeRef counted = LLVMIntTypeInContext(emitter->context, (unsigned)(sizeof(void *) * 8));
+
+        values[inst->result.id] =
+            LLVMConstInt(counted, type_registry_size_of(emitter->registry, inst->type), false);
+        break;
+    }
+
     case MIR_ADD:
         values[inst->result.id] = floating ? LLVMBuildFAdd(builder, operand_value(emitter, inst->args[0]),
                                                            operand_value(emitter, inst->args[1]), "")
@@ -721,31 +729,6 @@ static void emit_inst(LLVMEmitter *emitter, const MIRInst *inst) {
         }
 
         LLVMBuildCall2(builder, signature, drop_glue_of(emitter, inst->type), &address, 1, "");
-        break;
-    }
-
-    case MIR_BOX: {
-        const Type *boxed = inst->type ? type_pointee(inst->type) : NULL;
-
-        LLVMTypeRef size_type = LLVMInt64TypeInContext(emitter->context);
-        LLVMTypeRef pointer = LLVMPointerTypeInContext(emitter->context, 0);
-
-        LLVMTypeRef signature = LLVMFunctionType(pointer, &size_type, 1, false);
-
-        LLVMValueRef box = LLVMGetNamedFunction(emitter->module, "malloc");
-
-        if (!box) {
-            box = LLVMAddFunction(emitter->module, "malloc", signature);
-        }
-
-        LLVMValueRef size =
-            LLVMConstInt(size_type, type_registry_size_of(emitter->ir->registry, boxed), false);
-
-        LLVMValueRef object = LLVMBuildCall2(builder, signature, box, &size, 1, "");
-
-        LLVMBuildStore(builder, operand_value(emitter, inst->args[0]), object);
-
-        values[inst->result.id] = object;
         break;
     }
 

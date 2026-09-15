@@ -76,6 +76,22 @@ static void append_type(SymbolBuffer *buffer, const Type *type) {
     const String *name = type_name_of(type);
 
     symbol_append(buffer, name ? name->data : "?");
+
+    for (size_t i = 0; i < type_arg_count(type); i++) {
+        symbol_append(buffer, "$");
+
+        const TypeArg *arg = &type_args(type)[i];
+
+        if (arg->kind == TYPE_ARG_TYPE) {
+            append_type(buffer, arg->type);
+            continue;
+        }
+
+        char value[32];
+        snprintf(value, sizeof(value), "%" PRId64, arg->constant.value.as_int);
+
+        symbol_append(buffer, value);
+    }
 }
 
 static void append_type_args(SymbolBuffer *buffer, const Function *function) {

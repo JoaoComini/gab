@@ -1147,9 +1147,15 @@ static const Type *resolve_expr_kind(ResolverState *state, ASTExpr *expr, const 
 
             const Type *counted = type_registry_get_primitive(state->global->types, TYPE_USIZE);
 
-            fact_set_constant(
-                state->facts, expr,
-                constant_int(counted, (int32_t)type_registry_size_of(state->global->types, measured)));
+            /* A parameter has no size until it is substituted, so what is measured here is recorded
+             * as the type itself; only a concrete measurement folds to the byte count directly. */
+            if (type_has_param(measured)) {
+                fact_set_constant(state->facts, expr, constant_int(measured, 0));
+            } else {
+                fact_set_constant(
+                    state->facts, expr,
+                    constant_int(counted, (int32_t)type_registry_size_of(state->global->types, measured)));
+            }
 
             return counted;
         }
@@ -2696,7 +2702,8 @@ static void resolve_stmt(ResolverState *state, ASTStmt *stmt) {
             break;
         }
 
-        if (stmt->assign.target->kind == EXPR_FIELD || stmt->assign.target->kind == EXPR_DEREF) {
+        if (stmt->assign.target->kind == EXPR_FIELD || stmt->assign.target->kind == EXPR_DEREF ||
+            stmt->assign.target->kind == EXPR_INDEX) {
             mark_implicit_move(state, stmt->assign.value, target_type, stmt->span);
             break;
         }

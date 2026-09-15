@@ -12,7 +12,7 @@ impl Noted as Destroy {
 func run(): i32 {
     let seen: i32 = 0;
 
-    { let n: *Noted = box Noted { seen: seen }; }
+    { let n: Unique<Noted> = Unique<Noted>::new(Noted { seen: seen }); }
 
     assert(seen == 5);
 

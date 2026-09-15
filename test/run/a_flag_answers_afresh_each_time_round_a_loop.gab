@@ -1,15 +1,15 @@
 module test;
 import testing;
 
-struct Node { seen: *i32 }
+struct Node { seen: Unique<i32> }
 
-func take(p: *Node): i32 { return 1; }
+func take(p: Unique<Node>): i32 { return 1; }
 
 func rounds(): i32 {
     let total: i32 = 0;
 
     for let i: i32 = 0; i < 3; i = i + 1 {
-        let a: *Node = box Node { seen: box 0 };
+        let a: Unique<Node> = Unique<Node>::new(Node { seen: Unique<i32>::new(0) });
 
         if i == 1 { total = total + take(a); }
     }

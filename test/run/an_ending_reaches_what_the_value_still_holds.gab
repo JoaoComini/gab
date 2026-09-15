@@ -3,18 +3,18 @@ import testing;
 
 struct Held { seen: &i32 }
 
-struct Owner { held: *Held }
+struct Owner { held: Unique<Held> }
 
 impl Owner as Destroy {
     func destroy(self: &Self) {
-        *self.held.seen = 7;
+        *(*self.held).seen = 7;
     }
 }
 
 func run(): i32 {
     let seen: i32 = 0;
 
-    { let o: Owner = Owner { held: box Held { seen: seen } }; }
+    { let o: Owner = Owner { held: Unique<Held>::new(Held { seen: seen }) }; }
 
     assert(seen == 7);
 

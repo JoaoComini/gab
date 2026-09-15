@@ -40,6 +40,10 @@ typedef enum {
     MIR_CONST_BOOL,
     MIR_CONST_STR,
 
+    /* '@size_of<T>()' where T is still a template parameter: its type is carried and substituted
+     * like any other instruction's, so the size is a fact of the instantiation, not the template. */
+    MIR_SIZE_OF,
+
     MIR_ADD,
     MIR_SUB,
     MIR_MUL,
@@ -68,7 +72,6 @@ typedef enum {
     MIR_CALL,
 
     MIR_NULL,
-    MIR_BOX,
 
     MIR_DROP,
 

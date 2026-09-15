@@ -237,9 +237,6 @@ static void collect_sources(MIRFlow *flow, MIRValueId value, MIRSlot *into) {
         }
         return;
 
-    case MIR_BOX:
-        return;
-
     case MIR_CALL:
         for (size_t i = 0; i < inst->arg_count; i++) {
             if (call_result_may_name(inst->callee, i)) {
@@ -485,7 +482,6 @@ static void flow_inst(MIRFlow *flow, const MIRInst *inst) {
     }
 
     case MIR_CALL:
-    case MIR_BOX:
     case MIR_MAKE_SLICE:
     case MIR_COPY: {
         for (size_t i = 0; i < inst->arg_count; i++) {

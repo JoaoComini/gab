@@ -220,7 +220,6 @@ static const char *const mir_op_names[MIR__COUNT] = {
     [MIR_CALL] = "call",
     [MIR_NULL] = "null",
     [MIR_DROP_FLAG] = "drop_flag",
-    [MIR_BOX] = "box",
     [MIR_DROP] = "drop",
     [MIR_STORAGE_LIVE] = "storage_live",
     [MIR_STORAGE_DEAD] = "storage_dead",
