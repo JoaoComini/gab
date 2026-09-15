@@ -178,7 +178,11 @@ static void collect_place_sources(MIRFlow *flow, const Place *place, MIRSlot *in
         return;
     }
 
-    if (holds_its_own_object(flow, root)) {
+    /* What a move carried away no longer lives in its source: the release of the emptied slot
+     * is pruned, so whatever receives the value depends on what it named instead. */
+    bool moved = mir_state_get(flow->state, root).init == MIR_SLOT_MOVED;
+
+    if (holds_its_own_object(flow, root) && !moved) {
         mir_slot_add_borrow(flow->arena, into, root);
         return;
     }
@@ -195,7 +199,7 @@ static void collect_place_sources(MIRFlow *flow, const Place *place, MIRSlot *in
         mir_slot_add_borrow(flow->arena, into, flat.borrows[i]);
     }
 
-    if (flat.borrow_count == 0) {
+    if (flat.borrow_count == 0 && flat.init != MIR_SLOT_MOVED) {
         mir_slot_add_borrow(flow->arena, into, root);
     }
 }

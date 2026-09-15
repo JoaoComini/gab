@@ -18,6 +18,10 @@ typedef struct {
     size_t local_count;
     size_t local_capacity;
 
+    MIRValueId *temp_slots;
+    size_t temp_slot_count;
+    size_t temp_slot_capacity;
+
     MIRBlockId break_target;
     MIRBlockId continue_target;
 
@@ -31,6 +35,8 @@ typedef struct {
 
 static MIRValueId lower_expr(Lowering *lowering, ASTExpr *expr);
 static MIRValueId lower_call(Lowering *lowering, ASTExpr *expr);
+static MIRValueId lower_load_from(Lowering *lowering, Place place, const Type *type, ReadKind read,
+                                  Span span);
 static void lower_stmt(Lowering *lowering, ASTStmt *stmt);
 static void lower_struct_lit_into(Lowering *lowering, ASTExpr *expr, Place base);
 static MIRValueId lower_location_of(Lowering *lowering, const Type *type, Span span);
@@ -77,6 +83,68 @@ static MIRValueId local_value(Lowering *lowering, const Symbol *binding) {
     }
 
     return MIR_NO_VALUE;
+}
+
+/* An owned value with no home slot gets one, so the scope that opened it also releases it. */
+static MIRValueId lower_temp_slot(Lowering *lowering, const Type *type, Span span) {
+    MIRValueId value = mir_value_create(lowering->ir, type, NULL, span);
+
+    bind_local(lowering, NULL, value);
+
+    if (lowering->temp_slot_count == lowering->temp_slot_capacity) {
+        size_t next = lowering->temp_slot_capacity == 0 ? 8 : lowering->temp_slot_capacity * 2;
+
+        MIRValueId *grown = arena_alloc(lowering->arena, next * sizeof(MIRValueId));
+
+        for (size_t i = 0; i < lowering->temp_slot_count; i++) {
+            grown[i] = lowering->temp_slots[i];
+        }
+
+        lowering->temp_slots = grown;
+        lowering->temp_slot_capacity = next;
+    }
+
+    lowering->temp_slots[lowering->temp_slot_count++] = value;
+
+    emit(lowering, (MIRInst){.op = MIR_STORAGE_LIVE,
+                             .type = type,
+                             .result = MIR_NO_VALUE,
+                             .place = mir_place_of(value, NULL),
+                             .span = span});
+
+    return value;
+}
+
+static bool is_temp_slot(Lowering *lowering, MIRValueId value) {
+    if (mir_value_is_none(value)) {
+        return false;
+    }
+
+    for (size_t i = 0; i < lowering->temp_slot_count; i++) {
+        if (lowering->temp_slots[i].id == value.id) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/* Ownership leaves a temporary with the value: read it out through a move, so the pass that
+ * nulls moved sources empties its slot exactly as for a named one. */
+static MIRValueId lower_moved_temp(Lowering *lowering, MIRValueId value, const Type *type, Span span) {
+    if (!is_temp_slot(lowering, value)) {
+        return value;
+    }
+
+    return lower_load_from(lowering, mir_place_of(value, NULL), type, READ_MOVE, span);
+}
+
+static bool callee_takes_slot(TypeRegistry *registry, const Function *callee, size_t index) {
+    if (!callee || index >= callee->signature.param_count) {
+        return false;
+    }
+
+    return type_registry_owns(registry, callee->signature.params[index]);
 }
 
 static void note_constant(Lowering *lowering, MIRValueId value, Constant constant) {
@@ -582,12 +650,26 @@ static MIRValueId lower_call(Lowering *lowering, ASTExpr *expr) {
 
     MIROperand *args = mir_args_alloc(lowering->ir, count + (passes_line ? 1 : 0));
 
+    size_t shift = receiver ? 1 : 0;
+
     if (receiver) {
-        args[0] = mir_operand_value(lower_expr(lowering, receiver));
+        MIRValueId value = lower_expr(lowering, receiver);
+
+        if (callee_takes_slot(lowering->registry, callee, 0)) {
+            value = lower_moved_temp(lowering, value, callee->signature.params[0], expr->span);
+        }
+
+        args[0] = mir_operand_value(value);
     }
 
     for (size_t i = 0; i < written; i++) {
-        args[i + (receiver ? 1 : 0)] = mir_operand_value(lower_expr(lowering, call_arg(expr, i)));
+        MIRValueId value = lower_expr(lowering, call_arg(expr, i));
+
+        if (callee_takes_slot(lowering->registry, callee, i + shift)) {
+            value = lower_moved_temp(lowering, value, callee->signature.params[i + shift], expr->span);
+        }
+
+        args[i + shift] = mir_operand_value(value);
     }
 
     if (passes_line) {
@@ -612,7 +694,21 @@ static MIRValueId lower_call(Lowering *lowering, ASTExpr *expr) {
                              .callee = callee,
                              .span = expr->span});
 
-    return result;
+    if (!mir_type_needs_drop(lowering->registry, answered)) {
+        return result;
+    }
+
+    MIRValueId slot = lower_temp_slot(lowering, answered, expr->span);
+
+    emit(lowering, (MIRInst){.op = MIR_STORE,
+                             .type = answered,
+                             .result = MIR_NO_VALUE,
+                             .place = mir_place_of(slot, NULL),
+                             .args = lower_args(lowering, &result, 1),
+                             .arg_count = 1,
+                             .span = expr->span});
+
+    return slot;
 }
 
 static void lower_struct_lit_into(Lowering *lowering, ASTExpr *expr, Place base) {
@@ -630,7 +726,8 @@ static void lower_struct_lit_into(Lowering *lowering, ASTExpr *expr, Place base)
             continue;
         }
 
-        MIRValueId value = lower_expr(lowering, init->value);
+        MIRValueId value = lower_moved_temp(lowering, lower_expr(lowering, init->value),
+                                            fact_type_of(lowering->facts, init->value), init->name->span);
 
         emit(lowering, (MIRInst){.op = MIR_STORE,
                                  .type = fact_type_of(lowering->facts, init->value),
@@ -674,7 +771,11 @@ static MIRValueId lower_location_of(Lowering *lowering, const Type *type, Span s
 }
 
 static MIRValueId lower_struct_lit(Lowering *lowering, ASTExpr *expr) {
-    MIRValueId result = lower_temp(lowering, fact_type_of(lowering->facts, expr), expr->span);
+    const Type *type = fact_type_of(lowering->facts, expr);
+
+    MIRValueId result = mir_type_needs_drop(lowering->registry, type)
+                            ? lower_temp_slot(lowering, type, expr->span)
+                            : lower_temp(lowering, type, expr->span);
 
     lower_struct_lit_into(lowering, expr, mir_place_of(result, NULL));
 
@@ -682,7 +783,11 @@ static MIRValueId lower_struct_lit(Lowering *lowering, ASTExpr *expr) {
 }
 
 static MIRValueId lower_array_lit(Lowering *lowering, ASTExpr *expr) {
-    MIRValueId result = lower_temp(lowering, fact_type_of(lowering->facts, expr), expr->span);
+    const Type *type = fact_type_of(lowering->facts, expr);
+
+    MIRValueId result = mir_type_needs_drop(lowering->registry, type)
+                            ? lower_temp_slot(lowering, type, expr->span)
+                            : lower_temp(lowering, type, expr->span);
 
     Place base = mir_place_of(result, NULL);
 
@@ -697,7 +802,8 @@ static MIRValueId lower_array_lit(Lowering *lowering, ASTExpr *expr) {
                                  .constant = {.as_int = (int32_t)i},
                                  .span = element->span});
 
-        MIRValueId value = lower_expr(lowering, element);
+        MIRValueId value = lower_moved_temp(lowering, lower_expr(lowering, element),
+                                            fact_type_of(lowering->facts, element), element->span);
 
         Place slot = mir_place_project(
             lowering->ir, base,
@@ -907,13 +1013,20 @@ static void lower_scope_end(Lowering *lowering, size_t enclosing, Span span) {
 
         Place place = mir_place_of(value, binding);
 
-        if (binding && binding->kind == SYMBOL_VAR &&
-            mir_type_needs_drop(lowering->registry, binding->var.type)) {
-            emit(lowering, (MIRInst){.op = MIR_DROP,
-                                     .type = binding->var.type,
-                                     .result = MIR_NO_VALUE,
-                                     .place = place,
-                                     .span = span});
+        const Type *type = NULL;
+
+        if (!binding) {
+            const MIRValueInfo *info = mir_value_info(lowering->ir, value);
+
+            type = info ? info->type : NULL;
+        } else if (binding->kind == SYMBOL_VAR) {
+            type = binding->var.type;
+        }
+
+        if (type && mir_type_needs_drop(lowering->registry, type)) {
+            emit(lowering,
+                 (MIRInst){
+                     .op = MIR_DROP, .type = type, .result = MIR_NO_VALUE, .place = place, .span = span});
         }
 
         emit(lowering, (MIRInst){.op = MIR_STORAGE_DEAD,
@@ -971,7 +1084,8 @@ static void lower_var_decl(Lowering *lowering, ASTStmt *stmt) {
         return;
     }
 
-    MIRValueId value = lower_expr(lowering, decl->initializer);
+    MIRValueId value = lower_moved_temp(lowering, lower_expr(lowering, decl->initializer),
+                                        fact_type_of(lowering->facts, decl->initializer), stmt->span);
 
     emit(lowering, (MIRInst){.op = MIR_STORE,
                              .type = fact_type_of(lowering->facts, decl->initializer),
@@ -1067,21 +1181,32 @@ static void lower_return(Lowering *lowering, ASTStmt *stmt) {
     MIRValueId value = MIR_NO_VALUE;
 
     if (stmt->ret.result) {
-        value = lower_expr(lowering, stmt->ret.result);
+        value = lower_moved_temp(lowering, lower_expr(lowering, stmt->ret.result),
+                                 fact_type_of(lowering->facts, stmt->ret.result), stmt->span);
     }
 
     for (size_t at = lowering->local_count; at > 0; at--) {
         Symbol *binding = lowering->locals[at - 1];
+        MIRValueId local = lowering->local_values[at - 1];
 
-        if (!binding || binding->kind != SYMBOL_VAR ||
-            !mir_type_needs_drop(lowering->registry, binding->var.type)) {
+        const Type *type = NULL;
+
+        if (!binding) {
+            const MIRValueInfo *info = mir_value_info(lowering->ir, local);
+
+            type = info ? info->type : NULL;
+        } else if (binding->kind == SYMBOL_VAR) {
+            type = binding->var.type;
+        }
+
+        if (!type || !mir_type_needs_drop(lowering->registry, type)) {
             continue;
         }
 
         emit(lowering, (MIRInst){.op = MIR_DROP,
-                                 .type = binding->var.type,
+                                 .type = type,
                                  .result = MIR_NO_VALUE,
-                                 .place = mir_place_of(lowering->local_values[at - 1], binding),
+                                 .place = mir_place_of(local, binding),
                                  .span = stmt->span});
     }
 
@@ -1130,8 +1255,11 @@ static void lower_stmt(Lowering *lowering, ASTStmt *stmt) {
                                    stmt->span);
         }
 
-        lower_store_to(lowering, place, lower_expr(lowering, stmt->assign.value),
-                       fact_type_of(lowering->facts, stmt->assign.value), stmt->span);
+        MIRValueId stored = lower_moved_temp(lowering, lower_expr(lowering, stmt->assign.value),
+                                             fact_type_of(lowering->facts, stmt->assign.value), stmt->span);
+
+        lower_store_to(lowering, place, stored, fact_type_of(lowering->facts, stmt->assign.value),
+                       stmt->span);
 
         if (overwrites_owned) {
             emit(lowering, (MIRInst){.op = MIR_DROP,
@@ -1189,16 +1317,26 @@ static void lower_stmt(Lowering *lowering, ASTStmt *stmt) {
     case STMT_JUMP: {
         for (size_t at = lowering->local_count; at > lowering->loop_local_floor; at--) {
             Symbol *binding = lowering->locals[at - 1];
+            MIRValueId local = lowering->local_values[at - 1];
 
-            if (!binding || binding->kind != SYMBOL_VAR ||
-                !mir_type_needs_drop(lowering->registry, binding->var.type)) {
+            const Type *type = NULL;
+
+            if (!binding) {
+                const MIRValueInfo *info = mir_value_info(lowering->ir, local);
+
+                type = info ? info->type : NULL;
+            } else if (binding->kind == SYMBOL_VAR) {
+                type = binding->var.type;
+            }
+
+            if (!type || !mir_type_needs_drop(lowering->registry, type)) {
                 continue;
             }
 
             emit(lowering, (MIRInst){.op = MIR_DROP,
-                                     .type = binding->var.type,
+                                     .type = type,
                                      .result = MIR_NO_VALUE,
-                                     .place = mir_place_of(lowering->local_values[at - 1], binding),
+                                     .place = mir_place_of(local, binding),
                                      .span = stmt->span});
         }
 
