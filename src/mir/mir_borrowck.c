@@ -72,7 +72,7 @@ static const Type *type_of(const MIRFlow *flow, MIRValueId value) {
 static bool holds_its_own_object(MIRFlow *flow, MIRValueId value) {
     const Type *type = type_of(flow, value);
 
-    return type && type_kind(type) == TYPE_BOX;
+    return type && type_registry_is_unique(flow->registry, type);
 }
 
 static bool slot_of(MIRFlow *flow, const Place *place, MIRSlot *out) {
@@ -300,7 +300,7 @@ static bool outlives_its_source(MIRFlow *flow, MIRValueId borrow, MIRValueId hel
 
         const Type *type = type_of(flow, source);
 
-        if (type && type_kind(type) == TYPE_BOX) {
+        if (type && type_registry_is_unique(flow->registry, type)) {
             continue;
         }
 
@@ -446,7 +446,7 @@ static void flow_inst(MIRFlow *flow, const MIRInst *inst) {
 
         const Type *type = type_of(flow, root);
 
-        if (depth == 0 && type && type_kind(type) == TYPE_BOX) {
+        if (depth == 0 && type && type_registry_is_unique(flow->registry, type)) {
             mir_state_invalidate_borrows_of(flow->state, root);
         }
 

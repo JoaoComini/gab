@@ -263,7 +263,6 @@ static void test_raw_pointer_owns_nothing() {
     assert(!type_registry_owns(registry, ptr));
     assert(type_registry_copies(registry, ptr));
 
-    assert(ptr != type_registry_box_to(registry, i32_type));
     assert(ptr != type_registry_ref_to(registry, i32_type));
 
     assert(type_registry_size_of(registry, ptr) == sizeof(void *));
@@ -291,38 +290,6 @@ static void test_an_array_is_interned_under_its_length() {
 
     assert(type_array_length(three) == 3);
     assert(type_array_length(four) == 4);
-
-    test_context_free(&ctx);
-}
-
-static void test_a_borrow_and_a_box_are_distinct_constructors() {
-    TestContext ctx;
-    test_context_init(&ctx);
-
-    TypeRegistry *registry = ctx.types;
-
-    const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
-
-    const Type *box = type_registry_box_to(registry, i32_type);
-    const Type *ref = type_registry_ref_to(registry, i32_type);
-
-    assert(type_kind(box) == TYPE_BOX);
-    assert(type_kind(ref) == TYPE_REF);
-
-    assert(type_pointee(box) == i32_type);
-    assert(type_pointee(ref) == i32_type);
-
-    assert(type_registry_box_to(registry, i32_type) == box);
-    assert(type_registry_ref_to(registry, i32_type) == ref);
-
-    assert(box != ref);
-    assert(box != i32_type && ref != i32_type);
-
-    assert(type_registry_owns(registry, box));
-    assert(!type_registry_owns(registry, ref));
-
-    assert(!type_registry_copies(registry, box));
-    assert(type_registry_copies(registry, ref));
 
     test_context_free(&ctx);
 }
@@ -425,7 +392,6 @@ static void test_rejects_an_array_of_the_struct_declaring_it() {
 int main(void) {
     test_builtin_widths();
     test_raw_pointer_owns_nothing();
-    test_a_borrow_and_a_box_are_distinct_constructors();
     test_an_array_is_interned_under_its_length();
 
     test_homogeneous_struct();

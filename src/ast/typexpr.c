@@ -135,22 +135,6 @@ static const Type *resolve_slice_type(ResolverState *state, TypeExpr *expr, Span
     return type_registry_slice_of(state->global->types, element);
 }
 
-static const Type *resolve_raw_type(ResolverState *state, TypeExpr *expr, Span span) {
-    if (expr->apply.args.size != 1 || expr->apply.args.data[0]->kind == TYPE_EXPR_CONST) {
-        diag_error(state->global->diagnostics, GAB_ERR_TYPE, span,
-                   "'raw' takes one element type, as 'raw<i32>'");
-        return resolver_error_type(state);
-    }
-
-    const Type *element = resolve_element_type(state, expr->apply.args.data[0], span, "a raw run's element");
-
-    if (!element) {
-        return resolver_error_type(state);
-    }
-
-    return type_registry_raw_of(state->global->types, element);
-}
-
 const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) {
     if (!expr) {
         return NULL;
@@ -159,7 +143,6 @@ const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) {
     TypeRegistry *registry = state->global->types;
 
     switch (expr->kind) {
-    case TYPE_EXPR_BOX:
     case TYPE_EXPR_REF: {
         const Type *inner = resolve_type_expr(state, expr->indirect.inner, span);
 
@@ -167,8 +150,17 @@ const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) {
             return resolver_error_type(state);
         }
 
-        return expr->kind == TYPE_EXPR_REF ? type_registry_ref_to(registry, inner)
-                                           : type_registry_box_to(registry, inner);
+        return type_registry_ref_to(registry, inner);
+    }
+
+    case TYPE_EXPR_RAW: {
+        const Type *element = resolve_element_type(state, expr->indirect.inner, span, "a raw run's element");
+
+        if (!element) {
+            return resolver_error_type(state);
+        }
+
+        return type_registry_raw_of(registry, element);
     }
 
     case TYPE_EXPR_APPLY: {
@@ -178,10 +170,6 @@ const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) {
 
         if (expr->apply.base->name->name == resolver_names(state)->slice) {
             return resolve_slice_type(state, expr, span);
-        }
-
-        if (expr->apply.base->name->name == resolver_names(state)->raw) {
-            return resolve_raw_type(state, expr, span);
         }
 
         Scope *base_scope = resolver_type_expr_scope(state, expr->apply.base);

@@ -727,7 +727,7 @@ static bool parse_type_args(Parser *parser, TypeExprList *out) {
 static TypeExpr *parse_type_expr(Parser *parser) {
     if (parser->current.type == TOKEN_AMP || parser->current.type == TOKEN_MUL ||
         parser->current.type == TOKEN_AND) {
-        TypeExprKind kind = parser->current.type == TOKEN_MUL ? TYPE_EXPR_BOX : TYPE_EXPR_REF;
+        TypeExprKind kind = parser->current.type == TOKEN_MUL ? TYPE_EXPR_RAW : TYPE_EXPR_REF;
 
         if (parser->current.type == TOKEN_AND) {
             parser->current.type = TOKEN_AMP;
@@ -1411,6 +1411,32 @@ static bool parser_type_args_close_with(Parser *parser, TokenType after) {
     return ok;
 }
 
+/* '*T(' is a cast to a raw run, so it is scanned rather than parsed: a parse would report an error
+ * for whatever '*' turns out not to introduce, and here it may be an ordinary dereference. */
+static bool parser_star_precedes_a_cast(Parser *parser) {
+    Lexer saved_lexer = *parser->lexer;
+    Token saved_current = parser->current;
+
+    parser_next_token(parser);
+
+    bool ok = parser->current.type == TOKEN_IDENT;
+
+    if (ok) {
+        parser_next_token(parser);
+
+        if (parser->current.type == TOKEN_LESS) {
+            ok = parser_scan_type_args(parser, TOKEN_LPAREN);
+        } else {
+            ok = parser->current.type == TOKEN_LPAREN;
+        }
+    }
+
+    *parser->lexer = saved_lexer;
+    parser->current = saved_current;
+
+    return ok;
+}
+
 static bool parser_type_args_precede_a_brace(Parser *parser) {
     return parser_type_args_close_with(parser, TOKEN_LBRACE);
 }
@@ -1591,15 +1617,20 @@ static ASTExpr *parse_postfix(Parser *parser, ASTExpr *expr, ExprContext ctx) {
 static ASTExpr *parse_unary(Parser *parser, ExprContext ctx) {
     Span span = parser_span(parser);
 
-    if (parser->current.type == TOKEN_BOX) {
-        parser_next_token(parser);
-
-        ASTExpr *value = parse_unary(parser, ctx);
-        if (!value) {
+    if (parser->current.type == TOKEN_MUL && parser_star_precedes_a_cast(parser)) {
+        TypeExpr *type_expr = parse_type_expr(parser);
+        if (!type_expr) {
             return NULL;
         }
 
-        return ast_box_expr_create(parser->arena, span, value);
+        ASTExpr *target = ast_cast_expr_create(parser->arena, span, type_expr);
+
+        ASTExprList args;
+        if (!parse_call_args(parser, &args)) {
+            return NULL;
+        }
+
+        return parse_postfix(parser, ast_call_expr_create(parser->arena, span, target, args), ctx);
     }
 
     if (parser->current.type == TOKEN_MUL || parser->current.type == TOKEN_MINUS ||

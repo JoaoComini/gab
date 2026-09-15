@@ -137,8 +137,6 @@ const char *token_description(TokenType type) {
         return "'interface'";
     case TOKEN_AS:
         return "'as'";
-    case TOKEN_BOX:
-        return "'box'";
     case TOKEN_MODULE:
         return "'module'";
     case TOKEN_IMPORT:
@@ -362,10 +360,6 @@ static Token lexer_identifier(Lexer *lexer) {
 
     if (string_ref_equals_cstr(ref, "caller")) {
         return token_create_ref(lexer, TOKEN_CALLER, ref);
-    }
-
-    if (string_ref_equals_cstr(ref, "box")) {
-        return token_create_ref(lexer, TOKEN_BOX, ref);
     }
 
     if (string_ref_equals_cstr(ref, "module")) {

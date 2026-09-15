@@ -84,6 +84,8 @@ const KnownNames *type_registry_names(const TypeRegistry *registry);
 
 bool type_registry_is_unique(const TypeRegistry *registry, const Type *type);
 
+const Type *type_registry_unique_pointee(const TypeRegistry *registry, const Type *type);
+
 void type_registry_destroy(TypeRegistry *registry);
 
 const Type *type_registry_get_primitive(TypeRegistry *registry, TypeKind kind);
@@ -100,7 +102,6 @@ const Type *type_registry_array_with(TypeRegistry *registry, const Type *element
 
 const Type *type_registry_slice_of(TypeRegistry *registry, const Type *element);
 
-const Type *type_registry_box_to(TypeRegistry *registry, const Type *inner);
 const Type *type_registry_ref_to(TypeRegistry *registry, const Type *inner);
 
 const Type *type_registry_raw_of(TypeRegistry *registry, const Type *pointee);

@@ -165,7 +165,6 @@ const TypeLayout *type_registry_layout_of(TypeRegistry *registry, const Type *ty
             layout_of_array(registry, type, &layout->size, &layout->alignment);
             break;
 
-        case TYPE_BOX:
         case TYPE_REF:
         case TYPE_RAW:
             layout_of_indirect(type, &layout->size, &layout->alignment);
@@ -381,10 +380,6 @@ static const Type *indirect_to(TypeRegistry *registry, TypeKind kind, const Type
     return intern(registry, &key);
 }
 
-const Type *type_registry_box_to(TypeRegistry *registry, const Type *inner) {
-    return indirect_to(registry, TYPE_BOX, inner);
-}
-
 const Type *type_registry_param(TypeRegistry *registry, size_t index) {
     assert(index < GAB_MAX_TYPE_PARAMS && "a declaration takes at most GAB_MAX_TYPE_PARAMS parameters");
 
@@ -426,10 +421,6 @@ const Type *type_registry_substitute(TypeRegistry *registry, const Type *type, c
 
         return args[index].type;
     }
-
-    case TYPE_BOX:
-        return type_registry_box_to(registry,
-                                    type_registry_substitute(registry, type_pointee(type), args, arg_count));
 
     case TYPE_REF:
         return type_registry_ref_to(registry,
@@ -510,8 +501,6 @@ bool type_registry_owns(TypeRegistry *registry, const Type *type) {
     }
 
     switch (type->kind) {
-    case TYPE_BOX:
-        return true;
     case TYPE_REF:
         return false;
 
@@ -560,7 +549,6 @@ bool type_registry_borrows(TypeRegistry *registry, const Type *type) {
     case TYPE_REF:
         return true;
 
-    case TYPE_BOX:
     case TYPE_RAW:
         return false;
 
@@ -592,8 +580,6 @@ bool type_registry_copies(TypeRegistry *registry, const Type *type) {
     }
 
     switch (type->kind) {
-    case TYPE_BOX:
-        return false;
     case TYPE_REF:
     case TYPE_RAW:
         return true;
@@ -744,6 +730,15 @@ bool type_registry_is_unique(const TypeRegistry *registry, const Type *type) {
     const TypeDecl *decl = type_decl(type);
 
     return decl && decl->id.name == registry->names.unique;
+}
+
+const Type *type_registry_unique_pointee(const TypeRegistry *registry, const Type *type) {
+    if (!type_registry_is_unique(registry, type)) {
+        return NULL;
+    }
+
+    return type_arg_count(type) == 1 && type_args(type)[0].kind == TYPE_ARG_TYPE ? type_args(type)[0].type
+                                                                                 : NULL;
 }
 
 const IntrinsicLowering *type_registry_intrinsic(const TypeRegistry *registry, const String *owner,

@@ -48,7 +48,6 @@ static void mir_print_type(MIRPrinter *printer, const Type *type) {
         mir_print_type(printer, type_pointee(type));
         return;
     case TYPE_RAW:
-    case TYPE_BOX:
         mir_printf(printer, "*");
         mir_print_type(printer, type_pointee(type));
         return;

@@ -5,9 +5,9 @@ extern "C" func abort();
 
 /* The host's own allocator, bound as C declares it: it deals in bytes, and what takes memory from here
  * reads it as a run of its own elements and gives it back the same way. */
-extern "C" func malloc(size: usize): raw<u8>;
-extern "C" func realloc(bytes: raw<u8>, size: usize): raw<u8>;
-extern "C" func free(bytes: raw<u8>);
+extern "C" func malloc(size: usize): *u8;
+extern "C" func realloc(bytes: *u8, size: usize): *u8;
+extern "C" func free(bytes: *u8);
 
 /* Where a check the compiler emitted has failed, such as an index out of range. Written to fd 2 rather
  * than printed, since 'abort' flushes nothing and a buffered message is never seen. */
@@ -32,6 +32,11 @@ interface Index<T> {
     func index(self: &Self, at: i32): &T;
 }
 
+/* What '*' reaches through when the operand is not already a reference or a raw run. */
+interface Deref<T> {
+    func deref(self: &Self): &T;
+}
+
 impl<T> slice<T> {
     intrinsic func len(self: &slice<T>): i32;
 }
@@ -41,7 +46,7 @@ impl<T> slice<T> as Index<T> {
 }
 
 /* A raw run has no length, so nothing bounds its index and nothing it holds is dropped through it. */
-impl<T> raw<T> as Index<T> {
+impl<T> *T as Index<T> {
     intrinsic func index(self: &Self, at: i32): &T;
 }
 
@@ -61,29 +66,29 @@ impl str {
 
 /* Where memory comes from and goes back to, so what allocates says which rather than assuming the host's. */
 interface Allocator {
-    func allocate(self: &Self, size: usize): raw<u8>;
-    func release(self: &Self, bytes: raw<u8>);
+    func allocate(self: &Self, size: usize): *u8;
+    func release(self: &Self, bytes: *u8);
 }
 
 /* The host's allocator, which is what a program takes memory from unless it says otherwise. */
 struct Global {}
 
 impl Global as Allocator {
-    func allocate(self: &Self, size: usize): raw<u8> { return malloc(size); }
+    func allocate(self: &Self, size: usize): *u8 { return malloc(size); }
 
-    func release(self: &Self, bytes: raw<u8>) { free(bytes); }
+    func release(self: &Self, bytes: *u8) { free(bytes); }
 }
 
 /* A run of one element the compiler both takes and gives back, which is what an owner is written over. */
 intrinsic struct Unique<T> {
-    ptr: raw<T>,
+    ptr: *T,
 }
 
 impl<T> Unique<T> {
     func new(value: T): Unique<T> {
         let allocator: Global = Global {};
 
-        let held: Unique<T> = Unique<T> { ptr: raw<T>(allocator.allocate(@size_of<T>())) };
+        let held: Unique<T> = Unique<T> { ptr: *T(allocator.allocate(@size_of<T>())) };
 
         held.ptr[0] = value;
 
@@ -97,6 +102,10 @@ impl<T> Unique<T> as Destroy {
     func destroy(self: &Self) {
         let allocator: Global = Global {};
 
-        allocator.release(raw<u8>(self.ptr));
+        allocator.release(*u8(self.ptr));
     }
+}
+
+impl<T> Unique<T> as Deref<T> {
+    func deref(self: &Self): &T { return self.ptr[0]; }
 }

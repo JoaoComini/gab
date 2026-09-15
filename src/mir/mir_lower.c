@@ -218,7 +218,15 @@ static MIRValueId lower_load_from(Lowering *lowering, Place place, const Type *t
 static Place lower_place(Lowering *lowering, ASTExpr *expr);
 
 static size_t call_arg_count(const ASTExpr *expr) {
-    return expr->kind == EXPR_INDEX ? 1 : expr->call.args.size;
+    if (expr->kind == EXPR_INDEX) {
+        return 1;
+    }
+
+    if (expr->kind == EXPR_DEREF) {
+        return 0;
+    }
+
+    return expr->call.args.size;
 }
 
 static ASTExpr *call_arg(const ASTExpr *expr, size_t i) {
@@ -229,6 +237,8 @@ static ASTExpr *call_receiver(const Lowering *lowering, const ASTExpr *expr) {
     switch (fact_call_kind(lowering->facts, expr)) {
     case CALL_INDEX:
         return expr->index.target;
+    case CALL_DEREF:
+        return expr->unary.target;
     case CALL_METHOD:
         return expr->call.target->field.target;
     default:
@@ -239,7 +249,7 @@ static ASTExpr *call_receiver(const Lowering *lowering, const ASTExpr *expr) {
 static const Type *call_result_type(Lowering *lowering, const ASTExpr *expr) {
     Function *callee = fact_callee_of(lowering->facts, expr);
 
-    if (expr->kind == EXPR_INDEX) {
+    if (expr->kind == EXPR_INDEX || (expr->kind == EXPR_DEREF && callee)) {
         return callee->signature.return_type;
     }
 
@@ -299,6 +309,12 @@ static Place lower_place(Lowering *lowering, ASTExpr *expr) {
     }
 
     case EXPR_DEREF: {
+        if (fact_call_kind(lowering->facts, expr) == CALL_DEREF) {
+            return mir_place_project(
+                lowering->ir, mir_place_of(lower_call(lowering, expr), NULL),
+                (Projection){.kind = PROJ_DEREF, .type = fact_type_of(lowering->facts, expr)});
+        }
+
         Place place = lower_place(lowering, expr->unary.target);
 
         return mir_place_project(
@@ -737,9 +753,6 @@ static MIRValueId lower_unadjusted(Lowering *lowering, ASTExpr *expr) {
 
     case EXPR_NOT:
         return lower_unary(lowering, MIR_NOT, expr, expr->unary.target);
-
-    case EXPR_BOX:
-        return lower_unary(lowering, MIR_BOX, expr, expr->box_expr.value);
 
     case EXPR_ADDR_OF: {
         MIRValueId result = lower_temp(lowering, fact_type_of(lowering->facts, expr), expr->span);

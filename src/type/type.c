@@ -76,7 +76,6 @@ const Type *type_pointee(const Type *type) {
     }
 
     switch (type->kind) {
-    case TYPE_BOX:
     case TYPE_REF:
     case TYPE_RAW:
         return type->indirect.pointee;
@@ -86,7 +85,7 @@ const Type *type_pointee(const Type *type) {
     }
 }
 
-bool type_is_indirect(const Type *type) { return type && (type->kind == TYPE_BOX || type->kind == TYPE_REF); }
+bool type_is_indirect(const Type *type) { return type && type->kind == TYPE_REF; }
 
 const Type *type_array_element(const Type *type) {
     assert(type && type->kind == TYPE_ARRAY && "only an array has an element");
@@ -151,7 +150,6 @@ size_t type_structural_hash(const Type *type) {
     hash = ((hash << 5) + hash) + (size_t)type->kind;
 
     switch (type->kind) {
-    case TYPE_BOX:
     case TYPE_REF:
     case TYPE_RAW:
         hash = ((hash << 5) + hash) + (size_t)(uintptr_t)type->indirect.pointee;
@@ -185,7 +183,6 @@ bool type_structurally_equals(const Type *type, const Type *other) {
     }
 
     switch (type->kind) {
-    case TYPE_BOX:
     case TYPE_REF:
     case TYPE_RAW:
         return type->indirect.pointee == other->indirect.pointee;
@@ -248,7 +245,6 @@ bool type_is_integer(const Type *type) {
     case TYPE_ARRAY:
     case TYPE_SLICE:
     case TYPE_STRUCT:
-    case TYPE_BOX:
     case TYPE_REF:
     case TYPE_RAW:
     case TYPE_PARAM:
@@ -277,7 +273,6 @@ bool type_is_unsigned(const Type *type) {
     case TYPE_ARRAY:
     case TYPE_SLICE:
     case TYPE_STRUCT:
-    case TYPE_BOX:
     case TYPE_REF:
     case TYPE_RAW:
     case TYPE_PARAM:

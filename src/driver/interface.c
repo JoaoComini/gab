@@ -26,7 +26,7 @@ static void print_type(FILE *out, const TypeExpr *type) {
         print_type(out, type->indirect.inner);
         return;
 
-    case TYPE_EXPR_BOX:
+    case TYPE_EXPR_RAW:
         fputc('*', out);
         print_type(out, type->indirect.inner);
         return;
@@ -266,10 +266,21 @@ static void print_expr(FILE *out, const Facts *facts, const ASTExpr *expr) {
             return;
         }
 
+        if (fact_call_kind(facts, expr) == CALL_CONVERSION && expr->call.target &&
+            expr->call.target->kind == EXPR_CAST) {
+            print_type(out, expr->call.target->cast.type_expr);
+            print_args(out, facts, &expr->call.args, 0);
+            return;
+        }
+
         print_expr(out, facts, expr->call.target);
         print_args(out, facts, &expr->call.args, 0);
         return;
     }
+
+    case EXPR_CAST:
+        print_type(out, expr->cast.type_expr);
+        return;
 
     case EXPR_FIELD:
         print_expr(out, facts, expr->field.target);
@@ -301,11 +312,6 @@ static void print_expr(FILE *out, const Facts *facts, const ASTExpr *expr) {
     case EXPR_NOT:
         fputc('!', out);
         print_expr(out, facts, expr->unary.target);
-        return;
-
-    case EXPR_BOX:
-        fprintf(out, "box ");
-        print_expr(out, facts, expr->box_expr.value);
         return;
 
     case EXPR_ARRAY_LIT:

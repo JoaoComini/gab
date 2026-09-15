@@ -19,7 +19,7 @@ static void test_a_declared_field_nests_constructors() {
     const Type *param = type_registry_param(registry, 0);
     const Type *i32_type = type_registry_get_primitive(registry, TYPE_I32);
 
-    const Type *field_type = type_registry_raw_of(registry, type_registry_box_to(registry, param));
+    const Type *field_type = type_registry_raw_of(registry, type_registry_ref_to(registry, param));
 
     TypeField field = {.name = string_from_cstr(&ctx.strings, "data"), .type = field_type};
 
@@ -39,7 +39,7 @@ static void test_a_declared_field_nests_constructors() {
 
     const Type *element = type_pointee(data);
 
-    assert(type_kind(element) == TYPE_BOX);
+    assert(type_kind(element) == TYPE_REF);
     assert(type_pointee(element) == i32_type);
 
     type_registry_destroy(registry);

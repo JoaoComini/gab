@@ -559,10 +559,10 @@ static void test_a_type_is_a_tree() {
     TypeExpr *ref = fields.data[0]->type_expr;
     assert(ref->kind == TYPE_EXPR_REF);
 
-    TypeExpr *box = ref->indirect.inner;
-    assert(box->kind == TYPE_EXPR_BOX);
+    TypeExpr *raw = ref->indirect.inner;
+    assert(raw->kind == TYPE_EXPR_RAW);
 
-    TypeExpr *array = box->indirect.inner;
+    TypeExpr *array = raw->indirect.inner;
     assert(array->kind == TYPE_EXPR_APPLY);
     assert(strcmp(array->apply.base->name->name->data, "array") == 0);
     assert(strcmp(array->apply.args.data[0]->name->name->data, "i32") == 0);

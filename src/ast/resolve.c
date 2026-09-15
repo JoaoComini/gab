@@ -749,6 +749,64 @@ static const Type *resolve_index_through_interface(ResolverState *state, ASTExpr
     return type_pointee(lent);
 }
 
+/* '*p' names what 'p' points to directly when 'p' is a reference or a raw run, and otherwise names
+ * what 'p' implements 'Deref' to reach, the same way 'p[i]' reaches through 'Index'. */
+static const Type *resolve_deref_through_interface(ResolverState *state, ASTExpr *expr) {
+    Span span = expr->span;
+
+    ASTExpr *target = expr->unary.target;
+    const Type *target_type = fact_type_of(state->facts, target);
+
+    String *name = string_from_cstr(state->global->strings, "deref");
+
+    const Type *base = NULL;
+    Function *method = find_method(state, target_type, name, span, &base);
+
+    if (!method) {
+        diag_error(state->global->diagnostics, GAB_ERR_TYPE, span, "cannot dereference %s",
+                   type_name(state, target_type));
+        return resolver_error_type(state);
+    }
+
+    method = specialize_method_call(state, expr, method, base);
+
+    if (!method) {
+        return resolver_error_type(state);
+    }
+
+    if (method->signature.param_count != 1) {
+        diag_error(state->global->diagnostics, GAB_ERR_TYPE, span,
+                   "'deref' of %s takes %zu argument(s), not 0", type_name(state, target_type),
+                   method->signature.param_count);
+        return resolver_error_type(state);
+    }
+
+    ReceiverAdjustment adjustment;
+
+    if (!reconcile_receiver(state, expr, target, method->signature.params[0], target_type, name,
+                            &adjustment)) {
+        return resolver_error_type(state);
+    }
+
+    record_receiver_adjustment(state, target, method, adjustment);
+
+    mark_implicit_move(state, target, method->signature.params[0], target->span);
+
+    fact_set_callee(state->facts, expr, method);
+    fact_set_call_kind(state->facts, expr, CALL_DEREF);
+
+    const Type *lent = method->signature.return_type;
+
+    if (type_kind(lent) != TYPE_REF) {
+        diag_error(state->global->diagnostics, GAB_ERR_TYPE, span,
+                   "'deref' of %s returns %s rather than lending what it holds",
+                   type_name(state, target_type), type_name(state, lent));
+        return resolver_error_type(state);
+    }
+
+    return type_pointee(lent);
+}
+
 static const IntrinsicLowering *intrinsic_for(ResolverState *state, const String *owner, const String *name) {
     return type_registry_intrinsic(state->global->types, owner, name);
 }
@@ -855,7 +913,6 @@ bool is_integer_type(const Type *t) {
     case TYPE_ARRAY:
     case TYPE_SLICE:
     case TYPE_STRUCT:
-    case TYPE_BOX:
     case TYPE_REF:
     case TYPE_RAW:
     case TYPE_PARAM:
@@ -956,22 +1013,7 @@ static bool bin_op_yields_bool(BinOp op) {
     }
 }
 
-static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
-    Symbol *symbol = scope_lookup(state->env.scope, expr->call.target->name.name->name);
-
-    const Type *target = symbol_type(state->global->types, symbol);
-
-    if (expr->call.target->name.owner_type_expr) {
-        bool names_a_type = (symbol && (symbol->kind == SYMBOL_TYPE || symbol->kind == SYMBOL_TYPE_DECL)) ||
-                            expr->call.target->name.name->name == resolver_names(state)->raw;
-
-        if (!names_a_type) {
-            return false;
-        }
-
-        target = resolve_type_expr(state, expr->call.target->name.owner_type_expr, expr->span);
-    }
-
+static bool resolve_conversion(ResolverState *state, ASTExpr *expr, const Type *target) {
     if (!target || is_error_type(target)) {
         return false;
     }
@@ -1006,6 +1048,25 @@ static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
 
     fact_set_type(state->facts, expr, target);
     return true;
+}
+
+static bool resolve_cast(ResolverState *state, ASTExpr *expr) {
+    Symbol *symbol = scope_lookup(state->env.scope, expr->call.target->name.name->name);
+
+    if (!symbol || (symbol->kind != SYMBOL_TYPE && symbol->kind != SYMBOL_TYPE_DECL)) {
+        return false;
+    }
+
+    return resolve_conversion(state, expr, symbol_type(state->global->types, symbol));
+}
+
+static void resolve_run_cast(ResolverState *state, ASTExpr *expr) {
+    const Type *target = resolve_type_expr(state, expr->call.target->cast.type_expr, expr->span);
+
+    if (!resolve_conversion(state, expr, target)) {
+        fact_set_call_kind(state->facts, expr, CALL_CONVERSION);
+        fact_set_type(state->facts, expr, resolver_error_type(state));
+    }
 }
 
 static const Type *resolve_expr_kind(ResolverState *state, ASTExpr *expr, const Type *expected) {
@@ -1148,6 +1209,11 @@ static const Type *resolve_expr_kind(ResolverState *state, ASTExpr *expr, const 
             return fact_type_of(state->facts, expr);
         }
 
+        if (expr->call.target && expr->call.target->kind == EXPR_CAST) {
+            resolve_run_cast(state, expr);
+            return fact_type_of(state->facts, expr);
+        }
+
         if (expr->call.target && expr->call.target->kind == EXPR_BUILTIN) {
             resolve_expr(state, expr->call.target, NULL);
 
@@ -1275,13 +1341,6 @@ static const Type *resolve_expr_kind(ResolverState *state, ASTExpr *expr, const 
             return resolver_error_type(state);
         }
 
-        if (type_kind(target_type) == TYPE_BOX) {
-            diag_error(state->global->diagnostics, GAB_ERR_TYPE, expr->span,
-                       "cannot take the address of an owning pointer; return ownership instead of "
-                       "repointing it through a borrow");
-            return resolver_error_type(state);
-        }
-
         Symbol *addressed = fact_root_local(state->facts, expr->unary.target);
         if (addressed) {
             addressed->pinned = true;
@@ -1296,10 +1355,8 @@ static const Type *resolve_expr_kind(ResolverState *state, ASTExpr *expr, const 
             return resolver_error_type(state);
         }
 
-        if (!type_is_indirect(target_type)) {
-            diag_error(state->global->diagnostics, GAB_ERR_TYPE, expr->span, "cannot dereference %s",
-                       type_name(state, target_type));
-            return resolver_error_type(state);
+        if (!type_is_indirect(target_type) && type_kind(target_type) != TYPE_RAW) {
+            return resolve_deref_through_interface(state, expr);
         }
 
         return type_pointee(target_type);
@@ -1333,21 +1390,6 @@ static const Type *resolve_expr_kind(ResolverState *state, ASTExpr *expr, const 
         }
 
         return target_type;
-    }
-    case EXPR_BOX: {
-        const Type *type = resolve_expr(state, expr->box_expr.value, NULL);
-
-        if (is_error_type(type)) {
-            return resolver_error_type(state);
-        }
-
-        if (type_kind(type) == TYPE_REF) {
-            diag_error(state->global->diagnostics, GAB_ERR_TYPE, expr->span,
-                       "cannot allocate %s; a heap slot cannot hold a borrow", type_name(state, type));
-            return resolver_error_type(state);
-        }
-
-        return type_registry_box_to(state->global->types, type);
     }
     case EXPR_STRUCT_LIT: {
         const Type *type = resolve_type_expr(state, expr->struct_lit.type_expr, expr->span);
@@ -1822,6 +1864,10 @@ static void enter_owner_scope(ResolverState *state, TypeExpr *owner, TypeExpr *c
                 state->global->types, params, arg->name->name, i,
                 bound_kind_of(state->global->types, state->global->strings, bounds ? bounds[i] : NULL));
         }
+    } else if (owner->kind == TYPE_EXPR_RAW && owner->indirect.inner->kind == TYPE_EXPR_NAME) {
+        bind_type_param(
+            state->global->types, params, owner->indirect.inner->name->name, 0,
+            bound_kind_of(state->global->types, state->global->strings, bounds ? bounds[0] : NULL));
     }
 
     state->env.scope = params;
@@ -1851,7 +1897,15 @@ static void bind_own_type_params(ResolverState *state, ASTStmt *stmt, size_t own
 }
 
 static size_t owner_type_param_count(const TypeExpr *owner) {
-    return owner && owner->kind == TYPE_EXPR_APPLY ? owner->apply.args.size : 0;
+    if (!owner) {
+        return 0;
+    }
+
+    if (owner->kind == TYPE_EXPR_APPLY) {
+        return owner->apply.args.size;
+    }
+
+    return owner->kind == TYPE_EXPR_RAW && owner->indirect.inner->kind == TYPE_EXPR_NAME ? 1 : 0;
 }
 
 static void enter_param_bounds(ResolverState *state, ASTStmt *stmt);

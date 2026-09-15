@@ -108,7 +108,7 @@ static void test_ref_is_a_distinct_type() {
 
     assert(owning && borrow);
     assert(owning != borrow);
-    assert(type_kind(owning) == TYPE_BOX);
+    assert(type_kind(owning) == TYPE_RAW);
     assert(type_kind(borrow) == TYPE_REF);
 
     assert(type_pointee(owning) == type_pointee(borrow));

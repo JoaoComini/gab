@@ -1,0 +1,14 @@
+struct Node { n: i32 }
+
+struct Pair { a: &Node, b: &Node }
+
+func read_the_field(): i32 {
+    let p: Unique<Node> = Unique<Node>::new(Node { n: 1 });
+    let q: Unique<Node> = Unique<Node>::new(Node { n: 2 });
+    let x = Pair { a: *p, b: *q };
+    p = Unique<Node>::new(Node { n: 3 });
+    return x.a.n;
+}
+
+// error
+// :10:15: lifetime error: this names memory that has been freed

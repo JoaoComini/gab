@@ -48,7 +48,7 @@ typedef enum {
 
     EXPR_NEG,
     EXPR_NOT,
-    EXPR_BOX,
+    EXPR_CAST,
 
     EXPR_BUILTIN,
 
@@ -146,8 +146,8 @@ typedef struct ASTExpr {
         } unary;
 
         struct {
-            ASTExpr *value;
-        } box_expr;
+            TypeExpr *type_expr;
+        } cast;
     };
 
     Span span;
@@ -165,7 +165,7 @@ ASTExpr *ast_addr_of_expr_create(Arena *arena, Span span, ASTExpr *target);
 ASTExpr *ast_deref_expr_create(Arena *arena, Span span, ASTExpr *target);
 ASTExpr *ast_neg_expr_create(Arena *arena, Span span, ASTExpr *target);
 ASTExpr *ast_not_expr_create(Arena *arena, Span span, ASTExpr *target);
-ASTExpr *ast_box_expr_create(Arena *arena, Span span, ASTExpr *value);
+ASTExpr *ast_cast_expr_create(Arena *arena, Span span, TypeExpr *type_expr);
 ASTExpr *ast_array_lit_expr_create(Arena *arena, Span span, ASTExprList elements);
 ASTExpr *ast_struct_lit_expr_create(Arena *arena, Span span, TypeExpr *type_expr, ASTFieldInitList fields);
 ASTExpr *ast_index_expr_create(Arena *arena, Span span, ASTExpr *target, ASTExpr *index);

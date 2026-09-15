@@ -101,10 +101,10 @@ ASTExpr *ast_not_expr_create(Arena *arena, Span span, ASTExpr *target) {
     return node;
 }
 
-ASTExpr *ast_box_expr_create(Arena *arena, Span span, ASTExpr *value) {
+ASTExpr *ast_cast_expr_create(Arena *arena, Span span, TypeExpr *type_expr) {
     ASTExpr *node = ast_expr_create(arena, span);
-    node->kind = EXPR_BOX;
-    node->box_expr.value = value;
+    node->kind = EXPR_CAST;
+    node->cast.type_expr = type_expr;
     return node;
 }
 

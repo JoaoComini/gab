@@ -15,7 +15,7 @@ GAB_LIST(TypeExprList, type_expr_list, TypeExpr *)
 typedef enum {
     TYPE_EXPR_NAME,
 
-    TYPE_EXPR_BOX,
+    TYPE_EXPR_RAW,
     TYPE_EXPR_REF,
 
     TYPE_EXPR_CONST,

@@ -51,7 +51,6 @@ static LLVMTypeRef llvm_type_of(LLVMEmitter *emitter, const Type *type) {
     case TYPE_USIZE:
         return LLVMIntTypeInContext(emitter->context, (unsigned)(sizeof(void *) * 8));
 
-    case TYPE_BOX:
     case TYPE_RAW:
     case TYPE_REF: {
         LLVMTypeRef pointer = LLVMPointerTypeInContext(emitter->context, 0);
@@ -84,16 +83,6 @@ static LLVMTypeRef llvm_type_of(LLVMEmitter *emitter, const Type *type) {
     default:
         return LLVMInt32TypeInContext(emitter->context);
     }
-}
-
-static LLVMValueRef free_function(LLVMEmitter *emitter, LLVMTypeRef *out_signature) {
-    LLVMTypeRef pointer = LLVMPointerTypeInContext(emitter->context, 0);
-
-    *out_signature = LLVMFunctionType(LLVMVoidTypeInContext(emitter->context), &pointer, 1, false);
-
-    LLVMValueRef declared = LLVMGetNamedFunction(emitter->module, "free");
-
-    return declared ? declared : LLVMAddFunction(emitter->module, "free", *out_signature);
 }
 
 static LLVMTypeRef trap_signature(LLVMEmitter *emitter) {
@@ -163,36 +152,11 @@ static Function *ending_of(LLVMEmitter *emitter, const Type *type) {
     return function_registry_destructor(emitter->ir->functions, type);
 }
 
-static const Type *unique_pointee(const Type *type) {
-    return type_arg_count(type) == 1 && type_args(type)[0].kind == TYPE_ARG_TYPE ? type_args(type)[0].type
-                                                                                 : NULL;
-}
-
 static void emit_drop_body(LLVMEmitter *emitter, const Type *type, LLVMValueRef self) {
     LLVMTypeRef pointer = LLVMPointerTypeInContext(emitter->context, 0);
 
-    if (type_kind(type) == TYPE_BOX) {
-        LLVMTypeRef signature;
-        LLVMValueRef release = free_function(emitter, &signature);
-
-        LLVMValueRef owned = LLVMBuildLoad2(emitter->builder, pointer, self, "");
-
-        const Type *pointee = type_pointee(type);
-
-        if (pointee && type_registry_owns(emitter->registry, pointee)) {
-            LLVMTypeRef glue_signature =
-                LLVMFunctionType(LLVMVoidTypeInContext(emitter->context), &pointer, 1, false);
-
-            LLVMBuildCall2(emitter->builder, glue_signature, drop_glue_of(emitter, pointee), &owned, 1, "");
-        }
-
-        LLVMBuildCall2(emitter->builder, signature, release, &owned, 1, "");
-
-        return;
-    }
-
     if (type_registry_is_unique(emitter->registry, type)) {
-        const Type *pointee = unique_pointee(type);
+        const Type *pointee = type_registry_unique_pointee(emitter->registry, type);
 
         if (pointee && type_registry_owns(emitter->registry, pointee)) {
             LLVMValueRef held =

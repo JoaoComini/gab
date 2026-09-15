@@ -25,6 +25,7 @@ typedef enum {
     CALL_METHOD,
 
     CALL_INDEX,
+    CALL_DEREF,
 } CallKind;
 
 typedef enum {

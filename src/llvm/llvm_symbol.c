@@ -55,11 +55,6 @@ static void append_type(SymbolBuffer *buffer, const Type *type) {
         append_type(buffer, type_pointee(type));
         return;
 
-    case TYPE_BOX:
-        symbol_append(buffer, "box.");
-        append_type(buffer, type_pointee(type));
-        return;
-
     case TYPE_SLICE:
         symbol_append(buffer, "slice.");
         append_type(buffer, type_slice_element(type));

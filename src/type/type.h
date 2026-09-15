@@ -29,7 +29,6 @@ typedef enum {
     TYPE_SLICE,
     TYPE_STRUCT,
 
-    TYPE_BOX,
     TYPE_REF,
 
     TYPE_PARAM,
