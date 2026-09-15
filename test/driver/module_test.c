@@ -40,6 +40,19 @@ static char *read_file(const char *path) {
     return text;
 }
 
+/* Every path a test names lives beside the others in the scratch directory, so a name is all a
+ * case states and where it lives is this one line's to know. */
+static const char *scratch(const char *name) {
+    static char paths[16][512];
+    static size_t next = 0;
+
+    char *path = paths[next++ % 16];
+
+    snprintf(path, 512, "%s/%s", GAB_TEST_SCRATCH, name);
+
+    return path;
+}
+
 /* What a compilation is given: every interface it reads, named. A test states a directory rather than
  * each import, so the module a source names is read from '<search>/<module>.gabi' as a build would
  * have passed it. */
@@ -140,11 +153,8 @@ static bool compile(const char *source, const char *object, const char *interfac
 
 /* One module written across two files, which are resolved together rather than one at a time. */
 static void a_module_is_written_across_the_files_it_is_compiled_from(void) {
-    char object[512];
-    char interface[512];
-
-    snprintf(object, sizeof(object), "%s/split.o", GAB_TEST_SCRATCH);
-    snprintf(interface, sizeof(interface), "%s/split.gabi", GAB_TEST_SCRATCH);
+    const char *object = scratch("split.o");
+    const char *interface = scratch("split.gabi");
 
     const char *parts[2] = {"module split;\nfunc one(): i32 { return 1; }\n",
                             "module split;\nfunc two(): i32 { return one() + 1; }\n"};
@@ -161,8 +171,7 @@ static void a_module_is_written_across_the_files_it_is_compiled_from(void) {
 }
 
 static void every_file_of_a_module_declares_that_module(void) {
-    char object[512];
-    snprintf(object, sizeof(object), "%s/disagree.o", GAB_TEST_SCRATCH);
+    const char *object = scratch("disagree.o");
 
     const char *parts[2] = {"module split;\nfunc one(): i32 { return 1; }\n",
                             "module other;\nfunc two(): i32 { return 2; }\n"};
@@ -172,40 +181,31 @@ static void every_file_of_a_module_declares_that_module(void) {
 
 /* What one unit states, another names: the declarations cross as an interface, never as source. */
 static void a_unit_names_what_an_imported_interface_declares(void) {
-    char object[512];
-    char interface[512];
-
-    snprintf(object, sizeof(object), "%s/lib.o", GAB_TEST_SCRATCH);
-    snprintf(interface, sizeof(interface), "%s/lib.gabi", GAB_TEST_SCRATCH);
+    const char *object = scratch("lib.o");
+    const char *interface = scratch("lib.gabi");
 
     assert(compile("module lib;\nfunc helper(): i32 { return 7; }\n", object, interface, NULL));
 
-    char user[512];
-    snprintf(user, sizeof(user), "%s/module_test_use.o", GAB_TEST_SCRATCH);
+    const char *user = scratch("module_test_use.o");
 
     assert(compile("module use;\nimport lib;\nfunc main(): i32 { return lib::helper(); }\n", user, NULL,
                    GAB_TEST_SCRATCH));
 }
 
 static void a_module_is_named_only_where_it_is_imported(void) {
-    char object[512];
-    snprintf(object, sizeof(object), "%s/module_test_undeclared.o", GAB_TEST_SCRATCH);
+    const char *object = scratch("module_test_undeclared.o");
 
     assert(!compile("module use;\nfunc main(): i32 { return lib::helper(); }\n", object, NULL,
                     GAB_TEST_SCRATCH));
 }
 
 static void an_import_is_named_only_in_the_file_that_imports_it(void) {
-    char object[512];
-    char interface[512];
-
-    snprintf(object, sizeof(object), "%s/perfile.o", GAB_TEST_SCRATCH);
-    snprintf(interface, sizeof(interface), "%s/perfile.gabi", GAB_TEST_SCRATCH);
+    const char *object = scratch("perfile.o");
+    const char *interface = scratch("perfile.gabi");
 
     assert(compile("module perfile;\nfunc helper(): i32 { return 7; }\n", object, interface, NULL));
 
-    char user[512];
-    snprintf(user, sizeof(user), "%s/perfile_use.o", GAB_TEST_SCRATCH);
+    const char *user = scratch("perfile_use.o");
 
     const char *parts[2] = {"module use;\nimport perfile;\nfunc one(): i32 { return perfile::helper(); }\n",
                             "module use;\nfunc two(): i32 { return perfile::helper(); }\n"};
@@ -215,16 +215,12 @@ static void an_import_is_named_only_in_the_file_that_imports_it(void) {
 
 /* A field's type is resolved after every file has declared, so it reads the imports of its own file. */
 static void a_field_names_a_type_its_own_file_imports(void) {
-    char object[512];
-    char interface[512];
-
-    snprintf(object, sizeof(object), "%s/fieldlib.o", GAB_TEST_SCRATCH);
-    snprintf(interface, sizeof(interface), "%s/fieldlib.gabi", GAB_TEST_SCRATCH);
+    const char *object = scratch("fieldlib.o");
+    const char *interface = scratch("fieldlib.gabi");
 
     assert(compile("module fieldlib;\nstruct Held { value: i32, }\n", object, interface, NULL));
 
-    char user[512];
-    snprintf(user, sizeof(user), "%s/fieldlib_use.o", GAB_TEST_SCRATCH);
+    const char *user = scratch("fieldlib_use.o");
 
     const char *parts[2] = {"module use;\nimport fieldlib;\nstruct Wrap { held: fieldlib::Held, }\n",
                             "module use;\nfunc main(): i32 { return 0; }\n"};
@@ -234,19 +230,13 @@ static void a_field_names_a_type_its_own_file_imports(void) {
 
 /* An interface states the module, so a module names an import once however many of its files import it. */
 static void an_interface_states_an_import_once(void) {
-    char object[512];
-    char interface[512];
-
-    snprintf(object, sizeof(object), "%s/shared.o", GAB_TEST_SCRATCH);
-    snprintf(interface, sizeof(interface), "%s/shared.gabi", GAB_TEST_SCRATCH);
+    const char *object = scratch("shared.o");
+    const char *interface = scratch("shared.gabi");
 
     assert(compile("module shared;\nfunc helper(): i32 { return 7; }\n", object, interface, NULL));
 
-    char user[512];
-    char stated[512];
-
-    snprintf(user, sizeof(user), "%s/twice.o", GAB_TEST_SCRATCH);
-    snprintf(stated, sizeof(stated), "%s/twice.gabi", GAB_TEST_SCRATCH);
+    const char *user = scratch("twice.o");
+    const char *stated = scratch("twice.gabi");
 
     const char *parts[2] = {"module twice;\nimport shared;\nfunc one(): i32 { return shared::helper(); }\n",
                             "module twice;\nimport shared;\nfunc two(): i32 { return shared::helper(); }\n"};
@@ -267,11 +257,8 @@ static void an_interface_states_an_import_once(void) {
 
 /* What a file declares is the module's, so a sibling names it without an import. */
 static void a_declaration_is_named_across_the_files_of_its_module(void) {
-    char object[512];
-    char interface[512];
-
-    snprintf(object, sizeof(object), "%s/across.o", GAB_TEST_SCRATCH);
-    snprintf(interface, sizeof(interface), "%s/across.gabi", GAB_TEST_SCRATCH);
+    const char *object = scratch("across.o");
+    const char *interface = scratch("across.gabi");
 
     const char *parts[2] = {"module across;\nfunc one(): i32 { return 1; }\n",
                             "module across;\nfunc two(): i32 { return one() + 1; }\n"};
@@ -281,8 +268,7 @@ static void a_declaration_is_named_across_the_files_of_its_module(void) {
 
 /* A module and its files are one namespace, so a name one file declares collides with the other's. */
 static void a_name_two_files_declare_is_declared_twice(void) {
-    char object[512];
-    snprintf(object, sizeof(object), "%s/collide.o", GAB_TEST_SCRATCH);
+    const char *object = scratch("collide.o");
 
     const char *parts[2] = {"module collide;\nfunc same(): i32 { return 1; }\n",
                             "module collide;\nfunc same(): i32 { return 2; }\n"};
@@ -292,8 +278,7 @@ static void a_name_two_files_declare_is_declared_twice(void) {
 
 /* The prelude declares into the global scope, which a module's own declaration shadows. */
 static void a_module_declares_a_name_the_prelude_holds(void) {
-    char object[512];
-    snprintf(object, sizeof(object), "%s/shadows.o", GAB_TEST_SCRATCH);
+    const char *object = scratch("shadows.o");
 
     assert(compile("module shadows;\nstruct Location { x: i32, }\n"
                    "func main(): i32 { let l = Location { x: 5 }; return l.x; }\n",
@@ -302,16 +287,12 @@ static void a_module_declares_a_name_the_prelude_holds(void) {
 
 /* An import binds the module in the file that wrote it, so a declaration cannot take the same name. */
 static void a_declaration_does_not_take_the_name_of_an_import(void) {
-    char object[512];
-    char interface[512];
-
-    snprintf(object, sizeof(object), "%s/taken.o", GAB_TEST_SCRATCH);
-    snprintf(interface, sizeof(interface), "%s/taken.gabi", GAB_TEST_SCRATCH);
+    const char *object = scratch("taken.o");
+    const char *interface = scratch("taken.gabi");
 
     assert(compile("module taken;\nfunc helper(): i32 { return 7; }\n", object, interface, NULL));
 
-    char user[512];
-    snprintf(user, sizeof(user), "%s/taken_use.o", GAB_TEST_SCRATCH);
+    const char *user = scratch("taken_use.o");
 
     assert(!compile("module use;\nimport taken;\nfunc taken(): i32 { return 1; }\n", user, NULL,
                     GAB_TEST_SCRATCH));
@@ -319,22 +300,18 @@ static void a_declaration_does_not_take_the_name_of_an_import(void) {
 
 /* A module imported directly and reached through another as well is still one this module may name. */
 static void an_import_is_read_before_whoever_imports_it(void) {
-    char object[512];
-    char interface[512];
+    const char *deep_object = scratch("deep.o");
+    const char *deep_interface = scratch("deep.gabi");
 
-    snprintf(object, sizeof(object), "%s/deep.o", GAB_TEST_SCRATCH);
-    snprintf(interface, sizeof(interface), "%s/deep.gabi", GAB_TEST_SCRATCH);
+    assert(compile("module deep;\nstruct Cell { value: i32 }\n", deep_object, deep_interface, NULL));
 
-    assert(compile("module deep;\nstruct Cell { value: i32 }\n", object, interface, NULL));
-
-    snprintf(object, sizeof(object), "%s/middle.o", GAB_TEST_SCRATCH);
-    snprintf(interface, sizeof(interface), "%s/middle.gabi", GAB_TEST_SCRATCH);
+    const char *middle_object = scratch("middle.o");
+    const char *middle_interface = scratch("middle.gabi");
 
     assert(compile("module middle;\nimport deep;\nfunc hold(): deep::Cell { return deep::Cell{value: 7}; }\n",
-                   object, interface, GAB_TEST_SCRATCH));
+                   middle_object, middle_interface, GAB_TEST_SCRATCH));
 
-    char user[512];
-    snprintf(user, sizeof(user), "%s/deep_use.o", GAB_TEST_SCRATCH);
+    const char *user = scratch("deep_use.o");
 
     assert(compile("module use;\nimport middle;\n"
                    "func main(): i32 { return middle::hold().value; }\n",
@@ -342,19 +319,15 @@ static void an_import_is_read_before_whoever_imports_it(void) {
 }
 
 static void a_module_that_imports_itself_is_an_error(void) {
-    char object[512];
-    char interface[512];
-
-    snprintf(object, sizeof(object), "%s/loop.o", GAB_TEST_SCRATCH);
-    snprintf(interface, sizeof(interface), "%s/loop.gabi", GAB_TEST_SCRATCH);
+    const char *object = scratch("loop.o");
+    const char *interface = scratch("loop.gabi");
 
     assert(compile("module loop;\nfunc value(): i32 { return 1; }\n", object, interface, NULL));
 
     /* Restated so the interface imports itself, which no compilation of the source could write. */
     write_file(interface, "module loop;\nimport loop;\nfunc value(): i32;\n");
 
-    char user[512];
-    snprintf(user, sizeof(user), "%s/loop_use.o", GAB_TEST_SCRATCH);
+    const char *user = scratch("loop_use.o");
 
     assert(!compile("module use;\nimport loop;\nfunc main(): i32 { return loop::value(); }\n", user, NULL,
                     GAB_TEST_SCRATCH));
@@ -363,16 +336,12 @@ static void a_module_that_imports_itself_is_an_error(void) {
 /* A name is qualified by the module that declares it, so one module's name does not reach another's. */
 /* A field's type resolves from the file that wrote it, so it names what that file imports. */
 static void a_field_type_names_what_its_own_file_imports(void) {
-    char object[512];
-    char interface[512];
-
-    snprintf(object, sizeof(object), "%s/shapes.o", GAB_TEST_SCRATCH);
-    snprintf(interface, sizeof(interface), "%s/shapes.gabi", GAB_TEST_SCRATCH);
+    const char *object = scratch("shapes.o");
+    const char *interface = scratch("shapes.gabi");
 
     assert(compile("module shapes;\nstruct Point { x: i32, y: i32 }\n", object, interface, NULL));
 
-    char user[512];
-    snprintf(user, sizeof(user), "%s/field_import.o", GAB_TEST_SCRATCH);
+    const char *user = scratch("field_import.o");
 
     const char *parts[2] = {"module holder;\nimport shapes;\nstruct Holder { at: Point }\n",
                             "module holder;\nfunc main(): i32 { return 0; }\n"};
@@ -381,16 +350,12 @@ static void a_field_type_names_what_its_own_file_imports(void) {
 }
 
 static void a_qualifier_names_the_module_that_declares_it(void) {
-    char object[512];
-    char interface[512];
-
-    snprintf(object, sizeof(object), "%s/holds.o", GAB_TEST_SCRATCH);
-    snprintf(interface, sizeof(interface), "%s/holds.gabi", GAB_TEST_SCRATCH);
+    const char *object = scratch("holds.o");
+    const char *interface = scratch("holds.gabi");
 
     assert(compile("module holds;\nfunc helper(): i32 { return 5; }\n", object, interface, NULL));
 
-    char user[512];
-    snprintf(user, sizeof(user), "%s/qualifies.o", GAB_TEST_SCRATCH);
+    const char *user = scratch("qualifies.o");
 
     assert(!compile("module qualifies;\nimport holds;\n"
                     "func main(): i32 { return qualifies::helper(); }\n",
@@ -398,22 +363,18 @@ static void a_qualifier_names_the_module_that_declares_it(void) {
 }
 
 static void a_direct_import_reached_through_another_is_still_named(void) {
-    char object[512];
-    char interface[512];
+    const char *under_object = scratch("under.o");
+    const char *under_interface = scratch("under.gabi");
 
-    snprintf(object, sizeof(object), "%s/under.o", GAB_TEST_SCRATCH);
-    snprintf(interface, sizeof(interface), "%s/under.gabi", GAB_TEST_SCRATCH);
+    assert(compile("module under;\nfunc value(): i32 { return 5; }\n", under_object, under_interface, NULL));
 
-    assert(compile("module under;\nfunc value(): i32 { return 5; }\n", object, interface, NULL));
+    const char *over_object = scratch("over.o");
+    const char *over_interface = scratch("over.gabi");
 
-    snprintf(object, sizeof(object), "%s/over.o", GAB_TEST_SCRATCH);
-    snprintf(interface, sizeof(interface), "%s/over.gabi", GAB_TEST_SCRATCH);
+    assert(compile("module over;\nimport under;\nfunc via(): i32 { return under::value(); }\n", over_object,
+                   over_interface, GAB_TEST_SCRATCH));
 
-    assert(compile("module over;\nimport under;\nfunc via(): i32 { return under::value(); }\n", object,
-                   interface, GAB_TEST_SCRATCH));
-
-    char user[512];
-    snprintf(user, sizeof(user), "%s/both_use.o", GAB_TEST_SCRATCH);
+    const char *user = scratch("both_use.o");
 
     /* 'over' is read first and states 'under', which this module imports for itself. */
     assert(compile("module use;\nimport over;\nimport under;\n"
@@ -423,13 +384,9 @@ static void a_direct_import_reached_through_another_is_still_named(void) {
 
 /* An interface and the object it was compiled from name each other, so a stale pair cannot be linked. */
 static void a_stale_interface_does_not_link(void) {
-    char object[512];
-    char interface[512];
-    char stale[512];
-
-    snprintf(object, sizeof(object), "%s/dig.o", GAB_TEST_SCRATCH);
-    snprintf(interface, sizeof(interface), "%s/dig.gabi", GAB_TEST_SCRATCH);
-    snprintf(stale, sizeof(stale), "%s/stale/dig.gabi", GAB_TEST_SCRATCH);
+    const char *object = scratch("dig.o");
+    const char *interface = scratch("dig.gabi");
+    const char *stale = scratch("stale/dig.gabi");
 
     assert(compile("module dig;\nfunc helper(): i32 { return 7; }\n", object, interface, NULL));
 
@@ -446,18 +403,14 @@ static void a_stale_interface_does_not_link(void) {
 
     assert(compile("module dig;\nfunc helper(a: i32): i32 { return a; }\n", object, interface, NULL));
 
-    char user[512];
-    snprintf(user, sizeof(user), "%s/module_test_stale_user.o", GAB_TEST_SCRATCH);
-
-    char stale_directory[512];
-    snprintf(stale_directory, sizeof(stale_directory), "%s/stale", GAB_TEST_SCRATCH);
+    const char *user = scratch("module_test_stale_user.o");
+    const char *stale_directory = scratch("stale");
 
     /* It compiles: the interface is well formed, and only the link can see it is not the object's. */
     assert(compile("module u;\nimport dig;\nfunc main(): i32 { return dig::helper(); }\n", user, NULL,
                    stale_directory));
 
-    char binary[512];
-    snprintf(binary, sizeof(binary), "%s/module_test_stale_user", GAB_TEST_SCRATCH);
+    const char *binary = scratch("module_test_stale_user");
 
     assert(!gab_link(user, (const char *const[]){object}, 1, binary));
 }
@@ -465,22 +418,17 @@ static void a_stale_interface_does_not_link(void) {
 /* Nothing was compiled for arguments the declaring unit never saw, so a reader instantiates the body
  * its interface carries rather than linking against a symbol that does not exist. */
 static void an_imported_generic_is_instantiated_where_it_is_named(void) {
-    char object[512];
-    char interface[512];
-
-    snprintf(object, sizeof(object), "%s/gen.o", GAB_TEST_SCRATCH);
-    snprintf(interface, sizeof(interface), "%s/gen.gabi", GAB_TEST_SCRATCH);
+    const char *object = scratch("gen.o");
+    const char *interface = scratch("gen.gabi");
 
     assert(compile("module gen;\nfunc same<T>(x: T): T { return x; }\n", object, interface, NULL));
 
-    char user[512];
-    snprintf(user, sizeof(user), "%s/module_test_generic.o", GAB_TEST_SCRATCH);
+    const char *user = scratch("module_test_generic.o");
 
     assert(compile("module use;\nimport gen;\nfunc main(): i32 { return gen::same(7); }\n", user, NULL,
                    GAB_TEST_SCRATCH));
 
-    char binary[512];
-    snprintf(binary, sizeof(binary), "%s/module_test_generic", GAB_TEST_SCRATCH);
+    const char *binary = scratch("module_test_generic");
 
     /* The instance is a body of the reader's own, so linking finds it without the declaring object. */
     assert(gab_link(user, (const char *const[]){object}, 1, binary));
@@ -489,58 +437,45 @@ static void an_imported_generic_is_instantiated_where_it_is_named(void) {
 /* Two readers naming one generic each instantiate it, so the two objects state the same body and the
  * link takes one rather than refusing both. */
 static void one_generic_instantiated_twice_links_once(void) {
-    char object[512];
-    char interface[512];
-
-    snprintf(object, sizeof(object), "%s/twice.o", GAB_TEST_SCRATCH);
-    snprintf(interface, sizeof(interface), "%s/twice.gabi", GAB_TEST_SCRATCH);
+    const char *object = scratch("twice.o");
+    const char *interface = scratch("twice.gabi");
 
     assert(compile("module twice;\nfunc same<T>(x: T): T { return x; }\n", object, interface, NULL));
 
-    char first[512];
-    char first_interface[512];
-
-    snprintf(first, sizeof(first), "%s/twice_one.o", GAB_TEST_SCRATCH);
-    snprintf(first_interface, sizeof(first_interface), "%s/one.gabi", GAB_TEST_SCRATCH);
+    const char *first = scratch("twice_one.o");
+    const char *first_interface = scratch("one.gabi");
 
     assert(compile("module one;\nimport twice;\nfunc up(): i32 { return twice::same(1); }\n", first,
                    first_interface, GAB_TEST_SCRATCH));
 
-    char user[512];
-    snprintf(user, sizeof(user), "%s/twice_use.o", GAB_TEST_SCRATCH);
+    const char *user = scratch("twice_use.o");
 
     assert(compile("module use;\nimport twice;\nimport one;\n"
                    "func main(): i32 { return twice::same(2) + one::up(); }\n",
                    user, NULL, GAB_TEST_SCRATCH));
 
-    char binary[512];
-    snprintf(binary, sizeof(binary), "%s/twice_linked", GAB_TEST_SCRATCH);
+    const char *binary = scratch("twice_linked");
 
     assert(gab_link(user, (const char *const[]){object, first}, 2, binary));
 }
 
 /* A method an imported generic type owns is instantiated where it is named, as a free function is. */
 static void an_imported_generic_method_is_instantiated_where_it_is_named(void) {
-    char object[512];
-    char interface[512];
-
-    snprintf(object, sizeof(object), "%s/holder.o", GAB_TEST_SCRATCH);
-    snprintf(interface, sizeof(interface), "%s/holder.gabi", GAB_TEST_SCRATCH);
+    const char *object = scratch("holder.o");
+    const char *interface = scratch("holder.gabi");
 
     assert(compile("module holder;\nstruct Box<T> { value: T }\n"
                    "impl<T> Box<T> {\n    func get(self: &Self): &T { return self.value; }\n}\n",
                    object, interface, NULL));
 
-    char user[512];
-    snprintf(user, sizeof(user), "%s/holder_use.o", GAB_TEST_SCRATCH);
+    const char *user = scratch("holder_use.o");
 
     assert(compile("module use;\nimport holder;\n"
                    "func main(): i32 { let b: holder::Box<i32> = holder::Box<i32> { value: 3 };\n"
                    "                   return *b.get(); }\n",
                    user, NULL, GAB_TEST_SCRATCH));
 
-    char binary[512];
-    snprintf(binary, sizeof(binary), "%s/holder_linked", GAB_TEST_SCRATCH);
+    const char *binary = scratch("holder_linked");
 
     assert(gab_link(user, (const char *const[]){object}, 1, binary));
 }
@@ -602,8 +537,7 @@ static void a_declaration_read_back_has_the_id_it_was_written_with(void) {
     Reading writer;
     read_source(&writer, &ctx, source);
 
-    char path[512];
-    snprintf(path, sizeof(path), "%s/id_written.gabi", GAB_TEST_SCRATCH);
+    const char *path = scratch("id_written.gabi");
 
     assert(gab_interface_write(writer.unit, &writer.resolved->facts, path));
 
@@ -625,35 +559,27 @@ static void a_declaration_read_back_has_the_id_it_was_written_with(void) {
 }
 
 static void two_modules_declare_one_foreign_function(void) {
-    char first[512];
-    char first_interface[512];
-
-    snprintf(first, sizeof(first), "%s/ffi_one.o", GAB_TEST_SCRATCH);
-    snprintf(first_interface, sizeof(first_interface), "%s/ffi_one.gabi", GAB_TEST_SCRATCH);
+    const char *first = scratch("ffi_one.o");
+    const char *first_interface = scratch("ffi_one.gabi");
 
     assert(compile("module ffi_one;\nextern \"C\" func getpid(): i32;\n"
                    "func stop(): i32 { return getpid(); }\n",
                    first, first_interface, NULL));
 
-    char second[512];
-    char second_interface[512];
-
-    snprintf(second, sizeof(second), "%s/ffi_two.o", GAB_TEST_SCRATCH);
-    snprintf(second_interface, sizeof(second_interface), "%s/ffi_two.gabi", GAB_TEST_SCRATCH);
+    const char *second = scratch("ffi_two.o");
+    const char *second_interface = scratch("ffi_two.gabi");
 
     assert(compile("module ffi_two;\nextern \"C\" func getpid(): i32;\n"
                    "func halt(): i32 { return getpid(); }\n",
                    second, second_interface, NULL));
 
-    char user[512];
-    snprintf(user, sizeof(user), "%s/ffi_use.o", GAB_TEST_SCRATCH);
+    const char *user = scratch("ffi_use.o");
 
     assert(compile("module use;\nimport ffi_one;\nimport ffi_two;\n"
                    "func main(): i32 { return ffi_one::stop() - ffi_two::halt(); }\n",
                    user, NULL, GAB_TEST_SCRATCH));
 
-    char binary[512];
-    snprintf(binary, sizeof(binary), "%s/ffi_linked", GAB_TEST_SCRATCH);
+    const char *binary = scratch("ffi_linked");
 
     assert(gab_link(user, (const char *const[]){first, second}, 2, binary));
 }
@@ -661,26 +587,20 @@ static void two_modules_declare_one_foreign_function(void) {
 /* A 'main' that names no return type still marks its module executable, since C's 'main' returns
  * an int of its own and a void entry point does not need to supply one. */
 static void a_void_main_is_an_executable_entry_point(void) {
-    char object[512];
-    snprintf(object, sizeof(object), "%s/void_main.o", GAB_TEST_SCRATCH);
+    const char *object = scratch("void_main.o");
 
     assert(compile("module void_main;\nfunc main() { }\n", object, NULL, NULL));
 
-    char binary[512];
-    snprintf(binary, sizeof(binary), "%s/void_main", GAB_TEST_SCRATCH);
+    const char *binary = scratch("void_main");
 
     assert(gab_link(object, NULL, 0, binary));
 
-    char run[1024];
-    snprintf(run, sizeof(run), "%s", binary);
-
-    assert(system(run) == 0);
+    assert(system(binary) == 0);
 }
 
 /* A 'main' promising neither i32 nor nothing names no entry point an executable can call. */
 static void a_main_that_returns_neither_i32_nor_nothing_is_not_an_entry_point(void) {
-    char object[512];
-    snprintf(object, sizeof(object), "%s/bool_main.o", GAB_TEST_SCRATCH);
+    const char *object = scratch("bool_main.o");
 
     assert(!compile("module bool_main;\nfunc main(): bool { return true; }\n", object, NULL, NULL));
 }
