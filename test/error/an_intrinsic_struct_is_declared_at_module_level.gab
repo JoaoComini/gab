@@ -1,5 +1,5 @@
 func f(): i32 {
-    intrinsic struct Unique<T> { ptr: raw<T> }
+    intrinsic struct Unique<T> { ptr: *T }
 
     return 0;
 }

@@ -14,7 +14,7 @@ impl Counter {
 }
 
 impl Holder {
-    func take(self: *Holder): i32 { return self.n; }
+    func take(self: &Holder): i32 { return self.n; }
 }
 
 func run(): i32 {
@@ -25,11 +25,11 @@ func run(): i32 {
     assert(c.read() == 5);
     assert(Counter::read(c) == 5);
 
-    let named: *Holder = box Holder { n: 6 };
-    assert(Holder::take(named) == 6);
+    let named: Unique<Holder> = Unique<Holder>::new(Holder { n: 6 });
+    assert(Holder::take(*named) == 6);
 
-    let sugared: *Holder = box Holder { n: 4 };
-    assert(sugared.take() == 4);
+    let sugared: Unique<Holder> = Unique<Holder>::new(Holder { n: 4 });
+    assert((*sugared).take() == 4);
 
     return 0;
 }

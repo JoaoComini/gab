@@ -21,16 +21,16 @@ func a_type_holding_a_borrow_copies(): i32 {
 }
 
 func binding_an_owner_transfers_it(): i32 {
-    let a: *Box = box Box { n: 7 };
+    let a: Unique<Box> = Unique<Box>::new(Box { n: 7 });
     let b = a;
-    return b.n;
+    return (*b).n;
 }
 
 func assigning_to_a_moved_slot_revives_it(): i32 {
-    let a: *Box = box Box { n: 1 };
+    let a: Unique<Box> = Unique<Box>::new(Box { n: 1 });
     let b = a;
-    a = box Box { n: 5 };
-    return a.n;
+    a = Unique<Box>::new(Box { n: 5 });
+    return (*a).n;
 }
 
 func run(): i32 {

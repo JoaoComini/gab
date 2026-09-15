@@ -30,19 +30,19 @@ func swapped(p: Point): Point { return Point { x: p.y, y: p.x }; }
 
 func made_pair(): Point { return Point { x: 1, y: 2 }; }
 
-struct Owner { b: *Node, tag: i32 }
+struct Owner { b: Unique<Node>, tag: i32 }
 
 struct WithArray { xs: array<i32, 3>, tag: i32 }
 
 struct Node { n: i32 }
 
 func an_owning_field_is_taken(): i32 {
-    let o = Owner { b: box Node { n: 5 }, tag: 2 };
+    let o = Owner { b: Unique<Node>::new(Node { n: 5 }), tag: 2 };
 
-    return o.b.n * 10 + o.tag;
+    return (*o.b).n * 10 + o.tag;
 }
 
-func an_owning_literal_is_returned(): Owner { return Owner { b: box Node { n: 3 }, tag: 1 }; }
+func an_owning_literal_is_returned(): Owner { return Owner { b: Unique<Node>::new(Node { n: 3 }), tag: 1 }; }
 
 func a_field_holds_an_array(): i32 {
     let w = WithArray { xs: [1, 2, 3], tag: 4 };
@@ -109,7 +109,7 @@ func run(): i32 {
 
     let owned = an_owning_literal_is_returned();
 
-    assert(owned.b.n == 3);
+    assert((*owned.b).n == 3);
     assert(a_field_holds_an_array() == 34);
 
     return 0;

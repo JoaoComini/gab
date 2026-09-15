@@ -154,9 +154,17 @@ const Type *resolve_type_expr(ResolverState *state, TypeExpr *expr, Span span) {
     }
 
     case TYPE_EXPR_RAW: {
-        const Type *element = resolve_element_type(state, expr->indirect.inner, span, "a raw run's element");
+        const Type *element = resolve_type_expr(state, expr->indirect.inner, span);
 
-        if (!element) {
+        if (is_error_type(element)) {
+            return resolver_error_type(state);
+        }
+
+        if (type_has_param(element)) {
+            return type_registry_raw_of(registry, element);
+        }
+
+        if (reject_unsized(state, element, span, "a raw run's element")) {
             return resolver_error_type(state);
         }
 

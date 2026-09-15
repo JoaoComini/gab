@@ -1,8 +1,8 @@
 struct Box { n: i32 }
 
 func f(): i32 {
-    let xs: array<*Box, 2>;
-    let b: *Box = xs[0];
+    let xs: array<Unique<Box>, 2>;
+    let b: Unique<Box> = xs[0];
     return 0;
 }
 

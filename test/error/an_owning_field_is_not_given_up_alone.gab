@@ -1,16 +1,16 @@
 struct Inner { n: i32 }
 
-struct Outer { child: *Inner }
+struct Outer { child: Unique<Inner> }
 
 func to_itself(): i32 {
-    let o: *Outer = box Outer { child: box Inner { n: 5 } };
-    o.child = o.child;
-    return o.child.n;
+    let o: Unique<Outer> = Unique<Outer>::new(Outer { child: Unique<Inner>::new(Inner { n: 5 }) });
+    (*o).child = (*o).child;
+    return (*(*o).child).n;
 }
 
 func to_another_struct(): i32 {
-    let g = Outer { child: box Inner { n: 1 } };
-    let h = Outer { child: box Inner { n: 2 } };
+    let g = Outer { child: Unique<Inner>::new(Inner { n: 1 }) };
+    let h = Outer { child: Unique<Inner>::new(Inner { n: 2 }) };
     g.child = h.child;
     return 0;
 }

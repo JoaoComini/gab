@@ -1,5 +1,5 @@
 intrinsic struct Unique<T> {
-    ptr: raw<T>,
+    ptr: *T,
 }
 
 // error

@@ -6,9 +6,9 @@ func choose(a: &Box, b: &Box, flag: bool): &Box {
 }
 
 func f(): i32 {
-    let owner: *Box = box Box { n: 0 };
-    let got: &Box = owner;
-    { let inner = Box { n: 1 }; got = choose(owner, inner, true); }
+    let owner: Unique<Box> = Unique<Box>::new(Box { n: 0 });
+    let got: &Box = *owner;
+    { let inner = Box { n: 1 }; got = choose(*owner, inner, true); }
     return got.n;
 }
 

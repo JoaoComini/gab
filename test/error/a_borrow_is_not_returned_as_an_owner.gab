@@ -1,6 +1,6 @@
 struct Box { n: i32 }
 
-func launder(b: &Box): *Box { return b; }
+func launder(b: &Box): Unique<Box> { return b; }
 
 // error
-// :3:31: type error: returns &Box, but *Box was declared
+// :3:38: type error: returns &Box, but Unique was declared

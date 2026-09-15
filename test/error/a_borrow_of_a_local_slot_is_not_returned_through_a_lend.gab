@@ -1,9 +1,9 @@
 struct Node { n: i32 }
 
 func f(): &Node {
-    let local: *Node = box Node { n: 0 };
-    let s: &*Node = local;
-    return s;
+    let local: Unique<Node> = Unique<Node>::new(Node { n: 0 });
+    let s: &Unique<Node> = local;
+    return **s;
 }
 
 // error

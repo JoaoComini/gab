@@ -1,11 +1,11 @@
 struct Inner { n: i32 }
 
-struct Owner { i: *Inner }
+struct Owner { i: Unique<Inner> }
 
 func take(o: Owner): i32 { return 0; }
 
 func f(): i32 {
-    let o = Owner { i: box Inner { n: 1 } };
+    let o = Owner { i: Unique<Inner>::new(Inner { n: 1 }) };
     take(o);
     return take(o);
 }

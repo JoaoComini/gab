@@ -17,25 +17,29 @@ func borrow(b: &Box): &Box { return b; }
 
 func object(b: &Box): i32 { return b.n; }
 
-func slot(s: &*Box): i32 { return s.n + 3; }
+func slot(s: &Unique<Box>): i32 { return (**s).n + 3; }
 
-func through_a_borrow(s: &*Box): i32 { return object(s); }
+func through_a_borrow(s: &Unique<Box>): i32 { return object(**s); }
 
-func poke(s: &*Box): i32 { return s.bump(); }
+func poke(s: &Unique<Box>): i32 { return (**s).bump(); }
 
-func replace(s: &*Box): i32 { *s = box Box { n: 9 }; return 0; }
+func replace(s: &Unique<Box>): i32 { *s = Unique<Box>::new(Box { n: 9 }); return 0; }
 
 func fill(b: &Box): i32 { b.n = 42; return 0; }
 
-func made(seed: &Box): *Box { return box Box { n: seed.n + 1 }; }
+func made(seed: &Box): Unique<Box> { return Unique<Box>::new(Box { n: seed.n + 1 }); }
 
-func owned_out(): *Box { return box Box { n: 4 }; }
+func owned_out(): Unique<Box> { return Unique<Box>::new(Box { n: 4 }); }
 
-func from_a_temporary(): i32 { return (box Box { n: 3 }).n; }
+func from_a_temporary(): i32 {
+    let made: Unique<Box> = Unique<Box>::new(Box { n: 3 });
+    return (*made).n;
+}
 
 func into_an_assignment(): i32 {
     let x: i32 = 0;
-    x = (box Box { n: 5 }).n;
+    let made: Unique<Box> = Unique<Box>::new(Box { n: 5 });
+    x = (*made).n;
     return x;
 }
 
@@ -47,42 +51,42 @@ func run(): i32 {
     borrowed.n = 9;
     assert(value.n == 9);
 
-    let nested: **Box = box (box Box { n: 4 });
-    assert(nested.n == 4);
-    assert(object(nested) == 4);
-    assert(slot(nested) == 7);
+    let nested: Unique<Unique<Box>> = Unique<Unique<Box>>::new(Unique<Box>::new(Box { n: 4 }));
+    assert((**nested).n == 4);
+    assert(object(**nested) == 4);
+    assert(slot(*nested) == 7);
 
-    let owner: *Box = box Box { n: 4 };
+    let owner: Unique<Box> = Unique<Box>::new(Box { n: 4 });
     assert(through_a_borrow(owner) == 4);
-    assert(peek(owner) == 4);
+    assert(peek(*owner) == 4);
     assert(slot(owner) == 7);
 
-    let bumped: *Box = box Box { n: 11 };
+    let bumped: Unique<Box> = Unique<Box>::new(Box { n: 11 });
     assert(poke(bumped) == 12);
-    assert(bumped.n == 12);
+    assert((*bumped).n == 12);
 
-    let repointed: *Box = box Box { n: 1 };
+    let repointed: Unique<Box> = Unique<Box>::new(Box { n: 1 });
     replace(repointed);
-    assert(repointed.n == 9);
+    assert((*repointed).n == 9);
 
-    let filled: *Box = box Box { n: 0 };
-    fill(filled);
-    assert(filled.n == 42);
+    let filled: Unique<Box> = Unique<Box>::new(Box { n: 0 });
+    fill(*filled);
+    assert((*filled).n == 42);
 
-    let lent: *Box = box Box { n: 2 };
-    let got: &Box = borrow(lent);
-    assert(got.n + lent.n == 4);
+    let lent: Unique<Box> = Unique<Box>::new(Box { n: 2 });
+    let got: &Box = borrow(*lent);
+    assert(got.n + (*lent).n == 4);
 
     let leaf = Leaf { n: 7 };
-    let holder: *Node = box Node { n: 0, parent: leaf };
-    assert(holder.parent.n == 7);
+    let holder: Unique<Node> = Unique<Node>::new(Node { n: 0, parent: leaf });
+    assert((*holder).parent.n == 7);
 
-    let seed: *Box = box Box { n: 1 };
-    let fresh = made(seed);
-    assert(fresh.n == 2);
+    let seed: Unique<Box> = Unique<Box>::new(Box { n: 1 });
+    let fresh = made(*seed);
+    assert((*fresh).n == 2);
 
     let returned = owned_out();
-    assert(returned.n == 4);
+    assert((*returned).n == 4);
 
     assert(from_a_temporary() == 3);
     assert(into_an_assignment() == 5);

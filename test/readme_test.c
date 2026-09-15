@@ -21,13 +21,13 @@ static void the_interface_sample_compiles(void) {
 }
 
 static void the_ownership_sample_compiles(void) {
-    assert(test_compiles("struct Box { n: i32 }\n"
-                         "func consume(b: *Box): i32 { return b.n; }\n"
-                         "func peek(b: &Box): i32 { return b.n; }\n"
+    assert(test_compiles("struct Unique { n: i32 }\n"
+                         "func consume(b: Unique): i32 { return b.n; }\n"
+                         "func peek(b: &Unique): i32 { return b.n; }\n"
                          "func f(): i32 {\n"
-                         "    let a: *Box = box Box { n: 1 };\n"
+                         "    let a: Unique = Unique { n: 1 };\n"
                          "    peek(a);\n"
-                         "    let c: *Box = a;\n"
+                         "    let c: Unique = a;\n"
                          "    return consume(c);\n"
                          "}\n"));
 }

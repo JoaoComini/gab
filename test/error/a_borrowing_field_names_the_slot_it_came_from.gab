@@ -3,10 +3,10 @@ struct Box { n: i32 }
 struct Pair { a: &Box, b: &Box }
 
 func f(): i32 {
-    let x: *Box = box Box { n: 1 };
-    let y: *Box = box Box { n: 2 };
-    let p = Pair { a: x, b: y };
-    y = box Box { n: 3 };
+    let x: Unique<Box> = Unique<Box>::new(Box { n: 1 });
+    let y: Unique<Box> = Unique<Box>::new(Box { n: 2 });
+    let p = Pair { a: *x, b: *y };
+    y = Unique<Box>::new(Box { n: 3 });
     return p.b.n;
 }
 

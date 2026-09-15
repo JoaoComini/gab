@@ -39,7 +39,7 @@ static void test_pointer_types_are_interned() {
 
     assert(p && q);
     assert(p == q);
-    assert(type_is_indirect(p));
+    assert(type_kind(p) == TYPE_RAW);
 
     const Type *player = scope_type_lookup(ctx.types, declared, string_from_cstr(&ctx.strings, "Player"));
     assert(type_pointee(p) == player);

@@ -1,11 +1,11 @@
-struct Counted { seen: *i32 }
+struct Counted { seen: Unique<i32> }
 
 impl Counted as Destroy {
     func destroy(self: &Self) { }
 }
 
 func f(): i32 {
-    let c: Counted = Counted { seen: box 0 };
+    let c: Counted = Counted { seen: Unique<i32>::new(0) };
 
     c.destroy();
 

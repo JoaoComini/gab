@@ -5,18 +5,18 @@ struct Pair { a: &Node, b: &Node }
 func g(v: Pair): i32 { return 0; }
 
 func read_the_field(): i32 {
-    let p: *Node = box Node { n: 1 };
-    let q: *Node = box Node { n: 2 };
-    let x = Pair { a: p, b: q };
-    p = box Node { n: 3 };
+    let p: Unique<Node> = Unique<Node>::new(Node { n: 1 });
+    let q: Unique<Node> = Unique<Node>::new(Node { n: 2 });
+    let x = Pair { a: *p, b: *q };
+    p = Unique<Node>::new(Node { n: 3 });
     return x.a.n;
 }
 
 func pass_the_struct(): i32 {
-    let p: *Node = box Node { n: 1 };
-    let q: *Node = box Node { n: 2 };
-    let x = Pair { a: p, b: q };
-    p = box Node { n: 3 };
+    let p: Unique<Node> = Unique<Node>::new(Node { n: 1 });
+    let q: Unique<Node> = Unique<Node>::new(Node { n: 2 });
+    let x = Pair { a: *p, b: *q };
+    p = Unique<Node>::new(Node { n: 3 });
     return g(x);
 }
 

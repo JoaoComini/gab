@@ -1,13 +1,13 @@
 struct Inner { n: i32 }
 
-struct Outer { child: *Inner }
+struct Outer { child: Unique<Inner> }
 
 func f(): i32 {
-    let o: *Outer = box Outer { child: box Inner { n: 0 } };
-    let i: *Inner = box Inner { n: 0 };
-    o.child = i;
-    return i.n;
+    let o: Unique<Outer> = Unique<Outer>::new(Outer { child: Unique<Inner>::new(Inner { n: 0 }) });
+    let i: Unique<Inner> = Unique<Inner>::new(Inner { n: 0 });
+    (*o).child = i;
+    return (*i).n;
 }
 
 // error
-// :9:13: lifetime error: this was moved out of and no longer holds a value
+// :9:14: lifetime error: this was moved out of and no longer holds a value

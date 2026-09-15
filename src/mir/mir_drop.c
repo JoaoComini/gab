@@ -24,6 +24,148 @@ static MIRInst *block_insert(Arena *arena, MIRBlock *block, size_t at, MIRInst i
     return &block->insts[at];
 }
 
+static bool callee_takes(TypeRegistry *registry, const Function *callee, size_t index) {
+    if (!callee || index >= callee->signature.param_count) {
+        return false;
+    }
+
+    return type_registry_owns(registry, callee->signature.params[index]);
+}
+
+static bool is_given_away(TypeRegistry *registry, const MIRFunction *ir, MIRValueId value) {
+    for (size_t b = 0; b < ir->block_count; b++) {
+        const MIRBlock *block = ir->blocks[b];
+
+        for (size_t j = 0; j < block->inst_count; j++) {
+            const MIRInst *inst = &block->insts[j];
+
+            if (inst->op != MIR_STORE && inst->op != MIR_CALL && inst->op != MIR_RETURN &&
+                inst->op != MIR_MAKE_SLICE) {
+                continue;
+            }
+
+            bool is_call = inst->op == MIR_CALL;
+
+            for (size_t a = 0; a < inst->arg_count; a++) {
+                MIRValueId arg = mir_operand_as_value(inst->args[a]);
+
+                if (mir_value_is_none(arg) || arg.id != value.id) {
+                    continue;
+                }
+
+                if (is_call && !callee_takes(registry, inst->callee, a)) {
+                    continue;
+                }
+
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+static bool last_read_of(const MIRFunction *ir, MIRValueId value, size_t *block_index, size_t *at) {
+    bool found = false;
+
+    for (size_t b = 0; b < ir->block_count; b++) {
+        const MIRBlock *block = ir->blocks[b];
+
+        for (size_t j = 0; j < block->inst_count; j++) {
+            const MIRInst *inst = &block->insts[j];
+
+            bool reads = false;
+
+            for (size_t a = 0; a < inst->arg_count && !reads; a++) {
+                MIRValueId arg = mir_operand_as_value(inst->args[a]);
+
+                reads = !mir_value_is_none(arg) && arg.id == value.id;
+            }
+
+            if (!reads && mir_op_has_place(inst->op) && !mir_value_is_none(inst->place.base) &&
+                inst->place.base.id == value.id) {
+                reads = true;
+            }
+
+            if (reads) {
+                *block_index = b;
+                *at = j;
+                found = true;
+            }
+        }
+    }
+
+    return found;
+}
+
+/* Where a temporary comes into being: its defining call, or the last store that built a
+ * literal in place. A load never originates ownership, so what one hands back is disqualified. */
+static bool temporary_origin_of(const MIRFunction *ir, MIRValueId value, size_t *out_block, size_t *out_at) {
+    bool built = false;
+
+    for (size_t b = 0; b < ir->block_count; b++) {
+        const MIRBlock *block = ir->blocks[b];
+
+        for (size_t j = 0; j < block->inst_count; j++) {
+            const MIRInst *inst = &block->insts[j];
+
+            if (!mir_value_is_none(inst->result) && inst->result.id == value.id) {
+                if (inst->op == MIR_LOAD) {
+                    return false;
+                }
+
+                *out_block = b;
+                *out_at = j;
+                built = true;
+            } else if (inst->op == MIR_STORE && !mir_value_is_none(inst->place.base) &&
+                       inst->place.base.id == value.id) {
+                *out_block = b;
+                *out_at = j;
+                built = true;
+            }
+        }
+    }
+
+    return built;
+}
+
+/* A temporary no slot holds is released where it is last read, whether a call handed it back or a
+ * literal built it in place. */
+static void drop_owned_temporaries(Arena *arena, TypeRegistry *registry, MIRFunction *ir) {
+    for (size_t v = 0; v < ir->value_count; v++) {
+        MIRValueId value = {(uint32_t)v};
+        const MIRValueInfo *info = mir_value_info(ir, value);
+
+        if (!info || info->binding || !mir_type_needs_drop(registry, info->type)) {
+            continue;
+        }
+
+        if (is_given_away(registry, ir, value)) {
+            continue;
+        }
+
+        size_t at_block;
+        size_t at;
+
+        if (!temporary_origin_of(ir, value, &at_block, &at)) {
+            continue;
+        }
+
+        last_read_of(ir, value, &at_block, &at);
+
+        MIRBlock *target = ir->blocks[at_block];
+
+        size_t insert_at = mir_op_is_terminator(target->insts[at].op) ? at : at + 1;
+
+        block_insert(arena, target, insert_at,
+                     (MIRInst){.op = MIR_DROP,
+                               .type = info->type,
+                               .result = MIR_NO_VALUE,
+                               .place = mir_place_of(value, NULL),
+                               .span = info->span});
+    }
+}
+
 static void release_before_overwrite(Arena *arena, TypeRegistry *registry, MIRFunction *ir) {
     bool *stored = arena_alloc(arena, (ir->value_count + 1) * sizeof(bool));
 
@@ -402,6 +544,8 @@ void mir_drop_elaborate(Arena *arena, TypeRegistry *registry, FunctionRegistry *
     }
 
     release_before_overwrite(arena, registry, ir);
+
+    drop_owned_temporaries(arena, registry, ir);
 
     drop_releases_of_emptied_places(arena, ir);
 

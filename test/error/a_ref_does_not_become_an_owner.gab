@@ -1,11 +1,11 @@
 struct Node { n: i32 }
 
 func f(): i32 {
-    let owner: *Node = box Node { n: 0 };
-    let b: &Node = owner;
-    let o: *Node = b;
+    let owner: Unique<Node> = Unique<Node>::new(Node { n: 0 });
+    let b: &Node = *owner;
+    let o: Unique<Node> = b;
     return 0;
 }
 
 // error
-// :6:20: type error: cannot initialize a variable of type *Node with a value of type &Node
+// :6:27: type error: cannot initialize a variable of type Unique with a value of type &Node

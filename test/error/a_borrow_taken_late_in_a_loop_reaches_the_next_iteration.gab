@@ -1,11 +1,11 @@
 struct Box { n: i32 }
 
 func f(): i32 {
-    let heap: *Box = box Box { n: 0 };
-    let out: &Box = heap;
+    let heap: Unique<Box> = Unique<Box>::new(Box { n: 0 });
+    let out: &Box = *heap;
     {
         let inner = Box { n: 0 };
-        let a: &Box = heap;
+        let a: &Box = *heap;
         for let i = 0; i < 2; i = i + 1 {
             out = a;
             a = inner;

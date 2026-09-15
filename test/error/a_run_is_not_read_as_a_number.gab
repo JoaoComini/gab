@@ -1,4 +1,4 @@
-func f(bytes: raw<u8>): i32 {
+func f(bytes: *u8): i32 {
     return i32(bytes);
 }
 

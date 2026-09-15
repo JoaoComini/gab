@@ -5,13 +5,11 @@
 #include <assert.h>
 
 static void an_intrinsic_struct_names_one_the_compiler_knows(void) {
-    assert(test_core_diagnostic_mentions("intrinsic struct Bag<T> { ptr: raw<T> }",
-                                         "no intrinsic struct 'Bag'"));
+    assert(test_core_diagnostic_mentions("intrinsic struct Bag<T> { ptr: *T }", "no intrinsic struct 'Bag'"));
 }
 
 static void the_core_declares_the_intrinsic_struct_the_compiler_knows(void) {
-    assert(
-        !test_core_diagnostic_mentions("intrinsic struct Unique<T> { ptr: raw<T> }", "no intrinsic struct"));
+    assert(!test_core_diagnostic_mentions("intrinsic struct Unique<T> { ptr: *T }", "no intrinsic struct"));
 }
 
 /* The type a 'Unique' names is the one that owns what it points at, which is what its drop is written on. */
@@ -25,8 +23,8 @@ static void a_unique_owns_what_it_points_at(void) {
     ResolvedModule *resolved;
 
     bool ok = test_resolve_ir_with(&ctx, scope, &unit, &bodies, &resolved,
-                                   "intrinsic struct Unique<T> { ptr: raw<T> }\n"
-                                   "struct Plain { ptr: raw<i32> }",
+                                   "intrinsic struct Unique<T> { ptr: *T }\n"
+                                   "struct Plain { ptr: *i32 }",
                                    true);
     assert(ok);
 

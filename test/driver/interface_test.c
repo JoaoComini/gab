@@ -134,7 +134,7 @@ static void a_carried_body_states_every_shape_it_holds(void) {
                      "    let total: i32 = 0;\n"
                      "    let pair: array<i32, 2> = [1, 2];\n"
                      "    let made: Holder<i32> = Holder<i32> { value: 3, flag: !h.flag };\n"
-                     "    let owned: *i32 = box n;\n"
+                     "    let owned: &i32 = n;\n"
                      "    let seen: &i32 = total;\n"
                      "    total = ((-n * 2) + 5) % 7;\n"
                      "    total = total - xs[0] / 2;\n"

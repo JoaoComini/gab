@@ -788,9 +788,9 @@ static void test_reports_a_stack_pointer_stored_into_a_heap_object() {
     Diagnostics *diagnostics = &ctx.diagnostics;
 
     compile(&ctx, "struct Inner { n: i32 }\n"
-                  "struct Outer { child: &Inner }\n"
-                  "func test() { let o: *Outer = box Outer { child: box Inner { n: 0 } }; let local = Inner "
-                  "{ n: 0 }; o.child = local; }");
+                  "struct Unique { child: &Inner }\n"
+                  "func test() { let heap = Inner { n: 0 }; let o: Unique = Unique { child: heap }; "
+                  "let local = Inner { n: 0 }; o.child = local; }");
 
     assert(diagnostics_count(diagnostics) == 1);
 

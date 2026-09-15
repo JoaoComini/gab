@@ -1,11 +1,11 @@
-struct Holder { n: i32 }
+struct Unique { n: i32 }
 
-impl Holder {
-    func take(self: *Holder): i32 { return self.n; }
+impl Unique {
+    func take(self: Unique): i32 { return self.n; }
 }
 
 func f(): i32 {
-    let h: *Holder = box Holder { n: 0 };
+    let h: Unique = Unique { n: 0 };
     h.take();
     return h.n;
 }

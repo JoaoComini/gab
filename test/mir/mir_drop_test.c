@@ -72,9 +72,9 @@ static void test_a_value_owning_nothing_is_never_marked_for_dropping(void) {
 static void test_a_drop_of_an_owning_value_survives(void) {
     Elaborated out;
     MIRFunction *ir = elaborate(&out,
-                                "struct Node { n: i32 }\n"
+                                "struct Unique { n: i32 }\n"
                                 "func f(): i32 {\n"
-                                "    let a: *Node = box Node { n: 1 };\n"
+                                "    let a: Unique = Unique { n: 1 };\n"
                                 "    return a.n;\n"
                                 "}\n",
                                 "f");
@@ -84,11 +84,27 @@ static void test_a_drop_of_an_owning_value_survives(void) {
     elaborated_free(&out);
 }
 
+/* A call hands back a value no slot holds, so what it owns is released where it is last read. */
 static void test_an_owned_temporary_is_dropped_where_it_is_last_read(void) {
     Elaborated out;
     MIRFunction *ir = elaborate(&out,
-                                "struct Node { n: i32 }\n"
-                                "func f(): i32 { return (box Node { n: 1 }).n; }\n",
+                                "struct Unique { n: i32 }\n"
+                                "func made(): Unique { return Unique { n: 6 }; }\n"
+                                "func f(): i32 { return made().n; }\n",
+                                "f");
+
+    assert(count_op(ir, MIR_DROP) == 1);
+
+    elaborated_free(&out);
+}
+
+/* A literal builds a value no slot holds, so what it owns is released where it ends. */
+static void test_a_constructed_temporary_is_dropped_where_it_ends(void) {
+    Elaborated out;
+    MIRFunction *ir = elaborate(&out,
+                                "struct Unique { n: i32 }\n"
+                                "struct Outer { child: Unique }\n"
+                                "func f(): i32 { Outer { child: Unique { n: 1 } }; return 0; }\n",
                                 "f");
 
     assert(count_op(ir, MIR_DROP) == 1);
@@ -100,10 +116,10 @@ static void test_an_owned_temporary_is_dropped_where_it_is_last_read(void) {
 static void test_a_move_nulls_what_it_gave_away(void) {
     Elaborated out;
     MIRFunction *ir = elaborate(&out,
-                                "struct Node { n: i32 }\n"
-                                "func take(p: *Node): i32 { return p.n; }\n"
+                                "struct Unique { n: i32 }\n"
+                                "func take(p: Unique): i32 { return p.n; }\n"
                                 "func f(): i32 {\n"
-                                "    let a: *Node = box Node { n: 1 };\n"
+                                "    let a: Unique = Unique { n: 1 };\n"
                                 "    return take(a);\n"
                                 "}\n",
                                 "f");
@@ -117,10 +133,10 @@ static void test_a_move_nulls_what_it_gave_away(void) {
 static void test_a_null_follows_the_move_it_answers_for(void) {
     Elaborated out;
     MIRFunction *ir = elaborate(&out,
-                                "struct Node { n: i32 }\n"
-                                "func take(p: *Node): i32 { return p.n; }\n"
+                                "struct Unique { n: i32 }\n"
+                                "func take(p: Unique): i32 { return p.n; }\n"
                                 "func f(): i32 {\n"
-                                "    let a: *Node = box Node { n: 1 };\n"
+                                "    let a: Unique = Unique { n: 1 };\n"
                                 "    return take(a);\n"
                                 "}\n",
                                 "f");
@@ -151,10 +167,10 @@ static void test_a_null_follows_the_move_it_answers_for(void) {
 static void test_a_value_moved_on_one_path_still_reaches_one_drop(void) {
     Elaborated out;
     MIRFunction *ir = elaborate(&out,
-                                "struct Node { n: i32 }\n"
-                                "func take(p: *Node): i32 { return p.n; }\n"
+                                "struct Unique { n: i32 }\n"
+                                "func take(p: Unique): i32 { return p.n; }\n"
                                 "func f(c: bool): i32 {\n"
-                                "    let a: *Node = box Node { n: 1 };\n"
+                                "    let a: Unique = Unique { n: 1 };\n"
                                 "    if c { let x: i32 = take(a); }\n"
                                 "    return 0;\n"
                                 "}\n",
@@ -178,11 +194,11 @@ static void test_a_move_of_a_value_owning_nothing_needs_no_null(void) {
 static void a_call_result_stored_into_a_field_releases_what_it_replaced(void) {
     Elaborated out;
     MIRFunction *ir = elaborate(&out,
-                                "struct Inner { n: i32 }\n"
-                                "struct Outer { child: *Inner }\n"
-                                "func made(): *Inner { return box Inner { n: 6 }; }\n"
+                                "struct Unique { n: i32 }\n"
+                                "struct Outer { child: Unique }\n"
+                                "func made(): Unique { return Unique { n: 6 }; }\n"
                                 "func f(): i32 {\n"
-                                "    let o: *Outer = box Outer { child: box Inner { n: 1 } };\n"
+                                "    let o: Outer = Outer { child: Unique { n: 1 } };\n"
                                 "    o.child = made();\n"
                                 "    return 0;\n"
                                 "}\n",
@@ -196,10 +212,10 @@ static void a_call_result_stored_into_a_field_releases_what_it_replaced(void) {
 static void a_value_moved_on_every_path_reaches_no_drop(void) {
     Elaborated out;
     MIRFunction *ir = elaborate(&out,
-                                "struct Node { n: i32 }\n"
-                                "func take(p: *Node): i32 { return p.n; }\n"
+                                "struct Unique { n: i32 }\n"
+                                "func take(p: Unique): i32 { return p.n; }\n"
                                 "func f(c: bool): i32 {\n"
-                                "    let a: *Node = box Node { n: 1 };\n"
+                                "    let a: Unique = Unique { n: 1 };\n"
                                 "    if c { let x: i32 = take(a); } else { let y: i32 = take(a); }\n"
                                 "    return 0;\n"
                                 "}\n",
@@ -214,10 +230,10 @@ static void a_value_moved_on_every_path_reaches_no_drop(void) {
 static void a_value_moved_on_one_path_is_dropped_behind_a_flag(void) {
     Elaborated out;
     MIRFunction *ir = elaborate(&out,
-                                "struct Node { n: i32 }\n"
-                                "func take(p: *Node): i32 { return p.n; }\n"
+                                "struct Unique { n: i32 }\n"
+                                "func take(p: Unique): i32 { return p.n; }\n"
                                 "func f(c: bool): i32 {\n"
-                                "    let a: *Node = box Node { n: 1 };\n"
+                                "    let a: Unique = Unique { n: 1 };\n"
                                 "    if c { let x: i32 = take(a); }\n"
                                 "    return 0;\n"
                                 "}\n",
@@ -233,6 +249,7 @@ int main(void) {
     test_a_value_owning_nothing_is_never_marked_for_dropping();
     test_a_drop_of_an_owning_value_survives();
     test_an_owned_temporary_is_dropped_where_it_is_last_read();
+    test_a_constructed_temporary_is_dropped_where_it_ends();
     test_a_move_nulls_what_it_gave_away();
     test_a_null_follows_the_move_it_answers_for();
     test_a_value_moved_on_one_path_still_reaches_one_drop();

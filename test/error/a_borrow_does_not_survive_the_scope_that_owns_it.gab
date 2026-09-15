@@ -2,7 +2,7 @@ struct Box { n: i32 }
 
 func f(): i32 {
     let b: &Box;
-    { let o: *Box = box Box { n: 7 }; b = o; }
+    { let o: Unique<Box> = Unique<Box>::new(Box { n: 7 }); b = *o; }
     return b.n;
 }
 

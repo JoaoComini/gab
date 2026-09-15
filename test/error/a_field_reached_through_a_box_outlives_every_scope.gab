@@ -5,8 +5,8 @@ struct View { r: &Node }
 func f(p: &Node): i32 {
     if true {
         let inner = Node { n: 1 };
-        let h = box View { r: p };
-        h.r = inner;
+        let h = Unique<View>::new(View { r: p });
+        (*h).r = inner;
     }
     return 0;
 }

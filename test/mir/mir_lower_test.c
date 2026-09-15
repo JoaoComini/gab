@@ -317,9 +317,9 @@ static void test_a_local_opens_and_closes_its_storage(void) {
 /* An owning local's object is released where the local's scope ends, on every path that leaves it. */
 static void test_a_local_is_ended_on_each_path_out_of_its_scope(void) {
     Lowered lowered;
-    MIRFunction *ir = lower_first_function(&lowered, "struct Node { n: i32 }\n"
+    MIRFunction *ir = lower_first_function(&lowered, "struct Unique { n: i32 }\n"
                                                      "func f(c: bool): i32 {\n"
-                                                     "    let a: *Node = box Node { n: 1 };\n"
+                                                     "    let a: Unique = Unique { n: 1 };\n"
                                                      "    if c { return 0; }\n"
                                                      "    return a.n;\n"
                                                      "}\n");
@@ -333,10 +333,10 @@ static void test_a_local_is_ended_on_each_path_out_of_its_scope(void) {
 /* A scope closing without leaving the function still ends the locals it opened. */
 static void test_a_scope_that_falls_through_ends_its_locals(void) {
     Lowered lowered;
-    MIRFunction *ir = lower_first_function(&lowered, "struct Node { n: i32 }\n"
+    MIRFunction *ir = lower_first_function(&lowered, "struct Unique { n: i32 }\n"
                                                      "func f(c: bool): i32 {\n"
                                                      "    if c {\n"
-                                                     "        let a: *Node = box Node { n: 1 };\n"
+                                                     "        let a: Unique = Unique { n: 1 };\n"
                                                      "    }\n"
                                                      "    return 0;\n"
                                                      "}\n");
@@ -350,10 +350,10 @@ static void test_a_scope_that_falls_through_ends_its_locals(void) {
 /* Leaving a loop leaves the scopes opened inside it, so their locals end at the jump. */
 static void test_a_break_ends_the_locals_the_loop_body_opened(void) {
     Lowered lowered;
-    MIRFunction *ir = lower_first_function(&lowered, "struct Node { n: i32 }\n"
+    MIRFunction *ir = lower_first_function(&lowered, "struct Unique { n: i32 }\n"
                                                      "func f(n: i32): i32 {\n"
                                                      "    for let i: i32 = 0; i < n; i = i + 1 {\n"
-                                                     "        let a: *Node = box Node { n: 1 };\n"
+                                                     "        let a: Unique = Unique { n: 1 };\n"
                                                      "        break;\n"
                                                      "    }\n"
                                                      "    return 0;\n"
@@ -367,10 +367,10 @@ static void test_a_break_ends_the_locals_the_loop_body_opened(void) {
 /* A moving read leaves the place holding nothing, so it must be a load rather than a bare name. */
 static void test_a_move_reads_through_a_load_that_says_so(void) {
     Lowered lowered;
-    MIRFunction *ir = lower_first_function(&lowered, "struct Node { n: i32 }\n"
+    MIRFunction *ir = lower_first_function(&lowered, "struct Unique { n: i32 }\n"
                                                      "func f(): i32 {\n"
-                                                     "    let a: *Node = box Node { n: 1 };\n"
-                                                     "    let b: *Node = a;\n"
+                                                     "    let a: Unique = Unique { n: 1 };\n"
+                                                     "    let b: Unique = a;\n"
                                                      "    return b.n;\n"
                                                      "}\n");
 

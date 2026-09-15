@@ -91,11 +91,11 @@ static void a_type_owning_nothing_emits_no_drop_glue(void) {
 
 static void a_type_that_owns_is_dropped_by_glue_named_for_it(void) {
     TestEmission emission;
-    char *text = unit_text(&emission, "struct Node { n: i32 }\n"
-                                      "func f(): i32 { let a: *Node = box Node { n: 1 }; return a.n; }\n");
+    char *text = unit_text(&emission, "struct Unique { n: i32 }\n"
+                                      "func f(): i32 { let a: Unique = Unique { n: 1 }; return a.n; }\n");
 
-    assert(strstr(text, "define linkonce_odr void @drop.box.Node"));
-    assert(strstr(text, "call void @free"));
+    assert(strstr(text, "define linkonce_odr void @drop.Unique("));
+    assert(strstr(text, "call void @drop.Unique("));
 
     test_emission_free(&emission);
 }
@@ -113,56 +113,35 @@ static size_t occurrences(const char *text, const char *needle) {
 
 static void a_type_dropped_from_many_places_is_glued_once(void) {
     TestEmission emission;
-    char *text = unit_text(&emission, "struct Inner { n: i32 }\n"
-                                      "struct Outer { child: *Inner }\n"
-                                      "func made(): *Inner { return box Inner { n: 6 }; }\n"
+    char *text = unit_text(&emission, "struct Unique { n: i32 }\n"
+                                      "struct Outer { child: Unique }\n"
+                                      "func made(): Unique { return Unique { n: 6 }; }\n"
                                       "func f(): i32 {\n"
-                                      "    let a: *Inner = box Inner { n: 1 };\n"
-                                      "    let o: *Outer = box Outer { child: box Inner { n: 2 } };\n"
+                                      "    let a: Unique = Unique { n: 1 };\n"
+                                      "    let o: Outer = Outer { child: Unique { n: 2 } };\n"
                                       "    o.child = made();\n"
                                       "    return a.n;\n"
                                       "}\n");
 
-    assert(occurrences(text, "define linkonce_odr void @drop.box.Inner(") == 1);
-    assert(occurrences(text, "call void @drop.box.Inner(") > 1);
+    assert(occurrences(text, "define linkonce_odr void @drop.Unique(") == 1);
+    assert(occurrences(text, "call void @drop.Unique(") > 1);
 
     test_emission_free(&emission);
 }
 
-static void a_box_drops_what_its_object_owns_before_freeing_it(void) {
+static void a_holder_drops_the_owner_it_holds(void) {
     TestEmission emission;
-    char *text = unit_text(&emission, "struct Inner { n: i32 }\n"
-                                      "struct Outer { child: *Inner }\n"
+    char *text = unit_text(&emission, "struct Unique { n: i32 }\n"
+                                      "struct Outer { child: Unique }\n"
                                       "func f(): i32 {\n"
-                                      "    let o: *Outer = box Outer { child: box Inner { n: 1 } };\n"
+                                      "    let o: Outer = Outer { child: Unique { n: 1 } };\n"
                                       "    return 0;\n"
                                       "}\n");
 
-    const char *glue = strstr(text, "define linkonce_odr void @drop.box.Outer(");
+    const char *glue = strstr(text, "define linkonce_odr void @drop.Outer(");
 
     assert(glue);
-
-    const char *inner = strstr(glue, "call void @drop.Outer(");
-    const char *freed = strstr(glue, "call void @free(");
-
-    assert(inner && freed && inner < freed);
-
-    test_emission_free(&emission);
-}
-
-/* A slot the compiler proves moved-from is not read, so what a box holds need not start zeroed. */
-static void a_box_allocates_without_zeroing(void) {
-    TestEmission emission;
-    char *text = emitted_named(&emission,
-                               "struct Node { n: i32 }\n"
-                               "func f(): i32 {\n"
-                               "    let a: *Node = box Node { n: 7 };\n"
-                               "    return a.n;\n"
-                               "}\n",
-                               "f");
-
-    assert(strstr(text, "@malloc"));
-    assert(!strstr(text, "@calloc"));
+    assert(strstr(glue, "call void @drop.Unique("));
 
     test_emission_free(&emission);
 }
@@ -174,9 +153,7 @@ int main(void) {
     a_type_owning_nothing_emits_no_drop_glue();
     a_type_that_owns_is_dropped_by_glue_named_for_it();
     a_type_dropped_from_many_places_is_glued_once();
-    a_box_drops_what_its_object_owns_before_freeing_it();
-
-    a_box_allocates_without_zeroing();
+    a_holder_drops_the_owner_it_holds();
 
     return 0;
 }
