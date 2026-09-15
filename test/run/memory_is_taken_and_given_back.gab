@@ -2,8 +2,8 @@ module test;
 import testing;
 
 func sums(): i32 {
-    let bytes: raw<u8> = malloc(@size_of<i32>() * 4);
-    let p: raw<i32> = raw<i32>(bytes);
+    let bytes: *u8 = malloc(@size_of<i32>() * 4);
+    let p: *i32 = *i32(bytes);
 
     p[0] = 1;
     p[3] = 8;

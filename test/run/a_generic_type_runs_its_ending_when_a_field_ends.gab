@@ -1,0 +1,22 @@
+module test;
+import testing;
+
+struct Holder<T> { value: T, seen: &i32 }
+
+impl<T> Holder<T> as Destroy {
+    func destroy(self: &Self) {
+        *self.seen = 7;
+    }
+}
+
+struct Outer { held: Holder<i32> }
+
+func run(): i32 {
+    let seen: i32 = 0;
+
+    { let o: Outer = Outer { held: Holder<i32> { value: 1, seen: seen } }; }
+
+    assert(seen == 7);
+
+    return 0;
+}

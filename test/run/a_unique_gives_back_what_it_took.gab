@@ -2,7 +2,7 @@ module test;
 import testing;
 
 func run(): i32 {
-    let held: Unique<i32> = Unique<i32> { ptr: raw<i32>(malloc(@size_of<i32>())) };
+    let held: Unique<i32> = Unique<i32> { ptr: *i32(malloc(@size_of<i32>())) };
 
     held.ptr[0] = 9;
 

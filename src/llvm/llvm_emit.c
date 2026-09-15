@@ -149,7 +149,9 @@ static Function *ending_of(LLVMEmitter *emitter, const Type *type) {
         }
     }
 
-    return function_registry_destructor(emitter->ir->functions, type);
+    const String *name = type_registry_names(emitter->registry)->destroy_method;
+
+    return function_registry_owned_for(emitter->ir->functions, type, name);
 }
 
 static void emit_drop_body(LLVMEmitter *emitter, const Type *type, LLVMValueRef self) {
